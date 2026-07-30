@@ -17,7 +17,10 @@ export {
   GitHubCredentialsError,
   GitHubGraphQLDocumentError,
   GitHubGraphQLReadOnlyViolationError,
+  GitHubPublicBoundaryViolationError,
   GitHubReadOnlyViolationError,
+  GitHubRepositoryInventoryError,
+  GitHubRepositoryStaleFallbackUnavailableError,
   GitHubRequestError,
   GitHubResponseValidationError,
   GitHubRetryExhaustedError,
@@ -41,4 +44,22 @@ export {
   type GitHubRetryRuntime,
   type GitHubRetrySettings,
 } from "./retry.js";
+export {
+  assertPublicRepositoryBoundary,
+  createPublicRepositoryAllowlist,
+  isEligiblePublicRepository,
+  PublicRepositoryAllowlist,
+  type PublicRepository,
+  type PublicRepositoryId,
+} from "./public-repository-allowlist.js";
+export {
+  collectRepositoriesWithStaleFallback,
+  type CollectRepositoriesOptions,
+  type PreviousRepositoryValue,
+  type RepositoryCollectionResult,
+} from "./repository-collection.js";
+export {
+  discoverRepositoryInventory,
+  type DiscoverRepositoryInventoryOptions,
+} from "./repository-inventory.js";
 export { GITHUB_APP_READ_PERMISSIONS, InstallationTokenManager } from "./token-manager.js";

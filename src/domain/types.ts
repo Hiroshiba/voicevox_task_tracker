@@ -283,6 +283,7 @@ export type Repository = Readonly<{
   name: string;
   visibility: RepositoryVisibility;
   archived: boolean;
+  disabled: boolean;
   observedAt: UtcIsoDateTime;
 }>;
 

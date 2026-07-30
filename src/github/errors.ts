@@ -75,6 +75,30 @@ export class GitHubResponseValidationError extends GitHubClientError {
   }
 }
 
+/** リポジトリインベントリの完全性を確認できないことを表す。 */
+export class GitHubRepositoryInventoryError extends GitHubClientError {
+  public constructor(options: ErrorOptions) {
+    super("GitHubリポジトリインベントリの完全性を確認できません", options);
+  }
+}
+
+/** 公開allowlist外のリポジトリ参照を表す。 */
+export class GitHubPublicBoundaryViolationError extends GitHubClientError {
+  public readonly violationCount: number;
+
+  public constructor(violationCount: number) {
+    super(`公開allowlist外のリポジトリ参照を検出しました。件数: ${violationCount.toString()}`, {});
+    this.violationCount = violationCount;
+  }
+}
+
+/** 一時取得失敗時に利用できる前回値がないことを表す。 */
+export class GitHubRepositoryStaleFallbackUnavailableError extends GitHubClientError {
+  public constructor(repository: string, options: ErrorOptions) {
+    super(`リポジトリの前回取得値がありません。対象: ${repository}`, options);
+  }
+}
+
 /** GitHub API呼び出しが失敗したことを表す。 */
 export class GitHubRequestError extends GitHubClientError {
   public readonly attempts: number;

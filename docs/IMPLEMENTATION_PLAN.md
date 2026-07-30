@@ -23,7 +23,7 @@ VOICEVOX Organization全体の公開Issue/PRについて、状態・ボールの
 ### Phase 1: GitHub収集
 
 - [x] T04 GitHub App認証とAPIクライアント — installation token発行、Octokit REST/GraphQL、rate limit監視、指数backoff+jitter retry
-- [ ] T05 リポジトリインベントリと公開境界 — Organization repositoriesのページネーション、public/non-archived/non-disabled allowlistのrun内固定、allowlist外へのAPI呼び出し禁止
+- [x] T05 リポジトリインベントリと公開境界 — Organization repositoriesのページネーション、public/non-archived/non-disabled allowlistのrun内固定、allowlist外へのAPI呼び出し禁止
 - [ ] T06 項目列挙と増分収集 — repo単位のopen Issue/PR全ページ取得、fingerprint、前回成功時刻からのoverlap付き増分、event IDでの重複排除
 - [ ] T07 詳細収集 — issue comments、reviews、review threads、review requests、head SHA、checks/statuses、timeline、native dependency、sub-issue、inbound cross-reference
 - [ ] T08 正規化 — 収集結果を安定したsource ID付き正規化イベントへ変換、変更種別の保持、stale repo処理
