@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://voicevox.github.io/voicevox_task_tracker/schemas/snapshot.schema.json",
+  "title": "VOICEVOX Task Tracker Snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "trackingStartAt",
+    "repositories",
+    "items",
+    "relations",
+    "run"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1"
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trackingStartAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "repositories": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "relations": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "run": {
+      "type": "object",
+      "required": [
+        "id",
+        "status",
+        "complete"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "complete": {
+          "const": true
+        }
+      }
+    }
+  }
+}

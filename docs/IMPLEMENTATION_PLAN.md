@@ -16,7 +16,7 @@ VOICEVOX Organization全体の公開Issue/PRについて、状態・ボールの
 
 ### Phase 0: 基盤
 
-- [ ] T01 リポジトリ初期化 — package.json、pnpm、TypeScript strict設定、Vitest、ESLint、Prettier、.gitignore、最小のREADME
+- [x] T01 リポジトリ初期化 — package.json、pnpm、TypeScript strict設定、Vitest、ESLint、Prettier、.gitignore、最小のREADME
 - [ ] T02 設定の読み込みと検証 — config.yml、config schema、YAMLロード、schemaVersion検証、semantic検証、team slug未設定時の安全停止
 - [ ] T03 ドメイン型定義 — Repository、TrackedItem、Relation、AnalysisMetadata、NotificationLedger、status/waitingOn enum、正規化イベントとsource ID規約
 

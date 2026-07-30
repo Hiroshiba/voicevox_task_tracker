@@ -1,0 +1,292 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://voicevox.github.io/voicevox_task_tracker/schemas/codex-analysis.schema.json",
+  "title": "VOICEVOX Task Tracker Codex Analysis",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "item",
+    "status",
+    "waitingOn",
+    "nextAction",
+    "relations",
+    "progress",
+    "evidence",
+    "confidence",
+    "uncertainties",
+    "notification"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1"
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nodeId",
+        "url"
+      ],
+      "properties": {
+        "nodeId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https://github\\.com/"
+        }
+      }
+    },
+    "status": {
+      "enum": [
+        "new_untriaged",
+        "needs_maintainer_decision",
+        "waiting_for_review",
+        "waiting_for_author",
+        "waiting_for_assignee",
+        "blocked",
+        "waiting_for_automation",
+        "ready_to_merge",
+        "in_progress",
+        "unknown",
+        "terminal_merged",
+        "terminal_completed",
+        "terminal_not_planned"
+      ]
+    },
+    "waitingOn": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "candidateId",
+          "role",
+          "reasonSummary",
+          "sourceIds",
+          "confidence"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "user",
+              "team",
+              "role",
+              "item",
+              "automation",
+              "unknown"
+            ]
+          },
+          "candidateId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "role": {
+            "enum": [
+              "author",
+              "maintainer",
+              "reviewer",
+              "assignee",
+              "dependency",
+              "merge_decider",
+              "ci",
+              "unknown"
+            ]
+          },
+          "reasonSummary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "sourceIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      }
+    },
+    "nextAction": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
+    "relations": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "candidateId",
+          "verdict",
+          "reasonSummary",
+          "sourceIds",
+          "confidence"
+        ],
+        "properties": {
+          "candidateId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verdict": {
+            "enum": [
+              "current_is_blocked_by_target",
+              "current_blocks_target",
+              "current_implements_target",
+              "target_is_subtask_of_current",
+              "current_is_subtask_of_target",
+              "duplicates",
+              "related",
+              "none"
+            ]
+          },
+          "reasonSummary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "sourceIds": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      }
+    },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "latestMeaningfulSourceId",
+        "reasonSummary",
+        "confidence"
+      ],
+      "properties": {
+        "latestMeaningfulSourceId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reasonSummary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "sourceId",
+          "supports",
+          "summary"
+        ],
+        "properties": {
+          "sourceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "supports": {
+            "enum": [
+              "status",
+              "waiting_on",
+              "relation",
+              "progress",
+              "notification",
+              "uncertainty"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          }
+        }
+      }
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "uncertainties": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      }
+    },
+    "notification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "recommended",
+        "reasonCode",
+        "reasonSummary"
+      ],
+      "properties": {
+        "recommended": {
+          "type": "boolean"
+        },
+        "reasonCode": {
+          "enum": [
+            "none",
+            "triage_overdue",
+            "review_overdue",
+            "author_overdue",
+            "owner_unknown",
+            "blocker_overdue",
+            "newly_unblocked",
+            "dependency_cycle",
+            "responsibility_changed",
+            "ready_to_merge_overdue",
+            "automation_stuck"
+          ]
+        },
+        "reasonSummary": {
+          "type": "string",
+          "maxLength": 240
+        }
+      }
+    }
+  }
+}
