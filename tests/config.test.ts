@@ -1,0 +1,196 @@
+import { readFile } from "node:fs/promises";
+
+import { stringify } from "yaml";
+import { describe, expect, it } from "vitest";
+
+import { ConfigError, loadConfig, parseConfig } from "../src/config/index.js";
+import { TaskTrackerError } from "../src/util/index.js";
+
+const validConfigUrl = new URL("./fixtures/config.valid.yml", import.meta.url);
+const validConfigSource = await readFile(validConfigUrl, "utf8");
+
+function replaceRequired(source: string, target: string, replacement: string): string {
+  const replaced = source.replace(target, replacement);
+  if (replaced === source) {
+    throw new Error(`テストfixture内に置換対象がありません: ${target}`);
+  }
+  return replaced;
+}
+
+function captureConfigError(source: string): ConfigError {
+  try {
+    parseConfig(source);
+  } catch (error: unknown) {
+    if (error instanceof ConfigError) {
+      return error;
+    }
+    throw error;
+  }
+  throw new Error("設定エラーが発生しませんでした");
+}
+
+describe("設定の読み込みと検証", () => {
+  it("YAMLファイルを型付き設定として読み込む", async () => {
+    const config = await loadConfig(validConfigUrl);
+
+    expect(config.schemaVersion).toBe(1);
+    expect(config.organization).toBe("VOICEVOX");
+    expect(config.teams.defaults.maintainers[0]).toEqual({
+      org: "VOICEVOX",
+      slug: "default-maintainers",
+    });
+    expect(config.teams.repositories["VOICEVOX/voicevox"]?.reviewers[0]?.slug).toBe(
+      "voicevox-reviewers",
+    );
+    expect(config.ai.provider).toBe("codex");
+    expect(config.notifications.discord.mentions.enabled).toBe(false);
+  });
+
+  it("未知のschema major versionを明示的に拒否する", () => {
+    const source = replaceRequired(validConfigSource, "schemaVersion: 1", 'schemaVersion: "2.0"');
+    const error = captureConfigError(source);
+
+    expect(error).toBeInstanceOf(TaskTrackerError);
+    expect(error.message).toContain("schemaVersion");
+    expect(error.message).toContain("major version 2は未対応です");
+  });
+
+  it("VOICEVOX以外のorganizationを拒否する", () => {
+    const source = replaceRequired(
+      validConfigSource,
+      "organization: VOICEVOX",
+      "organization: OTHER",
+    );
+    const error = captureConfigError(source);
+
+    expect(error.message).toContain("organization");
+    expect(error.message).toContain("VOICEVOXを指定してください");
+  });
+
+  it("codex以外のAI providerを未対応として拒否する", () => {
+    const source = replaceRequired(validConfigSource, "  provider: codex", "  provider: other");
+    const error = captureConfigError(source);
+
+    expect(error.message).toContain("ai.provider");
+    expect(error.message).toContain("otherは未対応です");
+  });
+
+  it("AIが有効な場合はplaceholderのmodelを拒否する", () => {
+    const source = replaceRequired(
+      validConfigSource,
+      "  model: codex-model",
+      "  model: YOUR_PINNED_CODEX_MODEL",
+    );
+    const error = captureConfigError(source);
+
+    expect(error.message).toContain("ai.model");
+    expect(error.message).toContain("placeholderは使用できません");
+  });
+
+  it("AIが無効な場合はplaceholderのmodelを許可する", () => {
+    const disabledSource = replaceRequired(
+      validConfigSource,
+      "ai:\n  provider: codex\n  enabled: true",
+      "ai:\n  provider: codex\n  enabled: false",
+    );
+    const source = replaceRequired(
+      disabledSource,
+      "  model: codex-model",
+      "  model: YOUR_PINNED_CODEX_MODEL",
+    );
+    const config = parseConfig(source);
+
+    expect(config.ai.model).toBe("YOUR_PINNED_CODEX_MODEL");
+  });
+
+  it("placeholderのteam slugを拒否する", () => {
+    const source = replaceRequired(
+      validConfigSource,
+      "slug: default-maintainers",
+      "slug: YOUR_DEFAULT_MAINTAINER_TEAM_SLUG",
+    );
+    const error = captureConfigError(source);
+
+    expect(error.message).toContain("teams.defaults.maintainers[0].slug");
+    expect(error.message).toContain("placeholderは使用できません");
+  });
+
+  it("空のteam slugを拒否する", () => {
+    const source = replaceRequired(validConfigSource, "slug: default-reviewers", 'slug: ""');
+    const error = captureConfigError(source);
+
+    expect(error.message).toContain("teams.defaults.reviewers[0].slug");
+    expect(error.message).toContain("空文字は指定できません");
+  });
+
+  it("AI confidenceのhighがmedium未満なら拒否する", () => {
+    const source = replaceRequired(
+      validConfigSource,
+      "    high: 0.85\n    medium: 0.65",
+      "    high: 0.60\n    medium: 0.65",
+    );
+    const error = captureConfigError(source);
+
+    expect(error.message).toContain("ai.confidence.high");
+    expect(error.message).toContain("highはmedium以上にしてください");
+  });
+
+  it("停滞閾値がwatch、urgent、criticalの順でなければ拒否する", () => {
+    const source = replaceRequired(
+      validConfigSource,
+      "reviewer: { watch: 48, urgent: 120, critical: 240 }",
+      "reviewer: { watch: 121, urgent: 120, critical: 119 }",
+    );
+    const error = captureConfigError(source);
+
+    expect(error.message).toContain("staleness.thresholdsHours.reviewer.urgent");
+    expect(error.message).toContain("urgentはwatch以上にしてください");
+    expect(error.message).toContain("staleness.thresholdsHours.reviewer.critical");
+    expect(error.message).toContain("criticalはurgent以上にしてください");
+  });
+
+  it("startAtをUTCへ正規化し、再解析しても変化させない", () => {
+    const source = replaceRequired(
+      validConfigSource,
+      "startAt: null",
+      'startAt: "2026-07-31T08:30:45+09:00"',
+    );
+
+    const firstConfig = parseConfig(source);
+    const secondConfig = parseConfig(stringify(firstConfig));
+
+    expect(firstConfig.tracking.startAt).toBe("2026-07-30T23:30:45.000Z");
+    expect(secondConfig.tracking.startAt).toBe(firstConfig.tracking.startAt);
+  });
+
+  it("mentions.enabledを省略した場合はfalseにする", () => {
+    const source = replaceRequired(validConfigSource, "      enabled: false\n", "");
+    const config = parseConfig(source);
+
+    expect(config.notifications.discord.mentions.enabled).toBe(false);
+  });
+
+  it("複数フィールドの不正を1件の設定エラーへまとめる", () => {
+    const invalidOrganization = replaceRequired(
+      validConfigSource,
+      "organization: VOICEVOX",
+      "organization: OTHER",
+    );
+    const invalidProvider = replaceRequired(
+      invalidOrganization,
+      "  provider: codex",
+      "  provider: other",
+    );
+    const source = replaceRequired(
+      invalidProvider,
+      "slug: default-maintainers",
+      "slug: YOUR_DEFAULT_MAINTAINER_TEAM_SLUG",
+    );
+    const error = captureConfigError(source);
+    const paths = error.issues.map((issue) => issue.path);
+
+    expect(paths).toEqual(
+      expect.arrayContaining(["organization", "teams.defaults.maintainers[0].slug", "ai.provider"]),
+    );
+  });
+});

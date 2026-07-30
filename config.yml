@@ -1,0 +1,137 @@
+# 実運用時はこのファイルを編集し、YOUR_で始まる値を実際の値へ置き換える。
+schemaVersion: 1
+organization: VOICEVOX
+
+tracking:
+  # nullなら最初の「完全成功run」の時刻をstateへ固定する。
+  startAt: null
+  autoInclude:
+    createdAfterStart: true
+    changedAfterStart: true
+    referencedByTracked: true
+    referencesTracked: true
+    nativeRelations: true
+    relationDepth: 3
+  include: []
+  retentionDaysAfterTerminal: 180
+  backfill:
+    maxItemsPerRun: 500
+
+teams:
+  defaults:
+    maintainers:
+      - org: VOICEVOX
+        slug: YOUR_DEFAULT_MAINTAINER_TEAM_SLUG
+    reviewers:
+      - org: VOICEVOX
+        slug: YOUR_DEFAULT_REVIEWER_TEAM_SLUG
+  repositories: {}
+  # リポジトリ別に上書きする場合は空のmapを次の形式へ置き換える。
+  # repositories:
+  #   VOICEVOX/example_repo:
+  #     maintainers:
+  #       - org: VOICEVOX
+  #         slug: EXAMPLE_MAINTAINERS
+  #     reviewers:
+  #       - org: VOICEVOX
+  #         slug: EXAMPLE_REVIEWERS
+
+actors:
+  bots:
+    loginPatterns:
+      - "\\[bot\\]$"
+    knownLogins:
+      - renovate[bot]
+      - dependabot[bot]
+      - copilot-pull-request-reviewer[bot]
+      - voicevox-preview-pages[bot]
+    treatAsHuman: []
+
+labels:
+  rules:
+    - repository: "VOICEVOX/*"
+      namePattern: "^優先度[：:]高$"
+      effects:
+        priorityWeight: 25
+        severityLift: 1
+    - repository: "VOICEVOX/*"
+      namePattern: "^優先度[：:]中$"
+      effects:
+        priorityWeight: 12
+    - repository: "VOICEVOX/*"
+      namePattern: "^要議論$"
+      effects:
+        requiresMaintainerDecision: true
+    # 既存labelだけを読む。trackerはlabelを追加・変更しない。
+
+staleness:
+  timezone: Asia/Tokyo
+  recentProgressGraceHours: 24
+  thresholdsHours:
+    maintainerTriage: { watch: 48, urgent: 96, critical: 168 }
+    ownerUnknown: { watch: 48, urgent: 96, critical: 168 }
+    reviewer: { watch: 48, urgent: 120, critical: 240 }
+    authorAfterChangesRequested: { watch: 72, urgent: 168, critical: 336 }
+    assigneeOrInProgress: { watch: 168, urgent: 336, critical: 720 }
+    readyToMerge: { watch: 24, urgent: 72, critical: 168 }
+    automation: { watch: 6, urgent: 24, critical: 72 }
+
+ai:
+  provider: codex
+  enabled: true
+  # 実装時点で利用可能なCodex modelを明示的にpinし、更新はeval付きPRで行う。
+  model: YOUR_PINNED_CODEX_MODEL
+  promptVersion: v1
+  schemaPath: schemas/codex-analysis.schema.json
+  confidence:
+    high: 0.85
+    medium: 0.65
+  budget:
+    maxCallsPerRun: 100
+    maxInputCharactersPerItem: 60000
+    maxTotalInputCharactersPerRun: 2000000
+  execution:
+    timeoutSeconds: 120
+    maxAttempts: 2
+    sandbox: read-only
+    approvalPolicy: never
+
+notifications:
+  discord:
+    enabled: true
+    webhookSecretName: DISCORD_WEBHOOK_URL
+    operationsWebhookSecretName: DISCORD_WEBHOOK_URL
+    mentions:
+      enabled: false
+      users: {}
+      # Hiroshiba: "123456789012345678"
+    maxItemsPerDigest: 10
+    cooldownDays:
+      urgent: 3
+      critical: 2
+    silenceWhenEmpty: true
+
+state:
+  branch: tracker-state
+  snapshotPath: state/snapshot.json
+  historyDirectory: state/history
+  aiCacheDirectory: state/ai-cache
+  notificationLedgerPath: state/notification-ledger.json
+  canonicalJson: true
+
+web:
+  basePath: /voicevox_task_tracker/
+  title: VOICEVOX Task Tracker
+  defaultLocale: ja-JP
+  graph:
+    maxInitialNodes: 500
+    clusterByRepository: true
+
+operations:
+  githubApiBudgetRatio: 0.70
+  failOnPrivateDataGuard: true
+  publishPartialData: false
+  retry:
+    maxAttempts: 4
+    initialDelaySeconds: 2
+    maxDelaySeconds: 30
