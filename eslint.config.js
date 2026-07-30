@@ -33,7 +33,26 @@ export default defineConfig([
         },
       ],
       "@typescript-eslint/no-non-null-assertion": "error",
-      eqeqeq: ["error", "always"],
+      eqeqeq: ["error", "always", { null: "ignore" }],
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "BinaryExpression[operator='==='] > Literal[value=null]",
+          message: "nullとの比較には==を使ってください",
+        },
+        {
+          selector: "BinaryExpression[operator='!=='] > Literal[value=null]",
+          message: "nullとの比較には!=を使ってください",
+        },
+        {
+          selector: "BinaryExpression[operator='==='] > Identifier[name='undefined']",
+          message: "nullまたはundefinedとの比較には== nullを使ってください",
+        },
+        {
+          selector: "BinaryExpression[operator='!=='] > Identifier[name='undefined']",
+          message: "nullまたはundefinedとの比較には!= nullを使ってください",
+        },
+      ],
     },
   },
 ]);

@@ -1,0 +1,402 @@
+import { z } from "zod";
+
+import { type SourceId } from "./source-id.js";
+
+const opaqueIdSchema = z
+  .string()
+  .min(1, "IDは空にできません")
+  .regex(/^\S+$/, "IDに空白は使えません");
+const githubNodeIdSchema = opaqueIdSchema.brand<"GitHubNodeId">();
+const githubRepositoryIdSchema = opaqueIdSchema.brand<"GitHubRepositoryId">();
+const externalReferenceNodeIdSchema = opaqueIdSchema.brand<"ExternalReferenceNodeId">();
+const utcIsoDateTimeSchema = z.iso
+  .datetime({
+    offset: true,
+    error: "タイムゾーンを含むISO 8601日時を指定してください",
+  })
+  .transform((value) => new Date(value).toISOString())
+  .brand<"UtcIsoDateTime">();
+
+/** GitHubのIssue、Pull Request、ユーザーなどを識別するglobal node ID。 */
+export type GitHubNodeId = z.output<typeof githubNodeIdSchema>;
+
+/** GitHubリポジトリを識別するglobal node ID。 */
+export type GitHubRepositoryId = z.output<typeof githubRepositoryIdSchema>;
+
+/** GitHub Organization外の参照先へ決定論的に割り当てるnode ID。 */
+export type ExternalReferenceNodeId = z.output<typeof externalReferenceNodeIdSchema>;
+
+/** グラフ上のnode ID。 */
+export type GraphNodeId = GitHubNodeId | ExternalReferenceNodeId;
+
+/** UTCのISO 8601文字列。表示時にだけJSTへ変換する。 */
+export type UtcIsoDateTime = z.output<typeof utcIsoDateTimeSchema>;
+
+/** GitHub global node IDを検証して型を付与する。 */
+export function createGitHubNodeId(value: string): GitHubNodeId {
+  return githubNodeIdSchema.parse(value);
+}
+
+/** GitHub repository IDを検証して型を付与する。 */
+export function createGitHubRepositoryId(value: string): GitHubRepositoryId {
+  return githubRepositoryIdSchema.parse(value);
+}
+
+/** 外部参照用node IDを検証して型を付与する。 */
+export function createExternalReferenceNodeId(value: string): ExternalReferenceNodeId {
+  return externalReferenceNodeIdSchema.parse(value);
+}
+
+/** ISO 8601日時をUTCへ正規化して型を付与する。 */
+export function createUtcIsoDateTime(value: string): UtcIsoDateTime {
+  return utcIsoDateTimeSchema.parse(value);
+}
+
+/** 追跡項目の処理状態。 */
+export type Status =
+  | "new_untriaged"
+  | "needs_maintainer_decision"
+  | "waiting_for_review"
+  | "waiting_for_author"
+  | "waiting_for_assignee"
+  | "blocked"
+  | "waiting_for_automation"
+  | "ready_to_merge"
+  | "in_progress"
+  | "unknown"
+  | "terminal_merged"
+  | "terminal_completed"
+  | "terminal_not_planned";
+
+/** 人の対応を必要としない終了状態。 */
+export type TerminalStatus = "terminal_merged" | "terminal_completed" | "terminal_not_planned";
+
+/** 処理が継続している状態。 */
+export type NonTerminalStatus = Exclude<Status, TerminalStatus>;
+
+/** 次の行動を待つ主体の種別。 */
+export type WaitingOnKind = "user" | "team" | "role" | "item" | "automation" | "unknown";
+
+/** 次の行動を待つ主体の役割。 */
+export type WaitingOnRole =
+  | "author"
+  | "maintainer"
+  | "reviewer"
+  | "assignee"
+  | "dependency"
+  | "merge_decider"
+  | "ci"
+  | "unknown";
+
+/** 要件定義のattentionに対応するwatchを含む停滞の重要度。 */
+export type Severity = "none" | "watch" | "urgent" | "critical";
+
+/** staleness.thresholdsHoursのキーと1対1に対応する待機分類。 */
+export type WaitClass =
+  | "maintainerTriage"
+  | "ownerUnknown"
+  | "reviewer"
+  | "authorAfterChangesRequested"
+  | "assigneeOrInProgress"
+  | "readyToMerge"
+  | "automation";
+
+/** グラフnodeの種別。 */
+export type GraphNodeKind = "issue" | "pull_request" | "external_reference";
+
+/** 追跡項目として保存するグラフnodeの種別。 */
+export type TrackedItemType = Exclude<GraphNodeKind, "external_reference">;
+
+/** Relation edgeの意味。 */
+export type RelationType = "blocks" | "parent_of" | "implements" | "related_to" | "duplicates";
+
+/** Relation edgeを得た経路。 */
+export type RelationProvenance =
+  "native" | "explicit_text" | "closing_keyword" | "checklist" | "cross_reference" | "ai_inference";
+
+/** Codex出力schemaと一致する通知理由コード。 */
+export type NotificationReasonCode =
+  | "none"
+  | "triage_overdue"
+  | "review_overdue"
+  | "author_overdue"
+  | "owner_unknown"
+  | "blocker_overdue"
+  | "newly_unblocked"
+  | "dependency_cycle"
+  | "responsibility_changed"
+  | "ready_to_merge_overdue"
+  | "automation_stuck";
+
+/** イベントを起こした主体の種別。 */
+export type ActorType = "human" | "bot" | "system";
+
+/** GitHubアカウントとして識別できるアクター。 */
+export type GitHubAccountActor = Readonly<{
+  type: Exclude<ActorType, "system">;
+  nodeId: GitHubNodeId;
+  login: string;
+}>;
+
+/** GitHubが生成したシステムアクター。 */
+export type SystemActor = Readonly<{
+  type: "system";
+  name: string;
+}>;
+
+/** 正規化イベントを起こしたアクター。 */
+export type Actor = GitHubAccountActor | SystemActor;
+
+type NormalizedEventBase = Readonly<{
+  sourceId: SourceId;
+  itemNodeId: GitHubNodeId;
+  occurredAt: UtcIsoDateTime;
+  actor: Actor;
+}>;
+
+type EventChangeAction = "added" | "removed";
+
+type NormalizedCommentEvent = NormalizedEventBase &
+  Readonly<{
+    kind: "comment";
+    bodyFingerprint: string;
+    bodyEmpty: boolean;
+    replyToCommentNodeId?: GitHubNodeId;
+  }>;
+
+type NormalizedPushEvent = NormalizedEventBase &
+  Readonly<{
+    kind: "push";
+    headCommitSha: string;
+    forcePush: boolean;
+  }>;
+
+type NormalizedReviewEvent = NormalizedEventBase &
+  Readonly<{
+    kind: "review";
+    state: "approved" | "changes_requested" | "commented" | "dismissed";
+    commitSha: string;
+  }>;
+
+type ReviewRequestTarget =
+  | Readonly<{
+      type: "user";
+      nodeId: GitHubNodeId;
+    }>
+  | Readonly<{
+      type: "team";
+      nodeId: GitHubNodeId;
+    }>;
+
+type NormalizedReviewRequestEvent = NormalizedEventBase &
+  Readonly<{
+    kind: "review_request";
+    target: ReviewRequestTarget;
+    action: EventChangeAction;
+  }>;
+
+type NormalizedLabelEvent = NormalizedEventBase &
+  Readonly<{
+    kind: "label";
+    labelName: string;
+    action: EventChangeAction;
+  }>;
+
+type NormalizedAssigneeEvent = NormalizedEventBase &
+  Readonly<{
+    kind: "assignee";
+    assignee: GitHubAccountActor;
+    action: EventChangeAction;
+  }>;
+
+type NormalizedStateEvent = NormalizedEventBase &
+  (
+    | Readonly<{
+        kind: "state";
+        state: "open" | "merged" | "reopened";
+      }>
+    | Readonly<{
+        kind: "state";
+        state: "closed";
+        stateReason: "completed" | "not_planned";
+      }>
+  );
+
+type RelationEventTarget =
+  | Readonly<{
+      type: "node";
+      nodeId: GraphNodeId;
+    }>
+  | Readonly<{
+      type: "url";
+      url: GitHubItemUrl;
+    }>;
+
+type NormalizedRelationEvent = NormalizedEventBase &
+  Readonly<{
+    kind: "relation";
+    relationType: RelationType;
+    target: RelationEventTarget;
+    action: EventChangeAction;
+    provenance: RelationProvenance;
+  }>;
+
+/** 安定したsource IDと変更種別ごとの内容を持つ正規化イベント。 */
+export type NormalizedEvent =
+  | NormalizedCommentEvent
+  | NormalizedPushEvent
+  | NormalizedReviewEvent
+  | NormalizedReviewRequestEvent
+  | NormalizedLabelEvent
+  | NormalizedAssigneeEvent
+  | NormalizedStateEvent
+  | NormalizedRelationEvent;
+
+/** 根拠が支持する判定箇所。 */
+export type EvidenceSupport =
+  "status" | "waiting_on" | "relation" | "progress" | "notification" | "uncertainty";
+
+/** 判定をGitHub由来のsourceへ結び付ける根拠。 */
+export type Evidence = Readonly<{
+  sourceId: SourceId;
+  supports: EvidenceSupport;
+  summary: string;
+}>;
+
+/** 次の行動を待つ主体と判断根拠。 */
+export type WaitingOn = Readonly<{
+  kind: WaitingOnKind;
+  candidateId: string;
+  role: WaitingOnRole;
+  reasonSummary: string;
+  sourceIds: readonly [SourceId, ...SourceId[]];
+  confidence: number;
+}>;
+
+/** リポジトリの公開範囲。 */
+export type RepositoryVisibility = "public" | "private" | "internal";
+
+/** GitHub global repository IDを正本としてrename前後を同じリポジトリとして扱う。 */
+export type Repository = Readonly<{
+  id: GitHubRepositoryId;
+  owner: string;
+  name: string;
+  visibility: RepositoryVisibility;
+  archived: boolean;
+  observedAt: UtcIsoDateTime;
+}>;
+
+/** GitHub上の項目状態。 */
+export type TrackedItemState = "open" | "closed" | "merged";
+
+/** Pull Requestの集約review状態。 */
+export type ReviewState =
+  "not_applicable" | "not_requested" | "requested" | "changes_requested" | "approved" | "unknown";
+
+/** Pull Requestの集約check状態。 */
+export type CheckState =
+  "not_applicable" | "not_required" | "pending" | "passing" | "failing" | "unknown";
+
+/** owner/repository#number形式の表示用別名。 */
+export type GitHubItemDisplayReference = `${string}/${string}#${number}`;
+
+/** GitHub上の項目を指す表示用URL。 */
+export type GitHubItemUrl = `https://github.com/${string}`;
+
+type TrackedItemFields = Readonly<{
+  nodeId: GitHubNodeId;
+  type: TrackedItemType;
+  repositoryId: GitHubRepositoryId;
+  displayReference: GitHubItemDisplayReference;
+  number: number;
+  url: GitHubItemUrl;
+  title: string;
+  state: TrackedItemState;
+  nextAction: string;
+  createdAt: UtcIsoDateTime;
+  githubUpdatedAt: UtcIsoDateTime;
+  lastHumanActivityAt: UtcIsoDateTime;
+  lastProgressAt: UtcIsoDateTime;
+  statusSince: UtcIsoDateTime;
+  ownerSince: UtcIsoDateTime;
+  stallSince: UtcIsoDateTime;
+  observedAt: UtcIsoDateTime;
+  labels: readonly string[];
+  assignees: readonly GitHubAccountActor[];
+  reviewState: ReviewState;
+  checkState: CheckState;
+  confidence: number;
+  evidence: readonly Evidence[];
+  uncertainties: readonly string[];
+}>;
+
+/** nodeIdを正本とし、renameで変わり得る表示用別名を分離した追跡項目。 */
+export type TrackedItem =
+  | (TrackedItemFields &
+      Readonly<{
+        status: NonTerminalStatus;
+        waitingOn: readonly WaitingOn[];
+      }>)
+  | (TrackedItemFields &
+      Readonly<{
+        status: TerminalStatus;
+        waitingOn: readonly [];
+      }>);
+
+type RelationFields = Readonly<{
+  id: string;
+  fromNodeId: GraphNodeId;
+  toNodeId: GraphNodeId;
+  type: RelationType;
+  provenance: RelationProvenance;
+  confidence: number;
+  evidence: readonly Evidence[];
+  firstSeenAt: UtcIsoDateTime;
+  lastConfirmedAt: UtcIsoDateTime;
+}>;
+
+/** blocksではfromNodeIdをblocker、toNodeIdをblocked itemとするRelation。 */
+export type Relation =
+  | (RelationFields &
+      Readonly<{
+        active: true;
+      }>)
+  | (RelationFields &
+      Readonly<{
+        active: false;
+        removedAt: UtcIsoDateTime;
+      }>);
+
+/** Codex分析を再現するためのversion、hash、実行時刻。 */
+export type AnalysisMetadata = Readonly<{
+  deterministicRulesVersion: string;
+  model: string;
+  backendVersion: string;
+  promptVersion: string;
+  schemaVersion: string;
+  inputHash: string;
+  outputHash: string;
+  executedAt: UtcIsoDateTime;
+}>;
+
+type NotificationLedgerEntryBase = Readonly<{
+  notificationKey: string;
+  itemNodeId: GitHubNodeId;
+  reasonCode: NotificationReasonCode;
+  severity: Severity;
+  reservedAt: UtcIsoDateTime;
+  cooldownUntil: UtcIsoDateTime;
+}>;
+
+/** Discord通知の予約または送信結果を記録するledger entry。 */
+export type NotificationLedgerEntry =
+  | (NotificationLedgerEntryBase &
+      Readonly<{
+        status: "reserved";
+      }>)
+  | (NotificationLedgerEntryBase &
+      Readonly<{
+        status: "sent";
+        sentAt: UtcIsoDateTime;
+        discordMessageId: string;
+      }>);
