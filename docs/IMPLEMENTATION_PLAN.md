@@ -34,7 +34,7 @@ VOICEVOX Organization全体の公開Issue/PRについて、状態・ボールの
 - [x] T10 PR状態機械 — terminal、blocked、automation、changes requested、re-review、review request、draft、ready to merge、CI失敗、conflictの優先順位判定
 - [x] T11 Issue状態機械 — terminal、blocked、未回答の明示依頼、assignee、未アサイン時のmaintainer責務
 - [x] T12 停滞時間とseverity — statusSince、ownerSince、stallSince、lastProgressAtの算出、bot activityによるリセット禁止、wait class別閾値、priority labelによる引き上げ
-- [ ] T13 追跡ライフサイクル — startAt確定、追跡対象への追加規則、明示include、backfill、terminal保持と再分析抑制
+- [x] T13 追跡ライフサイクル — startAt確定、追跡対象への追加規則、明示include、backfill、terminal保持と再分析抑制
 
 ### Phase 3: 依存グラフ
 

@@ -174,6 +174,29 @@ describe("設定の読み込みと検証", () => {
     expect(secondConfig.tracking.startAt).toBe(firstConfig.tracking.startAt);
   });
 
+  it("追跡対象の明示includeへGitHub node IDを指定できる", () => {
+    const source = replaceRequired(
+      validConfigSource,
+      "    - https://github.com/VOICEVOX/voicevox/issues/1",
+      "    - I_kwDOExplicitInclude",
+    );
+    const config = parseConfig(source);
+
+    expect(config.tracking.include).toEqual(["I_kwDOExplicitInclude"]);
+  });
+
+  it("追跡対象の明示includeへGitHub以外のURLを指定できない", () => {
+    const source = replaceRequired(
+      validConfigSource,
+      "    - https://github.com/VOICEVOX/voicevox/issues/1",
+      "    - https://example.com/issues/1",
+    );
+    const error = captureConfigError(source);
+
+    expect(error.message).toContain("tracking.include[0]");
+    expect(error.message).toContain("GitHub IssueかPull Request");
+  });
+
   it("mentions.enabledを省略した場合はfalseにする", () => {
     const source = replaceRequired(validConfigSource, "      enabled: false\n", "");
     const config = parseConfig(source);

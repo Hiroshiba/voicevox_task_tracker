@@ -9,6 +9,8 @@ const SUPPORTED_AI_PROVIDER = "codex";
 const DEFAULT_HIGH_CONFIDENCE = 0.85;
 const DEFAULT_MEDIUM_CONFIDENCE = 0.65;
 const SCHEMA_VERSION_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d+)*$/;
+const GITHUB_ITEM_URL_PATTERN =
+  /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/(?:issues|pull)\/[1-9]\d*\/?$/u;
 
 const requiredStringSchema = z.string().min(1, "空文字は指定できません");
 const positiveIntegerSchema = z.number().int().positive();
@@ -95,6 +97,20 @@ const regexPatternSchema = requiredStringSchema.superRefine((value, context) => 
     context.addIssue({
       code: "custom",
       message: "正規表現として解釈できません",
+    });
+  }
+});
+
+const trackingIncludeSchema = requiredStringSchema.superRefine((value, context) => {
+  if (value.includes("://") && !GITHUB_ITEM_URL_PATTERN.test(value)) {
+    context.addIssue({
+      code: "custom",
+      message: "GitHub IssueかPull RequestのHTTPS URLまたはnode IDを指定してください",
+    });
+  } else if (/\s/u.test(value)) {
+    context.addIssue({
+      code: "custom",
+      message: "node IDに空白は使えません",
     });
   }
 });
@@ -204,7 +220,7 @@ const configSchema = z.strictObject({
       nativeRelations: z.boolean(),
       relationDepth: nonNegativeIntegerSchema,
     }),
-    include: z.array(z.url("有効なURLを指定してください")),
+    include: z.array(trackingIncludeSchema),
     retentionDaysAfterTerminal: nonNegativeIntegerSchema,
     backfill: z.strictObject({
       maxItemsPerRun: positiveIntegerSchema,
