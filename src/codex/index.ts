@@ -8,6 +8,7 @@ export {
   runAiAnalyses,
   type AiAnalysisRunConfiguration,
   type AiAnalysisRunDependencies,
+  type AiAnalysisRunFailure,
   type AiAnalysisRunIdentity,
   type AiAnalysisRunItemResult,
   type AiAnalysisRunResult,
@@ -63,19 +64,59 @@ export {
   CodexAttemptError,
   CodexInvalidJsonError,
   CodexNonZeroExitError,
+  CodexOutputSchemaValidationError,
+  CodexOutputSemanticValidationError,
+  CodexOutputValidationError,
   CodexProcessStartError,
+  CodexRateLimitError,
   CodexResourceError,
   CodexTemporaryWorkspaceError,
   CodexTimeoutError,
+  type CodexOutputValidationIssue,
 } from "./errors.js";
+export {
+  classifyCodexConfidence,
+  type CodexConfidenceClassification,
+  type CodexConfidenceThresholds,
+} from "./confidence.js";
 export {
   createCodexAnalysisInput,
   serializeCodexAnalysisInput,
   type CodexAnalysisInput,
 } from "./input.js";
 export {
+  type SchemaValidCodexAnalysisOutput,
+  type SchemaValidCodexEvidence,
+  type SchemaValidCodexRelation,
+  type SchemaValidCodexWaitingOn,
+  type ValidatedCodexAnalysisOutput,
+  type ValidatedCodexRelation,
+} from "./output-types.js";
+export { validateCodexAnalysisOutput } from "./output-validation.js";
+export {
   runCodexProcess,
   type CodexProcessRequest,
   type CodexProcessResult,
   type CodexProcessRunner,
 } from "./process-runner.js";
+export {
+  classifyCodexUnavailableReason,
+  executeValidatedCodexAnalysis,
+  reduceCodexAnalysis,
+  runCodexAnalysisWithFallback,
+  type CodexAnalysisAttempt,
+  type CodexAnalysisReduction,
+  type CodexRelationCoverage,
+  type CodexUnavailableReason,
+  type DeterministicCodexDecision,
+  type ReducedCodexDecision,
+  type ReducedCodexNotification,
+  type RunCodexAnalysisWithFallbackDependencies,
+  type RunCodexAnalysisWithFallbackInput,
+} from "./reducer.js";
+export { validateCodexAnalysisSchema } from "./schema-validation.js";
+export {
+  listNativeRelationConstraints,
+  validateCodexAnalysisSemantics,
+  type NativeRelationConstraint,
+} from "./semantic-validation.js";

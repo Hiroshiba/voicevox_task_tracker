@@ -56,6 +56,13 @@ export class CodexInvalidJsonError extends CodexAttemptError {
   }
 }
 
+/** Codexがrate limitに達したことを表す。 */
+export class CodexRateLimitError extends CodexAttemptError {
+  public constructor(attempts: number, options: ErrorOptions) {
+    super(`Codexがrate limitに達しました。試行回数: ${attempts.toString()}`, attempts, options);
+  }
+}
+
 /** Codex CLIの起動または標準入力の送信に失敗したことを表す。 */
 export class CodexProcessStartError extends CodexAttemptError {
   public constructor(attempts: number, options: ErrorOptions) {
@@ -75,6 +82,50 @@ export class CodexTemporaryWorkspaceError extends CodexAdapterError {
   public constructor(action: "create" | "cleanup", options: ErrorOptions) {
     const actionText = action === "create" ? "作成" : "削除";
     super(`Codex用の一時作業ディレクトリを${actionText}できません`, options);
+  }
+}
+
+/** Codex出力の検証で見つけた問題。 */
+export type CodexOutputValidationIssue = Readonly<{
+  path: string;
+  code: string;
+  message: string;
+}>;
+
+/** Codex出力の検証失敗を表す基底クラス。 */
+export abstract class CodexOutputValidationError extends TaskTrackerError {
+  public abstract readonly stage: "schema" | "semantic";
+  public readonly issues: readonly CodexOutputValidationIssue[];
+
+  protected constructor(message: string, issues: readonly CodexOutputValidationIssue[]) {
+    super(`${message} 問題数: ${issues.length.toString()}`, {});
+    this.issues = Object.freeze(
+      issues.map((issue) =>
+        Object.freeze({
+          path: issue.path,
+          code: issue.code,
+          message: issue.message,
+        }),
+      ),
+    );
+  }
+}
+
+/** JSON Schema検証でCodex出力を拒否したことを表す。 */
+export class CodexOutputSchemaValidationError extends CodexOutputValidationError {
+  public readonly stage = "schema";
+
+  public constructor(issues: readonly CodexOutputValidationIssue[]) {
+    super("Codex出力がJSON Schemaに適合しません。", issues);
+  }
+}
+
+/** semantic検証でCodex出力を拒否したことを表す。 */
+export class CodexOutputSemanticValidationError extends CodexOutputValidationError {
+  public readonly stage = "semantic";
+
+  public constructor(issues: readonly CodexOutputValidationIssue[]) {
+    super("Codex出力がsemantic制約に適合しません。", issues);
   }
 }
 

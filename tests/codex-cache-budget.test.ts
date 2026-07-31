@@ -28,6 +28,16 @@ const unavailablePreviousFingerprint = Object.freeze({
 }) satisfies PreviousAiAnalysisFingerprint;
 const fixedExecutedAt = "2026-07-31T00:00:00.000Z";
 
+class HttpFixtureError extends Error {
+  public readonly status: number;
+
+  public constructor(status: number) {
+    super(`HTTP fixture error ${status.toString()}`);
+    this.name = "HttpFixtureError";
+    this.status = status;
+  }
+}
+
 function createInput(id: string, body: string): CodexAnalysisInput {
   return createCodexAnalysisInput({
     schemaVersion: "1",
@@ -121,11 +131,53 @@ function createConfiguration(
   });
 }
 
+function createExecutorOutput(input: CodexAnalysisInput) {
+  const source = input.sources.at(0);
+  assertNonNullable(source, "Codex分析入力のsourceがありません");
+  return {
+    schemaVersion: "1",
+    item: {
+      nodeId: input.item.nodeId,
+      url: input.item.url,
+    },
+    status: "needs_maintainer_decision",
+    waitingOn: [
+      {
+        kind: "role",
+        candidateId: "role:maintainer",
+        role: "maintainer",
+        reasonSummary: "maintainerの判断待ちです",
+        sourceIds: [source.id],
+        confidence: 0.9,
+      },
+    ],
+    nextAction: "maintainerが方針を決める",
+    relations: [],
+    progress: {
+      latestMeaningfulSourceId: null,
+      reasonSummary: "意味のある進捗は確定できません",
+      confidence: 0.8,
+    },
+    evidence: [
+      {
+        sourceId: source.id,
+        supports: "status",
+        summary: "明確な担当者がいません",
+      },
+    ],
+    confidence: 0.9,
+    uncertainties: [],
+    notification: {
+      recommended: false,
+      reasonCode: "none",
+      reasonSummary: "通知の必要性を確定できません",
+    },
+  };
+}
+
 function createExecutor() {
   return vi.fn((input: CodexAnalysisInput): Promise<unknown> =>
-    Promise.resolve({
-      itemNodeId: input.item.nodeId,
-    }),
+    Promise.resolve(createExecutorOutput(input)),
   );
 }
 
@@ -678,6 +730,92 @@ describe("AI run予算", () => {
       },
     ]);
     expect(result.usage.inputCharacters).toBe(firstInputCharacters);
+  });
+});
+
+describe("AI runの候補単位fallback", () => {
+  it("Codex 500相当の候補があっても他の候補を検証してrunを続ける", async () => {
+    const failed = createCandidate({
+      id: "I_failed",
+      body: "service unavailable",
+      deterministicResolution: "ambiguous",
+      previousFingerprint: unavailablePreviousFingerprint,
+      priority: createPriority("ordinary"),
+      graphVersion: 1,
+      estimatedCostUsd: 0.1,
+    });
+    const succeeded = createCandidate({
+      id: "I_succeeded",
+      body: "正常",
+      deterministicResolution: "ambiguous",
+      previousFingerprint: unavailablePreviousFingerprint,
+      priority: createPriority("ordinary"),
+      graphVersion: 1,
+      estimatedCostUsd: 0.1,
+    });
+    const execute = vi.fn((input: CodexAnalysisInput): Promise<unknown> => {
+      if (input.item.nodeId === "I_failed") {
+        return Promise.reject(new HttpFixtureError(500));
+      }
+      return Promise.resolve(createExecutorOutput(input));
+    });
+
+    const result = await runAiAnalyses([failed, succeeded], createConfiguration(2, 1_000_000, 1), {
+      cache: new MemoryAiCacheStore(),
+      execute,
+      executedAt: () => fixedExecutedAt,
+    });
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(result.results.map((value) => value.candidateId)).toEqual(["I_succeeded"]);
+    expect(result.failures).toEqual([
+      {
+        candidateId: "I_failed",
+        reason: "service_unavailable",
+        errorType: "HttpFixtureError",
+      },
+    ]);
+  });
+
+  it("schema不適合出力をcacheへ保存しない", async () => {
+    const candidate = createCandidate({
+      id: "I_invalid_schema",
+      body: "schema不適合",
+      deterministicResolution: "ambiguous",
+      previousFingerprint: unavailablePreviousFingerprint,
+      priority: createPriority("ordinary"),
+      graphVersion: 1,
+      estimatedCostUsd: 0.1,
+    });
+    const cache = new MemoryAiCacheStore();
+    const execute = vi.fn((input: CodexAnalysisInput): Promise<unknown> =>
+      Promise.resolve({
+        ...createExecutorOutput(input),
+        extra: true,
+      }),
+    );
+    const dependencies = {
+      cache,
+      execute,
+      executedAt: () => fixedExecutedAt,
+    };
+
+    const first = await runAiAnalyses(
+      [candidate],
+      createConfiguration(1, 1_000_000, 1),
+      dependencies,
+    );
+    const second = await runAiAnalyses(
+      [candidate],
+      createConfiguration(1, 1_000_000, 1),
+      dependencies,
+    );
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(first.results).toEqual([]);
+    expect(second.results).toEqual([]);
+    expect(first.failures[0]?.reason).toBe("schema_validation_failed");
+    expect(second.failures[0]?.reason).toBe("schema_validation_failed");
   });
 });
 

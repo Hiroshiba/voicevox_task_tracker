@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 import {
   selectAiAnalysisCandidates,
   type AiAnalysisCandidate,
@@ -16,7 +14,11 @@ import {
   type AiCacheStore,
 } from "./cache.js";
 import { hashCanonicalJson } from "./canonical-json.js";
+import { CodexOutputValidationError } from "./errors.js";
 import { type CodexAnalysisInput } from "./input.js";
+import { type ValidatedCodexAnalysisOutput } from "./output-types.js";
+import { validateCodexAnalysisOutput } from "./output-validation.js";
+import { executeValidatedCodexAnalysis, type CodexUnavailableReason } from "./reducer.js";
 import { createUtcIsoDateTime, type AnalysisMetadata } from "../domain/index.js";
 import { assertNonNullable } from "../util/index.js";
 
@@ -47,13 +49,21 @@ export type AiAnalysisRunItemResult = Readonly<{
   candidateId: string;
   origin: "cache" | "executed";
   fingerprint: AiAnalysisFingerprint;
-  output: unknown;
+  output: ValidatedCodexAnalysisOutput;
   metadata: AnalysisMetadata;
+}>;
+
+/** Codex実行または出力検証に失敗してfallbackする項目。 */
+export type AiAnalysisRunFailure = Readonly<{
+  candidateId: string;
+  reason: CodexUnavailableReason;
+  errorType: string;
 }>;
 
 /** 1 runのAI分析、抑止、延期と予算使用量。 */
 export type AiAnalysisRunResult = Readonly<{
   results: readonly AiAnalysisRunItemResult[];
+  failures: readonly AiAnalysisRunFailure[];
   skipped: readonly Readonly<{
     candidateId: string;
     reason: AiAnalysisSkipReason;
@@ -74,8 +84,6 @@ type CacheMissCandidate = Readonly<{
   identity: AiCacheIdentity;
 }>;
 
-const jsonValueSchema = z.json();
-
 function createCacheIdentity(
   candidate: PreparedAiAnalysisCandidate,
   identity: AiAnalysisRunIdentity,
@@ -92,7 +100,7 @@ function createCacheIdentity(
 function createResult(
   candidate: PreparedAiAnalysisCandidate,
   origin: AiAnalysisRunItemResult["origin"],
-  output: unknown,
+  output: ValidatedCodexAnalysisOutput,
   metadata: AnalysisMetadata,
 ): AiAnalysisRunItemResult {
   return Object.freeze({
@@ -123,8 +131,15 @@ async function resolveCacheEntries(
     if (cached.status === "hit") {
       const reuse = determineAiCacheReuse(cached.entry, identity, candidate.fingerprint.sourceHash);
       if (reuse.status === "reusable") {
-        results.push(createResult(candidate, "cache", reuse.entry.output, reuse.entry.metadata));
-        continue;
+        try {
+          const output = validateCodexAnalysisOutput(reuse.entry.output, candidate.input);
+          results.push(createResult(candidate, "cache", output, reuse.entry.metadata));
+          continue;
+        } catch (error: unknown) {
+          if (!(error instanceof CodexOutputValidationError)) {
+            throw error;
+          }
+        }
       }
     }
     misses.push(
@@ -154,11 +169,28 @@ async function executeSelectedCandidates(
   cacheMisses: readonly CacheMissCandidate[],
   configuration: AiAnalysisRunConfiguration,
   dependencies: AiAnalysisRunDependencies,
-): Promise<readonly AiAnalysisRunItemResult[]> {
+): Promise<
+  Readonly<{
+    results: readonly AiAnalysisRunItemResult[];
+    failures: readonly AiAnalysisRunFailure[];
+  }>
+> {
   const results: AiAnalysisRunItemResult[] = [];
+  const failures: AiAnalysisRunFailure[] = [];
   for (const candidate of selected) {
     const cacheMiss = findCacheMiss(cacheMisses, candidate);
-    const output = jsonValueSchema.parse(await dependencies.execute(candidate.input));
+    const attempt = await executeValidatedCodexAnalysis(candidate.input, dependencies.execute);
+    if (attempt.status === "unavailable") {
+      failures.push(
+        Object.freeze({
+          candidateId: candidate.id,
+          reason: attempt.reason,
+          errorType: attempt.errorType,
+        }),
+      );
+      continue;
+    }
+    const output = attempt.output;
     const metadata = Object.freeze({
       deterministicRulesVersion: configuration.identity.deterministicRulesVersion,
       model: configuration.identity.model,
@@ -176,9 +208,12 @@ async function executeSelectedCandidates(
       output,
     });
     await dependencies.cache.write(entry);
-    results.push(createResult(candidate, "executed", entry.output, entry.metadata));
+    results.push(createResult(candidate, "executed", output, entry.metadata));
   }
-  return Object.freeze(results);
+  return Object.freeze({
+    results: Object.freeze(results),
+    failures: Object.freeze(failures),
+  });
 }
 
 /** 曖昧な変更項目だけをcacheとrun予算の範囲でCodex分析する。 */
@@ -201,7 +236,8 @@ export async function runAiAnalyses(
   );
 
   return Object.freeze({
-    results: Object.freeze([...cached.results, ...executed]),
+    results: Object.freeze([...cached.results, ...executed.results]),
+    failures: executed.failures,
     skipped: Object.freeze(
       selection.skipped.map((value) =>
         Object.freeze({

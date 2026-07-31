@@ -46,7 +46,7 @@ VOICEVOX Organization全体の公開Issue/PRについて、状態・ボールの
 
 - [x] T17 Codex adapter — 空の一時作業ディレクトリ、read-only sandbox、承認なし、環境変数の隔離、`--output-schema`によるStructured Output
 - [x] T18 AI cacheと予算管理 — content-addressed cache、call/文字数/費用上限、予算超過時の優先順位、旧結果の安全再利用
-- [ ] T19 出力検証とreducer統合 — JSON Schema検証、候補参照とnative relation保護のsemantic検証、AI失敗時のfallback、AI非書込の担保
+- [x] T19 出力検証とreducer統合 — JSON Schema検証、候補参照とnative relation保護のsemantic検証、AI失敗時のfallback、AI非書込の担保
 
 ### Phase 5: 永続化
 
