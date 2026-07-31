@@ -61,7 +61,7 @@ VOICEVOX Organization全体の公開Issue/PRについて、状態・ボールの
 
 ### Phase 7: Discord通知
 
-- [ ] T25 通知選別 — 通知候補の抽出、noise抑制、ledgerによる重複抑制とcooldown
+- [x] T25 通知選別 — 通知候補の抽出、noise抑制、ledgerによる重複抑制とcooldown
 - [ ] T26 digest送信 — payload構成、Discord制限に応じた分割、mention allowlist、空digest抑制、運用障害通知
 
 ### Phase 8: 実行基盤
