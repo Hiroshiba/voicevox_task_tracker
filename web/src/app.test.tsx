@@ -2,8 +2,10 @@ import { render } from "preact";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import sampleDetailsSource from "../public/data/details.json";
 import sampleSummarySource from "../public/data/summary.json";
 import {
+  createPublicDetailsDto,
   createPublicSummaryDto,
   type PublicItemSummaryDto,
   type PublicSummaryDto,
@@ -23,6 +25,7 @@ import {
 const NOW = new Date("2026-08-01T00:00:00.000Z");
 const LOCALE = "ja-JP";
 const TITLE = "VOICEVOX Task Tracker";
+const sampleDetails = createPublicDetailsDto(sampleDetailsSource);
 const sampleSummary = createPublicSummaryDto(sampleSummarySource);
 const TABLE_COLUMN_KEYS: readonly TableColumnKey[] = [
   "repository",
@@ -42,7 +45,20 @@ function currentContainer(): HTMLDivElement {
 }
 
 function renderApp(summary: PublicSummaryDto): void {
-  render(<App locale={LOCALE} now={NOW} summary={summary} title={TITLE} />, currentContainer());
+  render(
+    <App
+      loadDetails={loadSampleDetails}
+      locale={LOCALE}
+      now={NOW}
+      summary={summary}
+      title={TITLE}
+    />,
+    currentContainer(),
+  );
+}
+
+function loadSampleDetails(): Promise<typeof sampleDetails> {
+  return Promise.resolve(sampleDetails);
 }
 
 function definitionValue(label: string): string {

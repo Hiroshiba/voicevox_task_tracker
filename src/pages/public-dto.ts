@@ -186,14 +186,30 @@ const publicItemDetailsSchema = z.strictObject({
   uncertainties: z.array(shortStringSchema),
   history: z.array(publicItemHistoryEventSchema),
 });
-const publicGraphNodeSchema = z.strictObject({
+const publicTrackedGraphNodeFieldsSchema = z.strictObject({
   nodeId: identifierSchema,
-  kind: z.enum(["issue", "pull_request"]),
   repositoryId: identifierSchema,
   state: z.enum(["open", "closed", "merged"]),
   status: statusSchema,
   severity: severitySchema,
 });
+const publicGraphNodeSchema = z.discriminatedUnion("kind", [
+  publicTrackedGraphNodeFieldsSchema.extend({
+    kind: z.literal("issue"),
+  }),
+  publicTrackedGraphNodeFieldsSchema.extend({
+    kind: z.literal("pull_request"),
+  }),
+  z.strictObject({
+    nodeId: identifierSchema,
+    kind: z.literal("external_reference"),
+    repositoryFullName: z.string().min(3).max(513),
+    displayReference: z.string().min(4).max(600),
+    url: githubUrlSchema,
+    title: z.string().max(500),
+    state: z.enum(["open", "closed", "merged"]),
+  }),
+]);
 const publicGraphEdgeFieldsSchema = z.strictObject({
   id: identifierSchema,
   fromNodeId: identifierSchema,
@@ -226,6 +242,14 @@ const publicGraphComponentSchema = z.strictObject({
   nodeIds: z.array(identifierSchema).min(1),
   repositoryIds: z.array(identifierSchema).min(1),
   edgeIds: z.array(identifierSchema),
+});
+const publicGraphComponentSummarySchema = z.strictObject({
+  id: identifierSchema,
+  nodeCount: z.number().int().positive(),
+  repositoryIds: z.array(identifierSchema).min(1),
+  edgeCount: nonNegativeIntegerSchema,
+  frontierCount: nonNegativeIntegerSchema,
+  cycleCount: nonNegativeIntegerSchema,
 });
 const publicDependencyCycleSchema = z.strictObject({
   id: identifierSchema,
@@ -264,8 +288,10 @@ const publicInitialGraphEdgeSchema = z.strictObject({
 const publicInitialGraphSchema = z.strictObject({
   nodes: z.array(publicGraphNodeSchema),
   edges: z.array(publicInitialGraphEdgeSchema),
+  components: z.array(publicGraphComponentSummarySchema),
   frontierNodeIds: z.array(identifierSchema),
   cycles: z.array(publicDependencyCycleSchema),
+  maxNodes: z.number().int().positive(),
   omittedNodeCount: nonNegativeIntegerSchema,
 });
 const publicAggregateSchema = z.strictObject({

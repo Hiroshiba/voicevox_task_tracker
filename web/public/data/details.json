@@ -1,0 +1,132 @@
+{
+  "schemaVersion": "1",
+  "runId": "sample-run-2026-07-31",
+  "generatedAt": "2026-07-31T00:05:00.000Z",
+  "items": [],
+  "graph": {
+    "nodes": [
+      {
+        "nodeId": "sample-item-editor-101",
+        "kind": "pull_request",
+        "repositoryId": "sample-repository-editor",
+        "state": "open",
+        "status": "ready_to_merge",
+        "severity": "critical"
+      },
+      {
+        "nodeId": "sample-item-engine-202",
+        "kind": "pull_request",
+        "repositoryId": "sample-repository-engine",
+        "state": "open",
+        "status": "waiting_for_review",
+        "severity": "critical"
+      },
+      {
+        "nodeId": "sample-item-editor-103",
+        "kind": "issue",
+        "repositoryId": "sample-repository-editor",
+        "state": "open",
+        "status": "needs_maintainer_decision",
+        "severity": "urgent"
+      },
+      {
+        "nodeId": "sample-item-engine-204",
+        "kind": "issue",
+        "repositoryId": "sample-repository-engine",
+        "state": "open",
+        "status": "blocked",
+        "severity": "watch"
+      },
+      {
+        "nodeId": "sample-item-core-305",
+        "kind": "pull_request",
+        "repositoryId": "sample-repository-core",
+        "state": "open",
+        "status": "waiting_for_author",
+        "severity": "urgent"
+      }
+    ],
+    "edges": [
+      {
+        "id": "sample-relation-editor-103-engine-204",
+        "fromNodeId": "sample-item-editor-103",
+        "toNodeId": "sample-item-engine-204",
+        "type": "blocks",
+        "provenance": "explicit_text",
+        "confidence": 0.92,
+        "evidence": [
+          {
+            "sourceId": "sample-source-editor-103",
+            "supports": "relation",
+            "summary": "配布方針の決定後に配布処理へ進むことが明示されています",
+            "sourceUrl": "https://github.com/VOICEVOX/sample-editor/issues/103"
+          }
+        ],
+        "firstSeenAt": "2026-07-10T00:00:00.000Z",
+        "lastConfirmedAt": "2026-07-31T00:00:00.000Z",
+        "active": true
+      }
+    ],
+    "components": [
+      {
+        "id": "sample-component-release",
+        "nodeIds": ["sample-item-editor-103", "sample-item-engine-204"],
+        "repositoryIds": ["sample-repository-editor", "sample-repository-engine"],
+        "edgeIds": ["sample-relation-editor-103-engine-204"]
+      },
+      {
+        "id": "sample-component-editor-101",
+        "nodeIds": ["sample-item-editor-101"],
+        "repositoryIds": ["sample-repository-editor"],
+        "edgeIds": []
+      },
+      {
+        "id": "sample-component-engine-202",
+        "nodeIds": ["sample-item-engine-202"],
+        "repositoryIds": ["sample-repository-engine"],
+        "edgeIds": []
+      },
+      {
+        "id": "sample-component-core-305",
+        "nodeIds": ["sample-item-core-305"],
+        "repositoryIds": ["sample-repository-core"],
+        "edgeIds": []
+      }
+    ],
+    "frontierNodeIds": [
+      "sample-item-editor-101",
+      "sample-item-engine-202",
+      "sample-item-editor-103",
+      "sample-item-core-305"
+    ],
+    "cycles": [],
+    "downstreamImpacts": [
+      {
+        "nodeId": "sample-item-editor-101",
+        "openNodeCount": 1,
+        "repositoryCount": 1
+      },
+      {
+        "nodeId": "sample-item-engine-202",
+        "openNodeCount": 4,
+        "repositoryCount": 3
+      },
+      {
+        "nodeId": "sample-item-editor-103",
+        "openNodeCount": 2,
+        "repositoryCount": 2
+      },
+      {
+        "nodeId": "sample-item-engine-204",
+        "openNodeCount": 0,
+        "repositoryCount": 0
+      },
+      {
+        "nodeId": "sample-item-core-305",
+        "openNodeCount": 3,
+        "repositoryCount": 2
+      }
+    ],
+    "history": []
+  }
+}

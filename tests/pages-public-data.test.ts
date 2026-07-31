@@ -520,6 +520,23 @@ describe("公開DTO生成", () => {
         critical: 0,
       },
     });
+    expect(generated.summary.graph.maxNodes).toBe(DEFAULT_INITIAL_GRAPH_NODE_LIMIT);
+    expect(generated.summary.graph.components).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          nodeCount: 2,
+          edgeCount: 2,
+          frontierCount: 0,
+          cycleCount: 1,
+        }),
+        expect.objectContaining({
+          nodeCount: 1,
+          edgeCount: 0,
+          frontierCount: 1,
+          cycleCount: 0,
+        }),
+      ]),
+    );
     expect(generated.details.graph.frontierNodeIds).toEqual(["I_C"]);
     expect(generated.details.graph.cycles).toMatchObject([
       {
@@ -715,6 +732,7 @@ describe("公開summaryサイズと書き出し", () => {
 
     expect(generated.summary.items).toHaveLength(itemCount);
     expect(generated.summary.graph.nodes).toHaveLength(100);
+    expect(generated.summary.graph.maxNodes).toBe(100);
     expect(generated.summary.graph.omittedNodeCount).toBe(4900);
     expect(generated.summarySize.gzipBytes).toBeLessThanOrEqual(PUBLIC_SUMMARY_GZIP_LIMIT_BYTES);
   }, 30_000);

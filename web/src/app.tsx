@@ -3,6 +3,7 @@ import { useMemo, useState } from "preact/hooks";
 
 import { type PublicItemSummaryDto, type PublicSummaryDto } from "../../src/pages/public-dto.js";
 import { assertNonNullable } from "../../src/util/index.js";
+import { DependencyGraph, type PublicDetailsLoader } from "./dependency-graph.js";
 import {
   attentionPriority,
   createEmptyTableFilters,
@@ -24,6 +25,7 @@ import {
 const TABLE_PAGE_SIZE = 50;
 
 type AppProps = Readonly<{
+  loadDetails: PublicDetailsLoader;
   locale: string;
   now: Date;
   summary: PublicSummaryDto;
@@ -130,7 +132,7 @@ function TimeDisplay({ label, locale, now, value }: TimeDisplayProps) {
   );
 }
 
-function Dashboard({ locale, now, summary }: Omit<AppProps, "title">) {
+function Dashboard({ locale, now, summary }: Omit<AppProps, "loadDetails" | "title">) {
   const aggregates = summary.aggregates;
   const primaryMetrics = [
     {
@@ -215,7 +217,7 @@ function Dashboard({ locale, now, summary }: Omit<AppProps, "title">) {
   );
 }
 
-function RepositoryFreshness({ locale, now, summary }: Omit<AppProps, "title">) {
+function RepositoryFreshness({ locale, now, summary }: Omit<AppProps, "loadDetails" | "title">) {
   return (
     <section aria-labelledby="freshness-heading" class="section-card">
       <div class="section-heading">
@@ -278,7 +280,7 @@ function RepositoryFreshness({ locale, now, summary }: Omit<AppProps, "title">) 
   );
 }
 
-function AttentionQueue({ locale, now, summary }: Omit<AppProps, "title">) {
+function AttentionQueue({ locale, now, summary }: Omit<AppProps, "loadDetails" | "title">) {
   const repositoriesById = new Map(
     summary.repositories.map((repository) => [repository.id, repository]),
   );
@@ -535,7 +537,7 @@ function ItemTable({ locale, now, summary }: ItemTableProps) {
 }
 
 /** 公開summary DTOを一覧画面として表示する。 */
-export function App({ locale, now, summary, title }: AppProps) {
+export function App({ loadDetails, locale, now, summary, title }: AppProps) {
   return (
     <>
       <a class="skip-link" href="#main-content">
@@ -553,6 +555,7 @@ export function App({ locale, now, summary, title }: AppProps) {
         <Dashboard summary={summary} now={now} locale={locale} />
         <RepositoryFreshness summary={summary} now={now} locale={locale} />
         <AttentionQueue summary={summary} now={now} locale={locale} />
+        <DependencyGraph summary={summary} now={now} locale={locale} loadDetails={loadDetails} />
         <ItemTable summary={summary} now={now} locale={locale} />
       </main>
       <footer>

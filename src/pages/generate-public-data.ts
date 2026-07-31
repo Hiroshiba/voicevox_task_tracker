@@ -541,9 +541,38 @@ function severityRank(severity: Severity): number {
   }
 }
 
+function graphNodeSeverity(node: PublicGraphNodeDto): Severity {
+  return node.kind === "external_reference" ? "none" : node.severity;
+}
+
+function graphNodeImpact(
+  node: PublicGraphNodeDto,
+  impactByNodeId: ReadonlyMap<string, AnalyzeGraphResult["downstreamImpacts"][number]>,
+): Readonly<{
+  openNodeCount: number;
+  repositoryCount: number;
+}> {
+  const impact = impactByNodeId.get(node.nodeId);
+  if (node.kind === "external_reference") {
+    if (impact != null) {
+      throw new PublicDtoSemanticError(
+        `external reference ${node.nodeId}にdownstream impactが設定されています`,
+      );
+    }
+    return {
+      openNodeCount: 0,
+      repositoryCount: 0,
+    };
+  }
+  assertNonNullable(impact, `node ${node.nodeId}のimpactがありません`);
+  return impact;
+}
+
 function createInitialGraph(
   graph: PublicGraph,
   items: readonly PublicItemSummaryDto[],
+  components: PublicDetailsDto["graph"]["components"],
+  cycles: PublicDetailsDto["graph"]["cycles"],
   maxInitialGraphNodes: number,
 ): PublicSummaryDto["graph"] {
   const summaryByNodeId = new Map(items.map((item) => [item.nodeId, item]));
@@ -552,20 +581,25 @@ function createInitialGraph(
   );
   const selectedNodes = [...graph.nodes]
     .sort((left, right) => {
-      const severityOrder = severityRank(right.severity) - severityRank(left.severity);
+      const severityOrder =
+        severityRank(graphNodeSeverity(right)) - severityRank(graphNodeSeverity(left));
       if (severityOrder !== 0) {
         return severityOrder;
       }
-      const leftImpact = impactByNodeId.get(left.nodeId);
-      const rightImpact = impactByNodeId.get(right.nodeId);
-      assertNonNullable(leftImpact, `node ${left.nodeId}のimpactがありません`);
-      assertNonNullable(rightImpact, `node ${right.nodeId}のimpactがありません`);
+      const leftImpact = graphNodeImpact(left, impactByNodeId);
+      const rightImpact = graphNodeImpact(right, impactByNodeId);
       const impactOrder = rightImpact.openNodeCount - leftImpact.openNodeCount;
       if (impactOrder !== 0) {
         return impactOrder;
       }
       const leftSummary = summaryByNodeId.get(left.nodeId);
       const rightSummary = summaryByNodeId.get(right.nodeId);
+      if (left.kind === "external_reference" || right.kind === "external_reference") {
+        if (left.kind === right.kind) {
+          return compareStrings(left.nodeId, right.nodeId);
+        }
+        return left.kind === "external_reference" ? 1 : -1;
+      }
       assertNonNullable(leftSummary, `node ${left.nodeId}のsummaryがありません`);
       assertNonNullable(rightSummary, `node ${right.nodeId}のsummaryがありません`);
       const stallOrder = compareStrings(leftSummary.stallSince, rightSummary.stallSince);
@@ -592,6 +626,19 @@ function createInitialGraph(
   return {
     nodes: selectedNodes,
     edges: selectedEdges,
+    components: components.map((component) => {
+      const nodeIds = new Set(component.nodeIds);
+      return {
+        id: component.id,
+        nodeCount: component.nodeIds.length,
+        repositoryIds: [...component.repositoryIds],
+        edgeCount: component.edgeIds.length,
+        frontierCount: graph.analysis.actionableFrontier.filter((nodeId) => nodeIds.has(nodeId))
+          .length,
+        cycleCount: cycles.filter((cycle) => cycle.nodeIds.every((nodeId) => nodeIds.has(nodeId)))
+          .length,
+      };
+    }),
     frontierNodeIds: graph.analysis.actionableFrontier.filter((nodeId) =>
       selectedNodeIds.has(nodeId),
     ),
@@ -604,6 +651,7 @@ function createInitialGraph(
           publicEdgeId(graph.analysisEdgeIdToPublicEdgeId, edge.id),
         ),
       })),
+    maxNodes: maxInitialGraphNodes,
     omittedNodeCount: graph.nodes.length - selectedNodes.length,
   };
 }
@@ -757,7 +805,13 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
     },
     repositories,
     items: itemSummaries,
-    graph: createInitialGraph(graph, itemSummaries, input.options.maxInitialGraphNodes),
+    graph: createInitialGraph(
+      graph,
+      itemSummaries,
+      components,
+      cycles,
+      input.options.maxInitialGraphNodes,
+    ),
   });
   const details = createPublicDetailsDto({
     schemaVersion: "1",
