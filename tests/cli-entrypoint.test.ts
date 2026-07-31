@@ -67,11 +67,11 @@ describe("tracker:run実行入口", () => {
     });
   });
 
-  it("pnpm tracker:run --backfill none相当の引数を受理する", () => {
-    expect(createTrackerRunCliArguments(["--backfill", "none"])).toEqual([
-      "backfill",
-      "--mode",
-      "none",
-    ]);
+  it("--backfill noneをdailyへ変換する", () => {
+    expect(createTrackerRunCliArguments(["--backfill", "none"])).toEqual(["daily"]);
+  });
+
+  it("--helpをhelpサブコマンドへ変換する", () => {
+    expect(createTrackerRunCliArguments(["--help"])).toEqual(["help"]);
   });
 });

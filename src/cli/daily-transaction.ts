@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { createUtcIsoDateTime, type UtcIsoDateTime } from "../domain/index.js";
 import { serializeCanonicalJson } from "../persistence/index.js";
 import { type BackfillCliCommand, type DailyCliCommand, type DryRunCliCommand } from "./command.js";
+import { CliCredentialsError } from "./errors.js";
 import { RunCoordinator, type CoordinatedRunResult } from "./run-coordinator.js";
 import {
   createEmptyRunMetrics,
@@ -318,6 +319,9 @@ function updateMetrics(metrics: RunMetrics, values: Partial<RunMetrics>): RunMet
 }
 
 function safeErrorDiagnostic(stage: RunStage, error: unknown): string {
+  if (error instanceof CliCredentialsError) {
+    return `stage=${stage} message=${error.message}`;
+  }
   const errorType = error instanceof Error ? error.name : typeof error;
   return `stage=${stage} errorType=${errorType}`;
 }

@@ -1,0 +1,251 @@
+import { join } from "node:path";
+
+import { describe, expect, it } from "vitest";
+
+import { loadConfig, type Config } from "../src/config/index.js";
+import { createCliApplication, type CliCompositionAdapters } from "../src/cli/index.js";
+import {
+  createProductionCliApplication,
+  type ProductionRuntimeAdapters,
+} from "../src/cli/production-runtime.js";
+import { StatePersistenceSession, type StateBranchAdapter } from "../src/persistence/index.js";
+
+const NOW = "2026-07-31T00:00:00.000Z";
+const PRIVATE_KEY = [
+  "-----BEGIN PRIVATE KEY-----",
+  "canary-private-key-material",
+  "-----END PRIVATE KEY-----",
+].join("\n");
+const OPENAI_SECRET = "canary-openai-secret";
+
+type Harness = Readonly<{
+  adapters: CliCompositionAdapters;
+  reportSources: string[];
+  externalAdapterCalls: Readonly<{
+    count: number;
+  }>;
+}>;
+
+function createHarness(environment: Readonly<NodeJS.ProcessEnv>): Harness {
+  const reportSources: string[] = [];
+  const externalAdapterCalls = {
+    count: 0,
+  };
+  const failExternalAdapter = (): never => {
+    externalAdapterCalls.count += 1;
+    throw new TypeError("認証情報検証後のadapterが呼ばれました");
+  };
+  return Object.freeze({
+    adapters: Object.freeze({
+      environment,
+      repositoryPath: join(import.meta.dirname, ".."),
+      pagesOutputDirectory: "unused-pages",
+      createGitHubClient: failExternalAdapter,
+      createStateBranchAdapter: failExternalAdapter,
+      codexProcessRunner: failExternalAdapter,
+      discordHttpClient: Object.freeze({
+        execute: failExternalAdapter,
+      }),
+      now: () => new Date(NOW),
+      sleep: () => Promise.resolve(),
+      random: () => 0,
+      writeStandardOutput: () => Promise.resolve(),
+      writeJsonArtifact: () => Promise.resolve(),
+      writeTextFile: (_path: string, source: string) => {
+        reportSources.push(source);
+        return Promise.resolve();
+      },
+      writePublicData: failExternalAdapter,
+      sendDiscord: failExternalAdapter,
+    }),
+    reportSources,
+    externalAdapterCalls,
+  });
+}
+
+function withoutExplicitIncludes(config: Config): Config {
+  return {
+    ...config,
+    tracking: {
+      ...config.tracking,
+      include: [],
+    },
+  };
+}
+
+function createMissingStateAdapter(onCommit: () => void): StateBranchAdapter {
+  return Object.freeze({
+    resolveHead: () =>
+      Promise.resolve(
+        Object.freeze({
+          status: "missing",
+        }),
+      ),
+    readFile: () =>
+      Promise.resolve(
+        Object.freeze({
+          status: "missing",
+        }),
+      ),
+    listFiles: () => Promise.resolve(Object.freeze([])),
+    commit: () => {
+      onCommit();
+      return Promise.resolve(
+        Object.freeze({
+          revision: "0000000000000000000000000000000000000001",
+          branchCreated: true,
+        }),
+      );
+    },
+  });
+}
+
+describe("CLI合成root", () => {
+  it("GitHub App認証情報が無い場合は環境変数名を示して失敗する", async () => {
+    const harness = createHarness({});
+    const application = createCliApplication(harness.adapters);
+
+    const result = await application.run([
+      "daily",
+      "--config",
+      "tests/fixtures/config.valid.yml",
+      "--report",
+      "unused-report.json",
+    ]);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.command).toBe("daily");
+    expect(harness.externalAdapterCalls.count).toBe(0);
+    expect(harness.reportSources).toHaveLength(1);
+    if (result.command !== "daily") {
+      throw new TypeError("dailyの実行結果ではありません");
+    }
+    expect(result.result.report).toMatchObject({
+      status: "failure",
+      failedStage: "configuration",
+    });
+    expect(result.result.report.diagnostics.join("\n")).toContain("GH_APP_ID");
+  });
+
+  it("指定済みsecretを診断やreportへ出さない", async () => {
+    const harness = createHarness({
+      GH_APP_ID: "123",
+      GH_APP_PRIVATE_KEY: PRIVATE_KEY,
+      GH_APP_INSTALLATION_ID: "456",
+      HOME: "/tmp",
+      OPENAI_API_KEY: OPENAI_SECRET,
+      PATH: "/usr/bin",
+    });
+    const application = createCliApplication(harness.adapters);
+
+    const result = await application.run([
+      "daily",
+      "--config",
+      "tests/fixtures/config.valid.yml",
+      "--report",
+      "unused-report.json",
+    ]);
+
+    expect(result.exitCode).toBe(1);
+    expect(harness.externalAdapterCalls.count).toBe(0);
+    const reportSource = harness.reportSources.join("\n");
+    expect(reportSource).toContain("DISCORD_WEBHOOK_URL");
+    expect(reportSource).not.toContain(PRIVATE_KEY);
+    expect(reportSource).not.toContain(OPENAI_SECRET);
+  });
+
+  it("dry-runは実行配線を完走して公開副作用を呼ばない", async () => {
+    let stateCommitCount = 0;
+    let pagesWriteCount = 0;
+    let discordSendCount = 0;
+    let codexProcessCount = 0;
+    const artifacts: unknown[] = [];
+    const harness = createHarness({
+      GH_APP_ID: "123",
+      GH_APP_PRIVATE_KEY: PRIVATE_KEY,
+      HOME: "/tmp",
+      OPENAI_API_KEY: OPENAI_SECRET,
+      PATH: "/usr/bin",
+    });
+    const runtimeAdapters: ProductionRuntimeAdapters = Object.freeze({
+      ...harness.adapters,
+      loadConfig: async (path) => withoutExplicitIncludes(await loadConfig(path)),
+      openStateSession: (adapter, configuration) =>
+        StatePersistenceSession.open(adapter, configuration),
+      discoverRepositoryInventory: () => Promise.resolve(Object.freeze([])),
+      collectGitHubTeamDirectory: () => Promise.resolve(Object.freeze([])),
+      enumerateOpenGitHubItems: () => Promise.resolve(Object.freeze([])),
+      collectGitHubItemDetails: () =>
+        Promise.resolve(
+          Object.freeze({
+            capabilities: Object.freeze({
+              nativeDependencies: "unavailable",
+              nativeHierarchy: "unavailable",
+            }),
+            items: Object.freeze([]),
+          }),
+        ),
+      executeCodexAnalysis: () => Promise.reject(new TypeError("Codex adapterは呼ばれません")),
+      readReplayFixture: () => Promise.reject(new TypeError("replay fixtureは読みません")),
+      readReplayState: () => Promise.reject(new TypeError("replay stateは読みません")),
+      readGoldenFixtures: () => Promise.reject(new TypeError("golden fixtureは読みません")),
+      createGitHubClient: () =>
+        Promise.resolve(
+          Object.freeze({
+            installationId: 123,
+            request: () => Promise.reject(new TypeError("GitHub RESTへ接続しません")),
+            graphql: () => Promise.reject(new TypeError("GitHub GraphQLへ接続しません")),
+            getRateLimitSnapshot: () => undefined,
+          }),
+        ),
+      createStateBranchAdapter: () =>
+        createMissingStateAdapter(() => {
+          stateCommitCount += 1;
+        }),
+      codexProcessRunner: () => {
+        codexProcessCount += 1;
+        return Promise.reject(new TypeError("Codex subprocessは起動しません"));
+      },
+      writeJsonArtifact: (_path, value) => {
+        artifacts.push(value);
+        return Promise.resolve();
+      },
+      writePublicData: () => {
+        pagesWriteCount += 1;
+        return Promise.reject(new TypeError("Pagesは書きません"));
+      },
+      sendDiscord: () => {
+        discordSendCount += 1;
+        return Promise.reject(new TypeError("Discordへ送信しません"));
+      },
+    });
+    const application = createProductionCliApplication(runtimeAdapters);
+
+    const result = await application.run([
+      "dry-run",
+      "--config",
+      "tests/fixtures/config.valid.yml",
+      "--artifact",
+      "unused-artifact.json",
+      "--report",
+      "unused-report.json",
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.command).toBe("dry-run");
+    if (result.command !== "dry-run") {
+      throw new TypeError("dry-runの実行結果ではありません");
+    }
+    expect(result.result.effects).toEqual({
+      stateCommitted: false,
+      pagesBuilt: false,
+      discordAttempted: false,
+      artifactWritten: true,
+    });
+    expect(artifacts).toHaveLength(1);
+    expect(stateCommitCount).toBe(0);
+    expect(pagesWriteCount).toBe(0);
+    expect(discordSendCount).toBe(0);
+    expect(codexProcessCount).toBe(0);
+  });
+});

@@ -34,7 +34,14 @@ export {
   type OnlineCliCommand,
   type RepositoryInventoryStageResult,
 } from "./daily-transaction.js";
-export { CliFixtureError, CliOutputError, CliUsageError } from "./errors.js";
+export { CliCredentialsError, CliFixtureError, CliOutputError, CliUsageError } from "./errors.js";
+export {
+  createCliApplication,
+  createDefaultCliApplication,
+  createDefaultCliCompositionAdapters,
+  type CliCompositionAdapters,
+  type ProductionTypes,
+} from "./composition-root.js";
 export { writeCliJsonArtifact, writeCliTextFile } from "./file-output.js";
 export {
   OfflineRunRunner,

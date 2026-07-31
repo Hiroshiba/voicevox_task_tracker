@@ -2,8 +2,10 @@ import { pathToFileURL } from "node:url";
 
 import { z } from "zod";
 
-import { parseCliArguments, type BackfillCliCommand } from "./command.js";
-import { CliUsageError } from "./errors.js";
+import { type CliExecutionResult } from "./application.js";
+import { parseCliArguments } from "./command.js";
+import { createDefaultCliApplication } from "./composition-root.js";
+import { CliCredentialsError, CliUsageError } from "./errors.js";
 
 const REPOSITORY_FILTER_SEPARATOR = ",";
 
@@ -73,24 +75,37 @@ function parseRepositoryFilter(value: string): readonly string[] {
   return Object.freeze(repositories);
 }
 
-/** workflow向けoptionを既存CLIのbackfillサブコマンドへ変換する。 */
+/** workflow向けoptionを日次またはbackfillサブコマンドへ変換する。 */
 export function createTrackerRunCliArguments(args: readonly string[]): readonly string[] {
+  if (args.length === 1 && args[0] === "--help") {
+    return Object.freeze(["help"]);
+  }
+  if (args.includes("--help")) {
+    throw new CliUsageError("--helpは単独で指定してください", {});
+  }
   const options = parseTrackerRunOptions(args);
-  const cliArguments = ["backfill", "--mode", options["--backfill"]];
+  const backfillMode = options["--backfill"];
+  const cliArguments = backfillMode === "none" ? ["daily"] : ["backfill", "--mode", backfillMode];
   appendOption(cliArguments, options, "--config", "--config");
   appendOption(cliArguments, options, "--report", "--report");
   appendOption(cliArguments, options, "--scheduled-for", "--scheduled-for");
 
   const repositoryFilter = options["--repository-filter"];
   if (repositoryFilter != null) {
+    if (backfillMode === "none") {
+      throw new CliUsageError("--repository-filterはlinkedまたはall-openで指定してください", {});
+    }
     for (const repository of parseRepositoryFilter(repositoryFilter)) {
       cliArguments.push("--repository", repository);
     }
   }
 
   const command = parseCliArguments(cliArguments);
-  if (command.kind !== "backfill") {
-    throw new TypeError("tracker:runの変換結果がbackfill commandではありません");
+  if (
+    (backfillMode === "none" && command.kind !== "daily") ||
+    (backfillMode !== "none" && command.kind !== "backfill")
+  ) {
+    throw new TypeError("tracker:runの変換結果が実行modeと一致しません");
   }
   return Object.freeze(cliArguments);
 }
@@ -103,12 +118,20 @@ export async function runTrackerCommand<Result>(
   return runCli(createTrackerRunCliArguments(args));
 }
 
-function validateTrackerCommand(args: readonly string[]): Promise<BackfillCliCommand> {
-  const command = parseCliArguments(args);
-  if (command.kind !== "backfill") {
-    throw new TypeError("tracker:runはbackfill commandだけを実行できます");
+function writeFailureDiagnostics(result: CliExecutionResult): void {
+  if (result.exitCode === 0) {
+    return;
   }
-  return Promise.resolve(command);
+  for (const diagnostic of result.result.report.diagnostics) {
+    process.stderr.write(`${diagnostic}\n`);
+  }
+}
+
+function safeTopLevelMessage(error: unknown): string {
+  if (error instanceof CliUsageError || error instanceof CliCredentialsError) {
+    return error.message;
+  }
+  return "tracker:runの実行に失敗しました";
 }
 
 function isMainModule(moduleUrl: string, executablePath: string | undefined): boolean {
@@ -117,10 +140,12 @@ function isMainModule(moduleUrl: string, executablePath: string | undefined): bo
 
 if (isMainModule(import.meta.url, process.argv[1])) {
   try {
-    await runTrackerCommand(process.argv.slice(2), validateTrackerCommand);
+    const application = createDefaultCliApplication();
+    const result = await runTrackerCommand(process.argv.slice(2), (args) => application.run(args));
+    writeFailureDiagnostics(result);
+    process.exitCode = result.exitCode;
   } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "tracker:runの実行に失敗しました";
-    process.stderr.write(`${message}\n`);
+    process.stderr.write(`${safeTopLevelMessage(error)}\n`);
     process.exitCode = 1;
   }
 }
