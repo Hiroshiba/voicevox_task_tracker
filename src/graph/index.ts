@@ -1,6 +1,25 @@
+export { analyzeGraph } from "./analyze-graph.js";
 export { extractRelationCandidates } from "./extract-relation-candidates.js";
 export { deriveBlockedBy, reconcileGraph } from "./reconcile-graph.js";
 export { buildRelationCandidateId } from "./relation-candidate-id.js";
+export {
+  type AnalyzeGraphInput,
+  type AnalyzeGraphResult,
+  type AvailablePreviousGraphAnalysisSnapshot,
+  type ConnectedComponent,
+  type ConnectedComponentId,
+  type DependencyCycle,
+  type DependencyCycleId,
+  type DownstreamImpact,
+  type ExternalGraphAnalysisNode,
+  type GraphAnalysisNode,
+  type GraphAnalysisSnapshot,
+  type GraphRepositoryKey,
+  type ReclassificationReason,
+  type ReclassificationTarget,
+  type TrackedGraphAnalysisNode,
+  type UnavailablePreviousGraphAnalysisSnapshot,
+} from "./analyze-graph-types.js";
 export {
   type ActiveRelationCandidateResolution,
   type BlockedByEntry,
