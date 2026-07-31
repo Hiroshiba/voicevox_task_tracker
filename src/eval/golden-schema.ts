@@ -312,7 +312,6 @@ export const goldenEvalOutputSchema = z.discriminatedUnion("kind", [
   largeGoldenOutputSchema,
 ]);
 
-export type GoldenEvalInput = z.output<typeof goldenEvalInputSchema>;
 export type StandardGoldenInput = z.output<typeof standardGoldenInputSchema>;
 export type GoldenEvalOutput = z.output<typeof goldenEvalOutputSchema>;
 export type StandardGoldenOutput = z.output<typeof standardGoldenOutputSchema>;

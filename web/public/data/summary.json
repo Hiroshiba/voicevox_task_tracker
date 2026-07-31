@@ -12,7 +12,7 @@
   "aggregates": {
     "repositoryCount": 3,
     "itemCount": 5,
-    "activeEdgeCount": 1,
+    "activeEdgeCount": 2,
     "componentCount": 4,
     "frontierCount": 4,
     "cycleCount": 0,
@@ -213,6 +213,14 @@
           "reasonSummary": "配布方針の決定を待っています",
           "sourceIds": ["sample-source-engine-204"],
           "confidence": 1
+        },
+        {
+          "kind": "item",
+          "candidateId": "external:github:sample-distribution-42",
+          "role": "dependency",
+          "reasonSummary": "外部配布ツールの対応を待っています",
+          "sourceIds": ["sample-source-external-distribution-42"],
+          "confidence": 0.9
         }
       ],
       "primaryWaitingOn": {
@@ -227,7 +235,7 @@
       "stallSince": "2026-07-01T00:00:00.000Z",
       "observedAt": "2026-07-31T00:00:00.000Z",
       "repositoryFreshness": "fresh",
-      "blockerNodeIds": ["sample-item-editor-103"],
+      "blockerNodeIds": ["external:github:sample-distribution-42", "sample-item-editor-103"],
       "downstreamImpact": {
         "nodeId": "sample-item-engine-204",
         "openNodeCount": 0,
@@ -315,6 +323,15 @@
         "state": "open",
         "status": "waiting_for_author",
         "severity": "urgent"
+      },
+      {
+        "nodeId": "external:github:sample-distribution-42",
+        "kind": "external_reference",
+        "repositoryFullName": "example/sample-distribution",
+        "displayReference": "example/sample-distribution#42",
+        "url": "https://github.com/example/sample-distribution/issues/42",
+        "title": "配布ツールの新形式へ対応する",
+        "state": "open"
       }
     ],
     "edges": [
@@ -323,14 +340,20 @@
         "fromNodeId": "sample-item-editor-103",
         "toNodeId": "sample-item-engine-204",
         "type": "blocks"
+      },
+      {
+        "id": "sample-relation-external-42-engine-204",
+        "fromNodeId": "external:github:sample-distribution-42",
+        "toNodeId": "sample-item-engine-204",
+        "type": "blocks"
       }
     ],
     "components": [
       {
         "id": "sample-component-release",
-        "nodeCount": 2,
+        "nodeCount": 3,
         "repositoryIds": ["sample-repository-editor", "sample-repository-engine"],
-        "edgeCount": 1,
+        "edgeCount": 2,
         "frontierCount": 1,
         "cycleCount": 0
       },

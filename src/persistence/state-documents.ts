@@ -219,19 +219,3 @@ export function parseStateNotificationLedger(source: string): StateNotificationL
   }
   return createStateNotificationLedger(value);
 }
-
-/** JSONからrun reportを検証して読み取る。 */
-export function parseStateRunReport(source: string): StateRunReport {
-  let value: unknown;
-  try {
-    const parseJson: (text: string) => unknown = JSON.parse;
-    value = parseJson(source);
-  } catch (error: unknown) {
-    throw new StateFormatError("run report", {
-      cause: new SyntaxError("JSON構文が不正です", {
-        cause: error,
-      }),
-    });
-  }
-  return createStateRunReport(value);
-}

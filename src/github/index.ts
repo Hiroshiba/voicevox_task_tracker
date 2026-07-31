@@ -6,11 +6,7 @@ export {
   type GitHubRestRequest,
   type GitHubRestResponse,
 } from "./client.js";
-export {
-  parseGitHubAppCredentials,
-  readGitHubAppCredentials,
-  type GitHubAppCredentials,
-} from "./credentials.js";
+export { parseGitHubAppCredentials, type GitHubAppCredentials } from "./credentials.js";
 export {
   GitHubApiBudgetExceededError,
   GitHubAuthenticationError,
@@ -92,7 +88,6 @@ export {
   type NormalizeGitHubEventsOptions,
   type NormalizeObservedGitHubItemOptions,
   type NormalizeObservedGitHubItemsOptions,
-  type ObservedGitHubItem,
   type StaleObservedGitHubItem,
 } from "./item-normalization.js";
 export {

@@ -7,7 +7,6 @@ export {
 export {
   goldenEvalInputSchema,
   goldenEvalOutputSchema,
-  type GoldenEvalInput,
   type GoldenEvalOutput,
   type StandardGoldenInput,
   type StandardGoldenOutput,

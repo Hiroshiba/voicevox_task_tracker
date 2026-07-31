@@ -16,6 +16,7 @@ VOICEVOX Task Trackerは、GitHubから得た確定情報を決定論的に評�
 | `src/pages`       | 独立した公開guard、公開DTO生成、gzip上限検査、JSON出力                                   | `src/domain`、`src/graph`、`src/persistence` |
 | `src/discord`     | 通知候補選別、cooldown、payload分割、mention制限、Webhook送信                            | `src/domain`、`src/graph`                    |
 | `src/eval`        | golden fixtureの解析と期待値比較                                                         | 判定、graph、公開DTO、通知の各pure処理       |
+| `src/performance` | 外部接続をモックした日次run全体の性能と予算の検証                                        | `src/cli`と全実処理モジュール                |
 | `src/cli`         | コマンド解析、日次トランザクション、実アダプターの合成、run report                       | 上記の全モジュール                           |
 | `web`             | 公開DTOの検証、一覧、詳細、依存グラフ、検索、deep link                                   | `src/pages`のDTO契約                         |
 
@@ -85,8 +86,7 @@ DiscordはPages guardを通過したsnapshot由来の通知候補だけを受け
 CodexはGitHubの確定情報で解決できず、入力hashまたは隣接graph hashが変わった項目だけを分析します。
 model、backend version、prompt version、schema version、入力hashからcache keyを作り、同一入力だけを再利用します。
 call数、入力文字数、推定費用の上限を超えた候補を優先順位に従って延期できる設計です。
-現在の本番経路ではcall数と入力文字数だけが有効で、推定費用、blocker変化、downstream impactの入力は未接続です。
-本番経路へ未接続の機能は[要求トレーサビリティ](TRACEABILITY.md)に記録しています。
+本番経路は実入力から推定費用を算出し、blocker変化と前回graphのdownstream impactを予算不足時の優先順位へ反映します。
 
 実行時は空の一時directoryを作り、`codex exec`へ次の制約を渡します。
 

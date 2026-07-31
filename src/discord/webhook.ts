@@ -220,13 +220,6 @@ async function waitBeforeRetry(
   }
 }
 
-/** process environmentから指定名のActions secretを解決するproviderを生成する。 */
-export function createEnvironmentDiscordSecretProvider(): DiscordSecretProvider {
-  return Object.freeze({
-    read: (secretName) => process.env[secretName],
-  });
-}
-
 /** Node.jsのfetchを利用するDiscord webhook HTTP clientを生成する。 */
 export function createFetchDiscordWebhookHttpClient(): DiscordWebhookHttpClient {
   return Object.freeze({

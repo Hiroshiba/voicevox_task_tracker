@@ -56,7 +56,6 @@ export {
   type PreparedDiscordDigestMessage,
 } from "./payload.js";
 export {
-  createEnvironmentDiscordSecretProvider,
   createFetchDiscordWebhookHttpClient,
   executeDiscordWebhook,
   type DiscordSecretProvider,

@@ -235,6 +235,14 @@
             "reasonSummary": "配布方針の決定を待っています",
             "sourceIds": ["sample-source-engine-204"],
             "confidence": 1
+          },
+          {
+            "kind": "item",
+            "candidateId": "external:github:sample-distribution-42",
+            "role": "dependency",
+            "reasonSummary": "外部配布ツールの対応を待っています",
+            "sourceIds": ["sample-source-external-distribution-42"],
+            "confidence": 0.9
           }
         ],
         "primaryWaitingOn": {
@@ -249,7 +257,7 @@
         "stallSince": "2026-07-01T00:00:00.000Z",
         "observedAt": "2026-07-31T00:00:00.000Z",
         "repositoryFreshness": "fresh",
-        "blockerNodeIds": ["sample-item-editor-103"],
+        "blockerNodeIds": ["external:github:sample-distribution-42", "sample-item-editor-103"],
         "downstreamImpact": {
           "nodeId": "sample-item-engine-204",
           "openNodeCount": 0,
@@ -281,6 +289,12 @@
           "sourceId": "sample-source-engine-204",
           "supports": "status",
           "summary": "配布方針の決定がopen blockerとして残っています",
+          "sourceUrl": "https://github.com/VOICEVOX/sample-engine/issues/204"
+        },
+        {
+          "sourceId": "sample-source-external-distribution-42",
+          "supports": "waiting_on",
+          "summary": "外部配布ツールの対応完了を待つことが示されています",
           "sourceUrl": "https://github.com/VOICEVOX/sample-engine/issues/204"
         }
       ],
@@ -318,6 +332,14 @@
                   "reasonSummary": "配布方針の決定を待っています",
                   "sourceIds": ["sample-source-engine-204"],
                   "confidence": 1
+                },
+                {
+                  "kind": "item",
+                  "candidateId": "external:github:sample-distribution-42",
+                  "role": "dependency",
+                  "reasonSummary": "外部配布ツールの対応を待っています",
+                  "sourceIds": ["sample-source-external-distribution-42"],
+                  "confidence": 0.9
                 }
               ]
             }
@@ -451,6 +473,15 @@
         "state": "open",
         "status": "waiting_for_author",
         "severity": "urgent"
+      },
+      {
+        "nodeId": "external:github:sample-distribution-42",
+        "kind": "external_reference",
+        "repositoryFullName": "example/sample-distribution",
+        "displayReference": "example/sample-distribution#42",
+        "url": "https://github.com/example/sample-distribution/issues/42",
+        "title": "配布ツールの新形式へ対応する",
+        "state": "open"
       }
     ],
     "edges": [
@@ -472,14 +503,40 @@
         "firstSeenAt": "2026-07-10T00:00:00.000Z",
         "lastConfirmedAt": "2026-07-31T00:00:00.000Z",
         "active": true
+      },
+      {
+        "id": "sample-relation-external-42-engine-204",
+        "fromNodeId": "external:github:sample-distribution-42",
+        "toNodeId": "sample-item-engine-204",
+        "type": "blocks",
+        "provenance": "explicit_text",
+        "confidence": 0.9,
+        "evidence": [
+          {
+            "sourceId": "sample-source-external-distribution-42",
+            "supports": "relation",
+            "summary": "外部配布ツールの対応後に配布処理へ進むことが明示されています",
+            "sourceUrl": "https://github.com/VOICEVOX/sample-engine/issues/204"
+          }
+        ],
+        "firstSeenAt": "2026-07-25T02:00:00.000Z",
+        "lastConfirmedAt": "2026-07-31T00:00:00.000Z",
+        "active": true
       }
     ],
     "components": [
       {
         "id": "sample-component-release",
-        "nodeIds": ["sample-item-editor-103", "sample-item-engine-204"],
+        "nodeIds": [
+          "external:github:sample-distribution-42",
+          "sample-item-editor-103",
+          "sample-item-engine-204"
+        ],
         "repositoryIds": ["sample-repository-editor", "sample-repository-engine"],
-        "edgeIds": ["sample-relation-editor-103-engine-204"]
+        "edgeIds": [
+          "sample-relation-editor-103-engine-204",
+          "sample-relation-external-42-engine-204"
+        ]
       },
       {
         "id": "sample-component-editor-101",
@@ -532,6 +589,11 @@
         "nodeId": "sample-item-core-305",
         "openNodeCount": 3,
         "repositoryCount": 2
+      },
+      {
+        "nodeId": "external:github:sample-distribution-42",
+        "openNodeCount": 1,
+        "repositoryCount": 1
       }
     ],
     "history": []

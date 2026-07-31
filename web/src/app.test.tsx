@@ -519,6 +519,8 @@ describe("Web UI", () => {
       "選定理由: 複数blockerから影響度が最も高い項目を選びました",
     );
     expect(details.textContent).toContain("VOICEVOX/sample-editor#103");
+    expect(details.textContent).toContain("example/sample-distribution#42");
+    expect(details.querySelectorAll(".blocker-list > li")).toHaveLength(2);
     expect(details.textContent).toContain("判定根拠");
     expect(details.textContent).toContain("GitHub上の根拠を開く");
     expect(details.textContent).toContain("confidence 100%");

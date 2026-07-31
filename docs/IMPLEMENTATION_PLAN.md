@@ -79,4 +79,4 @@ VOICEVOX Organization全体の公開Issue/PRについて、状態・ボールの
 - [x] T32 全体レビューと修正 — 要求との突き合わせ、抜けの補完
 - [x] T33 本番収集の接続 — 増分収集、stale repository、terminal項目の保持、closed項目の明示include
 - [x] T34 判定入力の接続 — Codex評価の反映、blocker情報の公開、予算と影響度の入力、運用障害通知
-- [ ] T35 最終確認 — 要求の再突き合わせと動作確認
+- [x] T35 最終確認 — 要求の再突き合わせと動作確認

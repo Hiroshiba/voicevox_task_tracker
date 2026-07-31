@@ -1,0 +1,35 @@
+name: 性能profile
+
+on:
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  end-to-end-profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - name: ソースコードを取得
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Node.jsを準備
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+      - name: pnpmを準備
+        run: corepack enable
+      - name: 依存関係をインストール
+        run: pnpm install --frozen-lockfile
+      - name: end-to-end性能profileを実行
+        run: pnpm perf:profile
+      - name: 性能profileの証跡を保存
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: end-to-end-performance-profile
+          path: artifacts/performance-profile.json
+          if-no-files-found: error

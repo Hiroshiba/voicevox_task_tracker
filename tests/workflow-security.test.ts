@@ -8,6 +8,7 @@ import { z } from "zod";
 const WORKFLOW_DIRECTORY = join(import.meta.dirname, "..", ".github", "workflows");
 const DAILY_WORKFLOW_PATH = join(WORKFLOW_DIRECTORY, "daily.yml");
 const CI_WORKFLOW_PATH = join(WORKFLOW_DIRECTORY, "ci.yml");
+const PERFORMANCE_WORKFLOW_PATH = join(WORKFLOW_DIRECTORY, "performance.yml");
 const PACKAGE_PATH = join(import.meta.dirname, "..", "package.json");
 const FULL_COMMIT_ACTION_PATTERN = /^[^@\s]+@[0-9a-f]{40}$/u;
 const VERSIONED_USES_LINE_PATTERN =
@@ -278,6 +279,19 @@ describe("日次workflow", () => {
 });
 
 describe("workflow security", () => {
+  it("性能profileを外部secretなしの手動workflowへ分離する", async () => {
+    const workflow = await readWorkflow(PERFORMANCE_WORKFLOW_PATH);
+    const profileJob = workflow.jobs["end-to-end-profile"];
+    if (profileJob == null) {
+      throw new TypeError("end-to-end性能profile jobがありません");
+    }
+
+    expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"]);
+    expect(profileJob.permissions).toEqual({ contents: "read" });
+    expect(runCommands(profileJob)).toContain("pnpm perf:profile");
+    expect(JSON.stringify(workflow)).not.toContain("${{ secrets.");
+  });
+
   it("全Actionをversion付きfull commit SHAへpinする", async () => {
     const fileNames = (await readdir(WORKFLOW_DIRECTORY))
       .filter((fileName) => fileName.endsWith(".yml") || fileName.endsWith(".yaml"))

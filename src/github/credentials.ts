@@ -60,8 +60,3 @@ export function parseGitHubAppCredentials(
   } satisfies GitHubAppCredentials;
   return credentials;
 }
-
-/** process.envからGitHub App認証情報だけを読み取る。 */
-export function readGitHubAppCredentials(): GitHubAppCredentials {
-  return parseGitHubAppCredentials(process.env);
-}

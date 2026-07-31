@@ -31,6 +31,7 @@ pnpm install --frozen-lockfile
 | `pnpm build:web`    | 静的サイトを`dist/web`へビルドする                |
 | `pnpm dev:web`      | サンプル公開DTOを使ってWeb UIを起動する           |
 | `pnpm eval:golden`  | CLIをビルドしてgolden fixtureの回帰評価を実行する |
+| `pnpm perf:profile` | モックの日次runでOPS-004の性能閾値を検証する      |
 | `pnpm typecheck`    | CLIとWeb UIの型を検査する                         |
 | `pnpm test`         | Vitestのテストを1回実行する                       |
 | `pnpm lint`         | ESLintでコードを検査する                          |
@@ -55,6 +56,7 @@ pnpm install --frozen-lockfile
 | `src/pages/`         | 公開guardとPages用DTO生成                                          |
 | `src/discord/`       | 通知選別、payload生成、Webhook送信                                 |
 | `src/eval/`          | golden fixtureの回帰評価                                           |
+| `src/performance/`   | 日次run全体の性能と予算のprofile                                   |
 | `web/`               | ViteとPreactによる静的Web UI                                       |
 | `tests/`             | unit、integration、security、golden fixtureのテスト                |
 | `schemas/`           | stateとCodex出力のJSON Schema                                      |

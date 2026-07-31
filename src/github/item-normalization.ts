@@ -141,9 +141,6 @@ export type StaleObservedGitHubItem<
   }>;
 }>;
 
-/** freshnessにより最新値と前回値を区別するGitHub項目の観測結果。 */
-export type ObservedGitHubItem = FreshObservedGitHubItem | StaleObservedGitHubItem;
-
 export type NormalizeGitHubEventsOptions = Readonly<{
   item: EnumeratedGitHubItem;
   detail: GitHubItemDetail;

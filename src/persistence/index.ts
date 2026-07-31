@@ -79,7 +79,6 @@ export {
   createStateNotificationLedger,
   createStateRunReport,
   parseStateNotificationLedger,
-  parseStateRunReport,
   serializeStateNotificationLedger,
   serializeStateRunReport,
   type StateNotificationLedger,
