@@ -412,3 +412,16 @@ export type NotificationLedgerEntry =
         sentAt: UtcIsoDateTime;
         discordMessageId: string;
       }>);
+
+/** 運用障害として通知する処理の分類。 */
+export type OperationsAlertKind = "collection" | "pages" | "discord";
+
+/** 送信済みの運用障害通知を重複抑制するledger entry。 */
+export type OperationsAlertLedgerEntry = Readonly<{
+  alertKey: string;
+  incidentId: string;
+  kind: OperationsAlertKind;
+  occurredAt: UtcIsoDateTime;
+  sentAt: UtcIsoDateTime;
+  discordMessageId: string;
+}>;

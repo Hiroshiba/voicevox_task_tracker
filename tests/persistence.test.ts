@@ -261,6 +261,16 @@ function createSentLedger(cooldownUntil: string): StateNotificationLedger {
         discordMessageId: "discord-message-1",
       },
     ],
+    operationsAlerts: [
+      {
+        alertKey: "discord-operations-alert:v1:pages",
+        incidentId: "pages-run-1",
+        kind: "pages",
+        occurredAt: fixedItemAt,
+        sentAt: fixedItemAt,
+        discordMessageId: "discord-operations-message-1",
+      },
+    ],
   });
 }
 
@@ -744,6 +754,16 @@ describe("メモリstate branch transaction", () => {
       },
     });
     expect(ledger.entries[0]?.cooldownUntil).toBe(cooldownUntil);
+    expect(ledger.operationsAlerts).toEqual([
+      {
+        alertKey: "discord-operations-alert:v1:pages",
+        incidentId: "pages-run-1",
+        kind: "pages",
+        occurredAt: fixedItemAt,
+        sentAt: fixedItemAt,
+        discordMessageId: "discord-operations-message-1",
+      },
+    ]);
   });
 
   it("任意の二日間について責務・edge・severity差分を再生する", async () => {

@@ -37,6 +37,7 @@ const notificationReasonCodeSchema = z.enum([
   "ready_to_merge_overdue",
   "automation_stuck",
 ]);
+const operationsAlertKindSchema = z.enum(["collection", "pages", "discord"]);
 
 const runMetricsSchema = z.strictObject({
   repositoryCount: nonNegativeIntegerSchema,
@@ -82,10 +83,19 @@ const ledgerEntrySchema = z.discriminatedUnion("status", [
     discordMessageId: nonEmptyStringSchema,
   }),
 ]);
+const operationsAlertEntrySchema = z.strictObject({
+  alertKey: nonEmptyStringSchema,
+  incidentId: nonEmptyStringSchema,
+  kind: operationsAlertKindSchema,
+  occurredAt: dateTimeSchema,
+  sentAt: dateTimeSchema,
+  discordMessageId: nonEmptyStringSchema,
+});
 const notificationLedgerSchema = z
   .strictObject({
     schemaVersion: z.literal("1"),
     entries: z.array(ledgerEntrySchema),
+    operationsAlerts: z.array(operationsAlertEntrySchema),
   })
   .superRefine((ledger, context) => {
     const keys = ledger.entries.map((entry) => entry.notificationKey);
@@ -96,12 +106,29 @@ const notificationLedgerSchema = z
         message: "notificationKeyが重複しています",
       });
     }
+    const alertKeys = ledger.operationsAlerts.map((entry) => entry.alertKey);
+    if (new Set(alertKeys).size !== alertKeys.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["operationsAlerts"],
+        message: "運用障害通知のalertKeyが重複しています",
+      });
+    }
+    for (const [index, entry] of ledger.operationsAlerts.entries()) {
+      if (entry.sentAt < entry.occurredAt) {
+        context.addIssue({
+          code: "custom",
+          path: ["operationsAlerts", index, "sentAt"],
+          message: "送信時刻は障害発生時刻以後にしてください",
+        });
+      }
+    }
   });
 
 /** 日次runの完了状態と運用metricsを保持するreport。 */
 export type StateRunReport = z.output<typeof runReportSchema>;
 
-/** 通知予約と送信済みcooldownを保持するledger。 */
+/** 通常通知の予約と送信結果、送信済み運用障害を保持するledger。 */
 export type StateNotificationLedger = z.output<typeof notificationLedgerSchema>;
 
 function createFormatError(kind: string): StateFormatError {
@@ -146,6 +173,15 @@ export function createStateNotificationLedger(value: unknown): StateNotification
   return {
     schemaVersion: "1",
     entries: [...result.data.entries].sort(compareNotificationKeys),
+    operationsAlerts: [...result.data.operationsAlerts].sort((left, right) => {
+      if (left.alertKey < right.alertKey) {
+        return -1;
+      }
+      if (left.alertKey > right.alertKey) {
+        return 1;
+      }
+      return 0;
+    }),
   };
 }
 
@@ -154,6 +190,7 @@ export function createEmptyStateNotificationLedger(): StateNotificationLedger {
   return {
     schemaVersion: "1",
     entries: [],
+    operationsAlerts: [],
   };
 }
 

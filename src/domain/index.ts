@@ -170,6 +170,8 @@ export {
   type NormalizedEvent,
   type NotificationLedgerEntry,
   type NotificationReasonCode,
+  type OperationsAlertKind,
+  type OperationsAlertLedgerEntry,
   type Relation,
   type RelationProvenance,
   type RelationType,
