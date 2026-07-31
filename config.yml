@@ -118,6 +118,7 @@ state:
   historyDirectory: state/history
   aiCacheDirectory: state/ai-cache
   notificationLedgerPath: state/notification-ledger.json
+  runReportsDirectory: state/run-reports
   canonicalJson: true
 
 web:

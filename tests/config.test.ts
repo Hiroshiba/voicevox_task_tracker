@@ -45,6 +45,7 @@ describe("設定の読み込みと検証", () => {
     expect(config.ai.provider).toBe("codex");
     expect(config.ai.budget.maxEstimatedCostUsdPerRun).toBe(10);
     expect(config.notifications.discord.mentions.enabled).toBe(false);
+    expect(config.state.runReportsDirectory).toBe("state/run-reports");
   });
 
   it("未知のschema major versionを明示的に拒否する", () => {
@@ -215,6 +216,25 @@ describe("設定の読み込みと検証", () => {
     const config = parseConfig(source);
 
     expect(config.notifications.discord.mentions.enabled).toBe(false);
+  });
+
+  it("state保存先をtracker-state branchのstate配下へ制限する", () => {
+    const invalidBranch = replaceRequired(
+      validConfigSource,
+      "branch: tracker-state",
+      "branch: main",
+    );
+    const invalidPath = replaceRequired(
+      invalidBranch,
+      "snapshotPath: state/snapshot.json",
+      "snapshotPath: ../snapshot.json",
+    );
+    const error = captureConfigError(invalidPath);
+
+    expect(error.message).toContain("state.branch");
+    expect(error.message).toContain("tracker-state");
+    expect(error.message).toContain("state.snapshotPath");
+    expect(error.message).toContain("state配下");
   });
 
   it("複数フィールドの不正を1件の設定エラーへまとめる", () => {

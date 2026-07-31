@@ -18,44 +18,467 @@
       "const": "1"
     },
     "generatedAt": {
-      "type": "string",
-      "format": "date-time"
+      "$ref": "#/$defs/dateTime"
     },
     "trackingStartAt": {
-      "type": "string",
-      "format": "date-time"
+      "$ref": "#/$defs/dateTime"
     },
     "repositories": {
       "type": "array",
       "items": {
-        "type": "object"
+        "$ref": "#/$defs/repository"
       }
     },
     "items": {
       "type": "array",
       "items": {
-        "type": "object"
+        "$ref": "#/$defs/item"
       }
     },
     "relations": {
       "type": "array",
       "items": {
-        "type": "object"
+        "$ref": "#/$defs/relation"
       }
     },
     "run": {
+      "$ref": "#/$defs/run"
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^\\S+$"
+    },
+    "shortString": {
+      "type": "string",
+      "maxLength": 1000
+    },
+    "dateTime": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "evidence": {
       "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceId", "supports", "summary"],
+      "properties": {
+        "sourceId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "supports": {
+          "enum": [
+            "status",
+            "waiting_on",
+            "relation",
+            "progress",
+            "notification",
+            "uncertainty"
+          ]
+        },
+        "summary": {
+          "$ref": "#/$defs/shortString"
+        }
+      }
+    },
+    "accountActor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "nodeId", "login"],
+      "properties": {
+        "type": {
+          "enum": ["human", "bot"]
+        },
+        "nodeId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "login": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    },
+    "waitingOn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "candidateId",
+        "role",
+        "reasonSummary",
+        "sourceIds",
+        "confidence"
+      ],
+      "properties": {
+        "kind": {
+          "enum": ["user", "team", "role", "item", "automation", "unknown"]
+        },
+        "candidateId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "role": {
+          "enum": [
+            "author",
+            "maintainer",
+            "reviewer",
+            "assignee",
+            "dependency",
+            "merge_decider",
+            "ci",
+            "unknown"
+          ]
+        },
+        "reasonSummary": {
+          "$ref": "#/$defs/shortString"
+        },
+        "sourceIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/identifier"
+          }
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
       "required": [
         "id",
-        "status",
-        "complete"
+        "owner",
+        "name",
+        "visibility",
+        "archived",
+        "disabled",
+        "observedAt"
       ],
       "properties": {
         "id": {
-          "type": "string"
+          "$ref": "#/$defs/identifier"
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "visibility": {
+          "const": "public"
+        },
+        "archived": {
+          "const": false
+        },
+        "disabled": {
+          "const": false
+        },
+        "observedAt": {
+          "$ref": "#/$defs/dateTime"
+        }
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nodeId",
+        "type",
+        "repositoryId",
+        "displayReference",
+        "number",
+        "url",
+        "title",
+        "state",
+        "status",
+        "waitingOn",
+        "nextAction",
+        "createdAt",
+        "githubUpdatedAt",
+        "lastHumanActivityAt",
+        "lastProgressAt",
+        "statusSince",
+        "ownerSince",
+        "stallSince",
+        "observedAt",
+        "labels",
+        "assignees",
+        "reviewState",
+        "checkState",
+        "confidence",
+        "evidence",
+        "uncertainties",
+        "severity"
+      ],
+      "properties": {
+        "nodeId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "type": {
+          "enum": ["issue", "pull_request"]
+        },
+        "repositoryId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "displayReference": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 600,
+          "pattern": "^.+/.+#[1-9][0-9]*$"
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "pattern": "^https://github\\.com/"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "state": {
+          "enum": ["open", "closed", "merged"]
         },
         "status": {
-          "type": "string"
+          "enum": [
+            "new_untriaged",
+            "needs_maintainer_decision",
+            "waiting_for_review",
+            "waiting_for_author",
+            "waiting_for_assignee",
+            "blocked",
+            "waiting_for_automation",
+            "ready_to_merge",
+            "in_progress",
+            "unknown",
+            "terminal_merged",
+            "terminal_completed",
+            "terminal_not_planned"
+          ]
+        },
+        "waitingOn": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/waitingOn"
+          }
+        },
+        "nextAction": {
+          "$ref": "#/$defs/shortString"
+        },
+        "createdAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "githubUpdatedAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "lastHumanActivityAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "lastProgressAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "statusSince": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "ownerSince": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "stallSince": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "observedAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "labels": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "assignees": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/accountActor"
+          }
+        },
+        "reviewState": {
+          "enum": [
+            "not_applicable",
+            "not_requested",
+            "requested",
+            "changes_requested",
+            "approved",
+            "unknown"
+          ]
+        },
+        "checkState": {
+          "enum": [
+            "not_applicable",
+            "not_required",
+            "pending",
+            "passing",
+            "failing",
+            "unknown"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "uncertainties": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/shortString"
+          }
+        },
+        "severity": {
+          "enum": ["none", "watch", "urgent", "critical"]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["status"],
+            "properties": {
+              "status": {
+                "enum": ["terminal_merged", "terminal_completed", "terminal_not_planned"]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "waitingOn": {
+                "type": "array",
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "fromNodeId",
+        "toNodeId",
+        "type",
+        "provenance",
+        "confidence",
+        "evidence",
+        "active",
+        "firstSeenAt",
+        "lastConfirmedAt"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "fromNodeId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "toNodeId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "type": {
+          "enum": ["blocks", "parent_of", "implements", "related_to", "duplicates"]
+        },
+        "provenance": {
+          "enum": [
+            "native",
+            "explicit_text",
+            "closing_keyword",
+            "checklist",
+            "cross_reference",
+            "ai_inference"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "firstSeenAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "lastConfirmedAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "removedAt": {
+          "$ref": "#/$defs/dateTime"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["active"],
+            "properties": {
+              "active": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "removedAt": {
+                "$ref": "#/$defs/dateTime"
+              }
+            },
+            "required": ["removedAt"]
+          },
+          "else": {
+            "not": {
+              "required": ["removedAt"]
+            }
+          }
+        }
+      ]
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "complete"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/identifier"
+        },
+        "status": {
+          "enum": ["success", "fallback"]
         },
         "complete": {
           "const": true

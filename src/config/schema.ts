@@ -6,6 +6,7 @@ import { assertNonNullable } from "../util/assert-non-nullable.js";
 const SUPPORTED_SCHEMA_MAJOR = 1;
 const TARGET_ORGANIZATION = "VOICEVOX";
 const SUPPORTED_AI_PROVIDER = "codex";
+const STATE_BRANCH = "tracker-state";
 const DEFAULT_HIGH_CONFIDENCE = 0.85;
 const DEFAULT_MEDIUM_CONFIDENCE = 0.65;
 const SCHEMA_VERSION_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d+)*$/;
@@ -17,6 +18,24 @@ const positiveIntegerSchema = z.number().int().positive();
 const nonNegativeIntegerSchema = z.number().int().nonnegative();
 const nonNegativeNumberSchema = z.number().nonnegative();
 const probabilitySchema = z.number().min(0).max(1);
+const statePathSchema = requiredStringSchema.superRefine((value, context) => {
+  const segments = value.split("/");
+  if (
+    !value.startsWith("state/") ||
+    value.endsWith("/") ||
+    value.includes("\\") ||
+    !/^[A-Za-z0-9._/-]+$/u.test(value) ||
+    segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "state配下の正規化された相対パスを指定してください",
+    });
+  }
+});
+const stateJsonPathSchema = statePathSchema.refine((value) => value.endsWith(".json"), {
+  message: ".jsonで終わるパスを指定してください",
+});
 
 const schemaVersionSchema = z.union([z.string(), z.number()]).transform((value, context) => {
   const version = String(value);
@@ -207,6 +226,41 @@ const mentionsSchema = z
     users: {},
   }));
 
+const stateSchema = z
+  .strictObject({
+    branch: z.literal(STATE_BRANCH, {
+      error: `${STATE_BRANCH}を指定してください`,
+    }),
+    snapshotPath: stateJsonPathSchema,
+    historyDirectory: statePathSchema,
+    aiCacheDirectory: statePathSchema,
+    notificationLedgerPath: stateJsonPathSchema,
+    runReportsDirectory: statePathSchema,
+    canonicalJson: z.literal(true, {
+      error: "canonicalJsonはtrueにしてください",
+    }),
+  })
+  .superRefine((state, context) => {
+    const paths = [
+      ["snapshotPath", state.snapshotPath],
+      ["historyDirectory", state.historyDirectory],
+      ["aiCacheDirectory", state.aiCacheDirectory],
+      ["notificationLedgerPath", state.notificationLedgerPath],
+      ["runReportsDirectory", state.runReportsDirectory],
+    ] as const;
+    const seen = new Set<string>();
+    for (const [name, path] of paths) {
+      if (seen.has(path)) {
+        context.addIssue({
+          code: "custom",
+          path: [name],
+          message: "state内の別の保存先と同じパスは指定できません",
+        });
+      }
+      seen.add(path);
+    }
+  });
+
 const configSchema = z.strictObject({
   schemaVersion: schemaVersionSchema,
   organization: organizationSchema,
@@ -309,14 +363,7 @@ const configSchema = z.strictObject({
       silenceWhenEmpty: z.boolean(),
     }),
   }),
-  state: z.strictObject({
-    branch: requiredStringSchema,
-    snapshotPath: requiredStringSchema,
-    historyDirectory: requiredStringSchema,
-    aiCacheDirectory: requiredStringSchema,
-    notificationLedgerPath: requiredStringSchema,
-    canonicalJson: z.boolean(),
-  }),
+  state: stateSchema,
   web: z.strictObject({
     basePath: requiredStringSchema,
     title: requiredStringSchema,

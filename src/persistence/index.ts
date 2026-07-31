@@ -1,0 +1,78 @@
+export {
+  assertValidStatePath,
+  joinStatePath,
+  validateStatePersistenceConfiguration,
+  type StateBranchAdapter,
+  type StateBranchCommitRequest,
+  type StateBranchCommitResult,
+  type StateBranchHead,
+  type StateFileReadResult,
+  type StateFileUpdate,
+  type StatePersistenceConfiguration,
+} from "./branch-adapter.js";
+export {
+  hashCanonicalJson,
+  parseSha256Hash,
+  serializeCanonicalJson,
+  serializeCanonicalJsonLine,
+  type Sha256Hash,
+} from "./canonical-json.js";
+export {
+  StateBranchCommitError,
+  StateBranchConflictError,
+  StateBranchReadError,
+  StateConfigurationError,
+  StateFormatError,
+  StateHistoryError,
+  StatePersistenceError,
+  StatePublicSafetyError,
+  StateSnapshotSchemaError,
+  StateSnapshotSemanticError,
+} from "./errors.js";
+export {
+  GitStateBranchAdapter,
+  type GitStateBranchAdapterOptions,
+} from "./git-state-branch-adapter.js";
+export {
+  appendStateHistoryRecord,
+  createStateHistoryRecord,
+  diffStateHistory,
+  parseStateHistoryRecords,
+  replayStateHistory,
+  serializeStateHistoryRecords,
+  type ReplayedStateHistory,
+  type StateHistoryDiff,
+  type StateHistoryDifference,
+  type StateHistoryEdge,
+  type StateHistoryEvent,
+  type StateHistoryRecord,
+  type StateHistoryResponsibility,
+  type StateHistoryValue,
+} from "./history.js";
+export { MemoryStateBranchAdapter } from "./memory-state-branch-adapter.js";
+export { assertStatePublicSafety, type StatePublicSafetyInput } from "./public-safety.js";
+export {
+  createStateSnapshot,
+  parseStateSnapshot,
+  serializeStateSnapshot,
+  type SnapshotRun,
+  type SnapshotTrackedItem,
+  type StateSnapshot,
+} from "./snapshot.js";
+export {
+  StatePersistenceSession,
+  type PersistStateTransactionInput,
+  type PersistStateTransactionResult,
+  type StateSnapshotReadResult,
+} from "./state-persistence-session.js";
+export {
+  createEmptyStateNotificationLedger,
+  createStateNotificationLedger,
+  createStateRunReport,
+  parseStateNotificationLedger,
+  parseStateRunReport,
+  serializeStateNotificationLedger,
+  serializeStateRunReport,
+  type StateNotificationLedger,
+  type StateRunReport,
+} from "./state-documents.js";

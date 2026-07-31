@@ -50,7 +50,7 @@ VOICEVOX Organization全体の公開Issue/PRについて、状態・ボールの
 
 ### Phase 5: 永続化
 
-- [ ] T20 state永続化 — canonical JSON、snapshot、日次history、ai-cache、notification ledger、tracker-state branchへのatomic commit、secret/private sentinel検査
+- [x] T20 state永続化 — canonical JSON、snapshot、日次history、ai-cache、notification ledger、tracker-state branchへのatomic commit、secret/private sentinel検査
 
 ### Phase 6: Webページ
 
