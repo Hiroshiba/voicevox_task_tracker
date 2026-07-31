@@ -42,6 +42,9 @@ function createEmptyWorkflowArtifact(): WorkflowArtifact {
       schemaVersion: "1",
       generatedAt: NOW,
       trackingStartAt: NOW,
+      collection: {
+        repositories: [],
+      },
       repositories: [],
       items: [],
       relations: [],

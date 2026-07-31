@@ -145,6 +145,9 @@ function createSnapshot(options: SnapshotFixtureOptions): StateSnapshot {
     schemaVersion: "1",
     generatedAt: options.generatedAt,
     trackingStartAt: fixedTrackingStartAt,
+    collection: {
+      repositories: [],
+    },
     repositories: options.repositoryIds.map((repositoryId) => ({
       id: repositoryId,
       owner: "VOICEVOX",
@@ -311,6 +314,7 @@ function snapshotWithoutVolatileFields(snapshot: StateSnapshot): unknown {
   return {
     schemaVersion: snapshot.schemaVersion,
     trackingStartAt: snapshot.trackingStartAt,
+    collection: snapshot.collection,
     repositories: snapshot.repositories,
     items: snapshot.items,
     relations: snapshot.relations,

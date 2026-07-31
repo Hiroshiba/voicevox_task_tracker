@@ -12,8 +12,8 @@ import {
   type UtcIsoDateTime,
 } from "../domain/index.js";
 import { type GitHubApiAccountType } from "./account-types.js";
-import { type GitHubRestRequest } from "./client.js";
-import { GitHubResponseValidationError } from "./errors.js";
+import { type GitHubClient, type GitHubRestRequest } from "./client.js";
+import { GitHubPublicBoundaryViolationError, GitHubResponseValidationError } from "./errors.js";
 import {
   type PublicRepository,
   type PublicRepositoryAllowlist,
@@ -152,6 +152,32 @@ const itemMetadataSchema = z
     }
   });
 const itemPageSchema = z.array(itemMetadataSchema).max(ITEMS_PER_PAGE);
+const itemIdentifierNodeSchema = z
+  .object({
+    __typename: z.enum(["Issue", "PullRequest"]),
+    id: nodeIdSchema,
+    url: githubItemUrlSchema,
+  })
+  .loose();
+const itemIdentifierResponseSchema = z.object({
+  node: itemIdentifierNodeSchema.nullable(),
+});
+
+const ITEM_IDENTIFIER_QUERY = `
+  query GitHubItemIdentifier($itemId: ID!) {
+    node(id: $itemId) {
+      __typename
+      ... on Issue {
+        id
+        url
+      }
+      ... on PullRequest {
+        id
+        url
+      }
+    }
+  }
+`;
 
 /** SHA-256で生成した内容fingerprint。 */
 export type Sha256Fingerprint = `sha256:${string}`;
@@ -226,6 +252,15 @@ export type EnumerateOpenGitHubItemsOptions = Readonly<{
   allowlist: PublicRepositoryAllowlist;
   observedAt: UtcIsoDateTime;
   request: GitHubRestRequest;
+}>;
+
+/** URLまたはnode IDで指定した項目を個別取得する入力。 */
+export type EnumerateGitHubItemsByIdentifiersOptions = Readonly<{
+  allowlist: PublicRepositoryAllowlist;
+  identifiers: readonly string[];
+  observedAt: UtcIsoDateTime;
+  request: GitHubRestRequest;
+  graphql: GitHubClient["graphql"];
 }>;
 
 type ParsedItemMetadata = z.output<typeof itemMetadataSchema>;
@@ -496,6 +531,128 @@ function normalizeItem(
     draft,
     itemFingerprint,
   });
+}
+
+type ParsedGitHubItemUrl = Readonly<{
+  repository: PublicRepository;
+  number: number;
+}>;
+
+function parseGitHubItemUrl(
+  value: GitHubItemUrl,
+  allowlist: PublicRepositoryAllowlist,
+): ParsedGitHubItemUrl {
+  const parsed = new URL(value);
+  const segments = parsed.pathname.split("/").filter((segment) => segment.length > 0);
+  const owner = segments[0];
+  const repositoryName = segments[1];
+  const kind = segments[2];
+  const numberSource = segments[3];
+  if (
+    owner == null ||
+    repositoryName == null ||
+    (kind !== "issues" && kind !== "pull") ||
+    numberSource == null ||
+    segments.length !== 4 ||
+    parsed.search.length !== 0 ||
+    parsed.hash.length !== 0 ||
+    !/^[1-9]\d*$/u.test(numberSource)
+  ) {
+    throw new GitHubResponseValidationError("個別取得するGitHub項目URL", {
+      cause: new TypeError("IssueまたはPull RequestのURL形式ではありません"),
+    });
+  }
+  const repository = allowlist.repositories.find(
+    (candidate) =>
+      candidate.owner.toLowerCase() === owner.toLowerCase() &&
+      candidate.name.toLowerCase() === repositoryName.toLowerCase(),
+  );
+  if (repository == null) {
+    throw new GitHubPublicBoundaryViolationError(1);
+  }
+  const number = Number(numberSource);
+  if (!Number.isSafeInteger(number) || number <= 0) {
+    throw new GitHubResponseValidationError("個別取得するGitHub項目番号", {
+      cause: new RangeError("項目番号を正の安全な整数へ変換できません"),
+    });
+  }
+  return Object.freeze({
+    repository,
+    number,
+  });
+}
+
+async function resolveNodeIdUrl(
+  nodeId: string,
+  graphql: GitHubClient["graphql"],
+): Promise<GitHubItemUrl> {
+  const response = await graphql(ITEM_IDENTIFIER_QUERY, {
+    itemId: nodeId,
+  });
+  const result = itemIdentifierResponseSchema.safeParse(response);
+  if (!result.success || result.data.node == null) {
+    throw new GitHubResponseValidationError(`個別取得するGitHub node ${nodeId}`, {
+      cause: new TypeError("IssueまたはPull Requestとして解決できません"),
+    });
+  }
+  if (result.data.node.id !== nodeId) {
+    throw new GitHubResponseValidationError(`個別取得するGitHub node ${nodeId}`, {
+      cause: new TypeError("要求したnode IDと応答が一致しません"),
+    });
+  }
+  return result.data.node.url;
+}
+
+async function enumerateGitHubItemByUrl(
+  url: GitHubItemUrl,
+  options: EnumerateGitHubItemsByIdentifiersOptions,
+): Promise<EnumeratedGitHubItem> {
+  const parsed = parseGitHubItemUrl(url, options.allowlist);
+  const response = await options.request("GET /repos/{owner}/{repo}/issues/{issue_number}", {
+    owner: parsed.repository.owner,
+    repo: parsed.repository.name,
+    issue_number: parsed.number,
+    headers: {
+      accept: "application/vnd.github.raw+json",
+      "x-github-api-version": GITHUB_API_VERSION,
+    },
+  });
+  if (response.status !== 200) {
+    throw new GitHubResponseValidationError(`GitHub項目 ${url}`, {
+      cause: new TypeError("成功以外のHTTP statusを受け取りました"),
+    });
+  }
+  const result = itemMetadataSchema.safeParse(response.data);
+  if (!result.success) {
+    throw new GitHubResponseValidationError(`GitHub項目 ${url}`, {
+      cause: new TypeError("IssueまたはPull Requestのmetadata形式が不正です"),
+    });
+  }
+  return normalizeItem(result.data, parsed.repository, options.observedAt);
+}
+
+/** open列挙に存在しない項目をURLまたはnode IDから個別取得する。 */
+export async function enumerateGitHubItemsByIdentifiers(
+  options: EnumerateGitHubItemsByIdentifiersOptions,
+): Promise<readonly EnumeratedGitHubItem[]> {
+  const items: EnumeratedGitHubItem[] = [];
+  for (const identifier of options.identifiers) {
+    if (identifier.length === 0 || /\s/u.test(identifier)) {
+      throw new TypeError("個別取得する識別子は空白を含まない空でない文字列にしてください");
+    }
+    const resolvedByNodeId = !identifier.includes("://");
+    const url = resolvedByNodeId
+      ? await resolveNodeIdUrl(identifier, options.graphql)
+      : githubItemUrlSchema.parse(identifier);
+    const item = await enumerateGitHubItemByUrl(url, options);
+    if (resolvedByNodeId && item.nodeId !== identifier) {
+      throw new GitHubResponseValidationError(`個別取得するGitHub node ${identifier}`, {
+        cause: new TypeError("node IDから解決した項目が要求と一致しません"),
+      });
+    }
+    items.push(item);
+  }
+  return deduplicateByStableId(items, (item) => item.nodeId);
 }
 
 function getLinkHeader(

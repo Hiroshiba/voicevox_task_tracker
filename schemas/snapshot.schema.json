@@ -8,6 +8,7 @@
     "schemaVersion",
     "generatedAt",
     "trackingStartAt",
+    "collection",
     "repositories",
     "items",
     "relations",
@@ -22,6 +23,9 @@
     },
     "trackingStartAt": {
       "$ref": "#/$defs/dateTime"
+    },
+    "collection": {
+      "$ref": "#/$defs/collection"
     },
     "repositories": {
       "type": "array",
@@ -59,6 +63,111 @@
     "dateTime": {
       "type": "string",
       "format": "date-time"
+    },
+    "fingerprint": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "collection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repositories"],
+      "properties": {
+        "repositories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/collectionRepository"
+          }
+        }
+      }
+    },
+    "collectionRepository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repositoryId", "successfulAt", "items"],
+      "properties": {
+        "repositoryId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "successfulAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/collectionItem"
+          }
+        }
+      }
+    },
+    "collectionItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "freshness",
+        "nodeId",
+        "repositoryId",
+        "itemFingerprint",
+        "observedAt",
+        "state",
+        "terminalAt"
+      ],
+      "properties": {
+        "freshness": {
+          "const": "fresh"
+        },
+        "nodeId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "repositoryId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "itemFingerprint": {
+          "$ref": "#/$defs/fingerprint"
+        },
+        "observedAt": {
+          "$ref": "#/$defs/dateTime"
+        },
+        "state": {
+          "enum": ["open", "closed"]
+        },
+        "terminalAt": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/dateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "open"
+              }
+            },
+            "required": ["state"]
+          },
+          "then": {
+            "properties": {
+              "terminalAt": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "terminalAt": {
+                "$ref": "#/$defs/dateTime"
+              }
+            }
+          }
+        }
+      ]
     },
     "evidence": {
       "type": "object",

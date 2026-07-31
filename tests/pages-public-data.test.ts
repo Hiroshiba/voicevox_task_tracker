@@ -201,6 +201,9 @@ function createSnapshot(options: SnapshotFixtureOptions): StateSnapshot {
     schemaVersion: "1",
     generatedAt: options.generatedAt,
     trackingStartAt: TRACKING_START_AT,
+    collection: {
+      repositories: [],
+    },
     repositories: options.repositories.map((repository) => ({
       id: repository.id,
       owner: "VOICEVOX",
@@ -491,8 +494,8 @@ describe("公開DTO生成", () => {
       ],
     });
     const historyRecords = [
-      createStateHistoryRecord(undefined, previous, "2026-07-31"),
-      createStateHistoryRecord(previous, current, "2026-08-01"),
+      createStateHistoryRecord(undefined, previous, "2026-07-31", previous.repositories),
+      createStateHistoryRecord(previous, current, "2026-08-01", current.repositories),
     ];
 
     const generated = generateFixture(

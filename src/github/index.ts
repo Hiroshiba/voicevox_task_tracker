@@ -29,8 +29,10 @@ export {
 } from "./errors.js";
 export {
   createGitHubBodyFingerprint,
+  enumerateGitHubItemsByIdentifiers,
   enumerateOpenGitHubItems,
   type EnumeratedGitHubItem,
+  type EnumerateGitHubItemsByIdentifiersOptions,
   type EnumerateOpenGitHubItemsOptions,
   type GitHubItemAccount,
   type GitHubItemAuthor,
@@ -41,6 +43,7 @@ export {
 export {
   collectGitHubItemDetails,
   type CollectGitHubItemDetailsOptions,
+  type GitHubItemDetailEventWindow,
 } from "./item-detail-collection.js";
 export {
   type GitHubAutoMerge,
@@ -82,6 +85,7 @@ export {
   normalizeObservedGitHubItems,
   type FreshObservedGitHubIssue,
   type FreshObservedGitHubItem,
+  type FreshObservedGitHubItemReference,
   type GitHubBotPredicate,
   type GitHubBotPredicateInput,
   type MarkObservedGitHubItemsStaleOptions,

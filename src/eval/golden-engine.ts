@@ -973,6 +973,9 @@ function createSnapshot(
         analyses[0]?.input.createdAt ?? input.evaluatedAt,
       ),
     ),
+    collection: {
+      repositories: [],
+    },
     repositories: input.repositories.map((repository) => ({
       id: repository.id,
       owner: ORGANIZATION,
@@ -1420,6 +1423,9 @@ function analyzeLargeFixture(
     schemaVersion: "1",
     generatedAt: evaluatedAt,
     trackingStartAt: "2026-01-01T00:00:00.000Z",
+    collection: {
+      repositories: [],
+    },
     repositories: repositories.map((repository) => ({
       ...repository,
       freshness: "fresh",

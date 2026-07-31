@@ -292,6 +292,9 @@ function createPublicHistory(records: readonly StateHistoryRecord[]): PublicHist
           graphEvents.push(historyEvent);
           break;
         }
+        case "repository_excluded": {
+          break;
+        }
       }
     }
   }

@@ -16,18 +16,22 @@ import {
 import { type Config, type loadConfig } from "../config/index.js";
 import {
   createUtcIsoDateTime,
+  createGitHubNodeId,
   createGitHubBotPredicate,
   createLabelEffectsResolver,
   calculateStaleness,
   determineIssueState,
   determineMeaningfulProgress,
   determinePullRequestState,
+  determineTerminalRetention,
+  determineTrackedItemWork,
   isTerminalStatus,
   resolveRepositoryTeams,
   selectTrackingItems,
   type LabelRule,
   type NotificationLedgerEntry,
   type GitHubNodeId,
+  type GitHubRepositoryId,
   type IssueBlocker,
   type IssueStateDecision,
   type BlockedParentContext,
@@ -41,6 +45,7 @@ import {
   type StalenessResult,
   type TrackedItem,
   type TrackingConnection,
+  type TrackedItemWorkDecision,
   type UtcIsoDateTime,
 } from "../domain/index.js";
 import {
@@ -57,10 +62,15 @@ import { analyzeGoldenFixture, goldenEvalInputSchema } from "../eval/index.js";
 import {
   type collectGitHubItemDetails,
   type collectGitHubTeamDirectory,
+  collectRepositoriesWithStaleFallback,
   createPublicRepositoryAllowlist,
+  deduplicateByStableId,
   type discoverRepositoryInventory,
+  type enumerateGitHubItemsByIdentifiers,
   type enumerateOpenGitHubItems,
+  markObservedGitHubItemsStale,
   normalizeObservedGitHubItems,
+  planIncrementalItemCollection,
   parseGitHubAppCredentials,
   type CreateGitHubClientOptions,
   type EnumeratedGitHubItem,
@@ -68,8 +78,12 @@ import {
   type GitHubAppCredentials,
   type GitHubClient,
   type GitHubItemDetail,
+  type GitHubItemDetailEventWindow,
   type PublicRepository,
   type PublicRepositoryAllowlist,
+  type PreviousItemCollection,
+  type RepositoryCollectionResult,
+  type StaleObservedGitHubItem,
 } from "../github/index.js";
 import {
   analyzeGraph,
@@ -99,6 +113,8 @@ import {
   createStateSnapshot,
   type StatePersistenceSession,
   type PersistStateTransactionResult,
+  type SnapshotCollectionItem,
+  type SnapshotCollectionRepository,
   type SnapshotRepository,
   type StateBranchAdapter,
   type StateNotificationLedger,
@@ -146,6 +162,7 @@ const CODEX_CLI_VERSION = "0.145.0";
 const CODEX_BACKEND_VERSION = `codex-cli-${CODEX_CLI_VERSION}`;
 const CODEX_SCHEMA_VERSION = "1";
 const PAGES_BASE_URL = "https://voicevox.github.io";
+const INCREMENTAL_COLLECTION_OVERLAP_MILLISECONDS = 5 * 60 * 1000;
 
 type RuntimeCredentials = Readonly<{
   github: GitHubAppCredentials;
@@ -174,8 +191,26 @@ type CollectedItems = Readonly<{
   enumeratedItems: readonly EnumeratedGitHubItem[];
   details: readonly GitHubItemDetail[];
   observedItems: readonly FreshObservedGitHubItem[];
+  staleItems: readonly StaleObservedGitHubItem<SnapshotCollectionItem>[];
   trackedNodeIds: ReadonlySet<GitHubNodeId>;
+  analysisNodeIds: ReadonlySet<GitHubNodeId>;
+  changedNodeIds: ReadonlySet<GitHubNodeId>;
   relationCandidates: readonly RelationCandidate[];
+  repositoryResults: readonly RepositoryCollectionResult<SnapshotCollectionRepository>[];
+  collectionRepositories: readonly SnapshotCollectionRepository[];
+}>;
+
+type FreshRepositoryRuntimeCollection = Readonly<{
+  state: SnapshotCollectionRepository;
+  enumeratedItems: readonly EnumeratedGitHubItem[];
+  details: readonly GitHubItemDetail[];
+  observedItems: readonly FreshObservedGitHubItem[];
+  changedNodeIds: readonly GitHubNodeId[];
+}>;
+
+type RuntimeTrackingSelection = Readonly<{
+  result: ReturnType<typeof selectTrackingItems>;
+  workByNodeId: ReadonlyMap<GitHubNodeId, TrackedItemWorkDecision>;
 }>;
 
 type DeterministicItemAnalysis = Readonly<{
@@ -273,6 +308,7 @@ export type ProductionRuntimeAdapters = Readonly<{
   ) => Promise<StatePersistenceSession>;
   discoverRepositoryInventory: typeof discoverRepositoryInventory;
   collectGitHubTeamDirectory: typeof collectGitHubTeamDirectory;
+  enumerateGitHubItemsByIdentifiers: typeof enumerateGitHubItemsByIdentifiers;
   enumerateOpenGitHubItems: typeof enumerateOpenGitHubItems;
   collectGitHubItemDetails: typeof collectGitHubItemDetails;
   executeCodexAnalysis: typeof executeCodexAnalysis;
@@ -444,6 +480,190 @@ function previousSnapshot(state: RuntimeState): StateSnapshot | undefined {
   return state.snapshot.status === "available" ? state.snapshot.snapshot : undefined;
 }
 
+function normalizeTrackingIdentifier(identifier: string): string {
+  if (identifier.includes("://") && identifier.endsWith("/")) {
+    return identifier.slice(0, -1);
+  }
+  return identifier;
+}
+
+function previousCollectionRepository(
+  state: RuntimeState,
+  repositoryId: GitHubRepositoryId,
+): SnapshotCollectionRepository | undefined {
+  return previousSnapshot(state)?.collection.repositories.find(
+    (repository) => repository.repositoryId === repositoryId,
+  );
+}
+
+function previousCollectionItemsByNodeId(
+  state: RuntimeState,
+): ReadonlyMap<GitHubNodeId, SnapshotCollectionItem> {
+  return new Map(
+    (previousSnapshot(state)?.collection.repositories ?? []).flatMap((repository) =>
+      repository.items.map((item) => [item.nodeId, item] as const),
+    ),
+  );
+}
+
+function createSnapshotCollectionItem(item: EnumeratedGitHubItem): SnapshotCollectionItem {
+  if (item.state === "open") {
+    return Object.freeze({
+      freshness: "fresh",
+      nodeId: item.nodeId,
+      repositoryId: item.repositoryId,
+      itemFingerprint: item.itemFingerprint,
+      observedAt: item.observedAt,
+      state: "open",
+      terminalAt: null,
+    });
+  }
+  return Object.freeze({
+    freshness: "fresh",
+    nodeId: item.nodeId,
+    repositoryId: item.repositoryId,
+    itemFingerprint: item.itemFingerprint,
+    observedAt: item.observedAt,
+    state: "closed",
+    terminalAt: item.closedAt,
+  });
+}
+
+function createSnapshotCollectionRepository(
+  repository: PublicRepository,
+  successfulAt: UtcIsoDateTime,
+  items: readonly EnumeratedGitHubItem[],
+): SnapshotCollectionRepository {
+  return Object.freeze({
+    repositoryId: repository.id,
+    successfulAt,
+    items: Object.freeze(items.map(createSnapshotCollectionItem)),
+  });
+}
+
+function previousItemCollection(
+  state: RuntimeState,
+  repository: PublicRepository,
+): PreviousItemCollection {
+  const previous = previousCollectionRepository(state, repository.id);
+  if (previous == null) {
+    return Object.freeze({
+      status: "none",
+    });
+  }
+  return Object.freeze({
+    status: "successful",
+    completedAt: previous.successfulAt,
+    itemFingerprints: new Map(previous.items.map((item) => [item.nodeId, item.itemFingerprint])),
+  });
+}
+
+function previousGraphAdjacentNodeIds(state: RuntimeState): ReadonlySet<GitHubNodeId> {
+  const nodeIds = new Set<GitHubNodeId>();
+  for (const relation of previousSnapshot(state)?.relations ?? []) {
+    if (!relation.active) {
+      continue;
+    }
+    nodeIds.add(createGitHubNodeId(relation.fromNodeId));
+    nodeIds.add(createGitHubNodeId(relation.toNodeId));
+  }
+  return nodeIds;
+}
+
+function detailEventWindow(
+  plan: ReturnType<typeof planIncrementalItemCollection>,
+): GitHubItemDetailEventWindow {
+  if (plan.mode === "initial") {
+    return Object.freeze({
+      mode: "initial",
+    });
+  }
+  return Object.freeze({
+    mode: "incremental",
+    since: plan.since,
+  });
+}
+
+function explicitIdentifierMatchesItem(
+  explicitIncludes: readonly string[],
+  item: Readonly<{ nodeId: GitHubNodeId; url: string }>,
+): boolean {
+  return explicitIncludes
+    .map(normalizeTrackingIdentifier)
+    .some((identifier) => identifier === item.nodeId || identifier === item.url);
+}
+
+function shouldObservePreviousTrackedItem(
+  invocation: DailyRunInvocation,
+  configuration: RuntimeConfiguration,
+  item: TrackedItem,
+  collectionItem: SnapshotCollectionItem,
+): boolean {
+  if (explicitIdentifierMatchesItem(configuration.config.tracking.include, item)) {
+    return true;
+  }
+  const retention = determineTerminalRetention({
+    item:
+      collectionItem.state === "open"
+        ? Object.freeze({ state: "open" })
+        : Object.freeze({
+            state: "closed",
+            terminalAt: collectionItem.terminalAt,
+          }),
+    evaluatedAt: invocation.startedAt,
+    retentionDays: configuration.config.tracking.retentionDaysAfterTerminal,
+  });
+  return retention.dataset === "active";
+}
+
+function previousTrackedItemIdentifiers(
+  invocation: DailyRunInvocation,
+  configuration: RuntimeConfiguration,
+  state: RuntimeState,
+  repository: PublicRepository,
+): readonly string[] {
+  const collectionItemsByNodeId = previousCollectionItemsByNodeId(state);
+  const identifiers: string[] = [];
+  for (const item of previousSnapshot(state)?.items ?? []) {
+    if (item.repositoryId !== repository.id) {
+      continue;
+    }
+    const collectionItem = collectionItemsByNodeId.get(item.nodeId);
+    assertNonNullable(collectionItem, `既存追跡項目の収集stateがありません。対象: ${item.nodeId}`);
+    if (shouldObservePreviousTrackedItem(invocation, configuration, item, collectionItem)) {
+      identifiers.push(item.nodeId);
+    }
+  }
+  return Object.freeze(identifiers);
+}
+
+function configuredUrlIdentifiersForRepository(
+  config: Config,
+  repository: PublicRepository,
+): readonly string[] {
+  const expectedPrefix = `https://github.com/${repository.owner}/${repository.name}/`.toLowerCase();
+  return Object.freeze(
+    config.tracking.include
+      .map(normalizeTrackingIdentifier)
+      .filter(
+        (identifier) =>
+          identifier.includes("://") && identifier.toLowerCase().startsWith(expectedPrefix),
+      ),
+  );
+}
+
+function missingIdentifiers(
+  identifiers: readonly string[],
+  currentItems: readonly EnumeratedGitHubItem[],
+): readonly string[] {
+  return Object.freeze(
+    [...new Set(identifiers.map(normalizeTrackingIdentifier))].filter(
+      (identifier) =>
+        !currentItems.some((item) => item.nodeId === identifier || item.url === identifier),
+    ),
+  );
+}
+
 function repositoryFullName(repository: PublicRepository): string {
   return `${repository.owner}/${repository.name}`;
 }
@@ -593,42 +813,68 @@ function authorType(item: FreshObservedGitHubItem): "human" | "bot" | "unknown" 
   return item.author.actor.type;
 }
 
+function enumeratedAuthorType(
+  item: EnumeratedGitHubItem,
+  isBot: ReturnType<typeof createGitHubBotPredicate>,
+): "human" | "bot" | "unknown" {
+  if (item.author.kind === "deleted_account") {
+    return "unknown";
+  }
+  return item.author.account.apiType === "Bot" || isBot(item.author.account) ? "bot" : "human";
+}
+
 function collectTrackingCandidates(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
   state: RuntimeState,
   inventory: RepositoryInventory,
-  items: readonly FreshObservedGitHubItem[],
+  enumeratedItems: readonly EnumeratedGitHubItem[],
+  observedItems: readonly FreshObservedGitHubItem[],
   relationCandidates: readonly RelationCandidate[],
-): ReturnType<typeof selectTrackingItems> {
+): RuntimeTrackingSelection {
   const resolveLabelEffects = createLabelEffectsResolver(normalizeLabelRules(configuration.config));
   const previousItems = new Map(
     (previousSnapshot(state)?.items ?? []).map((item) => [item.nodeId, item]),
   );
-  const currentNodeIds = new Set(items.map((item) => item.nodeId));
-  const candidates: OrganizationTrackingCandidate[] = items.map((item) => {
+  const observedItemsByNodeId = new Map(observedItems.map((item) => [item.nodeId, item]));
+  const currentNodeIds = new Set(enumeratedItems.map((item) => item.nodeId));
+  const isBot = createGitHubBotPredicate(configuration.config.actors.bots);
+  const candidates: OrganizationTrackingCandidate[] = enumeratedItems.map((item) => {
     const repository = findRepository(inventory, item.repositoryId);
     const previous = previousItems.get(item.nodeId);
-    const activity = determineMeaningfulProgress({
-      createdAt: item.createdAt,
-      evaluatedAt: invocation.startedAt,
-      events: item.events,
-      dependencyResolutions: [],
-      naturalLanguageAssessments: [],
-      minimumAiConfidence: configuration.config.ai.confidence.medium,
-      previousActivity:
-        previous == null
-          ? {
-              status: "not_available",
-            }
-          : {
-              status: "available",
-              lastProgressAt: previous.lastProgressAt,
+    const observed = observedItemsByNodeId.get(item.nodeId);
+    const activity =
+      observed == null
+        ? previous == null
+          ? undefined
+          : Object.freeze({
               lastHumanActivityAt: previous.lastHumanActivityAt,
-            },
-      repositoryFullName: repositoryFullName(repository),
-      resolveLabelEffects,
-    });
+              lastProgressAt: previous.lastProgressAt,
+            })
+        : determineMeaningfulProgress({
+            createdAt: observed.createdAt,
+            evaluatedAt: invocation.startedAt,
+            events: observed.events,
+            dependencyResolutions: [],
+            naturalLanguageAssessments: [],
+            minimumAiConfidence: configuration.config.ai.confidence.medium,
+            previousActivity:
+              previous == null
+                ? {
+                    status: "not_available",
+                  }
+                : {
+                    status: "available",
+                    lastProgressAt: previous.lastProgressAt,
+                    lastHumanActivityAt: previous.lastHumanActivityAt,
+                  },
+            repositoryFullName: repositoryFullName(repository),
+            resolveLabelEffects,
+          });
+    assertNonNullable(
+      activity,
+      `詳細未取得の新規項目を追跡候補へ変換できません。対象: ${item.nodeId}`,
+    );
     if (item.state === "open") {
       return Object.freeze({
         scope: "organization",
@@ -642,7 +888,7 @@ function collectTrackingCandidates(
           lastHumanActivityAt: activity.lastHumanActivityAt,
           lastProgressAt: activity.lastProgressAt,
         }),
-        authorType: authorType(item),
+        authorType: enumeratedAuthorType(item, isBot),
         notificationClass: "standard",
         state: "open",
       });
@@ -659,13 +905,13 @@ function collectTrackingCandidates(
         lastHumanActivityAt: activity.lastHumanActivityAt,
         lastProgressAt: activity.lastProgressAt,
       }),
-      authorType: authorType(item),
+      authorType: enumeratedAuthorType(item, isBot),
       notificationClass: "standard",
       state: "closed",
       terminalAt: item.closedAt,
     });
   });
-  return selectTrackingItems({
+  const result = selectTrackingItems({
     startAt: trackingStartAt(configuration, state, invocation),
     evaluatedAt: invocation.startedAt,
     candidates,
@@ -673,7 +919,13 @@ function collectTrackingCandidates(
     previouslyTrackedNodeIds: Object.freeze(
       [...previousItems.keys()].filter((nodeId) => currentNodeIds.has(nodeId)),
     ),
-    explicitIncludes: configuration.config.tracking.include,
+    explicitIncludes: configuration.config.tracking.include
+      .map(normalizeTrackingIdentifier)
+      .filter((identifier) =>
+        candidates.some(
+          (candidate) => candidate.nodeId === identifier || candidate.url === identifier,
+        ),
+      ),
     autoInclude: configuration.config.tracking.autoInclude,
     backfill: createTrackingBackfillRequest(
       invocation.command,
@@ -682,6 +934,33 @@ function collectTrackingCandidates(
       }),
     ),
     maxBackfillItemsPerRun: configuration.config.tracking.backfill.maxItemsPerRun,
+  });
+  const previousCollectionItems = previousCollectionItemsByNodeId(state);
+  const enumeratedItemsByNodeId = new Map(enumeratedItems.map((item) => [item.nodeId, item]));
+  const workByNodeId = new Map<GitHubNodeId, TrackedItemWorkDecision>();
+  for (const selected of result.trackedItems) {
+    const item = enumeratedItemsByNodeId.get(selected.item.nodeId);
+    assertNonNullable(item, `追跡対象の列挙値がありません。対象: ${selected.item.nodeId}`);
+    const previousCollectionItem = previousCollectionItems.get(item.nodeId);
+    workByNodeId.set(
+      item.nodeId,
+      determineTrackedItemWork({
+        state: item.state,
+        analysisInputFingerprint: item.itemFingerprint,
+        previousObservation:
+          previousCollectionItem == null
+            ? Object.freeze({ status: "not_available" })
+            : Object.freeze({
+                status: "available",
+                state: previousCollectionItem.state,
+                analysisInputFingerprint: previousCollectionItem.itemFingerprint,
+              }),
+      }),
+    );
+  }
+  return Object.freeze({
+    result,
+    workByNodeId,
   });
 }
 
@@ -751,7 +1030,7 @@ function createIssueRequestCandidates(
       );
     }
   }
-  return Object.freeze(candidates);
+  return deduplicateByStableId(candidates, (candidate) => candidate.sourceId);
 }
 
 function applyDeterministicAnalysis(
@@ -764,7 +1043,7 @@ function applyDeterministicAnalysis(
   const resolveLabelEffects = createLabelEffectsResolver(normalizeLabelRules(configuration.config));
   const items: DeterministicItemAnalysis[] = [];
   for (const item of collection.observedItems) {
-    if (!collection.trackedNodeIds.has(item.nodeId)) {
+    if (!collection.analysisNodeIds.has(item.nodeId)) {
       continue;
     }
     const repository = findRepository(inventory, item.repositoryId);
@@ -1284,6 +1563,7 @@ function reduceAllAnalyses(
   configuration: RuntimeConfiguration,
   state: RuntimeState,
   inventory: RepositoryInventory,
+  collection: CollectedItems,
   deterministicAnalysis: DeterministicAnalysis,
   codexAnalysis: CodexAnalysis,
 ): ReducedAnalysis {
@@ -1338,8 +1618,8 @@ function reduceAllAnalyses(
   );
   for (const previousItem of previousSnapshot(state)?.items ?? []) {
     if (
-      isTerminalStatus(previousItem.status) &&
       !currentNodeIds.has(previousItem.nodeId) &&
+      collection.trackedNodeIds.has(previousItem.nodeId) &&
       currentRepositoryIds.has(previousItem.repositoryId)
     ) {
       items.push(previousItem);
@@ -1408,6 +1688,27 @@ function previousGraphSnapshot(state: RuntimeState): GraphAnalysisSnapshot | und
   });
 }
 
+function preserveStaleGraphEdges(
+  collection: CollectedItems,
+  previousEdges: readonly ReconciledGraphEdge[],
+  reconciledEdges: readonly ReconciledGraphEdge[],
+): readonly ReconciledGraphEdge[] {
+  const staleNodeIds = new Set<string>(collection.staleItems.map((item) => item.nodeId));
+  const preservedEdges = new Map(
+    previousEdges
+      .filter((edge) => staleNodeIds.has(edge.fromNodeId) || staleNodeIds.has(edge.toNodeId))
+      .map((edge) => [edge.id, edge]),
+  );
+  const result = reconciledEdges.map((edge) => preservedEdges.get(edge.id) ?? edge);
+  const resultIds = new Set(result.map((edge) => edge.id));
+  for (const edgeId of preservedEdges.keys()) {
+    if (!resultIds.has(edgeId)) {
+      throw new TypeError(`stale repositoryの前回edgeがありません。対象: ${edgeId}`);
+    }
+  }
+  return Object.freeze(result);
+}
+
 function reconcileCurrentGraph(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
@@ -1435,11 +1736,12 @@ function reconcileCurrentGraph(
     minimumInferredConfidence: configuration.config.ai.confidence.medium,
     reconciledAt: invocation.startedAt,
   });
+  const edges = preserveStaleGraphEdges(collection, previous?.edges ?? [], reconciled.edges);
   const graphNodes = reduction.items.map(graphAnalysisNode);
   const analysis = analyzeGraph({
     current: {
       nodes: graphNodes,
-      edges: reconciled.edges,
+      edges,
     },
     previous:
       previous == null
@@ -1452,7 +1754,7 @@ function reconcileCurrentGraph(
           },
   });
   return Object.freeze({
-    edges: reconciled.edges,
+    edges,
     analysis,
     previousAnalysis:
       previous == null
@@ -1496,14 +1798,23 @@ function toStateRelation(edge: ReconciledGraphEdge): Relation {
   });
 }
 
-function snapshotRepositories(inventory: RepositoryInventory): readonly SnapshotRepository[] {
+function snapshotRepositories(collection: CollectedItems): readonly SnapshotRepository[] {
   return Object.freeze(
-    inventory.allowlist.repositories.map((repository) =>
-      Object.freeze({
-        ...repository,
-        freshness: "fresh",
-      }),
-    ),
+    collection.repositoryResults.map((result) => {
+      if (result.freshness === "fresh") {
+        return Object.freeze({
+          ...result.repository,
+          observedAt: result.observedAt,
+          freshness: "fresh",
+        });
+      }
+      return Object.freeze({
+        ...result.repository,
+        observedAt: result.lastSuccessfulAt,
+        freshness: "stale",
+        failedAt: result.failedAt,
+      });
+    }),
   );
 }
 
@@ -1672,6 +1983,7 @@ function validateRunCompleteness(
   configuration: RuntimeConfiguration,
   state: RuntimeState,
   inventory: RepositoryInventory,
+  collection: CollectedItems,
   reduction: ReducedAnalysis,
   graph: GraphResult,
 ): ValidatedRun {
@@ -1685,7 +1997,10 @@ function validateRunCompleteness(
     schemaVersion: "1",
     generatedAt: invocation.startedAt,
     trackingStartAt: trackingStartAt(configuration, state, invocation),
-    repositories: snapshotRepositories(inventory),
+    collection: {
+      repositories: collection.collectionRepositories,
+    },
+    repositories: snapshotRepositories(collection),
     items: reduction.items.map((item) => {
       const severity =
         severityByNodeId.get(item.nodeId) ?? previousSeverityByNodeId.get(item.nodeId);
@@ -1926,14 +2241,240 @@ async function deliverDiscord(
   });
 }
 
-function changedItemCount(state: RuntimeState, items: readonly FreshObservedGitHubItem[]): number {
-  const previousItems = new Map(
-    (previousSnapshot(state)?.items ?? []).map((item) => [item.nodeId, item]),
+function configuredNodeIdentifiers(config: Config): readonly string[] {
+  return Object.freeze(config.tracking.include.filter((identifier) => !identifier.includes("://")));
+}
+
+function previousRepositoryValues(state: RuntimeState): ReadonlyMap<
+  GitHubRepositoryId,
+  Readonly<{
+    value: SnapshotCollectionRepository;
+    observedAt: UtcIsoDateTime;
+  }>
+> {
+  return new Map(
+    (previousSnapshot(state)?.collection.repositories ?? []).map((repository) => [
+      repository.repositoryId,
+      Object.freeze({
+        value: repository,
+        observedAt: repository.successfulAt,
+      }),
+    ]),
   );
-  return items.filter((item) => {
-    const previous = previousItems.get(item.nodeId);
-    return previous?.githubUpdatedAt !== item.githubUpdatedAt;
-  }).length;
+}
+
+async function collectFreshRepositoryItems(
+  adapters: ProductionRuntimeAdapters,
+  invocation: DailyRunInvocation,
+  configuration: RuntimeConfiguration,
+  state: RuntimeState,
+  authentication: GitHubClient,
+  repository: PublicRepository,
+  explicitNodeItems: readonly EnumeratedGitHubItem[],
+  adjacentNodeIds: ReadonlySet<GitHubNodeId>,
+): Promise<FreshRepositoryRuntimeCollection> {
+  const allowlist = createPublicRepositoryAllowlist([repository]);
+  const openItems = await adapters.enumerateOpenGitHubItems({
+    allowlist,
+    observedAt: invocation.startedAt,
+    request: authentication.request,
+  });
+  const resolvedNodeItems = explicitNodeItems.filter((item) => item.repositoryId === repository.id);
+  const identifiers = missingIdentifiers(
+    [
+      ...configuredUrlIdentifiersForRepository(configuration.config, repository),
+      ...previousTrackedItemIdentifiers(invocation, configuration, state, repository),
+    ],
+    [...openItems, ...resolvedNodeItems],
+  );
+  const individuallyEnumeratedItems =
+    identifiers.length === 0
+      ? Object.freeze([])
+      : await adapters.enumerateGitHubItemsByIdentifiers({
+          allowlist,
+          identifiers,
+          observedAt: invocation.startedAt,
+          request: authentication.request,
+          graphql: authentication.graphql,
+        });
+  const enumeratedItems = deduplicateByStableId(
+    [...openItems, ...resolvedNodeItems, ...individuallyEnumeratedItems],
+    (item) => item.nodeId,
+  );
+  const currentNodeIds = new Set(enumeratedItems.map((item) => item.nodeId));
+  const plan = planIncrementalItemCollection({
+    items: enumeratedItems,
+    previous: previousItemCollection(state, repository),
+    adjacentItemNodeIds: new Set(
+      [...adjacentNodeIds].filter((nodeId) => currentNodeIds.has(nodeId)),
+    ),
+    overlapMilliseconds: INCREMENTAL_COLLECTION_OVERLAP_MILLISECONDS,
+  });
+  const detailNodeIds = new Set(plan.detailItemNodeIds);
+  const detailTargets = enumeratedItems.filter((item) => detailNodeIds.has(item.nodeId));
+  const details =
+    detailTargets.length === 0
+      ? Object.freeze([])
+      : (
+          await adapters.collectGitHubItemDetails({
+            allowlist,
+            items: detailTargets,
+            observedAt: invocation.startedAt,
+            eventWindow: detailEventWindow(plan),
+            graphql: authentication.graphql,
+          })
+        ).items;
+  const observedItems = normalizeObservedGitHubItems({
+    items: detailTargets,
+    details,
+    isBot: createGitHubBotPredicate(configuration.config.actors.bots),
+  });
+  return Object.freeze({
+    state: createSnapshotCollectionRepository(repository, invocation.startedAt, enumeratedItems),
+    enumeratedItems,
+    details,
+    observedItems,
+    changedNodeIds: plan.changedItemNodeIds,
+  });
+}
+
+async function collectProductionItems(
+  adapters: ProductionRuntimeAdapters,
+  invocation: DailyRunInvocation,
+  configuration: RuntimeConfiguration,
+  state: RuntimeState,
+  authentication: GitHubClient,
+  repositoryInventory: RepositoryInventory,
+): Promise<
+  Readonly<{
+    value: CollectedItems;
+    changedItemCount: number;
+    staleRepositoryCount: number;
+    diagnostics: readonly string[];
+  }>
+> {
+  const nodeIdentifiers = configuredNodeIdentifiers(configuration.config);
+  const explicitNodeItems =
+    nodeIdentifiers.length === 0
+      ? Object.freeze([])
+      : await adapters.enumerateGitHubItemsByIdentifiers({
+          allowlist: repositoryInventory.allowlist,
+          identifiers: nodeIdentifiers,
+          observedAt: invocation.startedAt,
+          request: authentication.request,
+          graphql: authentication.graphql,
+        });
+  const adjacentNodeIds = previousGraphAdjacentNodeIds(state);
+  const freshCollectionsByRepositoryId = new Map<
+    GitHubRepositoryId,
+    FreshRepositoryRuntimeCollection
+  >();
+  const repositoryResults = await collectRepositoriesWithStaleFallback({
+    allowlist: repositoryInventory.allowlist,
+    observedAt: invocation.startedAt,
+    previousValues: previousRepositoryValues(state),
+    collect: async (repository) => {
+      const collected = await collectFreshRepositoryItems(
+        adapters,
+        invocation,
+        configuration,
+        state,
+        authentication,
+        repository,
+        explicitNodeItems,
+        adjacentNodeIds,
+      );
+      freshCollectionsByRepositoryId.set(repository.id, collected);
+      return collected.state;
+    },
+  });
+
+  const enumeratedItems: EnumeratedGitHubItem[] = [];
+  const details: GitHubItemDetail[] = [];
+  const observedItems: FreshObservedGitHubItem[] = [];
+  const staleItems: StaleObservedGitHubItem<SnapshotCollectionItem>[] = [];
+  const changedNodeIds = new Set<GitHubNodeId>();
+  const collectionRepositories: SnapshotCollectionRepository[] = [];
+  const staleRepositoryIds = new Set<GitHubRepositoryId>();
+  const diagnostics: string[] = [];
+  for (const result of repositoryResults) {
+    if (result.freshness === "fresh") {
+      const collected = freshCollectionsByRepositoryId.get(result.repository.id);
+      assertNonNullable(
+        collected,
+        `最新repository収集結果がありません。対象: ${result.repository.id}`,
+      );
+      enumeratedItems.push(...collected.enumeratedItems);
+      details.push(...collected.details);
+      observedItems.push(...collected.observedItems);
+      for (const nodeId of collected.changedNodeIds) {
+        changedNodeIds.add(nodeId);
+      }
+      collectionRepositories.push(result.value);
+      continue;
+    }
+    staleRepositoryIds.add(result.repository.id);
+    collectionRepositories.push(result.previousValue);
+    staleItems.push(
+      ...markObservedGitHubItemsStale({
+        previousItems: result.previousValue.items,
+        failedAt: result.failedAt,
+        diagnostic: result.diagnostic,
+      }),
+    );
+    diagnostics.push(result.diagnostic.message);
+  }
+
+  const uniqueEnumeratedItems = deduplicateByStableId(enumeratedItems, (item) => item.nodeId);
+  const uniqueDetails = deduplicateByStableId(details, (detail) => detail.nodeId);
+  const uniqueObservedItems = deduplicateByStableId(observedItems, (item) => item.nodeId);
+  const relationCandidates = extractAllRelationCandidates(
+    configuration.config,
+    repositoryInventory.allowlist,
+    uniqueEnumeratedItems,
+    uniqueDetails,
+  );
+  const tracking = collectTrackingCandidates(
+    invocation,
+    configuration,
+    state,
+    repositoryInventory,
+    uniqueEnumeratedItems,
+    uniqueObservedItems,
+    relationCandidates,
+  );
+  const trackedNodeIds = new Set(
+    tracking.result.trackedItems.map((selected) => selected.item.nodeId),
+  );
+  for (const previousItem of previousSnapshot(state)?.items ?? []) {
+    if (staleRepositoryIds.has(previousItem.repositoryId)) {
+      trackedNodeIds.add(previousItem.nodeId);
+    }
+  }
+  const observedNodeIds = new Set(uniqueObservedItems.map((item) => item.nodeId));
+  const analysisNodeIds = new Set<GitHubNodeId>();
+  for (const [nodeId, work] of tracking.workByNodeId) {
+    if (work.codexAnalysis.action === "analyze" && observedNodeIds.has(nodeId)) {
+      analysisNodeIds.add(nodeId);
+    }
+  }
+  return Object.freeze({
+    value: Object.freeze({
+      enumeratedItems: uniqueEnumeratedItems,
+      details: uniqueDetails,
+      observedItems: uniqueObservedItems,
+      staleItems: Object.freeze(staleItems),
+      trackedNodeIds,
+      analysisNodeIds,
+      changedNodeIds,
+      relationCandidates,
+      repositoryResults,
+      collectionRepositories: Object.freeze(collectionRepositories),
+    }),
+    changedItemCount: [...changedNodeIds].filter((nodeId) => trackedNodeIds.has(nodeId)).length,
+    staleRepositoryCount: staleRepositoryIds.size,
+    diagnostics: Object.freeze(diagnostics),
+  });
 }
 
 function createDailyDependencies(
@@ -2001,54 +2542,21 @@ function createDailyDependencies(
       authentication,
       repositoryInventory,
     }) => {
-      const enumeratedItems = await adapters.enumerateOpenGitHubItems({
-        allowlist: repositoryInventory.allowlist,
-        observedAt: invocation.startedAt,
-        request: authentication.request,
-      });
-      const detailCollection = await adapters.collectGitHubItemDetails({
-        allowlist: repositoryInventory.allowlist,
-        items: enumeratedItems,
-        observedAt: invocation.startedAt,
-        graphql: authentication.graphql,
-      });
-      const details = detailCollection.items;
-      const observedItems = normalizeObservedGitHubItems({
-        items: enumeratedItems,
-        details,
-        isBot: createGitHubBotPredicate(configuration.config.actors.bots),
-      });
-      const relationCandidates = extractAllRelationCandidates(
-        configuration.config,
-        repositoryInventory.allowlist,
-        enumeratedItems,
-        details,
-      );
-      const tracking = collectTrackingCandidates(
+      const collection = await collectProductionItems(
+        adapters,
         invocation,
         configuration,
         state,
+        authentication,
         repositoryInventory,
-        observedItems,
-        relationCandidates,
       );
-      const trackedNodeIds = new Set(tracking.trackedItems.map((selected) => selected.item.nodeId));
       return Object.freeze({
-        value: Object.freeze({
-          enumeratedItems,
-          details,
-          observedItems,
-          trackedNodeIds,
-          relationCandidates,
-        }),
-        itemCount: trackedNodeIds.size,
-        changedItemCount: changedItemCount(
-          state,
-          observedItems.filter((item) => trackedNodeIds.has(item.nodeId)),
-        ),
+        value: collection.value,
+        itemCount: collection.value.trackedNodeIds.size,
+        changedItemCount: collection.changedItemCount,
         githubApiRemaining: githubApiRemaining(authentication),
-        staleRepositoryCount: 0,
-        diagnostics: Object.freeze([]),
+        staleRepositoryCount: collection.staleRepositoryCount,
+        diagnostics: collection.diagnostics,
       });
     },
     applyDeterministicRules: ({
@@ -2084,13 +2592,20 @@ function createDailyDependencies(
         diagnostics: analysis.diagnostics,
       });
     },
-    reduceAnalysis: ({ invocation, configuration, deterministicAnalysis, codexAnalysis }) =>
+    reduceAnalysis: ({
+      invocation,
+      configuration,
+      collection,
+      deterministicAnalysis,
+      codexAnalysis,
+    }) =>
       Promise.resolve(
         reduceAllAnalyses(
           invocation,
           configuration,
           deterministicAnalysis.state,
           deterministicAnalysis.inventory,
+          collection,
           deterministicAnalysis,
           codexAnalysis,
         ),
@@ -2109,6 +2624,7 @@ function createDailyDependencies(
       configuration,
       state,
       repositoryInventory,
+      collection,
       reduction,
       graph,
     }) =>
@@ -2120,6 +2636,7 @@ function createDailyDependencies(
             configuration,
             state,
             repositoryInventory,
+            collection,
             reduction,
             graph,
           ),

@@ -8,6 +8,7 @@ import {
   collectGitHubTeamDirectory,
   createGitHubClient,
   discoverRepositoryInventory,
+  enumerateGitHubItemsByIdentifiers,
   enumerateOpenGitHubItems,
 } from "../github/index.js";
 import { writePublicDataFiles } from "../pages/index.js";
@@ -32,6 +33,7 @@ type ConcreteOperationName =
   | "collectGitHubItemDetails"
   | "collectGitHubTeamDirectory"
   | "discoverRepositoryInventory"
+  | "enumerateGitHubItemsByIdentifiers"
   | "enumerateOpenGitHubItems"
   | "executeCodexAnalysis"
   | "loadConfig"
@@ -52,6 +54,7 @@ function createProductionAdapters(adapters: CliCompositionAdapters): ProductionR
       StatePersistenceSession.open(adapter, configuration),
     discoverRepositoryInventory,
     collectGitHubTeamDirectory,
+    enumerateGitHubItemsByIdentifiers,
     enumerateOpenGitHubItems,
     collectGitHubItemDetails,
     executeCodexAnalysis,

@@ -1,7 +1,7 @@
 import { StateConfigurationError, StatePublicSafetyError } from "./errors.js";
 import { type StateSnapshot } from "./snapshot.js";
 import { type Repository } from "../domain/index.js";
-import { createPublicRepositoryAllowlist, isEligiblePublicRepository } from "../github/index.js";
+import { createPublicRepositoryAllowlist } from "../github/index.js";
 
 const MAX_PERSISTED_STRING_LENGTH = 4096;
 const SECRET_PATTERNS: readonly RegExp[] = [
@@ -141,7 +141,7 @@ export function assertStatePublicSafety(input: StatePublicSafetyInput): void {
   }
 
   const privateRepositoryIds = input.repositoryInventory
-    .filter((repository) => !isEligiblePublicRepository(repository))
+    .filter((repository) => repository.visibility !== "public")
     .map((repository) => repository.id);
   violationCodes.push(
     ...scanValues(

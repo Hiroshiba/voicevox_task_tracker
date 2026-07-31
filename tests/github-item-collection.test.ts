@@ -14,6 +14,7 @@ import {
   createGitHubBodyFingerprint,
   createPublicRepositoryAllowlist,
   deduplicateByStableId,
+  enumerateGitHubItemsByIdentifiers,
   enumerateOpenGitHubItems,
   planIncrementalItemCollection,
   type EnumeratedGitHubItem,
@@ -229,6 +230,68 @@ async function enumerateFixture(
 }
 
 describe("GitHub項目列挙", () => {
+  it("open列挙にないclosed項目をURLから個別取得する", async () => {
+    const metadata = {
+      ...createItemMetadata(7, {}),
+      state: "closed",
+      state_reason: "completed",
+      closed_at: "2026-07-31T23:30:00Z",
+    };
+    const requestedRoutes: string[] = [];
+    const items = await enumerateGitHubItemsByIdentifiers({
+      allowlist: createAllowlist("R_example", "example"),
+      identifiers: [metadata.html_url],
+      observedAt,
+      request: async (route, parameters) => {
+        await Promise.resolve();
+        requestedRoutes.push(route);
+        expect(parameters).toMatchObject({
+          owner: "VOICEVOX",
+          repo: "example",
+          issue_number: 7,
+        });
+        return createRestResponse(metadata, "example");
+      },
+      graphql: () => Promise.reject(new TypeError("URL指定ではGraphQLを呼びません")),
+    });
+
+    expect(requestedRoutes).toEqual(["GET /repos/{owner}/{repo}/issues/{issue_number}"]);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      nodeId: "I_item_7",
+      state: "closed",
+      stateReason: "completed",
+      closedAt: "2026-07-31T23:30:00.000Z",
+    });
+  });
+
+  it("node IDをGitHub URLへ解決して同じ項目を個別取得する", async () => {
+    const metadata = createItemMetadata(8, {});
+    const items = await enumerateGitHubItemsByIdentifiers({
+      allowlist: createAllowlist("R_example", "example"),
+      identifiers: [metadata.node_id],
+      observedAt,
+      request: async (route) => {
+        await Promise.resolve();
+        expect(route).toBe("GET /repos/{owner}/{repo}/issues/{issue_number}");
+        return createRestResponse(metadata, "example");
+      },
+      graphql: (query, variables) => {
+        expect(query).toContain("query GitHubItemIdentifier");
+        expect(variables).toEqual({ itemId: metadata.node_id });
+        return Promise.resolve({
+          node: {
+            __typename: "Issue",
+            id: metadata.node_id,
+            url: metadata.html_url,
+          },
+        });
+      },
+    });
+
+    expect(items.map((item) => item.nodeId)).toEqual([metadata.node_id]);
+  });
+
   it("100件を超えるopen項目をrepo単位で最終ページまで取得する", async () => {
     const metadata = Array.from({ length: 205 }, (_, index) => createItemMetadata(index + 1, {}));
     const requestedRoutes: string[] = [];

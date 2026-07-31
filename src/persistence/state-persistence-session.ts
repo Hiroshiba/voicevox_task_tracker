@@ -350,7 +350,12 @@ export class StatePersistenceSession {
     const previousResult = await this.loadSnapshot();
     const previousSnapshot =
       previousResult.status === "missing_branch" ? undefined : previousResult.snapshot;
-    const historyRecord = createStateHistoryRecord(previousSnapshot, snapshot, runReport.date);
+    const historyRecord = createStateHistoryRecord(
+      previousSnapshot,
+      snapshot,
+      runReport.date,
+      input.repositoryInventory,
+    );
     const historyPath = joinStatePath(
       this.#configuration.historyDirectory,
       `${runReport.date}.jsonl`,

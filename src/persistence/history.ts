@@ -3,6 +3,7 @@ import { z } from "zod";
 import { serializeCanonicalJson, serializeCanonicalJsonLine } from "./canonical-json.js";
 import { StateFormatError, StateHistoryError } from "./errors.js";
 import { type StateSnapshot } from "./snapshot.js";
+import { type Repository } from "../domain/index.js";
 
 const identifierSchema = z.string().min(1).max(512).regex(/^\S+$/u);
 const dateTimeSchema = z.iso
@@ -117,6 +118,11 @@ const historyEventSchema = z.discriminatedUnion("kind", [
     kind: z.literal("edge_removed"),
     relationId: identifierSchema,
   }),
+  z.strictObject({
+    kind: z.literal("repository_excluded"),
+    repositoryFullName: z.string().regex(/^[^/\s]+\/[^/\s]+$/u),
+    reason: z.literal("archived"),
+  }),
 ]);
 const historyRecordSchema = z
   .strictObject({
@@ -209,7 +215,43 @@ function historyEventKey(event: StateHistoryEvent): string {
     case "edge_set":
     case "edge_removed":
       return `edge:${event.relationId}`;
+    case "repository_excluded":
+      return `repository_excluded:${event.repositoryFullName}`;
   }
+}
+
+function createRepositoryExclusionEvents(
+  previousSnapshot: StateSnapshot | undefined,
+  currentSnapshot: StateSnapshot,
+  repositoryInventory: readonly Repository[],
+): readonly StateHistoryEvent[] {
+  if (previousSnapshot == null) {
+    return Object.freeze([]);
+  }
+  const currentRepositoryIds = new Set(
+    currentSnapshot.repositories.map((repository) => repository.id),
+  );
+  const inventoryById = new Map(
+    repositoryInventory.map((repository) => [repository.id, repository]),
+  );
+  const events: StateHistoryEvent[] = [];
+  for (const previousRepository of previousSnapshot.repositories) {
+    if (currentRepositoryIds.has(previousRepository.id)) {
+      continue;
+    }
+    const currentInventoryRepository = inventoryById.get(previousRepository.id);
+    if (
+      currentInventoryRepository?.visibility === "public" &&
+      currentInventoryRepository.archived
+    ) {
+      events.push({
+        kind: "repository_excluded",
+        repositoryFullName: `${currentInventoryRepository.owner}/${currentInventoryRepository.name}`,
+        reason: "archived",
+      });
+    }
+  }
+  return Object.freeze(events);
 }
 
 function createProjection(snapshot: StateSnapshot): StateHistoryProjection {
@@ -356,6 +398,7 @@ export function createStateHistoryRecord(
   previousSnapshot: StateSnapshot | undefined,
   currentSnapshot: StateSnapshot,
   date: string,
+  repositoryInventory: readonly Repository[],
 ): StateHistoryRecord {
   if (!isCalendarDate(date)) {
     throw new StateHistoryError("履歴の日付が不正です");
@@ -371,6 +414,7 @@ export function createStateHistoryRecord(
     ),
     ...createSetAndRemoveEvents("edge", previous.edges, current.edges),
     ...createSetAndRemoveEvents("severity", previous.severities, current.severities),
+    ...createRepositoryExclusionEvents(previousSnapshot, currentSnapshot, repositoryInventory),
   ].sort((left, right) => compareStrings(historyEventKey(left), historyEventKey(right)));
 
   return validateHistoryRecord({
@@ -469,6 +513,8 @@ function applyHistoryEvent(
       return;
     case "edge_removed":
       projection.edges.delete(event.relationId);
+      return;
+    case "repository_excluded":
       return;
   }
 }

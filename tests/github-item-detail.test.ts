@@ -512,6 +512,7 @@ describe("Issue詳細収集", () => {
       allowlist,
       items: [item],
       observedAt,
+      eventWindow: Object.freeze({ mode: "initial" }),
       graphql: mock.graphql,
     });
 
@@ -649,6 +650,7 @@ describe("Issue詳細収集", () => {
       allowlist,
       items: [item],
       observedAt,
+      eventWindow: Object.freeze({ mode: "initial" }),
       graphql: mock.client.graphql,
     });
 
@@ -965,6 +967,7 @@ describe("Pull Request詳細収集", () => {
       allowlist,
       items: [item],
       observedAt,
+      eventWindow: Object.freeze({ mode: "initial" }),
       graphql: mock.graphql,
     });
 
@@ -1166,6 +1169,7 @@ describe("Pull Request詳細収集", () => {
       allowlist,
       items: fixtures.map((fixture) => fixture.item),
       observedAt,
+      eventWindow: Object.freeze({ mode: "initial" }),
       graphql: mock.graphql,
     });
 

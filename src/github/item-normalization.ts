@@ -7,6 +7,7 @@ import {
   type GitHubItemDisplayReference,
   type GitHubItemUrl,
   type GitHubNodeId,
+  type GitHubRepositoryId,
   type NormalizedEvent,
   type ObservedGitHubAutoMerge,
   type ObservedGitHubItemAuthor,
@@ -116,12 +117,22 @@ type GitHubPullRequestNormalizationResult = FreshObservedGitHubPullRequest &
 export type FreshObservedGitHubItem =
   FreshObservedGitHubIssue | GitHubPullRequestNormalizationResult;
 
+/** stale化に必要な前回観測値の最小契約。 */
+export type FreshObservedGitHubItemReference = Readonly<{
+  freshness: "fresh";
+  nodeId: GitHubNodeId;
+  repositoryId: GitHubRepositoryId;
+  observedAt: UtcIsoDateTime;
+}>;
+
 /** 取得失敗により前回観測値だけを保持するGitHub項目。 */
-export type StaleObservedGitHubItem = Readonly<{
+export type StaleObservedGitHubItem<
+  PreviousObservation extends FreshObservedGitHubItemReference = FreshObservedGitHubItem,
+> = Readonly<{
   freshness: "stale";
   nodeId: GitHubNodeId;
-  repositoryId: PublicRepositoryId;
-  previousObservation: FreshObservedGitHubItem;
+  repositoryId: PreviousObservation["repositoryId"];
+  previousObservation: PreviousObservation;
   lastSuccessfulAt: UtcIsoDateTime;
   failedAt: UtcIsoDateTime;
   diagnostic: Readonly<{
@@ -147,8 +158,10 @@ export type NormalizeObservedGitHubItemsOptions = Readonly<{
   isBot: GitHubBotPredicate;
 }>;
 
-export type MarkObservedGitHubItemsStaleOptions = Readonly<{
-  previousItems: readonly FreshObservedGitHubItem[];
+export type MarkObservedGitHubItemsStaleOptions<
+  PreviousObservation extends FreshObservedGitHubItemReference = FreshObservedGitHubItem,
+> = Readonly<{
+  previousItems: readonly PreviousObservation[];
   failedAt: UtcIsoDateTime;
   diagnostic: Readonly<{
     code: "github_repository_temporarily_unavailable";
@@ -814,9 +827,11 @@ export function normalizeObservedGitHubItems(
 }
 
 /** 前回の最新観測値を現在値へ昇格させずstale項目として保持する。 */
-export function markObservedGitHubItemsStale(
-  options: MarkObservedGitHubItemsStaleOptions,
-): readonly StaleObservedGitHubItem[] {
+export function markObservedGitHubItemsStale<
+  PreviousObservation extends FreshObservedGitHubItemReference,
+>(
+  options: MarkObservedGitHubItemsStaleOptions<PreviousObservation>,
+): readonly StaleObservedGitHubItem<PreviousObservation>[] {
   assertUniqueItemNodeIds(options.previousItems, "前回観測値");
   return Object.freeze(
     options.previousItems.map((previousObservation) => {

@@ -526,7 +526,34 @@ const PULL_REQUEST_TIMELINE_ITEM_TYPES = `
   ]
 `;
 
-function createItemDetailQuery(capabilities: GitHubItemDetailCapabilities): string {
+/** 詳細イベントを初回全件またはoverlap起点から取得する範囲。 */
+export type GitHubItemDetailEventWindow =
+  | Readonly<{
+      mode: "initial";
+    }>
+  | Readonly<{
+      mode: "incremental";
+      since: UtcIsoDateTime;
+    }>;
+
+function timelineSinceVariableDeclaration(window: GitHubItemDetailEventWindow): string {
+  return window.mode === "initial" ? "" : ", $since: DateTime!";
+}
+
+function timelineSinceArgument(window: GitHubItemDetailEventWindow): string {
+  return window.mode === "initial" ? "" : ", since: $since";
+}
+
+function eventWindowVariables(
+  window: GitHubItemDetailEventWindow,
+): Readonly<Record<string, unknown>> {
+  return window.mode === "initial" ? Object.freeze({}) : Object.freeze({ since: window.since });
+}
+
+function createItemDetailQuery(
+  capabilities: GitHubItemDetailCapabilities,
+  eventWindow: GitHubItemDetailEventWindow,
+): string {
   const dependencyFields =
     capabilities.nativeDependencies === "available"
       ? `
@@ -569,7 +596,7 @@ function createItemDetailQuery(capabilities: GitHubItemDetailCapabilities): stri
       : "";
 
   return `
-    query GitHubItemDetail($itemId: ID!) {
+    query GitHubItemDetail($itemId: ID!${timelineSinceVariableDeclaration(eventWindow)}) {
       item: node(id: $itemId) {
         __typename
         ... on Issue {
@@ -584,7 +611,7 @@ function createItemDetailQuery(capabilities: GitHubItemDetailCapabilities): stri
               endCursor
             }
           }
-          timelineItems(first: 100, itemTypes: ${ISSUE_TIMELINE_ITEM_TYPES}) {
+          timelineItems(first: 100, itemTypes: ${ISSUE_TIMELINE_ITEM_TYPES}${timelineSinceArgument(eventWindow)}) {
             nodes {
               ...DetailIssueTimelineFields
             }
@@ -678,7 +705,7 @@ function createItemDetailQuery(capabilities: GitHubItemDetailCapabilities): stri
               }
             }
           }
-          timelineItems(first: 100, itemTypes: ${PULL_REQUEST_TIMELINE_ITEM_TYPES}) {
+          timelineItems(first: 100, itemTypes: ${PULL_REQUEST_TIMELINE_ITEM_TYPES}${timelineSinceArgument(eventWindow)}) {
             nodes {
               ...DetailPullRequestTimelineFields
             }
@@ -727,10 +754,13 @@ const COMMENT_PAGE_QUERY = `
   ${GRAPHQL_FRAGMENTS}
 `;
 
-function createTimelinePageQuery(itemType: "issue" | "pull_request"): string {
+function createTimelinePageQuery(
+  itemType: "issue" | "pull_request",
+  eventWindow: GitHubItemDetailEventWindow,
+): string {
   if (itemType === "issue") {
     return `
-      query GitHubIssueTimelinePage($itemId: ID!, $after: String!) {
+      query GitHubIssueTimelinePage($itemId: ID!, $after: String!${timelineSinceVariableDeclaration(eventWindow)}) {
         item: node(id: $itemId) {
           __typename
           ... on Issue {
@@ -739,6 +769,7 @@ function createTimelinePageQuery(itemType: "issue" | "pull_request"): string {
               first: 100
               after: $after
               itemTypes: ${ISSUE_TIMELINE_ITEM_TYPES}
+              ${eventWindow.mode === "initial" ? "" : "since: $since"}
             ) {
               nodes {
                 ...DetailIssueTimelineFields
@@ -755,7 +786,7 @@ function createTimelinePageQuery(itemType: "issue" | "pull_request"): string {
     `;
   }
   return `
-    query GitHubPullRequestTimelinePage($itemId: ID!, $after: String!) {
+    query GitHubPullRequestTimelinePage($itemId: ID!, $after: String!${timelineSinceVariableDeclaration(eventWindow)}) {
       item: node(id: $itemId) {
         __typename
         ... on PullRequest {
@@ -764,6 +795,7 @@ function createTimelinePageQuery(itemType: "issue" | "pull_request"): string {
             first: 100
             after: $after
             itemTypes: ${PULL_REQUEST_TIMELINE_ITEM_TYPES}
+            ${eventWindow.mode === "initial" ? "" : "since: $since"}
           ) {
             nodes {
               ...DetailPullRequestTimelineFields
@@ -1442,6 +1474,7 @@ export type CollectGitHubItemDetailsOptions = Readonly<{
   allowlist: PublicRepositoryAllowlist;
   items: readonly EnumeratedGitHubItem[];
   observedAt: UtcIsoDateTime;
+  eventWindow: GitHubItemDetailEventWindow;
   graphql: Graphql;
 }>;
 
@@ -1717,11 +1750,12 @@ function normalizeComments(nodes: readonly RawComment[]): readonly GitHubIssueCo
 async function collectTimelineNodes(
   item: EnumeratedGitHubItem,
   initialConnection: z.output<typeof timelineConnectionSchema>,
+  eventWindow: GitHubItemDetailEventWindow,
   graphql: Graphql,
 ): Promise<readonly RawTimelineNode[]> {
   const nodes = [...initialConnection.nodes];
   let pageInfo = initialConnection.pageInfo;
-  const query = createTimelinePageQuery(item.type);
+  const query = createTimelinePageQuery(item.type, eventWindow);
   for (;;) {
     const cursor = requireConnectionCursor(pageInfo, "timeline events");
     if (cursor == null) {
@@ -1730,6 +1764,7 @@ async function collectTimelineNodes(
     const response = await graphql(query, {
       itemId: item.nodeId,
       after: cursor,
+      ...eventWindowVariables(eventWindow),
     });
     const parsed = parseGraphqlResponse(
       itemTimelinePageResponseSchema,
@@ -2859,7 +2894,12 @@ async function collectIssueDetail(
   options: CollectGitHubItemDetailsOptions,
 ): Promise<GitHubItemDetail> {
   const commentNodes = await collectCommentNodes(item, issue.comments, options.graphql);
-  const timelineNodes = await collectTimelineNodes(item, issue.timelineItems, options.graphql);
+  const timelineNodes = await collectTimelineNodes(
+    item,
+    issue.timelineItems,
+    options.eventWindow,
+    options.graphql,
+  );
   const timeline = normalizeTimeline(timelineNodes);
   return Object.freeze({
     sourceId: buildSourceId("github_item_detail", item.nodeId),
@@ -2910,6 +2950,7 @@ async function collectPullRequestDetail(
   const timelineNodes = await collectTimelineNodes(
     item,
     pullRequest.timelineItems,
+    options.eventWindow,
     options.graphql,
   );
   const timeline = normalizeTimeline(timelineNodes);
@@ -2945,8 +2986,9 @@ async function collectItemDetail(
   options: CollectGitHubItemDetailsOptions,
 ): Promise<GitHubItemDetail> {
   validateItemRepositoryAlias(item, repository);
-  const response = await options.graphql(createItemDetailQuery(capabilities), {
+  const response = await options.graphql(createItemDetailQuery(capabilities, options.eventWindow), {
     itemId: item.nodeId,
+    ...eventWindowVariables(options.eventWindow),
   });
   const parsed = parseGraphqlResponse(
     baseItemDetailResponseSchema,
@@ -2970,6 +3012,12 @@ async function collectItemDetail(
 export async function collectGitHubItemDetails(
   options: CollectGitHubItemDetailsOptions,
 ): Promise<GitHubItemDetailCollection> {
+  if (
+    options.eventWindow.mode === "incremental" &&
+    options.eventWindow.since > options.observedAt
+  ) {
+    throw new RangeError("増分イベント取得起点は詳細観測時刻以前にしてください");
+  }
   validateDetailTargets(options.allowlist, options.items);
   const capabilities = await discoverCapabilities(options.graphql);
   const details: GitHubItemDetail[] = [];

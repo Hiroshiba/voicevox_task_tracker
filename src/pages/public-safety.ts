@@ -1,5 +1,5 @@
 import { type Repository } from "../domain/index.js";
-import { createPublicRepositoryAllowlist, isEligiblePublicRepository } from "../github/index.js";
+import { createPublicRepositoryAllowlist } from "../github/index.js";
 import { type StateHistoryRecord, type StateSnapshot } from "../persistence/index.js";
 import { PagesPublicSafetyError } from "./errors.js";
 
@@ -92,7 +92,7 @@ function isSafeGitHubUrl(value: string): boolean {
 function privateRepositorySentinels(inventory: readonly Repository[]): readonly string[] {
   return Object.freeze(
     inventory
-      .filter((repository) => !isEligiblePublicRepository(repository))
+      .filter((repository) => repository.visibility !== "public")
       .flatMap((repository) => [
         repository.id,
         `${repository.owner}/${repository.name}`,

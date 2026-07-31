@@ -9,12 +9,14 @@ import {
 } from "./errors.js";
 import {
   isTerminalStatus,
+  type GitHubNodeId,
   type Relation,
   type Repository,
   type Severity,
   type TrackedItem,
   type UtcIsoDateTime,
 } from "../domain/index.js";
+import { type PublicRepositoryId, type Sha256Fingerprint } from "../github/index.js";
 
 type PublicSnapshotRepositoryFields = Repository &
   Readonly<{
@@ -41,6 +43,37 @@ export type SnapshotTrackedItem = TrackedItem &
     severity: Severity;
   }>;
 
+/** 次回の増分計画とterminal保持判定へ渡す軽量なGitHub項目観測値。 */
+export type SnapshotCollectionItem = Readonly<{
+  freshness: "fresh";
+  nodeId: GitHubNodeId;
+  repositoryId: PublicRepositoryId;
+  itemFingerprint: Sha256Fingerprint;
+  observedAt: UtcIsoDateTime;
+}> &
+  (
+    | Readonly<{
+        state: "open";
+        terminalAt: null;
+      }>
+    | Readonly<{
+        state: "closed";
+        terminalAt: UtcIsoDateTime;
+      }>
+  );
+
+/** repository単位の最終成功時刻と項目fingerprint。 */
+export type SnapshotCollectionRepository = Readonly<{
+  repositoryId: PublicRepositoryId;
+  successfulAt: UtcIsoDateTime;
+  items: readonly SnapshotCollectionItem[];
+}>;
+
+/** 次回runへ引き継ぐ本番収集の軽量state。 */
+export type SnapshotCollectionState = Readonly<{
+  repositories: readonly SnapshotCollectionRepository[];
+}>;
+
 /** 完全runだけを表すsnapshot内のrun情報。 */
 export type SnapshotRun = Readonly<{
   id: string;
@@ -53,6 +86,7 @@ export type StateSnapshot = Readonly<{
   schemaVersion: "1";
   generatedAt: UtcIsoDateTime;
   trackingStartAt: UtcIsoDateTime;
+  collection: SnapshotCollectionState;
   repositories: readonly SnapshotRepository[];
   items: readonly SnapshotTrackedItem[];
   relations: readonly Relation[];
@@ -116,6 +150,52 @@ function assertSnapshotSemantics(snapshot: StateSnapshot): void {
   );
 
   const repositoryIds = new Set(snapshot.repositories.map((repository) => repository.id));
+  assertUnique(
+    snapshot.collection.repositories.map((repository) => repository.repositoryId),
+    "収集stateのrepository ID",
+  );
+  const collectionItemNodeIds = snapshot.collection.repositories.flatMap((repository) =>
+    repository.items.map((item) => item.nodeId),
+  );
+  assertUnique(collectionItemNodeIds, "収集stateのitem node ID");
+  const snapshotRepositoriesById = new Map(
+    snapshot.repositories.map((repository) => [repository.id, repository]),
+  );
+  for (const collectionRepository of snapshot.collection.repositories) {
+    const snapshotRepository = snapshotRepositoriesById.get(collectionRepository.repositoryId);
+    if (snapshotRepository == null) {
+      throw new StateSnapshotSemanticError(
+        "収集stateのrepositoryIdがsnapshotのrepository一覧にありません",
+      );
+    }
+    assertUtcDateTime(collectionRepository.successfulAt, "収集stateのrepository成功時刻");
+    if (collectionRepository.successfulAt !== snapshotRepository.observedAt) {
+      throw new StateSnapshotSemanticError(
+        "収集stateのrepository成功時刻がsnapshotのrepository観測時刻と一致しません",
+      );
+    }
+    for (const item of collectionRepository.items) {
+      if (item.repositoryId !== collectionRepository.repositoryId) {
+        throw new StateSnapshotSemanticError(
+          "収集stateのitem repositoryIdが親repositoryと一致しません",
+        );
+      }
+      assertUtcDateTime(item.observedAt, "収集stateのitem観測時刻");
+      if (item.observedAt > collectionRepository.successfulAt) {
+        throw new StateSnapshotSemanticError(
+          "収集stateのitem観測時刻はrepository成功時刻以前にしてください",
+        );
+      }
+      if (item.state === "closed") {
+        assertUtcDateTime(item.terminalAt, "収集stateのterminal遷移時刻");
+        if (item.terminalAt > collectionRepository.successfulAt) {
+          throw new StateSnapshotSemanticError(
+            "収集stateのterminal遷移時刻はrepository成功時刻以前にしてください",
+          );
+        }
+      }
+    }
+  }
   for (const repository of snapshot.repositories) {
     assertUtcDateTime(repository.observedAt, "repository observedAt");
     if (repository.freshness === "stale") {
@@ -172,6 +252,22 @@ function assertSnapshotSemantics(snapshot: StateSnapshot): void {
 function normalizeSnapshot(snapshot: StateSnapshot): StateSnapshot {
   return Object.freeze({
     ...snapshot,
+    collection: Object.freeze({
+      repositories: Object.freeze(
+        [...snapshot.collection.repositories]
+          .sort((left, right) => compareStrings(left.repositoryId, right.repositoryId))
+          .map((repository) =>
+            Object.freeze({
+              ...repository,
+              items: Object.freeze(
+                [...repository.items].sort((left, right) =>
+                  compareStrings(left.nodeId, right.nodeId),
+                ),
+              ),
+            }),
+          ),
+      ),
+    }),
     repositories: Object.freeze(
       [...snapshot.repositories].sort((left, right) => compareStrings(left.id, right.id)),
     ),
