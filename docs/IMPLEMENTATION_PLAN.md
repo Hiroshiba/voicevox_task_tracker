@@ -38,7 +38,7 @@ VOICEVOX Organization全体の公開Issue/PRについて、状態・ボールの
 
 ### Phase 3: 依存グラフ
 
-- [ ] T14 関係候補抽出 — native dependency、sub-issue、closing keyword、checklist階層、cross-reference、plain linkの候補化と種別区別
+- [x] T14 関係候補抽出 — native dependency、sub-issue、closing keyword、checklist階層、cross-reference、plain linkの候補化と種別区別
 - [ ] T15 グラフreconcile — authoritative/inferred edgeのマージ、根拠消滅時の切断、edge履歴
 - [ ] T16 グラフ解析 — cycle検知、actionable frontier、downstream impact、cross-repo component、隣接変化の伝播
 

@@ -1,0 +1,840 @@
+import type { List, ListItem, Nodes, PhrasingContent } from "mdast";
+import { fromMarkdown } from "mdast-util-from-markdown";
+
+import {
+  createExternalReferenceNodeId,
+  type GitHubNodeId,
+  type SourceId,
+} from "../domain/index.js";
+import { assertNonNullable, UnreachableError } from "../util/index.js";
+import { buildRelationCandidateId } from "./relation-candidate-id.js";
+import {
+  type CandidateBlocksRelation,
+  type CandidateImplementsRelation,
+  type CandidateParentRelation,
+  type CandidateRelation,
+  type CandidateUnclassifiedRelation,
+  type ChecklistRelationCandidate,
+  type ClosingKeywordRelationCandidate,
+  type CrossReferenceRelationCandidate,
+  type ExplicitTextRelationCandidate,
+  type ExtractRelationCandidatesInput,
+  type ExternalRelationCandidateNode,
+  type NativeRelationCandidate,
+  type OrganizationRelationCandidateNode,
+  type PublicGitHubRelationItem,
+  type RelationCandidate,
+  type RelationCandidateNode,
+  type RelationTextSource,
+} from "./relation-candidate-types.js";
+
+const CANONICAL_GITHUB_ITEM_URL_PATTERN =
+  /^https:\/\/github\.com\/([a-z\d](?:[a-z\d-]{0,38}))\/([a-z\d_.-]+)\/(issues|pull)\/([1-9]\d*)$/iu;
+const GITHUB_ITEM_URL_IN_TEXT_PATTERN =
+  /https:\/\/github\.com\/([a-z\d](?:[a-z\d-]{0,38}))\/([a-z\d_.-]+)\/(issues|pull)\/([1-9]\d*)/giu;
+const GITHUB_SHORTHAND_IN_TEXT_PATTERN =
+  /(?<![a-z\d_.-])(?:([a-z\d](?:[a-z\d-]{0,38}))\/([a-z\d_.-]+))?#([1-9]\d*)(?![a-z\d_])/giu;
+const TASK_LIST_MARKER_PATTERN = /^\[[ xX]\](?:[ \t]|$)/u;
+const CLOSING_KEYWORD_PATTERN =
+  /(?:^|[\s(,:;])(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*$/iu;
+
+type ParsedGitHubItemUrl = Readonly<{
+  repositoryOwner: string;
+  repositoryName: string;
+  itemType: "issue" | "pull_request";
+  number: number;
+}>;
+
+type MarkdownDefinitionIndex = ReadonlyMap<string, string>;
+
+type MarkdownReference = Readonly<{
+  repositoryOwner: string;
+  repositoryName: string;
+  itemType: "issue" | "pull_request" | null;
+  number: number;
+  start: number;
+  end: number;
+}>;
+
+type ReferenceIndex = Readonly<{
+  byAlias: ReadonlyMap<string, PublicGitHubRelationItem>;
+  byNodeId: ReadonlyMap<GitHubNodeId, PublicGitHubRelationItem>;
+}>;
+
+type CandidateTemplate =
+  | Omit<NativeRelationCandidate, "sourceIds">
+  | Omit<ExplicitTextRelationCandidate, "sourceIds">
+  | Omit<ClosingKeywordRelationCandidate, "sourceIds">
+  | Omit<ChecklistRelationCandidate, "sourceIds">
+  | Omit<CrossReferenceRelationCandidate, "sourceIds">;
+
+type CandidateDraft = Readonly<{
+  template: CandidateTemplate;
+  sourceIds: Set<SourceId>;
+}>;
+
+function parseCanonicalGitHubItemUrl(value: string): ParsedGitHubItemUrl | null {
+  const match = CANONICAL_GITHUB_ITEM_URL_PATTERN.exec(value);
+  if (match == null) {
+    return null;
+  }
+  const repositoryOwner = match[1];
+  const repositoryName = match[2];
+  const itemPath = match[3];
+  const numberText = match[4];
+  assertNonNullable(repositoryOwner, "GitHub URLからownerを取得できません");
+  assertNonNullable(repositoryName, "GitHub URLからrepository名を取得できません");
+  assertNonNullable(itemPath, "GitHub URLから項目種別を取得できません");
+  assertNonNullable(numberText, "GitHub URLから項目番号を取得できません");
+  const number = Number(numberText);
+  if (!Number.isSafeInteger(number)) {
+    return null;
+  }
+  return Object.freeze({
+    repositoryOwner,
+    repositoryName,
+    itemType: itemPath === "issues" ? "issue" : "pull_request",
+    number,
+  });
+}
+
+function aliasKey(repositoryOwner: string, repositoryName: string, number: number): string {
+  return `${repositoryOwner.toLowerCase()}/${repositoryName.toLowerCase()}#${number.toString()}`;
+}
+
+function validatePublicItem(item: PublicGitHubRelationItem): void {
+  if (item.repositoryOwner.length === 0 || item.repositoryName.length === 0) {
+    throw new TypeError("公開参照項目のrepository情報は空にできません");
+  }
+  if (!Number.isSafeInteger(item.number) || item.number <= 0) {
+    throw new TypeError("公開参照項目の番号は正の安全な整数で指定してください");
+  }
+  if (item.type === "issue" && item.state === "merged") {
+    throw new TypeError("Issueの状態にmergedは指定できません");
+  }
+  const parsedUrl = parseCanonicalGitHubItemUrl(item.url);
+  if (
+    parsedUrl?.repositoryOwner.toLowerCase() !== item.repositoryOwner.toLowerCase() ||
+    parsedUrl.repositoryName.toLowerCase() !== item.repositoryName.toLowerCase() ||
+    parsedUrl.itemType !== item.type ||
+    parsedUrl.number !== item.number
+  ) {
+    throw new TypeError("公開参照項目のURLとmetadataが一致しません");
+  }
+}
+
+function samePublicItem(left: PublicGitHubRelationItem, right: PublicGitHubRelationItem): boolean {
+  return (
+    left.nodeId === right.nodeId &&
+    left.repositoryOwner.toLowerCase() === right.repositoryOwner.toLowerCase() &&
+    left.repositoryName.toLowerCase() === right.repositoryName.toLowerCase() &&
+    left.repositoryArchived === right.repositoryArchived &&
+    left.repositoryDisabled === right.repositoryDisabled &&
+    left.type === right.type &&
+    left.number === right.number &&
+    left.url === right.url &&
+    left.state === right.state
+  );
+}
+
+function createReferenceIndex(input: ExtractRelationCandidatesInput): ReferenceIndex {
+  const byAlias = new Map<string, PublicGitHubRelationItem>();
+  const byNodeId = new Map<GitHubNodeId, PublicGitHubRelationItem>();
+  const embeddedItems = [
+    ...input.item.nativeDependencies.map((source) => source.relatedItem),
+    ...input.item.nativeHierarchy.map((source) => source.relatedItem),
+    ...input.item.crossReferences.map((source) => source.sourceItem),
+  ];
+  const items = [input.item, ...input.knownItems, ...embeddedItems];
+
+  for (const item of items) {
+    validatePublicItem(item);
+    const existingByNodeId = byNodeId.get(item.nodeId);
+    if (existingByNodeId != null && !samePublicItem(existingByNodeId, item)) {
+      throw new TypeError("同じGitHub node IDに異なる公開参照項目が指定されています");
+    }
+    const key = aliasKey(item.repositoryOwner, item.repositoryName, item.number);
+    const existingByAlias = byAlias.get(key);
+    if (existingByAlias != null && existingByAlias.nodeId !== item.nodeId) {
+      throw new TypeError("同じrepositoryと番号に異なる公開参照項目が指定されています");
+    }
+    byNodeId.set(item.nodeId, item);
+    byAlias.set(key, item);
+  }
+
+  return Object.freeze({
+    byAlias,
+    byNodeId,
+  });
+}
+
+function createOrganizationNode(item: PublicGitHubRelationItem): OrganizationRelationCandidateNode {
+  return Object.freeze({
+    scope: "organization",
+    kind: item.type,
+    nodeId: item.nodeId,
+    repositoryOwner: item.repositoryOwner,
+    repositoryName: item.repositoryName,
+    number: item.number,
+    url: item.url,
+    state: item.state,
+  });
+}
+
+function createExternalNode(item: PublicGitHubRelationItem): ExternalRelationCandidateNode {
+  return Object.freeze({
+    scope: "external_public",
+    kind: "external_reference",
+    nodeId: createExternalReferenceNodeId(`external:github:${item.nodeId}`),
+    githubNodeId: item.nodeId,
+    githubItemType: item.type,
+    repositoryOwner: item.repositoryOwner,
+    repositoryName: item.repositoryName,
+    number: item.number,
+    url: item.url,
+    state: item.state,
+  });
+}
+
+function resolveCandidateNode(
+  item: PublicGitHubRelationItem,
+  organization: string,
+): RelationCandidateNode | null {
+  if (item.repositoryOwner.toLowerCase() === organization.toLowerCase()) {
+    return item.repositoryArchived || item.repositoryDisabled ? null : createOrganizationNode(item);
+  }
+  return createExternalNode(item);
+}
+
+function createCurrentNode(
+  input: ExtractRelationCandidatesInput,
+): OrganizationRelationCandidateNode {
+  if (input.organization.length === 0) {
+    throw new TypeError("対象Organizationは空にできません");
+  }
+  if (input.item.repositoryOwner.toLowerCase() !== input.organization.toLowerCase()) {
+    throw new TypeError("抽出対象項目は対象Organization内でなければなりません");
+  }
+  if (input.item.repositoryArchived || input.item.repositoryDisabled) {
+    throw new TypeError("抽出対象項目は非archiveかつ有効なrepositoryに置いてください");
+  }
+  return createOrganizationNode(input.item);
+}
+
+function resolveReferenceItem(
+  reference: MarkdownReference,
+  index: ReferenceIndex,
+  organization: string,
+): RelationCandidateNode | null {
+  const item = index.byAlias.get(
+    aliasKey(reference.repositoryOwner, reference.repositoryName, reference.number),
+  );
+  if (item == null || (reference.itemType != null && item.type !== reference.itemType)) {
+    return null;
+  }
+  return resolveCandidateNode(item, organization);
+}
+
+function resolveNodeId(
+  nodeId: GitHubNodeId,
+  index: ReferenceIndex,
+  organization: string,
+): RelationCandidateNode | null {
+  const item = index.byNodeId.get(nodeId);
+  return item == null ? null : resolveCandidateNode(item, organization);
+}
+
+function childNodes(node: Nodes): readonly Nodes[] {
+  switch (node.type) {
+    case "root":
+    case "blockquote":
+    case "footnoteDefinition":
+    case "list":
+    case "listItem":
+    case "paragraph":
+    case "heading":
+    case "link":
+    case "linkReference":
+    case "emphasis":
+    case "strong":
+    case "delete":
+    case "table":
+    case "tableRow":
+    case "tableCell":
+      return node.children;
+    case "break":
+    case "code":
+    case "definition":
+    case "footnoteReference":
+    case "html":
+    case "image":
+    case "imageReference":
+    case "inlineCode":
+    case "text":
+    case "thematicBreak":
+    case "yaml":
+      return Object.freeze([]);
+  }
+}
+
+function collectDefinitionIndex(root: Nodes): MarkdownDefinitionIndex {
+  const definitions = new Map<string, string>();
+
+  function visit(node: Nodes): void {
+    if (node.type === "definition" && !definitions.has(node.identifier)) {
+      definitions.set(node.identifier, node.url);
+      return;
+    }
+    for (const child of childNodes(node)) {
+      visit(child);
+    }
+  }
+
+  visit(root);
+  return definitions;
+}
+
+function renderPhrasingNode(node: PhrasingContent, definitions: MarkdownDefinitionIndex): string {
+  switch (node.type) {
+    case "text":
+      return node.value;
+    case "break":
+      return "\n";
+    case "link":
+      return ` ${node.url} `;
+    case "linkReference": {
+      const url = definitions.get(node.identifier);
+      return url == null
+        ? node.children.map((child) => renderPhrasingNode(child, definitions)).join("")
+        : ` ${url} `;
+    }
+    case "delete":
+    case "emphasis":
+    case "strong":
+      return node.children.map((child) => renderPhrasingNode(child, definitions)).join("");
+    case "footnoteReference":
+    case "html":
+    case "image":
+    case "imageReference":
+    case "inlineCode":
+      return "";
+    default:
+      throw new UnreachableError(node);
+  }
+}
+
+function renderPhrasingChildren(
+  children: readonly PhrasingContent[],
+  definitions: MarkdownDefinitionIndex,
+): string {
+  return children.map((child) => renderPhrasingNode(child, definitions)).join("");
+}
+
+function isTaskListItem(item: ListItem, definitions: MarkdownDefinitionIndex): boolean {
+  if (typeof item.checked === "boolean") {
+    return true;
+  }
+  const firstParagraph = item.children.find((child) => child.type === "paragraph");
+  if (firstParagraph == null) {
+    return false;
+  }
+  return TASK_LIST_MARKER_PATTERN.test(
+    renderPhrasingChildren(firstParagraph.children, definitions),
+  );
+}
+
+function isReferenceBoundary(value: string, end: number): boolean {
+  if (end === value.length) {
+    return true;
+  }
+  const next = value[end];
+  assertNonNullable(next, "参照の直後の文字を取得できません");
+  if (/\s/u.test(next)) {
+    return true;
+  }
+  if (next === ".") {
+    const afterPeriod = value[end + 1];
+    return afterPeriod == null || !/[a-z\d_]/iu.test(afterPeriod);
+  }
+  return /[,;:!'"）)\]】}>、。！？]/u.test(next);
+}
+
+function findMarkdownReferences(
+  value: string,
+  currentItem: PublicGitHubRelationItem,
+): readonly MarkdownReference[] {
+  const references: MarkdownReference[] = [];
+
+  for (const match of value.matchAll(GITHUB_ITEM_URL_IN_TEXT_PATTERN)) {
+    const url = match[0];
+    const repositoryOwner = match[1];
+    const repositoryName = match[2];
+    const itemPath = match[3];
+    const numberText = match[4];
+    assertNonNullable(repositoryOwner, "GitHub URL参照からownerを取得できません");
+    assertNonNullable(repositoryName, "GitHub URL参照からrepository名を取得できません");
+    assertNonNullable(itemPath, "GitHub URL参照から項目種別を取得できません");
+    assertNonNullable(numberText, "GitHub URL参照から項目番号を取得できません");
+    const end = match.index + url.length;
+    const number = Number(numberText);
+    if (!Number.isSafeInteger(number) || !isReferenceBoundary(value, end)) {
+      continue;
+    }
+    references.push(
+      Object.freeze({
+        repositoryOwner,
+        repositoryName,
+        itemType: itemPath.toLowerCase() === "issues" ? "issue" : "pull_request",
+        number,
+        start: match.index,
+        end,
+      }),
+    );
+  }
+
+  for (const match of value.matchAll(GITHUB_SHORTHAND_IN_TEXT_PATTERN)) {
+    const fullReference = match[0];
+    const specifiedOwner = match[1];
+    const specifiedRepository = match[2];
+    const numberText = match[3];
+    assertNonNullable(numberText, "GitHub短縮参照から項目番号を取得できません");
+    if ((specifiedOwner == null) !== (specifiedRepository == null)) {
+      throw new TypeError("GitHub短縮参照のownerとrepositoryの有無が一致しません");
+    }
+    const end = match.index + fullReference.length;
+    const number = Number(numberText);
+    if (!Number.isSafeInteger(number) || !isReferenceBoundary(value, end)) {
+      continue;
+    }
+    references.push(
+      Object.freeze({
+        repositoryOwner: specifiedOwner ?? currentItem.repositoryOwner,
+        repositoryName: specifiedRepository ?? currentItem.repositoryName,
+        itemType: null,
+        number,
+        start: match.index,
+        end,
+      }),
+    );
+  }
+
+  return Object.freeze(
+    references.sort((left, right) => {
+      const startComparison = left.start - right.start;
+      return startComparison !== 0 ? startComparison : right.end - left.end;
+    }),
+  );
+}
+
+function isClosingReference(value: string, reference: MarkdownReference): boolean {
+  const prefixStart = Math.max(0, reference.start - 64);
+  return CLOSING_KEYWORD_PATTERN.test(value.slice(prefixStart, reference.start));
+}
+
+function relationNodeIds(relation: CandidateRelation): readonly string[] {
+  switch (relation.type) {
+    case "blocks":
+      return [relation.blocker.nodeId, relation.blocked.nodeId];
+    case "parent_of":
+      return [relation.parent.nodeId, relation.subtask.nodeId];
+    case "implements":
+      return [relation.implementation.nodeId, relation.target.nodeId];
+    case "unclassified":
+      return [relation.referencing.nodeId, relation.referenced.nodeId];
+  }
+}
+
+function sameCandidateTemplate(left: CandidateTemplate, right: CandidateTemplate): boolean {
+  const leftIds = relationNodeIds(left.relation);
+  const rightIds = relationNodeIds(right.relation);
+  return (
+    left.id === right.id &&
+    left.authority === right.authority &&
+    left.provenance === right.provenance &&
+    left.relation.type === right.relation.type &&
+    leftIds.length === rightIds.length &&
+    leftIds.every((nodeId, index) => nodeId === rightIds[index])
+  );
+}
+
+function replaceCandidateSourceIds(
+  template: CandidateTemplate,
+  sourceIds: readonly [SourceId, ...SourceId[]],
+): RelationCandidate {
+  switch (template.provenance) {
+    case "native":
+      return Object.freeze({ ...template, sourceIds });
+    case "explicit_text":
+      return Object.freeze({ ...template, sourceIds });
+    case "closing_keyword":
+      return Object.freeze({ ...template, sourceIds });
+    case "checklist":
+      return Object.freeze({ ...template, sourceIds });
+    case "cross_reference":
+      return Object.freeze({ ...template, sourceIds });
+  }
+}
+
+class CandidateAccumulator {
+  readonly #drafts = new Map<string, CandidateDraft>();
+
+  public add(template: CandidateTemplate, sourceId: SourceId): void {
+    const existing = this.#drafts.get(template.id);
+    if (existing == null) {
+      this.#drafts.set(
+        template.id,
+        Object.freeze({
+          template,
+          sourceIds: new Set([sourceId]),
+        }),
+      );
+      return;
+    }
+    if (!sameCandidateTemplate(existing.template, template)) {
+      throw new TypeError("同じ候補IDに異なる関係候補が生成されました");
+    }
+    existing.sourceIds.add(sourceId);
+  }
+
+  public values(): readonly RelationCandidate[] {
+    const candidates = [...this.#drafts.values()].map((draft) => {
+      const sortedSourceIds = [...draft.sourceIds].sort();
+      const firstSourceId = sortedSourceIds[0];
+      assertNonNullable(firstSourceId, "関係候補には1件以上のsource IDが必要です");
+      const sourceIds = Object.freeze([
+        firstSourceId,
+        ...sortedSourceIds.slice(1),
+      ]) satisfies readonly [SourceId, ...SourceId[]];
+      return replaceCandidateSourceIds(draft.template, sourceIds);
+    });
+    return Object.freeze(candidates.sort((left, right) => left.id.localeCompare(right.id)));
+  }
+}
+
+function createNativeCandidate(
+  relation: CandidateBlocksRelation | CandidateParentRelation,
+): Omit<NativeRelationCandidate, "sourceIds"> {
+  return Object.freeze({
+    id: buildRelationCandidateId("native", relation),
+    authority: "authoritative",
+    provenance: "native",
+    relation,
+  });
+}
+
+function createExplicitTextCandidate(
+  relation: CandidateUnclassifiedRelation,
+): Omit<ExplicitTextRelationCandidate, "sourceIds"> {
+  return Object.freeze({
+    id: buildRelationCandidateId("explicit_text", relation),
+    authority: "inferred",
+    provenance: "explicit_text",
+    relation,
+  });
+}
+
+function createClosingKeywordCandidate(
+  relation: CandidateImplementsRelation,
+): Omit<ClosingKeywordRelationCandidate, "sourceIds"> {
+  return Object.freeze({
+    id: buildRelationCandidateId("closing_keyword", relation),
+    authority: "inferred",
+    provenance: "closing_keyword",
+    relation,
+  });
+}
+
+function createChecklistCandidate(
+  relation: CandidateParentRelation,
+): Omit<ChecklistRelationCandidate, "sourceIds"> {
+  return Object.freeze({
+    id: buildRelationCandidateId("checklist", relation),
+    authority: "inferred",
+    provenance: "checklist",
+    relation,
+  });
+}
+
+function createCrossReferenceCandidate(
+  relation: CandidateUnclassifiedRelation | CandidateImplementsRelation,
+): Omit<CrossReferenceRelationCandidate, "sourceIds"> {
+  return Object.freeze({
+    id: buildRelationCandidateId("cross_reference", relation),
+    authority: "inferred",
+    provenance: "cross_reference",
+    relation,
+  });
+}
+
+function isSameNode(left: RelationCandidateNode, right: RelationCandidateNode): boolean {
+  return left.nodeId === right.nodeId;
+}
+
+function addNativeCandidates(
+  input: ExtractRelationCandidatesInput,
+  currentNode: OrganizationRelationCandidateNode,
+  index: ReferenceIndex,
+  candidates: CandidateAccumulator,
+): void {
+  for (const source of input.item.nativeDependencies) {
+    const relatedNode = resolveNodeId(source.relatedItem.nodeId, index, input.organization);
+    if (relatedNode == null || isSameNode(currentNode, relatedNode)) {
+      continue;
+    }
+    const relation = Object.freeze(
+      source.direction === "blocked_by"
+        ? {
+            type: "blocks",
+            blocker: relatedNode,
+            blocked: currentNode,
+          }
+        : {
+            type: "blocks",
+            blocker: currentNode,
+            blocked: relatedNode,
+          },
+    ) satisfies CandidateBlocksRelation;
+    candidates.add(createNativeCandidate(relation), source.sourceId);
+  }
+
+  for (const source of input.item.nativeHierarchy) {
+    const relatedNode = resolveNodeId(source.relatedItem.nodeId, index, input.organization);
+    if (relatedNode == null || isSameNode(currentNode, relatedNode)) {
+      continue;
+    }
+    const relation = Object.freeze(
+      source.relationship === "parent"
+        ? {
+            type: "parent_of",
+            parent: relatedNode,
+            subtask: currentNode,
+          }
+        : {
+            type: "parent_of",
+            parent: currentNode,
+            subtask: relatedNode,
+          },
+    ) satisfies CandidateParentRelation;
+    candidates.add(createNativeCandidate(relation), source.sourceId);
+  }
+}
+
+function addCrossReferenceCandidates(
+  input: ExtractRelationCandidatesInput,
+  currentNode: OrganizationRelationCandidateNode,
+  index: ReferenceIndex,
+  candidates: CandidateAccumulator,
+): void {
+  for (const source of input.item.crossReferences) {
+    const sourceNode = resolveNodeId(source.sourceItem.nodeId, index, input.organization);
+    if (sourceNode == null || isSameNode(currentNode, sourceNode)) {
+      continue;
+    }
+    const relation = source.willCloseTarget
+      ? (Object.freeze({
+          type: "implements",
+          implementation: sourceNode,
+          target: currentNode,
+        }) satisfies CandidateImplementsRelation)
+      : (Object.freeze({
+          type: "unclassified",
+          referencing: sourceNode,
+          referenced: currentNode,
+        }) satisfies CandidateUnclassifiedRelation);
+    candidates.add(createCrossReferenceCandidate(relation), source.sourceId);
+  }
+}
+
+function visitMarkdownProse(
+  node: Nodes,
+  definitions: MarkdownDefinitionIndex,
+  skipTaskListItems: boolean,
+  consume: (value: string) => void,
+): void {
+  switch (node.type) {
+    case "paragraph":
+    case "heading":
+    case "tableCell":
+      consume(renderPhrasingChildren(node.children, definitions));
+      return;
+    case "listItem": {
+      const skipDirectContent = skipTaskListItems && isTaskListItem(node, definitions);
+      for (const child of node.children) {
+        if (child.type === "list" || !skipDirectContent) {
+          visitMarkdownProse(child, definitions, skipTaskListItems, consume);
+        }
+      }
+      return;
+    }
+    case "code":
+    case "definition":
+    case "html":
+    case "inlineCode":
+    case "yaml":
+      return;
+    default:
+      for (const child of childNodes(node)) {
+        visitMarkdownProse(child, definitions, skipTaskListItems, consume);
+      }
+  }
+}
+
+function addTextCandidates(
+  input: ExtractRelationCandidatesInput,
+  currentNode: OrganizationRelationCandidateNode,
+  index: ReferenceIndex,
+  candidates: CandidateAccumulator,
+  source: RelationTextSource,
+  skipTaskListItems: boolean,
+): void {
+  const tree = fromMarkdown(source.markdown);
+  const definitions = collectDefinitionIndex(tree);
+  visitMarkdownProse(tree, definitions, skipTaskListItems, (value) => {
+    for (const reference of findMarkdownReferences(value, input.item)) {
+      const referencedNode = resolveReferenceItem(reference, index, input.organization);
+      if (referencedNode == null || isSameNode(currentNode, referencedNode)) {
+        continue;
+      }
+      if (isClosingReference(value, reference)) {
+        const relation = Object.freeze({
+          type: "implements",
+          implementation: currentNode,
+          target: referencedNode,
+        }) satisfies CandidateImplementsRelation;
+        candidates.add(createClosingKeywordCandidate(relation), source.sourceId);
+        continue;
+      }
+      const relation = Object.freeze({
+        type: "unclassified",
+        referencing: currentNode,
+        referenced: referencedNode,
+      }) satisfies CandidateUnclassifiedRelation;
+      candidates.add(createExplicitTextCandidate(relation), source.sourceId);
+    }
+  });
+}
+
+function collectDirectChecklistReferences(
+  item: ListItem,
+  definitions: MarkdownDefinitionIndex,
+  input: ExtractRelationCandidatesInput,
+  index: ReferenceIndex,
+): readonly RelationCandidateNode[] {
+  const nodesById = new Map<string, RelationCandidateNode>();
+
+  function visit(node: Nodes): void {
+    switch (node.type) {
+      case "list":
+        return;
+      case "paragraph":
+      case "heading":
+      case "tableCell": {
+        const value = renderPhrasingChildren(node.children, definitions);
+        for (const reference of findMarkdownReferences(value, input.item)) {
+          const resolvedNode = resolveReferenceItem(reference, index, input.organization);
+          if (resolvedNode != null) {
+            nodesById.set(resolvedNode.nodeId, resolvedNode);
+          }
+        }
+        return;
+      }
+      case "code":
+      case "definition":
+      case "html":
+      case "inlineCode":
+      case "yaml":
+        return;
+      default:
+        for (const child of childNodes(node)) {
+          visit(child);
+        }
+    }
+  }
+
+  for (const child of item.children) {
+    visit(child);
+  }
+  return Object.freeze(
+    [...nodesById.values()].sort((left, right) => left.nodeId.localeCompare(right.nodeId)),
+  );
+}
+
+function addChecklistCandidates(
+  input: ExtractRelationCandidatesInput,
+  currentNode: OrganizationRelationCandidateNode,
+  index: ReferenceIndex,
+  candidates: CandidateAccumulator,
+): void {
+  const tree = fromMarkdown(input.item.body.markdown);
+  const definitions = collectDefinitionIndex(tree);
+
+  function visitNestedLists(node: Nodes, parent: RelationCandidateNode): void {
+    if (node.type === "list") {
+      visitList(node, parent);
+      return;
+    }
+    for (const child of childNodes(node)) {
+      visitNestedLists(child, parent);
+    }
+  }
+
+  function visitList(list: List, parent: RelationCandidateNode): void {
+    for (const item of list.children) {
+      let nestedParent = parent;
+      if (isTaskListItem(item, definitions)) {
+        const referencedNodes = collectDirectChecklistReferences(item, definitions, input, index);
+        const distinctReferencedNodes = referencedNodes.filter(
+          (referencedNode) => !isSameNode(parent, referencedNode),
+        );
+        for (const referencedNode of distinctReferencedNodes) {
+          const relation = Object.freeze({
+            type: "parent_of",
+            parent,
+            subtask: referencedNode,
+          }) satisfies CandidateParentRelation;
+          candidates.add(createChecklistCandidate(relation), input.item.body.sourceId);
+        }
+        if (distinctReferencedNodes.length === 1) {
+          const onlyReferencedNode = distinctReferencedNodes[0];
+          assertNonNullable(onlyReferencedNode, "checklistの参照先を取得できません");
+          nestedParent = onlyReferencedNode;
+        }
+      }
+      for (const child of item.children) {
+        visitNestedLists(child, nestedParent);
+      }
+    }
+  }
+
+  for (const child of tree.children) {
+    visitNestedLists(child, currentNode);
+  }
+}
+
+/** 公開GitHub項目の各sourceから決定論的な関係候補を抽出する。 */
+export function extractRelationCandidates(
+  input: ExtractRelationCandidatesInput,
+): readonly RelationCandidate[] {
+  const currentNode = createCurrentNode(input);
+  const index = createReferenceIndex(input);
+  const candidates = new CandidateAccumulator();
+
+  addNativeCandidates(input, currentNode, index, candidates);
+  addCrossReferenceCandidates(input, currentNode, index, candidates);
+  if (input.item.type === "issue") {
+    addChecklistCandidates(input, currentNode, index, candidates);
+  }
+  addTextCandidates(
+    input,
+    currentNode,
+    index,
+    candidates,
+    input.item.body,
+    input.item.type === "issue",
+  );
+  for (const comment of input.item.comments) {
+    addTextCandidates(input, currentNode, index, candidates, comment, false);
+  }
+
+  return candidates.values();
+}

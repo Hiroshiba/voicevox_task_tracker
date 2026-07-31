@@ -1,0 +1,26 @@
+export { extractRelationCandidates } from "./extract-relation-candidates.js";
+export { buildRelationCandidateId } from "./relation-candidate-id.js";
+export {
+  type CandidateBlocksRelation,
+  type CandidateImplementsRelation,
+  type CandidateParentRelation,
+  type CandidateRelation,
+  type CandidateUnclassifiedRelation,
+  type ChecklistRelationCandidate,
+  type ClosingKeywordRelationCandidate,
+  type CrossReferenceRelationCandidate,
+  type CrossReferenceSource,
+  type ExplicitTextRelationCandidate,
+  type ExternalRelationCandidateNode,
+  type ExtractRelationCandidatesInput,
+  type NativeDependencySource,
+  type NativeHierarchySource,
+  type NativeRelationCandidate,
+  type OrganizationRelationCandidateNode,
+  type PublicGitHubRelationItem,
+  type RelationCandidate,
+  type RelationCandidateId,
+  type RelationCandidateNode,
+  type RelationExtractionItem,
+  type RelationTextSource,
+} from "./relation-candidate-types.js";
