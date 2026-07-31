@@ -30,7 +30,7 @@ VOICEVOX Organization全体の公開Issue/PRについて、状態・ボールの
 
 ### Phase 2: 決定論的判定
 
-- [ ] T09 アクター・ラベル・チーム解決 — bot判定、label rules、既定チームとrepo別上書きの解決
+- [x] T09 アクター・ラベル・チーム解決 — bot判定、label rules、既定チームとrepo別上書きの解決
 - [ ] T10 PR状態機械 — terminal、blocked、automation、changes requested、re-review、review request、draft、ready to merge、CI失敗、conflictの優先順位判定
 - [ ] T11 Issue状態機械 — terminal、blocked、未回答の明示依頼、assignee、未アサイン時のmaintainer責務
 - [ ] T12 停滞時間とseverity — statusSince、ownerSince、stallSince、lastProgressAtの算出、bot activityによるリセット禁止、wait class別閾値、priority labelによる引き上げ

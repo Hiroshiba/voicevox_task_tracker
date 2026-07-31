@@ -1,6 +1,33 @@
+export {
+  createGitHubBotPredicate,
+  type BotLoginRules,
+  type BotPredicate,
+  type BotPredicateInput,
+} from "./actor-resolution.js";
+export {
+  createLabelEffectsResolver,
+  type LabelEffectsResolver,
+  type LabelRule,
+  type LabelRuleEffects,
+  type ResolvedLabelEffects,
+} from "./label-resolution.js";
 export { compareSeverity } from "./severity.js";
 export { buildSourceId, parseSourceId, type SourceId, type SourceIdParts } from "./source-id.js";
 export { isTerminalStatus } from "./status.js";
+export {
+  listConfiguredTeamReferences,
+  resolveRepositoryActorTeamRoles,
+  resolveRepositoryTeamReferences,
+  resolveRepositoryTeams,
+  type GitHubTeamDirectory,
+  type GitHubTeamMember,
+  type RepositoryActorTeamRoles,
+  type RepositoryTeamReferences,
+  type ResolvedGitHubTeam,
+  type ResolvedRepositoryTeams,
+  type TeamReference,
+  type TeamResolutionSettings,
+} from "./team-resolution.js";
 export {
   createExternalReferenceNodeId,
   createGitHubNodeId,
