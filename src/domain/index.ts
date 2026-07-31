@@ -6,6 +6,7 @@ export {
 } from "./actor-resolution.js";
 export {
   type FreshObservedGitHubItemBase,
+  type FreshObservedGitHubIssue,
   type FreshObservedGitHubPullRequest,
   type ObservedGitHubAutoMerge,
   type ObservedGitHubCommitPushedAt,
@@ -27,6 +28,18 @@ export {
   type LabelRuleEffects,
   type ResolvedLabelEffects,
 } from "./label-resolution.js";
+export {
+  determineIssueState,
+  ISSUE_DETERMINISTIC_RULES_VERSION,
+  type IssueBlocker,
+  type IssueExplicitRequestAssessment,
+  type IssueExplicitRequestCandidate,
+  type IssueExplicitRequestTarget,
+  type IssuePrimaryWaitingOn,
+  type IssueStateDecision,
+  type IssueStateMachineInput,
+  type IssueTransitionBasis,
+} from "./issue-state-machine.js";
 export {
   determinePullRequestState,
   PULL_REQUEST_DETERMINISTIC_RULES_VERSION,

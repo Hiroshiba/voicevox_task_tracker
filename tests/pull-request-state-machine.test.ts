@@ -170,6 +170,7 @@ function createOpenPullRequest(): FreshObservedGitHubPullRequest {
       status: "identified",
       actor: author,
     },
+    assignees: [],
     draft: false,
     headSha,
     headCommit: {

@@ -24,6 +24,7 @@ export type FreshObservedGitHubItemBase = Readonly<{
   sourceId: SourceId;
   nodeId: GitHubNodeId;
   author: ObservedGitHubItemAuthor;
+  assignees: readonly GitHubAccountActor[];
   events: readonly NormalizedEvent[];
   observedAt: UtcIsoDateTime;
 }>;
@@ -40,6 +41,13 @@ export type ObservedGitHubItemState =
       stateReason: "completed" | "not_planned" | "duplicate" | null;
       closedAt: UtcIsoDateTime;
     }>;
+
+/** 最新取得に成功したIssueで状態判定に使う観測値。 */
+export type FreshObservedGitHubIssue = FreshObservedGitHubItemBase &
+  ObservedGitHubItemState &
+  Readonly<{
+    type: "issue";
+  }>;
 
 /** Pull RequestのcommitがGitHubへpushされた時刻の観測値。 */
 export type ObservedGitHubCommitPushedAt =

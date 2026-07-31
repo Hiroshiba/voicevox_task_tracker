@@ -1,6 +1,7 @@
 import {
   type Actor,
   type FreshObservedGitHubItemBase,
+  type FreshObservedGitHubIssue as DomainFreshObservedGitHubIssue,
   type FreshObservedGitHubPullRequest,
   type GitHubAccountActor,
   type GitHubItemDisplayReference,
@@ -90,18 +91,15 @@ type FreshObservedGitHubItemMetadata = Readonly<{
   itemFingerprint: Sha256Fingerprint;
   createdAt: UtcIsoDateTime;
   githubUpdatedAt: UtcIsoDateTime;
-  assignees: readonly GitHubAccountActor[];
   labels: readonly string[];
   milestone: GitHubItemMilestone | null;
   inboundCrossReferences: readonly GitHubInboundCrossReferenceCandidate[];
 }>;
 
 /** 最新取得に成功したIssueの判定前観測値。 */
-export type FreshObservedGitHubIssue = FreshObservedGitHubItemBase &
+export type FreshObservedGitHubIssue = DomainFreshObservedGitHubIssue &
   FreshObservedGitHubItemMetadata &
-  ObservedGitHubItemState &
   Readonly<{
-    type: "issue";
     draft: "not_applicable";
     nativeDependencies: GitHubNativeDependencyCollection;
     nativeHierarchy: GitHubNativeHierarchyCollection;
