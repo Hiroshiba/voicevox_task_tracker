@@ -99,6 +99,7 @@ const publicItemSummarySchema = z.strictObject({
   waitingOn: z.array(waitingOnSchema),
   nextAction: shortStringSchema,
   severity: severitySchema,
+  priorityWeight: z.number(),
   confidence: z.number().min(0).max(1),
   githubUpdatedAt: dateTimeSchema,
   stallSince: dateTimeSchema,

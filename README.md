@@ -20,8 +20,18 @@ pnpm install
 | コマンド            | 内容                                       |
 | ------------------- | ------------------------------------------ |
 | `pnpm build`        | TypeScriptを`dist`へビルドする             |
+| `pnpm build:web`    | 静的サイトを`dist/web`へビルドする         |
+| `pnpm dev:web`      | サンプルDTOでWeb UIを起動する              |
 | `pnpm typecheck`    | TypeScriptの型を検査する                   |
 | `pnpm test`         | Vitestのテストを1回実行する                |
 | `pnpm lint`         | ESLintでコードを検査する                   |
 | `pnpm format`       | Prettierで対象ファイルを整形する           |
 | `pnpm format:check` | Prettierによる整形差分がないことを検査する |
+
+## Web UI
+
+Web UIはViteとPreactを使用します。Preactは小さなランタイムで大量項目の表示をコンポーネントへ分割しやすく、後から依存グラフを追加する場合も状態管理を共通化できるため採用しました。一覧表は50件ずつ描画し、5,000件規模のDTOでもDOM要素が一度に増えないようにしています。
+
+開発時は実データを含まない`web/public/data/summary.json`を読み込みます。Viteの公開パス、画面タイトル、日時localeには`config.yml`の`web`設定を使用します。
+
+attention queueはseverity、設定済みラベルルールのpriorityWeight、影響リポジトリ数、影響項目数、停滞開始時刻の順で決定論的に並べます。

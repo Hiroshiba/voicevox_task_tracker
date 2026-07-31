@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { parseDocument } from "yaml";
 
 import { ConfigError, type ConfigIssue } from "./config-error.js";
-import { type Config, validateConfig } from "./schema.js";
+import { type Config, type WebConfig, validateConfig, validateWebConfig } from "./schema.js";
 import { assertNonNullable } from "../util/assert-non-nullable.js";
 
 type YamlParseResult =
@@ -64,8 +64,7 @@ export function parseConfig(source: string): Config {
   return validateConfig(parsed.value);
 }
 
-/** YAML設定ファイルを型付き設定として読み込む。 */
-export async function loadConfig(configPath: string | URL): Promise<Config> {
+async function loadConfigValue(configPath: string | URL): Promise<unknown> {
   let source: string;
   try {
     source = await readFile(configPath, "utf8");
@@ -80,5 +79,19 @@ export async function loadConfig(configPath: string | URL): Promise<Config> {
       { cause: error },
     );
   }
-  return parseConfig(source);
+  const parsed = parseYaml(source);
+  if (!parsed.success) {
+    throw new ConfigError(parsed.issues, { cause: parsed.cause });
+  }
+  return parsed.value;
+}
+
+/** YAML設定ファイルを型付き設定として読み込む。 */
+export async function loadConfig(configPath: string | URL): Promise<Config> {
+  return validateConfig(await loadConfigValue(configPath));
+}
+
+/** YAML設定ファイルからWeb設定だけを読み込む。 */
+export async function loadWebConfig(configPath: string | URL): Promise<WebConfig> {
+  return validateWebConfig(await loadConfigValue(configPath));
 }

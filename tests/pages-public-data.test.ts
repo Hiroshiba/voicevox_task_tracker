@@ -41,6 +41,15 @@ const PUBLIC_REPOSITORY_ID = "R_PUBLIC";
 const STALE_REPOSITORY_ID = "R_STALE";
 const PRIVATE_REPOSITORY_ID = "R_PRIVATE_SENTINEL";
 const defaultGenerationOptions = Object.freeze({
+  labelRules: [
+    {
+      repository: "VOICEVOX/*",
+      namePattern: "^優先度[：:]高$",
+      effects: {
+        priorityWeight: 25,
+      },
+    },
+  ],
   maxInitialGraphNodes: DEFAULT_INITIAL_GRAPH_NODE_LIMIT,
   maxSummaryGzipBytes: PUBLIC_SUMMARY_GZIP_LIMIT_BYTES,
 }) satisfies PublicDtoGenerationOptions;
@@ -537,6 +546,7 @@ describe("公開DTO生成", () => {
     ]);
     const itemA = generated.details.items.find((item) => item.summary.nodeId === "I_A");
     expect(itemA?.summary.blockerNodeIds).toEqual(["I_B"]);
+    expect(itemA?.summary.priorityWeight).toBe(25);
     expect(itemA?.history.at(-2)).toMatchObject({
       kind: "responsibility_changed",
       before: {
@@ -696,6 +706,7 @@ describe("公開summaryサイズと書き出し", () => {
       }),
     });
     const options = {
+      labelRules: defaultGenerationOptions.labelRules,
       maxInitialGraphNodes: 100,
       maxSummaryGzipBytes: PUBLIC_SUMMARY_GZIP_LIMIT_BYTES,
     } satisfies PublicDtoGenerationOptions;
@@ -711,6 +722,7 @@ describe("公開summaryサイズと書き出し", () => {
   it("設定した上限を超えるfixtureではDTO生成を失敗させる", () => {
     const snapshot = createSingleItemSnapshot("gzip上限超過fixture");
     const options = {
+      labelRules: defaultGenerationOptions.labelRules,
       maxInitialGraphNodes: 1,
       maxSummaryGzipBytes: 64,
     } satisfies PublicDtoGenerationOptions;

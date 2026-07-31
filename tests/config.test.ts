@@ -3,10 +3,11 @@ import { readFile } from "node:fs/promises";
 import { stringify } from "yaml";
 import { describe, expect, it } from "vitest";
 
-import { ConfigError, loadConfig, parseConfig } from "../src/config/index.js";
+import { ConfigError, loadConfig, loadWebConfig, parseConfig } from "../src/config/index.js";
 import { TaskTrackerError } from "../src/util/index.js";
 
 const validConfigUrl = new URL("./fixtures/config.valid.yml", import.meta.url);
+const developmentConfigUrl = new URL("../config.yml", import.meta.url);
 const validConfigSource = await readFile(validConfigUrl, "utf8");
 
 function replaceRequired(source: string, target: string, replacement: string): string {
@@ -48,6 +49,16 @@ describe("設定の読み込みと検証", () => {
     expect(config.state.runReportsDirectory).toBe("state/run-reports");
   });
 
+  it("未設定値が残る開発用設定からWeb設定だけを読み込む", async () => {
+    const webConfig = await loadWebConfig(developmentConfigUrl);
+
+    expect(webConfig).toMatchObject({
+      basePath: "/voicevox_task_tracker/",
+      title: "VOICEVOX Task Tracker",
+      defaultLocale: "ja-JP",
+    });
+  });
+
   it("未知のschema major versionを明示的に拒否する", () => {
     const source = replaceRequired(validConfigSource, "schemaVersion: 1", 'schemaVersion: "2.0"');
     const error = captureConfigError(source);
@@ -67,6 +78,30 @@ describe("設定の読み込みと検証", () => {
 
     expect(error.message).toContain("organization");
     expect(error.message).toContain("VOICEVOXを指定してください");
+  });
+
+  it("GitHub Pagesで使えないWeb base pathを拒否する", () => {
+    const source = replaceRequired(
+      validConfigSource,
+      "basePath: /voicevox_task_tracker/",
+      "basePath: voicevox_task_tracker",
+    );
+    const error = captureConfigError(source);
+
+    expect(error.message).toContain("web.basePath");
+    expect(error.message).toContain("絶対base path");
+  });
+
+  it("不正なWeb localeを拒否する", () => {
+    const source = replaceRequired(
+      validConfigSource,
+      "defaultLocale: ja-JP",
+      "defaultLocale: invalid_locale",
+    );
+    const error = captureConfigError(source);
+
+    expect(error.message).toContain("web.defaultLocale");
+    expect(error.message).toContain("有効なlocale");
   });
 
   it("codex以外のAI providerを未対応として拒否する", () => {

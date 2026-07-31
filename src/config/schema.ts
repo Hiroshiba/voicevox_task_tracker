@@ -12,6 +12,7 @@ const DEFAULT_MEDIUM_CONFIDENCE = 0.65;
 const SCHEMA_VERSION_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d+)*$/;
 const GITHUB_ITEM_URL_PATTERN =
   /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/(?:issues|pull)\/[1-9]\d*\/?$/u;
+const WEB_BASE_PATH_PATTERN = /^\/(?:[A-Za-z0-9._~-]+\/)*$/u;
 
 const requiredStringSchema = z.string().min(1, "空文字は指定できません");
 const positiveIntegerSchema = z.number().int().positive();
@@ -35,6 +36,25 @@ const statePathSchema = requiredStringSchema.superRefine((value, context) => {
 });
 const stateJsonPathSchema = statePathSchema.refine((value) => value.endsWith(".json"), {
   message: ".jsonで終わるパスを指定してください",
+});
+const webBasePathSchema = requiredStringSchema
+  .regex(WEB_BASE_PATH_PATTERN, "先頭と末尾がスラッシュの絶対base pathを指定してください")
+  .refine(
+    (value) => !value.split("/").some((segment) => segment === "." || segment === ".."),
+    "正規化されたbase pathを指定してください",
+  );
+const localeSchema = requiredStringSchema.superRefine((value, context) => {
+  try {
+    Intl.getCanonicalLocales(value);
+  } catch (error: unknown) {
+    if (!(error instanceof RangeError)) {
+      throw error;
+    }
+    context.addIssue({
+      code: "custom",
+      message: "有効なlocaleを指定してください",
+    });
+  }
 });
 
 const schemaVersionSchema = z.union([z.string(), z.number()]).transform((value, context) => {
@@ -261,6 +281,16 @@ const stateSchema = z
     }
   });
 
+const webConfigSchema = z.strictObject({
+  basePath: webBasePathSchema,
+  title: requiredStringSchema,
+  defaultLocale: localeSchema,
+  graph: z.strictObject({
+    maxInitialNodes: positiveIntegerSchema,
+    clusterByRepository: z.boolean(),
+  }),
+});
+
 const configSchema = z.strictObject({
   schemaVersion: schemaVersionSchema,
   organization: organizationSchema,
@@ -364,15 +394,7 @@ const configSchema = z.strictObject({
     }),
   }),
   state: stateSchema,
-  web: z.strictObject({
-    basePath: requiredStringSchema,
-    title: requiredStringSchema,
-    defaultLocale: requiredStringSchema,
-    graph: z.strictObject({
-      maxInitialNodes: positiveIntegerSchema,
-      clusterByRepository: z.boolean(),
-    }),
-  }),
+  web: webConfigSchema,
   operations: z.strictObject({
     githubApiBudgetRatio: probabilitySchema,
     failOnPrivateDataGuard: z.boolean(),
@@ -386,6 +408,7 @@ const configSchema = z.strictObject({
 });
 
 export type Config = z.output<typeof configSchema>;
+export type WebConfig = z.output<typeof webConfigSchema>;
 
 function formatPath(path: readonly PropertyKey[]): string {
   let formattedPath = "";
@@ -416,4 +439,19 @@ export function validateConfig(value: unknown): Config {
     throw new ConfigError(createConfigIssues(result.error), {});
   }
   return result.data;
+}
+
+/** 未検証の設定全体からWeb設定だけを検証して取り出す。 */
+export function validateWebConfig(value: unknown): WebConfig {
+  const result = z
+    .object({
+      web: webConfigSchema,
+    })
+    .safeParse(value, {
+      error: z.locales.ja().localeError,
+    });
+  if (!result.success) {
+    throw new ConfigError(createConfigIssues(result.error), {});
+  }
+  return result.data.web;
 }

@@ -1,10 +1,10 @@
 {
   "compilerOptions": {
     "target": "ES2024",
-    "lib": ["ES2024"],
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "types": ["node"],
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["node", "vite/client"],
     "resolveJsonModule": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -23,8 +23,9 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "moduleDetection": "force",
-    "noEmit": true
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact"
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"],
-  "exclude": ["coverage", "dist", "hiho_requirements", "node_modules"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "vite.config.ts"]
 }

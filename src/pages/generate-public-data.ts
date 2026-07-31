@@ -1,5 +1,7 @@
 import {
+  createLabelEffectsResolver,
   type Evidence,
+  type LabelRule,
   type Relation,
   type Severity,
   type Status,
@@ -40,8 +42,9 @@ import { assertPublicSummarySize, type PublicSummarySizeMeasurement } from "./su
 /** 初期表示へ含めるgraph node数の既定値。 */
 export const DEFAULT_INITIAL_GRAPH_NODE_LIMIT = 500;
 
-/** 公開DTO生成時の初期graphとsummaryサイズ制約。 */
+/** 公開DTO生成時のラベルルール、初期graph、summaryサイズ設定。 */
 export type PublicDtoGenerationOptions = Readonly<{
+  labelRules: readonly LabelRule[];
   maxInitialGraphNodes: number;
   maxSummaryGzipBytes: number;
 }>;
@@ -494,6 +497,7 @@ function createItemSummary(
   repository: SnapshotRepository,
   blockerNodeIds: readonly string[],
   downstreamImpact: AnalyzeGraphResult["downstreamImpacts"][number],
+  priorityWeight: number,
 ): PublicItemSummaryDto {
   return {
     nodeId: item.nodeId,
@@ -511,6 +515,7 @@ function createItemSummary(
     })),
     nextAction: item.nextAction,
     severity: item.severity,
+    priorityWeight,
     confidence: item.confidence,
     githubUpdatedAt: item.githubUpdatedAt,
     stallSince: item.stallSince,
@@ -663,6 +668,7 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
     snapshot.repositories.map((repository) => [repository.id, repository]),
   );
   const blockersByNodeId = createBlockersByNodeId(snapshot);
+  const resolveLabelEffects = createLabelEffectsResolver(input.options.labelRules);
   const impactByNodeId = new Map(
     graph.analysis.downstreamImpacts.map((impact) => [impact.nodeId, impact]),
   );
@@ -676,6 +682,7 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
       repository,
       blockersByNodeId.get(item.nodeId) ?? Object.freeze([]),
       impact,
+      resolveLabelEffects(`${repository.owner}/${repository.name}`, item.labels).priorityWeight,
     );
   });
   const itemCountByRepositoryId = new Map<string, number>();

@@ -1,0 +1,480 @@
+import { type PublicItemSummaryDto, type PublicSummaryDto } from "../../src/pages/public-dto.js";
+import { assertNonNullable, UnreachableError } from "../../src/util/index.js";
+
+type PublicRepositoryDto = PublicSummaryDto["repositories"][number];
+type Status = PublicItemSummaryDto["status"];
+type Severity = PublicItemSummaryDto["severity"];
+
+/** attention queueで使う対応優先度。 */
+export type AttentionPriority = Readonly<{
+  label: string;
+  rank: number;
+}>;
+
+/** 一覧表で並び替えと絞り込みの対象にする列。 */
+export type TableColumnKey =
+  "repository" | "type" | "status" | "waitingOn" | "stall" | "blocker" | "updated";
+
+/** 一覧表の並び順。 */
+export type TableSort = Readonly<{
+  key: TableColumnKey;
+  direction: "ascending" | "descending";
+}>;
+
+/** 一覧表の列別絞り込み値。 */
+export type TableFilters = Readonly<Record<TableColumnKey, string>>;
+
+/** 一覧表へ表示する項目の導出値。 */
+export type ItemTableRow = Readonly<{
+  item: PublicItemSummaryDto;
+  repository: PublicRepositoryDto;
+  repositoryText: string;
+  typeText: string;
+  statusText: string;
+  waitingOnText: string;
+  stallText: string;
+  blockerText: string;
+  updatedText: string;
+  observedText: string;
+}>;
+
+/** 許可済みGitHub URLの検証結果。 */
+export type GitHubUrlResult =
+  | Readonly<{
+      allowed: true;
+      url: string;
+    }>
+  | Readonly<{
+      allowed: false;
+    }>;
+
+const STATUS_LABELS = {
+  new_untriaged: "未トリアージ",
+  needs_maintainer_decision: "メンテナー判断待ち",
+  waiting_for_review: "レビュー待ち",
+  waiting_for_author: "作成者待ち",
+  waiting_for_assignee: "担当者待ち",
+  blocked: "ブロック中",
+  waiting_for_automation: "自動処理待ち",
+  ready_to_merge: "マージ可能",
+  in_progress: "進行中",
+  unknown: "不明",
+  terminal_merged: "マージ済み",
+  terminal_completed: "完了",
+  terminal_not_planned: "対応しない",
+} satisfies Readonly<Record<Status, string>>;
+
+const SEVERITY_LABELS = {
+  none: "通常",
+  watch: "要確認",
+  urgent: "緊急",
+  critical: "最重要",
+} satisfies Readonly<Record<Severity, string>>;
+
+const SEVERITY_RANKS = {
+  none: 0,
+  watch: 1,
+  urgent: 2,
+  critical: 3,
+} satisfies Readonly<Record<Severity, number>>;
+
+const jstDateTimeFormatters = new Map<string, Intl.DateTimeFormat>();
+const relativeTimeFormatters = new Map<string, Intl.RelativeTimeFormat>();
+
+const ROLE_LABELS = {
+  author: "作成者",
+  maintainer: "メンテナー",
+  reviewer: "レビュワー",
+  assignee: "担当者",
+  dependency: "依存項目",
+  merge_decider: "マージ判断者",
+  ci: "CI",
+  unknown: "不明",
+} satisfies Readonly<Record<PublicItemSummaryDto["waitingOn"][number]["role"], string>>;
+
+/** 一覧表の空の絞り込み条件を作る。 */
+export function createEmptyTableFilters(): TableFilters {
+  return {
+    repository: "",
+    type: "",
+    status: "",
+    waitingOn: "",
+    stall: "",
+    blocker: "",
+    updated: "",
+  };
+}
+
+/** statusの日本語表示名を返す。 */
+export function statusLabel(status: Status): string {
+  return STATUS_LABELS[status];
+}
+
+/** severityの日本語表示名を返す。 */
+export function severityLabel(severity: Severity): string {
+  return SEVERITY_LABELS[severity];
+}
+
+/** 設定済みラベルルールのpriorityWeightをqueue表示へ変換する。 */
+export function attentionPriority(item: PublicItemSummaryDto): AttentionPriority {
+  return {
+    label: item.priorityWeight === 0 ? "標準" : item.priorityWeight.toString(),
+    rank: item.priorityWeight,
+  };
+}
+
+function parseTimestamp(value: string): number {
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    throw new TypeError(`日時を解釈できません: ${value}`);
+  }
+  return timestamp;
+}
+
+function jstDateTimeFormatter(locale: string): Intl.DateTimeFormat {
+  const cached = jstDateTimeFormatters.get(locale);
+  if (cached != null) {
+    return cached;
+  }
+  const formatter = new Intl.DateTimeFormat(locale, {
+    timeZone: "Asia/Tokyo",
+    dateStyle: "medium",
+    timeStyle: "medium",
+    hour12: false,
+  });
+  jstDateTimeFormatters.set(locale, formatter);
+  return formatter;
+}
+
+function relativeTimeFormatter(locale: string): Intl.RelativeTimeFormat {
+  const cached = relativeTimeFormatters.get(locale);
+  if (cached != null) {
+    return cached;
+  }
+  const formatter = new Intl.RelativeTimeFormat(locale, {
+    numeric: "always",
+  });
+  relativeTimeFormatters.set(locale, formatter);
+  return formatter;
+}
+
+/** 日時をJSTの絶対時刻へ整形する。 */
+export function formatJstDateTime(value: string, locale: string): string {
+  const timestamp = parseTimestamp(value);
+  return `${jstDateTimeFormatter(locale).format(timestamp)} JST`;
+}
+
+/** 日時を現在時刻からの相対時間へ整形する。 */
+export function formatRelativeTime(value: string, now: Date, locale: string): string {
+  const differenceMilliseconds = parseTimestamp(value) - now.getTime();
+  const absoluteMilliseconds = Math.abs(differenceMilliseconds);
+  let divisor: number;
+  let unit: Intl.RelativeTimeFormatUnit;
+
+  if (absoluteMilliseconds < 60 * 1000) {
+    divisor = 1000;
+    unit = "second";
+  } else if (absoluteMilliseconds < 60 * 60 * 1000) {
+    divisor = 60 * 1000;
+    unit = "minute";
+  } else if (absoluteMilliseconds < 24 * 60 * 60 * 1000) {
+    divisor = 60 * 60 * 1000;
+    unit = "hour";
+  } else {
+    divisor = 24 * 60 * 60 * 1000;
+    unit = "day";
+  }
+
+  return relativeTimeFormatter(locale).format(Math.round(differenceMilliseconds / divisor), unit);
+}
+
+/** stallSinceから現在までの停滞時間を整形する。 */
+export function formatStallDuration(stallSince: string, now: Date): string {
+  const elapsedMilliseconds = now.getTime() - parseTimestamp(stallSince);
+  if (elapsedMilliseconds < 0) {
+    throw new RangeError("stallSinceは現在時刻より後にできません");
+  }
+  const elapsedHours = Math.floor(elapsedMilliseconds / (60 * 60 * 1000));
+  if (elapsedHours < 1) {
+    const elapsedMinutes = Math.floor(elapsedMilliseconds / (60 * 1000));
+    return `${elapsedMinutes.toString()}分`;
+  }
+  if (elapsedHours < 24) {
+    return `${elapsedHours.toString()}時間`;
+  }
+  const elapsedDays = Math.floor(elapsedHours / 24);
+  const remainingHours = elapsedHours % 24;
+  if (remainingHours === 0) {
+    return `${elapsedDays.toString()}日`;
+  }
+  return `${elapsedDays.toString()}日 ${remainingHours.toString()}時間`;
+}
+
+function waitingOnCandidateLabel(waitingOn: PublicItemSummaryDto["waitingOn"][number]): string {
+  switch (waitingOn.kind) {
+    case "user":
+      return `@${waitingOn.candidateId}`;
+    case "team":
+      return `チーム ${waitingOn.candidateId}`;
+    case "role":
+      return ROLE_LABELS[waitingOn.role];
+    case "item":
+      return `項目 ${waitingOn.candidateId}`;
+    case "automation":
+      return `自動処理 ${waitingOn.candidateId}`;
+    case "unknown":
+      return "不明";
+    default:
+      throw new UnreachableError(waitingOn.kind);
+  }
+}
+
+/** waitingOn配列を日本語の表示文字列へ変換する。 */
+export function formatWaitingOn(item: PublicItemSummaryDto): string {
+  if (item.waitingOn.length === 0) {
+    if (
+      item.status !== "terminal_merged" &&
+      item.status !== "terminal_completed" &&
+      item.status !== "terminal_not_planned"
+    ) {
+      throw new TypeError(`非terminal項目 ${item.nodeId} にwaitingOnがありません`);
+    }
+    return "対応完了";
+  }
+  return item.waitingOn.map(waitingOnCandidateLabel).join("、");
+}
+
+function compareStrings(left: string, right: string): number {
+  if (left < right) {
+    return -1;
+  }
+  if (left > right) {
+    return 1;
+  }
+  return 0;
+}
+
+/** attention queueの決定論的な優先順を比較する。 */
+export function compareAttentionItems(
+  left: PublicItemSummaryDto,
+  right: PublicItemSummaryDto,
+): number {
+  const severityOrder = SEVERITY_RANKS[right.severity] - SEVERITY_RANKS[left.severity];
+  if (severityOrder !== 0) {
+    return severityOrder;
+  }
+  const priorityOrder = attentionPriority(right).rank - attentionPriority(left).rank;
+  if (priorityOrder !== 0) {
+    return priorityOrder;
+  }
+  const repositoryImpactOrder =
+    right.downstreamImpact.repositoryCount - left.downstreamImpact.repositoryCount;
+  if (repositoryImpactOrder !== 0) {
+    return repositoryImpactOrder;
+  }
+  const itemImpactOrder =
+    right.downstreamImpact.openNodeCount - left.downstreamImpact.openNodeCount;
+  if (itemImpactOrder !== 0) {
+    return itemImpactOrder;
+  }
+  const stallOrder = compareStrings(left.stallSince, right.stallSince);
+  if (stallOrder !== 0) {
+    return stallOrder;
+  }
+  return compareStrings(left.nodeId, right.nodeId);
+}
+
+function isTerminalStatus(status: Status): boolean {
+  return (
+    status === "terminal_merged" ||
+    status === "terminal_completed" ||
+    status === "terminal_not_planned"
+  );
+}
+
+/** staleとterminalを除いた要対応項目を優先順で返す。 */
+export function selectAttentionItems(
+  items: readonly PublicItemSummaryDto[],
+): readonly PublicItemSummaryDto[] {
+  return items
+    .filter(
+      (item) =>
+        item.severity !== "none" &&
+        item.repositoryFreshness === "fresh" &&
+        !isTerminalStatus(item.status),
+    )
+    .sort(compareAttentionItems);
+}
+
+/** URLがhttps://github.com配下かを検証する。 */
+export function validateGitHubUrl(value: string): GitHubUrlResult {
+  if (!URL.canParse(value)) {
+    return {
+      allowed: false,
+    };
+  }
+  const url = new URL(value);
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== "github.com" ||
+    url.port !== "" ||
+    url.username !== "" ||
+    url.password !== ""
+  ) {
+    return {
+      allowed: false,
+    };
+  }
+  return {
+    allowed: true,
+    url: url.toString(),
+  };
+}
+
+function blockerText(
+  item: PublicItemSummaryDto,
+  itemsByNodeId: ReadonlyMap<string, PublicItemSummaryDto>,
+): string {
+  if (item.blockerNodeIds.length === 0) {
+    return "なし";
+  }
+  return item.blockerNodeIds
+    .map((nodeId) => {
+      const blocker = itemsByNodeId.get(nodeId);
+      assertNonNullable(blocker, `blocker ${nodeId}の公開項目がありません`);
+      return blocker.displayReference;
+    })
+    .join("、");
+}
+
+/** 公開summaryから一覧表の表示行を作る。 */
+export function createItemTableRows(
+  summary: PublicSummaryDto,
+  now: Date,
+  locale: string,
+): readonly ItemTableRow[] {
+  const repositoriesById = new Map(
+    summary.repositories.map((repository) => [repository.id, repository]),
+  );
+  const itemsByNodeId = new Map(summary.items.map((item) => [item.nodeId, item]));
+
+  return summary.items.map((item) => {
+    const repository = repositoriesById.get(item.repositoryId);
+    assertNonNullable(repository, `項目 ${item.nodeId} のrepositoryがありません`);
+    return {
+      item,
+      repository,
+      repositoryText: `${repository.fullName} ${item.displayReference} ${item.title}`,
+      typeText: item.type === "issue" ? "Issue" : "Pull Request",
+      statusText: `${statusLabel(item.status)} ${item.status} ${severityLabel(
+        item.severity,
+      )} 優先度 ${item.priorityWeight.toString()}`,
+      waitingOnText: `${formatWaitingOn(item)} ${item.waitingOn
+        .map((waitingOn) => waitingOn.reasonSummary)
+        .join(" ")}`,
+      stallText: `${formatStallDuration(item.stallSince, now)} ${item.stallSince}`,
+      blockerText: blockerText(item, itemsByNodeId),
+      updatedText: `${formatJstDateTime(item.githubUpdatedAt, locale)} ${formatRelativeTime(
+        item.githubUpdatedAt,
+        now,
+        locale,
+      )} ${item.githubUpdatedAt}`,
+      observedText: `${formatJstDateTime(item.observedAt, locale)} ${formatRelativeTime(
+        item.observedAt,
+        now,
+        locale,
+      )} ${item.observedAt}`,
+    };
+  });
+}
+
+function normalizedSearchText(value: string): string {
+  return value.normalize("NFKC").toLowerCase();
+}
+
+function rowColumnText(row: ItemTableRow, key: TableColumnKey): string {
+  switch (key) {
+    case "repository":
+      return row.repositoryText;
+    case "type":
+      return row.typeText;
+    case "status":
+      return row.statusText;
+    case "waitingOn":
+      return row.waitingOnText;
+    case "stall":
+      return row.stallText;
+    case "blocker":
+      return row.blockerText;
+    case "updated":
+      return `${row.updatedText} ${row.observedText}`;
+    default:
+      throw new UnreachableError(key);
+  }
+}
+
+function compareTableRows(
+  left: ItemTableRow,
+  right: ItemTableRow,
+  key: TableColumnKey,
+  locale: string,
+): number {
+  switch (key) {
+    case "repository":
+      return left.repositoryText.localeCompare(right.repositoryText, locale);
+    case "type":
+      return left.typeText.localeCompare(right.typeText, locale);
+    case "status":
+      return left.statusText.localeCompare(right.statusText, locale);
+    case "waitingOn":
+      return left.waitingOnText.localeCompare(right.waitingOnText, locale);
+    case "stall":
+      return parseTimestamp(left.item.stallSince) - parseTimestamp(right.item.stallSince);
+    case "blocker": {
+      const countOrder = left.item.blockerNodeIds.length - right.item.blockerNodeIds.length;
+      return countOrder === 0
+        ? left.blockerText.localeCompare(right.blockerText, locale)
+        : countOrder;
+    }
+    case "updated":
+      return parseTimestamp(left.item.githubUpdatedAt) - parseTimestamp(right.item.githubUpdatedAt);
+    default:
+      throw new UnreachableError(key);
+  }
+}
+
+/** 一覧表の全列filterとsortを適用する。 */
+export function filterAndSortTableRows(
+  rows: readonly ItemTableRow[],
+  filters: TableFilters,
+  sort: TableSort,
+  locale: string,
+): readonly ItemTableRow[] {
+  const filteredRows = rows.filter((row) =>
+    Object.entries(filters).every(([key, value]) => {
+      if (value.length === 0) {
+        return true;
+      }
+      if (
+        key !== "repository" &&
+        key !== "type" &&
+        key !== "status" &&
+        key !== "waitingOn" &&
+        key !== "stall" &&
+        key !== "blocker" &&
+        key !== "updated"
+      ) {
+        throw new TypeError(`未対応の表列です: ${key}`);
+      }
+      return normalizedSearchText(rowColumnText(row, key)).includes(normalizedSearchText(value));
+    }),
+  );
+  const direction = sort.direction === "ascending" ? 1 : -1;
+  return filteredRows.sort((left, right) => {
+    const order = compareTableRows(left, right, sort.key, locale);
+    if (order !== 0) {
+      return order * direction;
+    }
+    return compareStrings(left.item.nodeId, right.item.nodeId);
+  });
+}
