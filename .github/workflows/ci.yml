@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: ソースコードを取得
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Node.jsを準備
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+      - name: pnpmを準備
+        run: corepack enable
+      - name: 依存関係をインストール
+        run: pnpm install --frozen-lockfile
+      - name: 型を検査
+        run: pnpm typecheck
+      - name: lintを実行
+        run: pnpm lint
+      - name: formatを検査
+        run: pnpm format:check
+      - name: testを実行
+        run: pnpm test
+      - name: CLIをビルド
+        run: pnpm build
+      - name: Web UIをビルド
+        run: pnpm build:web
+
+  golden-eval:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: ソースコードを取得
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Node.jsを準備
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+      - name: pnpmを準備
+        run: corepack enable
+      - name: 依存関係をインストール
+        run: pnpm install --frozen-lockfile
+      - name: golden evalを実行
+        run: pnpm eval:golden

@@ -60,3 +60,4 @@ export {
   type RunReport,
   type RunStage,
 } from "./run-report.js";
+export { createTrackerRunCliArguments, runTrackerCommand } from "./tracker-run.js";
