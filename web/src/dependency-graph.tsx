@@ -15,7 +15,7 @@ import {
   type GraphViewNode,
 } from "./graph-model.js";
 import type { GraphLayout, LayoutedGraphNode } from "./graph-layout.js";
-import { validateGitHubUrl } from "./model.js";
+import { SafeGitHubLink } from "./safe-link.js";
 
 const COMPONENTS_PER_PAGE = 50;
 
@@ -83,15 +83,7 @@ function GitHubGraphLink({ children, link }: GitHubGraphLinkProps) {
   if (link.status === "unavailable") {
     return <span>{children}</span>;
   }
-  const result = validateGitHubUrl(link.url);
-  if (!result.allowed) {
-    return <span class="unsafe-link">安全でないリンクを無効化しました</span>;
-  }
-  return (
-    <a href={result.url} target="_blank" rel="noopener noreferrer">
-      {children}
-    </a>
-  );
+  return <SafeGitHubLink href={link.url}>{children}</SafeGitHubLink>;
 }
 
 function truncateGraphText(value: string, maximumLength: number): string {
@@ -515,9 +507,9 @@ function GraphAlternativeTables({
                   <ul class="edge-evidence-list">
                     {edge.evidence.map((evidence) => (
                       <li key={`${edge.id}:${evidence.sourceId}`}>
-                        <a href={evidence.sourceUrl} target="_blank" rel="noopener noreferrer">
+                        <SafeGitHubLink href={evidence.sourceUrl}>
                           {evidence.sourceId}
-                        </a>
+                        </SafeGitHubLink>
                         <span>{evidence.summary}</span>
                       </li>
                     ))}

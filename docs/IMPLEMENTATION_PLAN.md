@@ -57,7 +57,7 @@ VOICEVOX Organization全体の公開Issue/PRについて、状態・ボールの
 - [x] T21 公開DTO生成 — Pages用DTOの生成、private data guard、全文転載の回避、gzipサイズ制約
 - [x] T22 Web UI基盤と一覧 — Viteビルド、概要dashboard、attention queue、sort/filter可能な表、鮮度表示
 - [x] T23 Web UI依存グラフ — component単位のグラフ描画、停滞時間とdownstream impactの視覚強調、frontier/cycle表示、凡例
-- [ ] T24 Web UI詳細と横断機能 — item詳細、検索、deep link、アクセシビリティ、XSS対策とCSP
+- [x] T24 Web UI詳細と横断機能 — item詳細、検索、deep link、アクセシビリティ、XSS対策とCSP
 
 ### Phase 7: Discord通知
 

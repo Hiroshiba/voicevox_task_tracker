@@ -1,4 +1,9 @@
-import { type PublicItemSummaryDto, type PublicSummaryDto } from "../../src/pages/public-dto.js";
+import {
+  type PublicDetailsDto,
+  type PublicItemDetailsDto,
+  type PublicItemSummaryDto,
+  type PublicSummaryDto,
+} from "../../src/pages/public-dto.js";
 import { assertNonNullable, UnreachableError } from "../../src/util/index.js";
 
 type PublicRepositoryDto = PublicSummaryDto["repositories"][number];
@@ -47,6 +52,13 @@ export type GitHubUrlResult =
   | Readonly<{
       allowed: false;
     }>;
+
+/** confidenceに応じた判定表示。 */
+export type ConfidencePresentation = Readonly<{
+  level: "confirmed" | "high_estimate" | "estimate" | "uncertain";
+  label: string;
+  fieldQualifier: "" | "推定" | "候補";
+}>;
 
 const STATUS_LABELS = {
   new_untriaged: "未トリアージ",
@@ -210,7 +222,10 @@ export function formatStallDuration(stallSince: string, now: Date): string {
   return `${elapsedDays.toString()}日 ${remainingHours.toString()}時間`;
 }
 
-function waitingOnCandidateLabel(waitingOn: PublicItemSummaryDto["waitingOn"][number]): string {
+/** waitingOn候補を日本語の表示文字列へ変換する。 */
+export function waitingOnCandidateLabel(
+  waitingOn: PublicItemSummaryDto["waitingOn"][number],
+): string {
   switch (waitingOn.kind) {
     case "user":
       return `@${waitingOn.candidateId}`;
@@ -229,6 +244,57 @@ function waitingOnCandidateLabel(waitingOn: PublicItemSummaryDto["waitingOn"][nu
   }
 }
 
+/** waitingOnのroleを日本語の表示文字列へ変換する。 */
+export function waitingOnRoleLabel(
+  role: PublicItemSummaryDto["waitingOn"][number]["role"],
+): string {
+  return ROLE_LABELS[role];
+}
+
+/** confidenceを確定、推定、候補の表示へ変換する。 */
+export function confidencePresentation(confidence: number): ConfidencePresentation {
+  if (confidence < 0 || confidence > 1) {
+    throw new RangeError("confidenceは0以上1以下でなければなりません");
+  }
+  if (confidence === 1) {
+    return {
+      level: "confirmed",
+      label: "確定",
+      fieldQualifier: "",
+    };
+  }
+  if (confidence >= 0.85) {
+    return {
+      level: "high_estimate",
+      label: "確度の高い推定",
+      fieldQualifier: "推定",
+    };
+  }
+  if (confidence >= 0.65) {
+    return {
+      level: "estimate",
+      label: "推定",
+      fieldQualifier: "推定",
+    };
+  }
+  return {
+    level: "uncertain",
+    label: "未確定",
+    fieldQualifier: "候補",
+  };
+}
+
+/** confidenceを百分率へ整形する。 */
+export function formatConfidence(confidence: number, locale: string): string {
+  if (confidence < 0 || confidence > 1) {
+    throw new RangeError("confidenceは0以上1以下でなければなりません");
+  }
+  return new Intl.NumberFormat(locale, {
+    style: "percent",
+    maximumFractionDigits: 1,
+  }).format(confidence);
+}
+
 /** waitingOn配列を日本語の表示文字列へ変換する。 */
 export function formatWaitingOn(item: PublicItemSummaryDto): string {
   if (item.waitingOn.length === 0) {
@@ -241,7 +307,14 @@ export function formatWaitingOn(item: PublicItemSummaryDto): string {
     }
     return "対応完了";
   }
-  return item.waitingOn.map(waitingOnCandidateLabel).join("、");
+  return item.waitingOn
+    .map((waitingOn) => {
+      const presentation = confidencePresentation(waitingOn.confidence);
+      return presentation.fieldQualifier.length === 0
+        ? waitingOnCandidateLabel(waitingOn)
+        : `${presentation.fieldQualifier}: ${waitingOnCandidateLabel(waitingOn)}`;
+    })
+    .join("、");
 }
 
 function compareStrings(left: string, right: string): number {
@@ -390,6 +463,78 @@ export function createItemTableRows(
 
 function normalizedSearchText(value: string): string {
   return value.normalize("NFKC").toLowerCase();
+}
+
+/** summaryとdetailsの項目を検証してnode IDで引けるようにする。 */
+export function createItemDetailsMap(
+  summary: PublicSummaryDto,
+  details: PublicDetailsDto,
+): ReadonlyMap<string, PublicItemDetailsDto> {
+  if (summary.runId !== details.runId || summary.generatedAt !== details.generatedAt) {
+    throw new TypeError("summaryとdetailsの生成runが一致しません");
+  }
+  const summaryByNodeId = new Map(summary.items.map((item) => [item.nodeId, item]));
+  const detailsByNodeId = new Map<string, PublicItemDetailsDto>();
+  for (const itemDetails of details.items) {
+    if (detailsByNodeId.has(itemDetails.summary.nodeId)) {
+      throw new TypeError(`detailsの項目 ${itemDetails.summary.nodeId} が重複しています`);
+    }
+    const summaryItem = summaryByNodeId.get(itemDetails.summary.nodeId);
+    assertNonNullable(
+      summaryItem,
+      `detailsの項目 ${itemDetails.summary.nodeId} がsummaryにありません`,
+    );
+    if (JSON.stringify(summaryItem) !== JSON.stringify(itemDetails.summary)) {
+      throw new TypeError(`summaryとdetailsの項目 ${itemDetails.summary.nodeId} が一致しません`);
+    }
+    detailsByNodeId.set(itemDetails.summary.nodeId, itemDetails);
+  }
+  for (const item of summary.items) {
+    if (!detailsByNodeId.has(item.nodeId)) {
+      throw new TypeError(`summaryの項目 ${item.nodeId} がdetailsにありません`);
+    }
+  }
+  return detailsByNodeId;
+}
+
+/** 公開DTO内のリポジトリ、番号、タイトル、アクター、team、ラベルを検索する。 */
+export function searchItemNodeIds(
+  summary: PublicSummaryDto,
+  detailsByNodeId: ReadonlyMap<string, PublicItemDetailsDto>,
+  query: string,
+): readonly string[] {
+  const tokens = normalizedSearchText(query).trim().split(/\s+/u);
+  if (tokens.length === 1 && tokens[0] === "") {
+    return summary.items.map((item) => item.nodeId);
+  }
+  const repositoriesById = new Map(
+    summary.repositories.map((repository) => [repository.id, repository]),
+  );
+  return summary.items
+    .filter((item) => {
+      const repository = repositoriesById.get(item.repositoryId);
+      const details = detailsByNodeId.get(item.nodeId);
+      assertNonNullable(repository, `項目 ${item.nodeId} のrepositoryがありません`);
+      assertNonNullable(details, `項目 ${item.nodeId} のdetailsがありません`);
+      const searchText = normalizedSearchText(
+        [
+          repository.fullName,
+          repository.name,
+          item.number.toString(),
+          `#${item.number.toString()}`,
+          item.displayReference,
+          item.title,
+          ...item.waitingOn.flatMap((waitingOn) => [
+            waitingOn.candidateId,
+            waitingOn.reasonSummary,
+          ]),
+          ...details.assignees.map((assignee) => assignee.login),
+          ...details.labels,
+        ].join("\n"),
+      );
+      return tokens.every((token) => searchText.includes(token));
+    })
+    .map((item) => item.nodeId);
 }
 
 function rowColumnText(row: ItemTableRow, key: TableColumnKey): string {

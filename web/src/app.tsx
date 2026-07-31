@@ -1,26 +1,42 @@
-import { type ComponentChildren } from "preact";
-import { useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 
-import { type PublicItemSummaryDto, type PublicSummaryDto } from "../../src/pages/public-dto.js";
-import { assertNonNullable } from "../../src/util/index.js";
+import {
+  type PublicDetailsDto,
+  type PublicItemSummaryDto,
+  type PublicSummaryDto,
+} from "../../src/pages/public-dto.js";
+import { assertNonNullable, UnreachableError } from "../../src/util/index.js";
 import { DependencyGraph, type PublicDetailsLoader } from "./dependency-graph.js";
 import {
+  ItemDetailsLink,
+  ItemWorkspace,
+  type ItemDetailsState,
+  type ItemSearchState,
+} from "./item-details.js";
+import {
   attentionPriority,
-  createEmptyTableFilters,
+  createItemDetailsMap,
   createItemTableRows,
   filterAndSortTableRows,
   formatJstDateTime,
   formatRelativeTime,
   formatStallDuration,
   formatWaitingOn,
+  searchItemNodeIds,
   selectAttentionItems,
   severityLabel,
   statusLabel,
-  validateGitHubUrl,
   type TableColumnKey,
   type TableFilters,
   type TableSort,
 } from "./model.js";
+import { SafeGitHubLink } from "./safe-link.js";
+import {
+  createWebViewHref,
+  parseWebViewState,
+  type ParsedWebViewState,
+  type WebViewState,
+} from "./url-state.js";
 
 const TABLE_PAGE_SIZE = 50;
 
@@ -32,11 +48,6 @@ type AppProps = Readonly<{
   title: string;
 }>;
 
-type SafeGitHubLinkProps = Readonly<{
-  children: ComponentChildren;
-  href: string;
-}>;
-
 type TimeDisplayProps = Readonly<{
   label: string;
   locale: string;
@@ -45,8 +56,23 @@ type TimeDisplayProps = Readonly<{
 }>;
 
 type ItemTableProps = Readonly<{
+  createItemHref: (nodeId: string) => string;
+  filters: TableFilters;
   locale: string;
   now: Date;
+  onFilterChange: (key: TableColumnKey, value: string) => void;
+  onSelectItem: (nodeId: string) => void;
+  onSortChange: (key: TableColumnKey) => void;
+  searchState: ItemSearchState;
+  sort: TableSort;
+  summary: PublicSummaryDto;
+}>;
+
+type AttentionQueueProps = Readonly<{
+  createItemHref: (nodeId: string) => string;
+  locale: string;
+  now: Date;
+  onSelectItem: (nodeId: string) => void;
   summary: PublicSummaryDto;
 }>;
 
@@ -109,17 +135,58 @@ const SEVERITY_VALUES: readonly PublicItemSummaryDto["severity"][] = [
   "none",
 ];
 
-/** 許可されたGitHub URLだけを別タブで開くリンク。 */
-export function SafeGitHubLink({ children, href }: SafeGitHubLinkProps) {
-  const result = validateGitHubUrl(href);
-  if (!result.allowed) {
-    return <span class="unsafe-link">安全でないリンクを無効化しました</span>;
-  }
-  return (
-    <a href={result.url} target="_blank" rel="noopener noreferrer">
-      {children}
-    </a>
-  );
+type SharedDetailsLoaderState =
+  | Readonly<{
+      status: "empty";
+    }>
+  | Readonly<{
+      status: "loading";
+      promise: Promise<PublicDetailsDto>;
+    }>
+  | Readonly<{
+      status: "loaded";
+      details: PublicDetailsDto;
+    }>;
+
+function createSharedDetailsLoader(loadDetails: PublicDetailsLoader): PublicDetailsLoader {
+  let state: SharedDetailsLoaderState = {
+    status: "empty",
+  };
+  return () => {
+    if (state.status === "loading") {
+      return state.promise;
+    }
+    if (state.status === "loaded") {
+      return Promise.resolve(state.details);
+    }
+
+    let request: Promise<PublicDetailsDto>;
+    try {
+      request = loadDetails();
+    } catch (error: unknown) {
+      return Promise.reject(error);
+    }
+    const sharedRequest = request.then(
+      (details) => {
+        state = {
+          status: "loaded",
+          details,
+        };
+        return details;
+      },
+      (error: unknown) => {
+        state = {
+          status: "empty",
+        };
+        throw error;
+      },
+    );
+    state = {
+      status: "loading",
+      promise: sharedRequest,
+    };
+    return sharedRequest;
+  };
 }
 
 function TimeDisplay({ label, locale, now, value }: TimeDisplayProps) {
@@ -227,7 +294,12 @@ function RepositoryFreshness({ locale, now, summary }: Omit<AppProps, "loadDetai
         </div>
         <p>観測に失敗したリポジトリは、前回値として明示します。</p>
       </div>
-      <div class="table-scroll">
+      <div
+        class="table-scroll"
+        tabIndex={0}
+        role="region"
+        aria-label="リポジトリ鮮度表の横スクロール領域"
+      >
         <table class="freshness-table">
           <caption class="visually-hidden">リポジトリごとの項目数、観測時刻、鮮度</caption>
           <thead>
@@ -280,7 +352,13 @@ function RepositoryFreshness({ locale, now, summary }: Omit<AppProps, "loadDetai
   );
 }
 
-function AttentionQueue({ locale, now, summary }: Omit<AppProps, "loadDetails" | "title">) {
+function AttentionQueue({
+  createItemHref,
+  locale,
+  now,
+  onSelectItem,
+  summary,
+}: AttentionQueueProps) {
   const repositoriesById = new Map(
     summary.repositories.map((repository) => [repository.id, repository]),
   );
@@ -354,7 +432,16 @@ function AttentionQueue({ locale, now, summary }: Omit<AppProps, "loadDetails" |
                       </dd>
                     </div>
                   </dl>
-                  <SafeGitHubLink href={item.url}>GitHubで開く</SafeGitHubLink>
+                  <div class="item-actions">
+                    <ItemDetailsLink
+                      href={createItemHref(item.nodeId)}
+                      nodeId={item.nodeId}
+                      onSelect={onSelectItem}
+                    >
+                      詳細を開く
+                    </ItemDetailsLink>
+                    <SafeGitHubLink href={item.url}>GitHubで開く</SafeGitHubLink>
+                  </div>
                 </article>
               </li>
             );
@@ -370,40 +457,56 @@ function AttentionQueue({ locale, now, summary }: Omit<AppProps, "loadDetails" |
   );
 }
 
-function ItemTable({ locale, now, summary }: ItemTableProps) {
-  const [filters, setFilters] = useState<TableFilters>(createEmptyTableFilters);
-  const [sort, setSort] = useState<TableSort>({
-    key: "repository",
-    direction: "ascending",
-  });
+function ItemTable({
+  createItemHref,
+  filters,
+  locale,
+  now,
+  onFilterChange,
+  onSelectItem,
+  onSortChange,
+  searchState,
+  sort,
+  summary,
+}: ItemTableProps) {
   const [pageIndex, setPageIndex] = useState(0);
   const rows = useMemo(() => createItemTableRows(summary, now, locale), [summary, now, locale]);
+  const searchedRows = useMemo(() => {
+    switch (searchState.status) {
+      case "inactive":
+        return rows;
+      case "available": {
+        const matchingNodeIds = new Set(searchState.nodeIds);
+        return rows.filter((row) => matchingNodeIds.has(row.item.nodeId));
+      }
+      case "loading":
+      case "failed":
+        return [];
+      default:
+        throw new Error("未対応の検索状態です");
+    }
+  }, [rows, searchState]);
   const filteredRows = useMemo(
-    () => filterAndSortTableRows(rows, filters, sort, locale),
-    [rows, filters, sort, locale],
+    () => filterAndSortTableRows(searchedRows, filters, sort, locale),
+    [searchedRows, filters, sort, locale],
   );
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / TABLE_PAGE_SIZE));
   const firstRowIndex = pageIndex * TABLE_PAGE_SIZE;
   const visibleRows = filteredRows.slice(firstRowIndex, firstRowIndex + TABLE_PAGE_SIZE);
 
   function updateFilter(key: TableColumnKey, value: string): void {
-    setFilters((currentFilters) => ({
-      ...currentFilters,
-      [key]: value,
-    }));
+    onFilterChange(key, value);
     setPageIndex(0);
   }
 
   function updateSort(key: TableColumnKey): void {
-    setSort((currentSort) => ({
-      key,
-      direction:
-        currentSort.key === key && currentSort.direction === "ascending"
-          ? "descending"
-          : "ascending",
-    }));
+    onSortChange(key);
     setPageIndex(0);
   }
+
+  useEffect(() => {
+    setPageIndex(0);
+  }, [filters, searchState, sort]);
 
   return (
     <section aria-labelledby="items-heading" class="section-card">
@@ -445,6 +548,7 @@ function ItemTable({ locale, now, summary }: ItemTableProps) {
                     <input
                       type="search"
                       value={filters[column.key]}
+                      maxLength={200}
                       aria-label={`${column.label}で絞り込み`}
                       placeholder="絞り込み"
                       onInput={(event) => {
@@ -466,9 +570,14 @@ function ItemTable({ locale, now, summary }: ItemTableProps) {
               >
                 <th scope="row">
                   <span class="repository-name">{row.repository.fullName}</span>
-                  <SafeGitHubLink href={row.item.url}>
+                  <ItemDetailsLink
+                    href={createItemHref(row.item.nodeId)}
+                    nodeId={row.item.nodeId}
+                    onSelect={onSelectItem}
+                  >
                     {row.item.displayReference} {row.item.title}
-                  </SafeGitHubLink>
+                  </ItemDetailsLink>
+                  <SafeGitHubLink href={row.item.url}>GitHubで開く</SafeGitHubLink>
                   {row.item.repositoryFreshness === "stale" && (
                     <span class="freshness-badge freshness-stale">古い観測値</span>
                   )}
@@ -507,7 +616,15 @@ function ItemTable({ locale, now, summary }: ItemTableProps) {
             ))}
           </tbody>
         </table>
-        {visibleRows.length === 0 && <p class="empty-state">条件に一致する項目はありません。</p>}
+        {visibleRows.length === 0 && (
+          <p class="empty-state">
+            {searchState.status === "loading"
+              ? "検索用の公開詳細データを読み込んでいます。"
+              : searchState.status === "failed"
+                ? "検索用の公開詳細データを取得できませんでした。"
+                : "条件に一致する項目はありません。"}
+          </p>
+        )}
       </div>
       <nav aria-label="一覧のページ送り" class="pagination">
         <button
@@ -538,6 +655,197 @@ function ItemTable({ locale, now, summary }: ItemTableProps) {
 
 /** 公開summary DTOを一覧画面として表示する。 */
 export function App({ loadDetails, locale, now, summary, title }: AppProps) {
+  const validItemNodeIds = useMemo(
+    () => new Set(summary.items.map((item) => item.nodeId)),
+    [summary.items],
+  );
+  const sharedLoadDetails = useMemo(() => createSharedDetailsLoader(loadDetails), [loadDetails]);
+  const [navigationState, setNavigationState] = useState<ParsedWebViewState>(() =>
+    parseWebViewState(window.location.search, validItemNodeIds),
+  );
+  const [detailsState, setDetailsState] = useState<ItemDetailsState>({
+    status: "not_requested",
+  });
+  const viewState = navigationState.state;
+  const detailsNeeded =
+    viewState.searchQuery.trim().length > 0 || viewState.selection.status === "selected";
+
+  useEffect(() => {
+    if (navigationState.status === "sanitized") {
+      window.history.replaceState(
+        {},
+        "",
+        createWebViewHref(window.location.pathname, navigationState.state),
+      );
+    }
+  }, [navigationState]);
+
+  useEffect(() => {
+    function applyBrowserHistory(): void {
+      const parsedState = parseWebViewState(window.location.search, validItemNodeIds);
+      if (parsedState.status === "sanitized") {
+        window.history.replaceState(
+          {},
+          "",
+          createWebViewHref(window.location.pathname, parsedState.state),
+        );
+      }
+      setNavigationState(parsedState);
+    }
+    window.addEventListener("popstate", applyBrowserHistory);
+    return () => {
+      window.removeEventListener("popstate", applyBrowserHistory);
+    };
+  }, [validItemNodeIds]);
+
+  useEffect(() => {
+    if (!detailsNeeded || detailsState.status !== "not_requested") {
+      return;
+    }
+    setDetailsState({
+      status: "loading",
+    });
+    void sharedLoadDetails()
+      .then((details) => {
+        setDetailsState({
+          status: "loaded",
+          itemsByNodeId: createItemDetailsMap(summary, details),
+        });
+      })
+      .catch((error: unknown) => {
+        console.error("項目検索と詳細表示の公開データ取得に失敗しました", error);
+        setDetailsState({
+          status: "failed",
+        });
+      });
+  }, [detailsNeeded, detailsState.status, sharedLoadDetails, summary]);
+
+  const searchState = useMemo<ItemSearchState>(() => {
+    if (viewState.searchQuery.trim().length === 0) {
+      return {
+        status: "inactive",
+      };
+    }
+    switch (detailsState.status) {
+      case "not_requested":
+      case "loading":
+        return {
+          status: "loading",
+        };
+      case "loaded":
+        return {
+          status: "available",
+          nodeIds: searchItemNodeIds(summary, detailsState.itemsByNodeId, viewState.searchQuery),
+        };
+      case "failed":
+        return {
+          status: "failed",
+        };
+      default:
+        throw new UnreachableError(detailsState);
+    }
+  }, [detailsState, summary, viewState.searchQuery]);
+
+  function navigate(nextState: WebViewState, mode: "push" | "replace"): void {
+    const href = createWebViewHref(window.location.pathname, nextState);
+    if (mode === "push") {
+      window.history.pushState({}, "", href);
+    } else {
+      window.history.replaceState({}, "", href);
+    }
+    setNavigationState({
+      status: "valid",
+      state: nextState,
+    });
+  }
+
+  function selectItem(nodeId: string): void {
+    if (!validItemNodeIds.has(nodeId)) {
+      throw new TypeError(`選択できない項目です: ${nodeId}`);
+    }
+    navigate(
+      {
+        ...viewState,
+        selection: {
+          status: "selected",
+          nodeId,
+        },
+      },
+      "push",
+    );
+  }
+
+  function clearSelection(): void {
+    navigate(
+      {
+        ...viewState,
+        selection: {
+          status: "none",
+        },
+      },
+      "push",
+    );
+  }
+
+  function replaceSearchQuery(searchQuery: string): void {
+    navigate(
+      {
+        ...viewState,
+        searchQuery,
+      },
+      "replace",
+    );
+  }
+
+  function replaceTableFilter(key: TableColumnKey, value: string): void {
+    navigate(
+      {
+        ...viewState,
+        tableFilters: {
+          ...viewState.tableFilters,
+          [key]: value,
+        },
+      },
+      "replace",
+    );
+  }
+
+  function replaceTableSort(key: TableColumnKey): void {
+    navigate(
+      {
+        ...viewState,
+        tableSort: {
+          key,
+          direction:
+            viewState.tableSort.key === key && viewState.tableSort.direction === "ascending"
+              ? "descending"
+              : "ascending",
+        },
+      },
+      "replace",
+    );
+  }
+
+  function createItemHref(nodeId: string): string {
+    if (!validItemNodeIds.has(nodeId)) {
+      throw new TypeError(`deep linkを作成できない項目です: ${nodeId}`);
+    }
+    return createWebViewHref(window.location.pathname, {
+      ...viewState,
+      selection: {
+        status: "selected",
+        nodeId,
+      },
+    });
+  }
+
+  const clearSelectionHref = createWebViewHref(window.location.pathname, {
+    ...viewState,
+    selection: {
+      status: "none",
+    },
+  });
+
   return (
     <>
       <a class="skip-link" href="#main-content">
@@ -552,11 +860,60 @@ export function App({ loadDetails, locale, now, summary, title }: AppProps) {
         <p class="run-id">Run {summary.runId}</p>
       </header>
       <main id="main-content">
+        {navigationState.status === "sanitized" && (
+          <p class="notice notice-warning url-state-notice" role="status" aria-live="polite">
+            URLに含まれる不正または未対応の表示条件を無視しました。
+          </p>
+        )}
         <Dashboard summary={summary} now={now} locale={locale} />
         <RepositoryFreshness summary={summary} now={now} locale={locale} />
-        <AttentionQueue summary={summary} now={now} locale={locale} />
-        <DependencyGraph summary={summary} now={now} locale={locale} loadDetails={loadDetails} />
-        <ItemTable summary={summary} now={now} locale={locale} />
+        <ItemWorkspace
+          clearSelectionHref={clearSelectionHref}
+          createItemHref={createItemHref}
+          detailsState={detailsState}
+          locale={locale}
+          now={now}
+          searchQuery={viewState.searchQuery}
+          searchState={searchState}
+          selection={viewState.selection}
+          summary={summary}
+          onClearSearch={() => {
+            replaceSearchQuery("");
+          }}
+          onClearSelection={clearSelection}
+          onRetryDetails={() => {
+            setDetailsState({
+              status: "not_requested",
+            });
+          }}
+          onSearchQueryChange={replaceSearchQuery}
+          onSelectItem={selectItem}
+        />
+        <AttentionQueue
+          createItemHref={createItemHref}
+          summary={summary}
+          now={now}
+          locale={locale}
+          onSelectItem={selectItem}
+        />
+        <DependencyGraph
+          summary={summary}
+          now={now}
+          locale={locale}
+          loadDetails={sharedLoadDetails}
+        />
+        <ItemTable
+          createItemHref={createItemHref}
+          filters={viewState.tableFilters}
+          locale={locale}
+          now={now}
+          searchState={searchState}
+          sort={viewState.tableSort}
+          summary={summary}
+          onFilterChange={replaceTableFilter}
+          onSelectItem={selectItem}
+          onSortChange={replaceTableSort}
+        />
       </main>
       <footer>
         <p>GitHubの公開情報を読み取り専用で整理しています。</p>
