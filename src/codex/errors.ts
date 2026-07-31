@@ -77,3 +77,27 @@ export class CodexTemporaryWorkspaceError extends CodexAdapterError {
     super(`Codex用の一時作業ディレクトリを${actionText}できません`, options);
   }
 }
+
+/** AI cacheで発生するエラーの基底クラス。 */
+export abstract class AiCacheError extends TaskTrackerError {}
+
+/** AI cacheファイルを読み込めなかったことを表す。 */
+export class AiCacheReadError extends AiCacheError {
+  public constructor(cacheKey: string, options: ErrorOptions) {
+    super(`AI cacheを読み込めません。cache key: ${cacheKey}`, options);
+  }
+}
+
+/** AI cacheファイルを書き込めなかったことを表す。 */
+export class AiCacheWriteError extends AiCacheError {
+  public constructor(cacheKey: string, options: ErrorOptions) {
+    super(`AI cacheを書き込めません。cache key: ${cacheKey}`, options);
+  }
+}
+
+/** AI cacheの内容が保存契約を満たさないことを表す。 */
+export class AiCacheFormatError extends AiCacheError {
+  public constructor(cacheKey: string, options: ErrorOptions) {
+    super(`AI cacheの内容が不正です。cache key: ${cacheKey}`, options);
+  }
+}

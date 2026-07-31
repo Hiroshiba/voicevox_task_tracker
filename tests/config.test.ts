@@ -43,6 +43,7 @@ describe("設定の読み込みと検証", () => {
       "voicevox-reviewers",
     );
     expect(config.ai.provider).toBe("codex");
+    expect(config.ai.budget.maxEstimatedCostUsdPerRun).toBe(10);
     expect(config.notifications.discord.mentions.enabled).toBe(false);
   });
 
@@ -133,6 +134,18 @@ describe("設定の読み込みと検証", () => {
 
     expect(error.message).toContain("ai.confidence.high");
     expect(error.message).toContain("highはmedium以上にしてください");
+  });
+
+  it("AI runの見積費用上限に負数を指定できない", () => {
+    const source = replaceRequired(
+      validConfigSource,
+      "    maxEstimatedCostUsdPerRun: 10",
+      "    maxEstimatedCostUsdPerRun: -0.01",
+    );
+    const error = captureConfigError(source);
+
+    expect(error.message).toContain("ai.budget.maxEstimatedCostUsdPerRun");
+    expect(error.message).toContain("0以上");
   });
 
   it("停滞閾値がwatch、urgent、criticalの順でなければ拒否する", () => {

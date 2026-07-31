@@ -83,6 +83,7 @@ ai:
     maxCallsPerRun: 100
     maxInputCharactersPerItem: 60000
     maxTotalInputCharactersPerRun: 2000000
+    maxEstimatedCostUsdPerRun: 10
   execution:
     timeoutSeconds: 120
     maxAttempts: 2

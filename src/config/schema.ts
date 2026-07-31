@@ -277,6 +277,7 @@ const configSchema = z.strictObject({
         maxCallsPerRun: nonNegativeIntegerSchema,
         maxInputCharactersPerItem: positiveIntegerSchema,
         maxTotalInputCharactersPerRun: positiveIntegerSchema,
+        maxEstimatedCostUsdPerRun: nonNegativeNumberSchema,
       }),
       execution: z.strictObject({
         timeoutSeconds: positiveIntegerSchema,
