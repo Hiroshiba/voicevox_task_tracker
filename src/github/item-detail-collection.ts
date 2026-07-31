@@ -65,6 +65,7 @@ const ITEM_DETAIL_CAPABILITIES_QUERY = `
 
 const GRAPHQL_FRAGMENTS = `
   fragment DetailActorFields on Actor {
+    __typename
     login
     ... on Node {
       id
@@ -214,6 +215,20 @@ const GRAPHQL_FRAGMENTS = `
 
   fragment DetailIssueTimelineFields on IssueTimelineItems {
     __typename
+    ... on ClosedEvent {
+      id
+      createdAt
+      actor {
+        ...DetailActorFields
+      }
+    }
+    ... on ReopenedEvent {
+      id
+      createdAt
+      actor {
+        ...DetailActorFields
+      }
+    }
     ... on AssignedEvent {
       id
       createdAt
@@ -291,6 +306,27 @@ const GRAPHQL_FRAGMENTS = `
 
   fragment DetailPullRequestTimelineFields on PullRequestTimelineItems {
     __typename
+    ... on ClosedEvent {
+      id
+      createdAt
+      actor {
+        ...DetailActorFields
+      }
+    }
+    ... on ReopenedEvent {
+      id
+      createdAt
+      actor {
+        ...DetailActorFields
+      }
+    }
+    ... on MergedEvent {
+      id
+      createdAt
+      actor {
+        ...DetailActorFields
+      }
+    }
     ... on AssignedEvent {
       id
       createdAt
@@ -453,6 +489,8 @@ const GRAPHQL_FRAGMENTS = `
 
 const ISSUE_TIMELINE_ITEM_TYPES = `
   [
+    CLOSED_EVENT
+    REOPENED_EVENT
     ASSIGNED_EVENT
     UNASSIGNED_EVENT
     LABELED_EVENT
@@ -465,6 +503,9 @@ const ISSUE_TIMELINE_ITEM_TYPES = `
 
 const PULL_REQUEST_TIMELINE_ITEM_TYPES = `
   [
+    CLOSED_EVENT
+    REOPENED_EVENT
+    MERGED_EVENT
     ASSIGNED_EVENT
     UNASSIGNED_EVENT
     LABELED_EVENT
@@ -945,8 +986,16 @@ const pageInfoSchema = z
       });
     }
   });
+const githubApiAccountTypeSchema = z.enum([
+  "Bot",
+  "EnterpriseUserAccount",
+  "Mannequin",
+  "Organization",
+  "User",
+]);
 const actorSchema = z
   .object({
+    __typename: githubApiAccountTypeSchema,
     id: opaqueIdSchema,
     login: z.string().min(1),
   })
@@ -969,7 +1018,7 @@ const reviewRequestTargetSchema = z.union([
   teamSchema,
 ]);
 const assigneeSchema = z.object({
-  __typename: z.enum(["Bot", "EnterpriseUserAccount", "Mannequin", "Organization", "User"]),
+  __typename: githubApiAccountTypeSchema,
   id: opaqueIdSchema,
   login: z.string().min(1),
 });
@@ -1127,6 +1176,15 @@ const timelineEventBaseSchema = z.object({
   id: opaqueIdSchema,
   createdAt: utcIsoDateTimeSchema,
   actor: actorSchema,
+});
+const closedEventSchema = timelineEventBaseSchema.extend({
+  __typename: z.literal("ClosedEvent"),
+});
+const reopenedEventSchema = timelineEventBaseSchema.extend({
+  __typename: z.literal("ReopenedEvent"),
+});
+const mergedEventSchema = timelineEventBaseSchema.extend({
+  __typename: z.literal("MergedEvent"),
 });
 const assignedEventSchema = timelineEventBaseSchema.extend({
   __typename: z.literal("AssignedEvent"),
@@ -1446,6 +1504,7 @@ function normalizeAccount(account: RawActor): GitHubDetailAccount {
     sourceId: buildSourceId("github_actor", nodeId),
     nodeId,
     login: account.login,
+    apiType: account.__typename,
   });
 }
 
@@ -1472,6 +1531,7 @@ function normalizeReviewRequestTarget(
       sourceId: buildSourceId("github_user", nodeId),
       nodeId,
       login: target.login,
+      apiType: target.__typename,
     });
   }
   return normalizeTeam(target);
@@ -1749,6 +1809,9 @@ function normalizeSimpleTimelineEvent(
   event: z.output<typeof timelineEventBaseSchema>,
   sequence: number,
   kind:
+    | "closed"
+    | "reopened"
+    | "merged"
     | "ready_for_review"
     | "converted_to_draft"
     | "added_to_merge_queue"
@@ -1764,6 +1827,24 @@ function normalizeSimpleTimelineEvent(
 
 function normalizeTimelineNode(node: RawTimelineNode, sequence: number): GitHubTimelineEvent {
   switch (node.__typename) {
+    case "ClosedEvent":
+      return normalizeSimpleTimelineEvent(
+        parseGraphqlResponse(closedEventSchema, node, "ClosedEvent"),
+        sequence,
+        "closed",
+      );
+    case "ReopenedEvent":
+      return normalizeSimpleTimelineEvent(
+        parseGraphqlResponse(reopenedEventSchema, node, "ReopenedEvent"),
+        sequence,
+        "reopened",
+      );
+    case "MergedEvent":
+      return normalizeSimpleTimelineEvent(
+        parseGraphqlResponse(mergedEventSchema, node, "MergedEvent"),
+        sequence,
+        "merged",
+      );
     case "AssignedEvent": {
       const event = parseGraphqlResponse(assignedEventSchema, node, "AssignedEvent");
       return Object.freeze({

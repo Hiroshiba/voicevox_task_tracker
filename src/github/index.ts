@@ -1,3 +1,4 @@
+export { type GitHubApiAccountType } from "./account-types.js";
 export {
   createGitHubClient,
   type CreateGitHubClientOptions,
@@ -73,6 +74,31 @@ export {
   type GitHubTimelineEvent,
   type GitHubTimelineAssignee,
 } from "./item-detail-types.js";
+export {
+  markObservedGitHubItemsStale,
+  normalizeGitHubActor,
+  normalizeGitHubEvents,
+  normalizeObservedGitHubItem,
+  normalizeObservedGitHubItems,
+  type FreshObservedGitHubIssue,
+  type FreshObservedGitHubItem,
+  type FreshObservedGitHubPullRequest,
+  type GitHubBotPredicate,
+  type GitHubBotPredicateInput,
+  type MarkObservedGitHubItemsStaleOptions,
+  type NormalizeGitHubEventsOptions,
+  type NormalizeObservedGitHubItemOptions,
+  type NormalizeObservedGitHubItemsOptions,
+  type ObservedGitHubActor,
+  type ObservedGitHubAutoMerge,
+  type ObservedGitHubItem,
+  type ObservedGitHubItemAuthor,
+  type ObservedGitHubPullRequestMergeState,
+  type ObservedGitHubReviewRequest,
+  type ObservedGitHubReviewRequestTarget,
+  type ObservedGitHubReviewThread,
+  type StaleObservedGitHubItem,
+} from "./item-normalization.js";
 export {
   planIncrementalItemCollection,
   type IncrementalItemCollectionPlan,

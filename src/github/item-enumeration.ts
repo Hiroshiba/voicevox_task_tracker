@@ -10,6 +10,7 @@ import {
   type GitHubNodeId,
   type UtcIsoDateTime,
 } from "../domain/index.js";
+import { type GitHubApiAccountType } from "./account-types.js";
 import { type GitHubRestRequest } from "./client.js";
 import { GitHubResponseValidationError } from "./errors.js";
 import {
@@ -63,6 +64,7 @@ const accountSchema = z
   .object({
     node_id: nodeIdSchema,
     login: z.string().min(1),
+    type: z.enum(["Bot", "EnterpriseUserAccount", "Mannequin", "Organization", "User"]),
   })
   .loose();
 const labelSchema = z.union([
@@ -157,6 +159,7 @@ export type Sha256Fingerprint = `sha256:${string}`;
 export type GitHubItemAccount = Readonly<{
   nodeId: GitHubNodeId;
   login: string;
+  apiType: GitHubApiAccountType;
 }>;
 
 /** GitHub項目の作成者。 */
@@ -261,6 +264,7 @@ function normalizeAccount(account: z.output<typeof accountSchema>): GitHubItemAc
   return Object.freeze({
     nodeId: createGitHubNodeId(account.node_id),
     login: account.login,
+    apiType: account.type,
   });
 }
 

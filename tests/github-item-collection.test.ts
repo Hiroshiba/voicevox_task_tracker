@@ -33,6 +33,7 @@ type ItemMetadataOverrides = Readonly<{
   updatedAt?: string;
   draft?: boolean;
   discussion?: boolean;
+  authorType?: "Bot" | "User";
 }>;
 
 type ItemMetadataFixture = Readonly<{
@@ -46,6 +47,7 @@ type ItemMetadataFixture = Readonly<{
   user: Readonly<{
     node_id: string;
     login: string;
+    type: "Bot" | "User";
   }>;
   labels: readonly (
     | string
@@ -56,6 +58,7 @@ type ItemMetadataFixture = Readonly<{
   assignees: readonly Readonly<{
     node_id: string;
     login: string;
+    type: "User";
   }>[];
   milestone: Readonly<{
     node_id: string;
@@ -131,16 +134,19 @@ function createItemMetadata(index: number, overrides: ItemMetadataOverrides): It
     user: {
       node_id: `U_author_${index.toString()}`,
       login: `author-${index.toString()}`,
+      type: overrides.authorType ?? "User",
     },
     labels: [{ name: "bug" }, "priority"],
     assignees: [
       {
         node_id: `U_assignee_b_${index.toString()}`,
         login: `assignee-b-${index.toString()}`,
+        type: "User",
       },
       {
         node_id: `U_assignee_a_${index.toString()}`,
         login: `assignee-a-${index.toString()}`,
+        type: "User",
       },
     ],
     milestone: {
@@ -375,6 +381,20 @@ describe("GitHub項目列挙", () => {
   it("本文が1文字変わるとfingerprintが変わる", () => {
     expect(createGitHubBodyFingerprint("本文A")).not.toBe(createGitHubBodyFingerprint("本文B"));
     expect(createGitHubBodyFingerprint("")).not.toBe(createGitHubBodyFingerprint(null));
+  });
+
+  it("GitHub APIのBot型を作成者メタデータへ保持する", async () => {
+    const items = await enumerateFixture("R_example", "example", [
+      createItemMetadata(1, {
+        authorType: "Bot",
+      }),
+    ]);
+    const item = items[0];
+    if (item?.author.kind !== "account") {
+      throw new Error("Bot作成者fixtureがありません");
+    }
+
+    expect(item.author.account.apiType).toBe("Bot");
   });
 
   it("rate limitの安全余裕到達時に部分的な列挙結果を返さず停止する", async () => {

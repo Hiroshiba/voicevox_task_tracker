@@ -175,8 +175,18 @@ type NormalizedReviewEvent = NormalizedEventBase &
   Readonly<{
     kind: "review";
     state: "approved" | "changes_requested" | "commented" | "dismissed";
-    commitSha: string;
-  }>;
+    bodyFingerprint: string;
+    bodyEmpty: boolean;
+  }> &
+  (
+    | Readonly<{
+        commitStatus: "available";
+        commitSha: string;
+      }>
+    | Readonly<{
+        commitStatus: "unavailable";
+      }>
+  );
 
 type ReviewRequestTarget =
   | Readonly<{
@@ -218,7 +228,7 @@ type NormalizedStateEvent = NormalizedEventBase &
     | Readonly<{
         kind: "state";
         state: "closed";
-        stateReason: "completed" | "not_planned";
+        stateReason: "completed" | "not_planned" | "duplicate" | "unavailable";
       }>
   );
 
@@ -239,6 +249,7 @@ type NormalizedRelationEvent = NormalizedEventBase &
     target: RelationEventTarget;
     action: EventChangeAction;
     provenance: RelationProvenance;
+    direction: "from_item" | "to_item";
   }>;
 
 /** 安定したsource IDと変更種別ごとの内容を持つ正規化イベント。 */

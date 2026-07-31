@@ -5,6 +5,7 @@ import {
   type SourceId,
   type UtcIsoDateTime,
 } from "../domain/index.js";
+import { type GitHubApiAccountType } from "./account-types.js";
 import { type PublicRepositoryId } from "./public-repository-allowlist.js";
 
 /** GitHub APIが識別情報を返したアカウント。 */
@@ -12,6 +13,7 @@ export type GitHubDetailAccount = Readonly<{
   sourceId: SourceId;
   nodeId: GitHubNodeId;
   login: string;
+  apiType: GitHubApiAccountType;
 }>;
 
 /** GitHub API上のアクター取得結果。 */
@@ -32,6 +34,7 @@ export type GitHubReviewRequestTarget =
       sourceId: SourceId;
       nodeId: GitHubNodeId;
       login: string;
+      apiType: GitHubApiAccountType;
     }>
   | Readonly<{
       type: "team";
@@ -194,6 +197,9 @@ export type GitHubTimelineEvent =
   | (GitHubTimelineEventBase &
       Readonly<{
         kind:
+          | "closed"
+          | "reopened"
+          | "merged"
           | "ready_for_review"
           | "converted_to_draft"
           | "added_to_merge_queue"

@@ -94,7 +94,9 @@ describe("正規化イベント", () => {
       case "push":
         return `${event.headCommitSha}:${String(event.forcePush)}`;
       case "review":
-        return `${event.state}:${event.commitSha}`;
+        return event.commitStatus === "available"
+          ? `${event.state}:${event.commitSha}`
+          : `${event.state}:commit不明`;
       case "review_request":
         return `${event.target.type}:${event.target.nodeId}:${event.action}`;
       case "label":
@@ -105,7 +107,7 @@ describe("正規化イベント", () => {
         return event.state === "closed" ? `${event.state}:${event.stateReason}` : event.state;
       case "relation": {
         const target = event.target.type === "node" ? event.target.nodeId : event.target.url;
-        return `${event.relationType}:${target}:${event.action}:${event.provenance}`;
+        return `${event.relationType}:${target}:${event.action}:${event.provenance}:${event.direction}`;
       }
     }
   }
@@ -133,6 +135,9 @@ describe("正規化イベント", () => {
         kind: "review",
         sourceId: buildSourceId("review", "PRR_kwDOReview"),
         state: "approved",
+        bodyFingerprint: "sha256:review",
+        bodyEmpty: false,
+        commitStatus: "available",
         commitSha: "0123456789abcdef",
       },
       {
@@ -177,6 +182,7 @@ describe("正規化イベント", () => {
         },
         action: "added",
         provenance: "native",
+        direction: "from_item",
       },
     ] satisfies readonly NormalizedEvent[];
 
@@ -188,7 +194,7 @@ describe("正規化イベント", () => {
       "bug:added",
       "reviewer:removed",
       "closed:completed",
-      "blocks:I_kwDORelated:added:native",
+      "blocks:I_kwDORelated:added:native:from_item",
     ]);
     expect(commentEvent).not.toHaveProperty("body");
   });

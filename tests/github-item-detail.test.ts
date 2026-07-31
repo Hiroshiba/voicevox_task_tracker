@@ -112,6 +112,7 @@ function createItem(
       account: {
         nodeId: createGitHubNodeId("U_author"),
         login: "author",
+        apiType: "User",
       },
     },
     createdAt: createUtcIsoDateTime("2026-07-01T00:00:00Z"),
@@ -296,12 +297,26 @@ function createPageInfo(
 }
 
 function createActor(index: number): Readonly<{
+  __typename: "User";
   id: string;
   login: string;
 }> {
   return {
+    __typename: "User",
     id: `U_actor_${index.toString()}`,
     login: `actor-${index.toString()}`,
+  };
+}
+
+function createBotActor(index: number): Readonly<{
+  __typename: "Bot";
+  id: string;
+  login: string;
+}> {
+  return {
+    __typename: "Bot",
+    id: `B_actor_${index.toString()}`,
+    login: `bot-${index.toString()}`,
   };
 }
 
@@ -396,7 +411,7 @@ describe("Issue詳細収集", () => {
         __typename: "LabeledEvent",
         id: "LE_labeled",
         createdAt: "2026-07-31T03:00:00Z",
-        actor: createActor(3),
+        actor: createBotActor(3),
         label: {
           id: "LA_bug",
           name: "bug",
@@ -411,6 +426,12 @@ describe("Issue詳細収集", () => {
           id: "LA_bug",
           name: "bug",
         },
+      },
+      {
+        __typename: "ClosedEvent",
+        id: "CLE_closed",
+        createdAt: "2026-07-31T04:30:00Z",
+        actor: createActor(4),
       },
       {
         __typename: "CrossReferencedEvent",
@@ -517,11 +538,17 @@ describe("Issue詳細収集", () => {
       "unassigned",
       "labeled",
       "unlabeled",
+      "closed",
       "cross_referenced",
       "connected",
       "disconnected",
     ]);
     expect(detail.timeline[0]?.sourceId).toBe("github_timeline_event:AE_assigned");
+    const labeledEvent = detail.timeline.find((event) => event.kind === "labeled");
+    if (labeledEvent?.kind !== "labeled" || labeledEvent.actor.status !== "identified") {
+      throw new Error("Bot actor付きlabel event fixtureがありません");
+    }
+    expect(labeledEvent.actor.account.apiType).toBe("Bot");
     if (detail.nativeDependencies.availability !== "available") {
       throw new Error("native dependency fixtureが利用不可です");
     }
