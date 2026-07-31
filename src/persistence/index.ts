@@ -56,6 +56,7 @@ export {
   parseStateSnapshot,
   serializeStateSnapshot,
   type SnapshotRun,
+  type SnapshotRepository,
   type SnapshotTrackedItem,
   type StateSnapshot,
 } from "./snapshot.js";

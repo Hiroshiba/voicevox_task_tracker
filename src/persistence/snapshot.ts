@@ -16,12 +16,24 @@ import {
   type UtcIsoDateTime,
 } from "../domain/index.js";
 
-type PublicSnapshotRepository = Repository &
+type PublicSnapshotRepositoryFields = Repository &
   Readonly<{
     visibility: "public";
     archived: false;
     disabled: false;
   }>;
+
+/** snapshotへ保存する公開リポジトリの最新取得状態。 */
+export type SnapshotRepository =
+  | (PublicSnapshotRepositoryFields &
+      Readonly<{
+        freshness: "fresh";
+      }>)
+  | (PublicSnapshotRepositoryFields &
+      Readonly<{
+        freshness: "stale";
+        failedAt: UtcIsoDateTime;
+      }>);
 
 /** snapshotへ保存するseverity付き追跡項目。 */
 export type SnapshotTrackedItem = TrackedItem &
@@ -41,7 +53,7 @@ export type StateSnapshot = Readonly<{
   schemaVersion: "1";
   generatedAt: UtcIsoDateTime;
   trackingStartAt: UtcIsoDateTime;
-  repositories: readonly PublicSnapshotRepository[];
+  repositories: readonly SnapshotRepository[];
   items: readonly SnapshotTrackedItem[];
   relations: readonly Relation[];
   run: SnapshotRun;
@@ -106,6 +118,21 @@ function assertSnapshotSemantics(snapshot: StateSnapshot): void {
   const repositoryIds = new Set(snapshot.repositories.map((repository) => repository.id));
   for (const repository of snapshot.repositories) {
     assertUtcDateTime(repository.observedAt, "repository observedAt");
+    if (repository.freshness === "stale") {
+      assertUtcDateTime(repository.failedAt, "stale repository failedAt");
+      if (repository.observedAt >= repository.failedAt) {
+        throw new StateSnapshotSemanticError(
+          "stale repositoryのobservedAtはfailedAtより前にしてください",
+        );
+      }
+    }
+    const latestRepositoryTime =
+      repository.freshness === "stale" ? repository.failedAt : repository.observedAt;
+    if (latestRepositoryTime > snapshot.generatedAt) {
+      throw new StateSnapshotSemanticError(
+        "repositoryの観測時刻はsnapshot generatedAt以前にしてください",
+      );
+    }
   }
   for (const item of snapshot.items) {
     if (!repositoryIds.has(item.repositoryId)) {

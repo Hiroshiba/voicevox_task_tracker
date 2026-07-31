@@ -121,7 +121,9 @@ function assertRunConsistency(snapshot: StateSnapshot, report: StateRunReport): 
   if (
     report.metrics.repositoryCount !== snapshot.repositories.length ||
     report.metrics.itemCount !== snapshot.items.length ||
-    report.metrics.activeEdgeCount !== activeEdgeCount
+    report.metrics.activeEdgeCount !== activeEdgeCount ||
+    report.metrics.staleRepositoryCount !==
+      snapshot.repositories.filter((repository) => repository.freshness === "stale").length
   ) {
     throw new StateSnapshotSemanticError("snapshotとrun reportの件数が一致しません");
   }

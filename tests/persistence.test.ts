@@ -153,6 +153,7 @@ function createSnapshot(options: SnapshotFixtureOptions): StateSnapshot {
       archived: false,
       disabled: false,
       observedAt: fixedItemAt,
+      freshness: "fresh",
     })),
     items: [
       {

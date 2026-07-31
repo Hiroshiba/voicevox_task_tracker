@@ -159,7 +159,8 @@
         "visibility",
         "archived",
         "disabled",
-        "observedAt"
+        "observedAt",
+        "freshness"
       ],
       "properties": {
         "id": {
@@ -186,8 +187,39 @@
         },
         "observedAt": {
           "$ref": "#/$defs/dateTime"
+        },
+        "freshness": {
+          "enum": ["fresh", "stale"]
+        },
+        "failedAt": {
+          "$ref": "#/$defs/dateTime"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["freshness"],
+            "properties": {
+              "freshness": {
+                "const": "stale"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "failedAt": {
+                "$ref": "#/$defs/dateTime"
+              }
+            },
+            "required": ["failedAt"]
+          },
+          "else": {
+            "not": {
+              "required": ["failedAt"]
+            }
+          }
+        }
+      ]
     },
     "item": {
       "type": "object",
