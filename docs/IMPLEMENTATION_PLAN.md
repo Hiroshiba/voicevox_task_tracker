@@ -66,7 +66,7 @@ VOICEVOX Organization全体の公開Issue/PRについて、状態・ボールの
 
 ### Phase 8: 実行基盤
 
-- [ ] T27 CLI — daily、dry-run、backfill、replay、evalの各サブコマンドとrun report出力
+- [x] T27 CLI — daily、dry-run、backfill、replay、evalの各サブコマンドとrun report出力
 - [ ] T28 GitHub Actions workflow — 日次workflowのjob分離と最小権限、full commit SHA pin、Pages deploy、CI workflow
 - [ ] T29 golden evalとfixture — 実運用パターンを模したfixture一式、回帰評価、受入試験の整備
 
