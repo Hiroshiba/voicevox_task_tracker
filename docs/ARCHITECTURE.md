@@ -1,0 +1,122 @@
+# アーキテクチャ
+
+VOICEVOX Task Trackerは、GitHubから得た確定情報を決定論的に評価し、曖昧な自然言語だけをCodexで補う日次バッチです。
+結果は型付き依存グラフと追跡stateへ集約し、GitHub PagesとDiscord向けの公開データへ変換します。
+
+## モジュール境界
+
+| モジュール        | 責務                                                                                     | 主な依存先                                   |
+| ----------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------- |
+| `src/config`      | YAMLの読み込み、Zod schemaとsemantic validation                                          | `src/util`                                   |
+| `src/github`      | GitHub App認証、RESTとGraphQLの読み取り、公開allowlist、収集、正規化、rate limit管理     | `src/config`、`src/domain`                   |
+| `src/domain`      | 状態機械、teamとlabel解決、追跡選定、停滞時間、severity                                  | `src/util`                                   |
+| `src/graph`       | 関係候補抽出、edge reconcile、cycle、frontier、downstream impact                         | `src/domain`                                 |
+| `src/codex`       | 分析候補選定、予算、cache、隔離実行、schemaとsemantic validation、reducer                | `src/domain`、`src/graph`                    |
+| `src/persistence` | canonical JSON、snapshot、履歴、AI cache、通知ledger、run report、Git branch transaction | `src/domain`と公開安全性の検証モジュール     |
+| `src/pages`       | 独立した公開guard、公開DTO生成、gzip上限検査、JSON出力                                   | `src/domain`、`src/graph`、`src/persistence` |
+| `src/discord`     | 通知候補選別、cooldown、payload分割、mention制限、Webhook送信                            | `src/domain`、`src/graph`                    |
+| `src/eval`        | golden fixtureの解析と期待値比較                                                         | 判定、graph、公開DTO、通知の各pure処理       |
+| `src/cli`         | コマンド解析、日次トランザクション、実アダプターの合成、run report                       | 上記の全モジュール                           |
+| `web`             | 公開DTOの検証、一覧、詳細、依存グラフ、検索、deep link                                   | `src/pages`のDTO契約                         |
+
+`src/domain`と`src/graph`はネットワークとファイルシステムへ依存しません。
+副作用を持つモジュールがpureな判定を呼び出し、pureな判定からGitHub、Codex、Git、Pages、Discordを呼び出す逆向きの依存は作りません。
+`src/cli`だけが実アダプターを組み合わせて一つのrunにします。
+
+```mermaid
+flowchart LR
+  CLI[src/cli] --> Config[src/config]
+  CLI --> GitHub[src/github]
+  CLI --> Domain[src/domain]
+  CLI --> Graph[src/graph]
+  CLI --> Codex[src/codex]
+  CLI --> State[src/persistence]
+  CLI --> Pages[src/pages]
+  CLI --> Discord[src/discord]
+  GitHub --> Domain
+  Graph --> Domain
+  Codex --> Domain
+  Codex --> Graph
+  Pages --> State
+  Discord --> Domain
+  Web[web] --> Pages
+```
+
+## 日次run
+
+`pnpm tracker:run`はworkflow向けの引数を`daily`または`backfill`へ変換し、`DailyTransactionRunner`へ渡します。
+日次トランザクションは次の順で進みます。
+
+1. `config.yml`を検証し、必要な環境変数だけを読み取ります。
+2. `tracker-state` branchのsnapshotと通知ledgerを同じrevisionから読み取ります。
+3. GitHub Appのinstallation tokenを発行し、期限前に更新できる読み取り専用clientを作ります。
+4. Organizationのrepository metadataを全ページ取得し、run中に不変な公開allowlistを作ります。
+5. 設定したteamを解決し、allowlist内repositoryのopen IssueとPull Requestを列挙して詳細を収集します。
+6. GitHubイベントをsource ID付きに正規化し、追跡対象と関係候補を選びます。
+7. IssueとPull Requestの状態、責務、意味のある進捗、停滞時間を決定論的に判定します。
+8. 入力が変化した曖昧項目だけを予算内でCodexへ渡し、検証済み出力をreducerへ反映します。
+9. authoritative edgeとinferred edgeをreconcileし、cycle、frontier、downstream impactを計算します。
+10. snapshotと通知候補を作り、完全性と公開安全性を検証します。
+11. `dry-run`以外ではstateをatomic commitし、Pages用DTOを書き出して、Discord送信を実行します。
+12. 成功、Codex縮退、失敗のいずれでもrun reportを書き出します。
+
+`dry-run`は手順10まで実行し、state、Pages、Discordを変更せずに検証済みartifactとrun reportだけを書き出します。
+Codexの失敗は決定論的判定へ縮退できるため、完全性を満たす場合は`fallback`として後続処理を続けます。
+それ以外の例外や不完全な結果は`failure`となり、残りのstageを実行しません。
+
+`.github/workflows/daily.yml`は`test-eval`、`collect-analyze`、`persist-state`、`build-pages`、`deploy-pages`、`notify-discord`の順にjob依存を定義しています。
+各jobは`contents`、`pages`、`id-token`を必要な範囲だけ要求し、secretを使うjobはdefault branchのscheduleと手動実行に限定しています。
+現在のActions統合上の制約は[デプロイ手順](DEPLOYMENT.md)に記載しています。
+
+## 公開境界の三重guard
+
+公開境界は一つのfilterへ依存せず、三つの段階で検証します。
+
+1. 収集guardはrepository metadataだけを先に取得し、`public`、非アーカイブ、非disabledを満たすrepository IDをallowlistへ固定します。
+2. 永続化guardはcommit直前にsnapshotと付随データを走査し、allowlist外ID、private repositoryの識別子、既知secret、credential field、不要な全文を拒否します。
+3. Pages guardはDTO生成直前に別実装でinventoryとsnapshotを照合し、repository identity、private sentinel、secret、安全でないURL、不要な全文を再検査します。
+
+guard違反は例外として日次トランザクションへ伝播します。
+後続のPages公開とDiscord送信は実行されず、最後に成功した公開結果が残ります。
+DiscordはPages guardを通過したsnapshot由来の通知候補だけを受け取ります。
+
+## Codexの隔離
+
+CodexはGitHubの確定情報で解決できず、入力hashまたは隣接graph hashが変わった項目だけを分析します。
+model、backend version、prompt version、schema version、入力hashからcache keyを作り、同一入力だけを再利用します。
+call数、入力文字数、推定費用の上限を超えた候補は優先順位に従って延期します。
+
+実行時は空の一時directoryを作り、`codex exec`へ次の制約を渡します。
+
+- `read-only` sandbox
+- approval policy `never`
+- ephemeral実行
+- user configとrulesの無視
+- Git repository検査の無効化
+- 固定system prompt
+- repository内JSON Schemaによる最終出力の拘束
+
+subprocessへ渡す環境変数は`HOME`、`PATH`、`OPENAI_API_KEY`だけです。
+GitHub App private key、installation token、Discord Webhook URLは渡しません。
+Issue本文、コメント、ラベル、loginはID付きの信頼できない入力データとして渡し、命令として扱いません。
+
+Codex出力はJSON Schema検証の後にsemantic validationを通します。
+入力にないsource ID、user、team、relation targetは拒否し、native relationは変更させません。
+検証済み出力も候補データであり、reducerを通さずstateや外部サービスへ反映しません。
+
+## state branch
+
+`main`にはsource、設定、schema、prompt、Web UI、テスト、文書を置きます。
+日次stateはorphan branchの`tracker-state`へcanonical JSONとして保存し、外部databaseは使いません。
+
+| 既定パス                            | 内容                                      |
+| ----------------------------------- | ----------------------------------------- |
+| `state/snapshot.json`               | schema version付きの最新snapshot          |
+| `state/history/YYYY-MM-DD.jsonl`    | 前回snapshotとの差分を持つ日次履歴        |
+| `state/ai-cache/<sha256>.json`      | Codexのcontent-addressed cache            |
+| `state/notification-ledger.json`    | 通知の重複抑制とcooldownに使うledger      |
+| `state/run-reports/YYYY-MM-DD.json` | 完全成功またはfallbackしたrunの指標と診断 |
+
+永続化sessionはbranch headを開始時に固定し、snapshot、履歴、追加cache、ledger、run reportを一つのGit commitへまとめます。
+同時更新でheadが変わった場合は競合として失敗し、不完全なcommitへ切り替えません。
+GitHub Pagesはbranchを公開元にせず、ActionsのPages artifactからdeployします。

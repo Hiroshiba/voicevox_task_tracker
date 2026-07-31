@@ -1,37 +1,69 @@
 # VOICEVOX Task Tracker
 
-VOICEVOX Organizationの公開かつ非アーカイブのリポジトリを対象に、IssueとPull Requestの状態、次に行動すべき主体、停滞時間、依存関係を整理するプロジェクトです。
+VOICEVOX Organizationの公開IssueとPull Requestを横断して、現在の状態、次に行動する主体、停滞時間、依存関係を整理するプロジェクトです。
+毎日08:00 JSTにGitHub Actionsから実行し、GitHub Pagesへ一覧と依存グラフを公開して、対応が必要な変化だけをDiscordへ通知します。
+追跡対象のIssue、Pull Request、コメント、ラベル、アサイン、レビュー依頼は変更しません。
 
-GitHubの確定情報を優先して状態を決定し、自然言語の解釈が必要な曖昧部分だけをCodexで補助します。リポジトリを横断する依存関係をグラフ化し、GitHub Pagesでの可視化とDiscordへの要点通知を行います。追跡状態は専用のGitブランチに保存します。
+## 主要な仕組み
+
+- GitHubのレビュー依頼、アサイン、native dependencyなどの確定情報を決定論的な規則で先に評価します。
+- Codexは未回答の依頼やリンクの意味など、自然言語の解釈が必要な変更だけを分析します。
+- 公開かつ非アーカイブで、無効化されていないリポジトリだけを扱います。
+- 公開対象外のデータやsecretを検出したrunはfail closedとし、state、Pages、Discordを更新しません。
+- snapshot、日次履歴、AI cache、通知ledger、run reportは専用の`tracker-state` branchへ保存します。
 
 ## 開発環境
 
 - Node.js 24.11.1
 - pnpm 10.33.4
 
-依存関係は次のコマンドでインストールします。
+依存関係をインストールします。
 
 ```console
-pnpm install
+pnpm install --frozen-lockfile
 ```
 
 ## 開発コマンド
 
-| コマンド            | 内容                                       |
-| ------------------- | ------------------------------------------ |
-| `pnpm build`        | TypeScriptを`dist`へビルドする             |
-| `pnpm build:web`    | 静的サイトを`dist/web`へビルドする         |
-| `pnpm dev:web`      | サンプルDTOでWeb UIを起動する              |
-| `pnpm typecheck`    | TypeScriptの型を検査する                   |
-| `pnpm test`         | Vitestのテストを1回実行する                |
-| `pnpm lint`         | ESLintでコードを検査する                   |
-| `pnpm format`       | Prettierで対象ファイルを整形する           |
-| `pnpm format:check` | Prettierによる整形差分がないことを検査する |
+| コマンド            | 内容                                              |
+| ------------------- | ------------------------------------------------- |
+| `pnpm build`        | CLIを`dist`へビルドする                           |
+| `pnpm build:web`    | 静的サイトを`dist/web`へビルドする                |
+| `pnpm dev:web`      | サンプル公開DTOを使ってWeb UIを起動する           |
+| `pnpm eval:golden`  | CLIをビルドしてgolden fixtureの回帰評価を実行する |
+| `pnpm typecheck`    | CLIとWeb UIの型を検査する                         |
+| `pnpm test`         | Vitestのテストを1回実行する                       |
+| `pnpm lint`         | ESLintでコードを検査する                          |
+| `pnpm format`       | Prettierで対象ファイルを整形する                  |
+| `pnpm format:check` | Prettierによる整形差分がないことを検査する        |
 
-## Web UI
+`pnpm tracker:run --backfill none`はビルド済みCLIを使う通常の運用コマンドです。
+必要な認証情報と使い方は[運用手順](docs/OPERATIONS.md)を参照してください。
 
-Web UIはViteとPreactを使用します。Preactは小さなランタイムで大量項目の表示をコンポーネントへ分割しやすく、後から依存グラフを追加する場合も状態管理を共通化できるため採用しました。一覧表は50件ずつ描画し、5,000件規模のDTOでもDOM要素が一度に増えないようにしています。
+## ディレクトリ構成
 
-開発時は実データを含まない`web/public/data/summary.json`を読み込みます。Viteの公開パス、画面タイトル、日時localeには`config.yml`の`web`設定を使用します。
+| パス                 | 内容                                                               |
+| -------------------- | ------------------------------------------------------------------ |
+| `.github/workflows/` | CIと日次runのGitHub Actions workflow                               |
+| `src/cli/`           | コマンド解析、日次トランザクション、実アダプターの合成             |
+| `src/config/`        | `config.yml`の読み込みと検証                                       |
+| `src/github/`        | GitHub App認証、読み取り専用API、収集、正規化、公開allowlist       |
+| `src/domain/`        | 状態機械、追跡選定、停滞時間、severityのpure TypeScript            |
+| `src/graph/`         | 関係候補、edge reconcile、cycle、frontier、影響度のpure TypeScript |
+| `src/codex/`         | Codexの隔離実行、cache、予算、出力検証                             |
+| `src/persistence/`   | canonical state、履歴、ledger、state branch操作                    |
+| `src/pages/`         | 公開guardとPages用DTO生成                                          |
+| `src/discord/`       | 通知選別、payload生成、Webhook送信                                 |
+| `src/eval/`          | golden fixtureの回帰評価                                           |
+| `web/`               | ViteとPreactによる静的Web UI                                       |
+| `tests/`             | unit、integration、security、golden fixtureのテスト                |
+| `schemas/`           | stateとCodex出力のJSON Schema                                      |
+| `prompts/`           | Codexへ渡す固定system prompt                                       |
+| `docs/`              | 設計、デプロイ、運用、実装計画                                     |
 
-attention queueはseverity、設定済みラベルルールのpriorityWeight、影響リポジトリ数、影響項目数、停滞開始時刻の順で決定論的に並べます。
+## 詳細文書
+
+- [アーキテクチャ](docs/ARCHITECTURE.md)
+- [デプロイ手順](docs/DEPLOYMENT.md)
+- [運用手順](docs/OPERATIONS.md)
+- [実装計画](docs/IMPLEMENTATION_PLAN.md)
