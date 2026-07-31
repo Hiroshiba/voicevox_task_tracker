@@ -8,12 +8,16 @@ export {
   formatCliUsage,
   parseCliArguments,
   type BackfillCliCommand,
+  type BuildPagesCliCommand,
   type CliCommand,
   type CliSchedule,
+  type CollectAnalyzeCliCommand,
   type DailyCliCommand,
   type DryRunCliCommand,
   type EvalCliCommand,
   type HelpCliCommand,
+  type NotifyDiscordCliCommand,
+  type PersistStateCliCommand,
   type ReplayCliCommand,
   type ReplaySource,
 } from "./command.js";
@@ -34,7 +38,14 @@ export {
   type OnlineCliCommand,
   type RepositoryInventoryStageResult,
 } from "./daily-transaction.js";
-export { CliCredentialsError, CliFixtureError, CliOutputError, CliUsageError } from "./errors.js";
+export {
+  CliCredentialsError,
+  CliExecutableError,
+  CliFixtureError,
+  CliOutputError,
+  CliUsageError,
+  CliWorkflowArtifactError,
+} from "./errors.js";
 export {
   createCliApplication,
   createDefaultCliApplication,
@@ -68,3 +79,15 @@ export {
   type RunStage,
 } from "./run-report.js";
 export { createTrackerRunCliArguments, runTrackerCommand } from "./tracker-run.js";
+export {
+  assertWorkflowArtifactPublicSafety,
+  createWorkflowArtifact,
+  readWorkflowArtifactFile,
+  workflowArtifactRepositoryInventory,
+  type WorkflowArtifact,
+} from "./workflow-artifact.js";
+export {
+  WorkflowStageRunner,
+  type WorkflowStageCliCommand,
+  type WorkflowStageDependencies,
+} from "./workflow-stage.js";

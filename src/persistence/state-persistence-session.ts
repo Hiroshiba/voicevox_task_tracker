@@ -316,6 +316,15 @@ export class StatePersistenceSession {
     return diffStateHistory(await this.#loadAllHistoryRecords(), fromDate, toDate);
   }
 
+  /** 現在のprocessで検証済みとなった未永続化AI cacheを返す。 */
+  public pendingAiCacheEntries(): readonly AiCacheEntry[] {
+    return Object.freeze(
+      [...this.#pendingAiCacheEntries.values()].sort((left, right) =>
+        compareStrings(left.cacheKey, right.cacheKey),
+      ),
+    );
+  }
+
   /** 全検証後にsnapshot・履歴・cache・ledger・reportをatomic commitする。 */
   public async persist(
     input: PersistStateTransactionInput,

@@ -3,7 +3,13 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { loadConfig, type Config } from "../src/config/index.js";
-import { createCliApplication, type CliCompositionAdapters } from "../src/cli/index.js";
+import { type DiscordDigestDelivery } from "../src/discord/index.js";
+import {
+  createCliApplication,
+  createWorkflowArtifact,
+  type CliCompositionAdapters,
+  type WorkflowArtifact,
+} from "../src/cli/index.js";
 import {
   createProductionCliApplication,
   type ProductionRuntimeAdapters,
@@ -100,6 +106,92 @@ function createMissingStateAdapter(onCommit: () => void): StateBranchAdapter {
   });
 }
 
+function createEmptyWorkflowArtifact(): WorkflowArtifact {
+  const runId = "tracker-run:composition-workflow-stage";
+  const metrics = {
+    repositoryCount: 1,
+    itemCount: 0,
+    changedItemCount: 0,
+    activeEdgeCount: 0,
+    aiCallCount: 0,
+    aiCacheHitCount: 0,
+    estimatedInputTokens: 0,
+    githubApiRemaining: 0,
+    staleRepositoryCount: 0,
+    notificationCount: 0,
+    durationMilliseconds: 0,
+  };
+  return createWorkflowArtifact({
+    schemaVersion: "1",
+    kind: "validated_public_run",
+    snapshot: {
+      schemaVersion: "1",
+      generatedAt: NOW,
+      trackingStartAt: NOW,
+      repositories: [
+        {
+          id: "R_composition_fixture",
+          owner: "VOICEVOX",
+          name: "voicevox_task_tracker",
+          visibility: "public",
+          archived: false,
+          disabled: false,
+          observedAt: NOW,
+          freshness: "fresh",
+        },
+      ],
+      items: [],
+      relations: [],
+      run: {
+        id: runId,
+        status: "success",
+        complete: true,
+      },
+    },
+    notificationLedger: {
+      schemaVersion: "1",
+      entries: [],
+      operationsAlerts: [],
+    },
+    notificationSelection: {
+      action: "skip_digest",
+      reason: "no_candidates",
+      candidates: [],
+      ledgerReservations: [],
+    },
+    stateRunReport: {
+      schemaVersion: "1",
+      runId,
+      date: "2026-07-31",
+      status: "success",
+      complete: true,
+      scheduledFor: NOW,
+      startedAt: NOW,
+      finishedAt: NOW,
+      metrics,
+      diagnostics: [],
+    },
+    aiCacheEntries: [],
+    pagesUrl: "https://voicevox.github.io/voicevox_task_tracker/",
+    discordSettings: {
+      enabled: true,
+      webhookSecretName: "DISCORD_WEBHOOK_URL",
+      operationsWebhookSecretName: "DISCORD_OPERATIONS_WEBHOOK_URL",
+      mentions: {
+        enabled: false,
+        users: {
+          Hiroshiba: "123456789012345678",
+        },
+      },
+      retry: {
+        maxAttempts: 3,
+        initialDelaySeconds: 1,
+        maxDelaySeconds: 10,
+      },
+    },
+  });
+}
+
 describe("CLI合成root", () => {
   it("GitHub App認証情報が無い場合は環境変数名を示して失敗する", async () => {
     const harness = createHarness({});
@@ -154,6 +246,32 @@ describe("CLI合成root", () => {
     expect(reportSource).not.toContain(OPENAI_SECRET);
   });
 
+  it("AI有効時にCodex CLIを起動できなければ明示的に失敗する", async () => {
+    const harness = createHarness({
+      GH_APP_ID: "123",
+      GH_APP_PRIVATE_KEY: PRIVATE_KEY,
+      HOME: "/tmp",
+      OPENAI_API_KEY: OPENAI_SECRET,
+      PATH: "/usr/bin",
+    });
+    const application = createCliApplication(harness.adapters);
+
+    const result = await application.run([
+      "dry-run",
+      "--config",
+      "tests/fixtures/config.valid.yml",
+      "--artifact",
+      "unused-artifact.json",
+      "--report",
+      "unused-report.json",
+    ]);
+
+    expect(result.exitCode).toBe(1);
+    expect(harness.externalAdapterCalls.count).toBe(1);
+    expect(harness.reportSources.join("\n")).toContain("実行可能ファイル");
+    expect(harness.reportSources.join("\n")).toContain("codex");
+  });
+
   it("dry-runは実行配線を完走して公開副作用を呼ばない", async () => {
     let stateCommitCount = 0;
     let pagesWriteCount = 0;
@@ -186,6 +304,7 @@ describe("CLI合成root", () => {
           }),
         ),
       executeCodexAnalysis: () => Promise.reject(new TypeError("Codex adapterは呼ばれません")),
+      readWorkflowArtifact: () => Promise.reject(new TypeError("workflow artifactは読みません")),
       readReplayFixture: () => Promise.reject(new TypeError("replay fixtureは読みません")),
       readReplayState: () => Promise.reject(new TypeError("replay stateは読みません")),
       readGoldenFixtures: () => Promise.reject(new TypeError("golden fixtureは読みません")),
@@ -202,7 +321,14 @@ describe("CLI合成root", () => {
         createMissingStateAdapter(() => {
           stateCommitCount += 1;
         }),
-      codexProcessRunner: () => {
+      codexProcessRunner: (request) => {
+        if (request.arguments.length === 1 && request.arguments[0] === "--version") {
+          return Promise.resolve({
+            exitCode: 0,
+            signal: null,
+            timedOut: false,
+          });
+        }
         codexProcessCount += 1;
         return Promise.reject(new TypeError("Codex subprocessは起動しません"));
       },
@@ -247,5 +373,78 @@ describe("CLI合成root", () => {
     expect(pagesWriteCount).toBe(0);
     expect(discordSendCount).toBe(0);
     expect(codexProcessCount).toBe(0);
+  });
+
+  it("後続の各stageが同じ公開artifactを単独process相当で消費する", async () => {
+    let stateCommitCount = 0;
+    let pagesWriteCount = 0;
+    let discordSendCount = 0;
+    const artifact = createEmptyWorkflowArtifact();
+    const harness = createHarness({});
+    const runtimeAdapters: ProductionRuntimeAdapters = Object.freeze({
+      ...harness.adapters,
+      loadConfig,
+      openStateSession: (adapter, configuration) =>
+        StatePersistenceSession.open(adapter, configuration),
+      discoverRepositoryInventory: () =>
+        Promise.reject(new TypeError("GitHub inventoryは呼びません")),
+      collectGitHubTeamDirectory: () => Promise.reject(new TypeError("teamは収集しません")),
+      enumerateOpenGitHubItems: () => Promise.reject(new TypeError("項目は収集しません")),
+      collectGitHubItemDetails: () => Promise.reject(new TypeError("詳細は収集しません")),
+      executeCodexAnalysis: () => Promise.reject(new TypeError("Codexは実行しません")),
+      readReplayFixture: () => Promise.reject(new TypeError("replay fixtureは読みません")),
+      readReplayState: () => Promise.reject(new TypeError("replay stateは読みません")),
+      readGoldenFixtures: () => Promise.reject(new TypeError("golden fixtureは読みません")),
+      readWorkflowArtifact: () => Promise.resolve(artifact),
+      createStateBranchAdapter: () =>
+        createMissingStateAdapter(() => {
+          stateCommitCount += 1;
+        }),
+      writePublicData: () => {
+        pagesWriteCount += 1;
+        return Promise.resolve({
+          summaryPath: "web/public/data/summary.json",
+          detailsPath: "web/public/data/details.json",
+          summaryBytes: 1,
+          detailsBytes: 1,
+        });
+      },
+      sendDiscord: () => {
+        discordSendCount += 1;
+        return Promise.resolve(
+          Object.freeze({
+            status: "skipped",
+            reason: "no_candidates",
+          } satisfies DiscordDigestDelivery),
+        );
+      },
+    });
+    const application = createProductionCliApplication(runtimeAdapters);
+
+    const persistResult = await application.run([
+      "persist-state",
+      "--config",
+      "tests/fixtures/config.valid.yml",
+    ]);
+    const pagesResult = await application.run([
+      "build-pages",
+      "--config",
+      "tests/fixtures/config.valid.yml",
+      "--output",
+      "unused-pages",
+    ]);
+    const notifyResult = await application.run([
+      "notify-discord",
+      "--pages-url",
+      "https://voicevox.github.io/voicevox_task_tracker/",
+    ]);
+
+    expect([persistResult.exitCode, pagesResult.exitCode, notifyResult.exitCode]).toEqual([
+      0, 0, 0,
+    ]);
+    expect(stateCommitCount).toBe(1);
+    expect(pagesWriteCount).toBe(1);
+    expect(discordSendCount).toBe(1);
+    expect(harness.externalAdapterCalls.count).toBe(0);
   });
 });

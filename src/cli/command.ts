@@ -5,6 +5,8 @@ import { CliUsageError } from "./errors.js";
 const DEFAULT_CONFIG_PATH = "config.yml";
 const DEFAULT_REPORT_DIRECTORY = "artifacts/run-reports";
 const DEFAULT_ARTIFACT_DIRECTORY = "artifacts";
+const DEFAULT_WORKFLOW_ARTIFACT_PATH = "artifacts/workflow/validated-run.json";
+const DEFAULT_PAGES_OUTPUT_DIRECTORY = "artifacts/workflow/pages";
 const REPOSITORY_FILTER_PATTERN = /^VOICEVOX\/[A-Za-z0-9._-]+$/u;
 
 /** runの予定時刻を現在時刻または明示値から決める指定。 */
@@ -43,6 +45,37 @@ export type BackfillCliCommand = OnlineCommandFields &
     mode: "none" | "linked" | "all-open";
     repositoryFilter: readonly string[];
   }>;
+
+/** workflowの収集と判定だけを行うCLI入力。 */
+export type CollectAnalyzeCliCommand = OnlineCommandFields &
+  Readonly<{
+    kind: "collect-analyze";
+    mode: "none" | "linked" | "all-open";
+    repositoryFilter: readonly string[];
+    artifactPath: string;
+  }>;
+
+/** 検証済みworkflow artifactをstate branchへ保存するCLI入力。 */
+export type PersistStateCliCommand = Readonly<{
+  kind: "persist-state";
+  configPath: string;
+  artifactPath: string;
+}>;
+
+/** 検証済みworkflow artifactからPages用データを生成するCLI入力。 */
+export type BuildPagesCliCommand = Readonly<{
+  kind: "build-pages";
+  configPath: string;
+  artifactPath: string;
+  outputDirectory: string;
+}>;
+
+/** Pagesのdeploy成功後にDiscord通知を送るCLI入力。 */
+export type NotifyDiscordCliCommand = Readonly<{
+  kind: "notify-discord";
+  artifactPath: string;
+  pagesUrl: string;
+}>;
 
 /** replayへ渡すfixtureまたは過去stateの入力元。 */
 export type ReplaySource =
@@ -83,6 +116,10 @@ export type CliCommand =
   | DailyCliCommand
   | DryRunCliCommand
   | BackfillCliCommand
+  | CollectAnalyzeCliCommand
+  | PersistStateCliCommand
+  | BuildPagesCliCommand
+  | NotifyDiscordCliCommand
   | ReplayCliCommand
   | EvalCliCommand
   | HelpCliCommand;
@@ -167,7 +204,7 @@ function assertDifferentOutputPaths(reportPath: string, artifactPath: string): v
 }
 
 function parseOnlineFields(
-  commandName: "daily" | "dry-run" | "backfill",
+  commandName: "daily" | "dry-run" | "backfill" | "collect-analyze",
   options: ParsedOptions,
 ): OnlineCommandFields {
   return Object.freeze({
@@ -247,6 +284,76 @@ function parseBackfill(args: readonly string[]): BackfillCliCommand {
     ...parseOnlineFields("backfill", options),
     mode,
     repositoryFilter,
+  });
+}
+
+function parseCollectAnalyze(args: readonly string[]): CollectAnalyzeCliCommand {
+  const options = parseOptions(
+    args,
+    new Set(["--artifact", "--config", "--mode", "--report", "--repository", "--scheduled-for"]),
+  );
+  const mode = parseBackfillMode(singleOption(options, "--mode", "none"));
+  const repositoryFilter = parseRepositoryFilter(options);
+  if (mode === "none" && repositoryFilter.length !== 0) {
+    throw usageError("--modeがnoneのとき--repositoryは指定できません");
+  }
+  const fields = parseOnlineFields("collect-analyze", options);
+  const artifactPath = singleOption(options, "--artifact", DEFAULT_WORKFLOW_ARTIFACT_PATH);
+  assertDifferentOutputPaths(fields.reportPath, artifactPath);
+  return Object.freeze({
+    kind: "collect-analyze",
+    ...fields,
+    mode,
+    repositoryFilter,
+    artifactPath,
+  });
+}
+
+function parsePersistState(args: readonly string[]): PersistStateCliCommand {
+  const options = parseOptions(args, new Set(["--artifact", "--config"]));
+  return Object.freeze({
+    kind: "persist-state",
+    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
+    artifactPath: singleOption(options, "--artifact", DEFAULT_WORKFLOW_ARTIFACT_PATH),
+  });
+}
+
+function parseBuildPages(args: readonly string[]): BuildPagesCliCommand {
+  const options = parseOptions(args, new Set(["--artifact", "--config", "--output"]));
+  return Object.freeze({
+    kind: "build-pages",
+    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
+    artifactPath: singleOption(options, "--artifact", DEFAULT_WORKFLOW_ARTIFACT_PATH),
+    outputDirectory: singleOption(options, "--output", DEFAULT_PAGES_OUTPUT_DIRECTORY),
+  });
+}
+
+function parsePagesUrl(options: ParsedOptions): string {
+  const value = optionalSingleOption(options, "--pages-url");
+  if (value == null) {
+    throw usageError("notify-discordにはPages deploy成功時の--pages-urlが必要です");
+  }
+  if (!URL.canParse(value)) {
+    throw usageError("--pages-urlには有効なHTTPS URLを指定してください");
+  }
+  const url = new URL(value);
+  if (
+    url.protocol !== "https:" ||
+    url.username.length !== 0 ||
+    url.password.length !== 0 ||
+    url.hash.length !== 0
+  ) {
+    throw usageError("--pages-urlには認証情報とfragmentを含まないHTTPS URLを指定してください");
+  }
+  return url.href;
+}
+
+function parseNotifyDiscord(args: readonly string[]): NotifyDiscordCliCommand {
+  const options = parseOptions(args, new Set(["--artifact", "--pages-url"]));
+  return Object.freeze({
+    kind: "notify-discord",
+    artifactPath: singleOption(options, "--artifact", DEFAULT_WORKFLOW_ARTIFACT_PATH),
+    pagesUrl: parsePagesUrl(options),
   });
 }
 
@@ -337,6 +444,14 @@ export function parseCliArguments(args: readonly string[]): CliCommand {
       return parseDryRun(options);
     case "backfill":
       return parseBackfill(options);
+    case "collect-analyze":
+      return parseCollectAnalyze(options);
+    case "persist-state":
+      return parsePersistState(options);
+    case "build-pages":
+      return parseBuildPages(options);
+    case "notify-discord":
+      return parseNotifyDiscord(options);
     case "replay":
       return parseReplay(options);
     case "eval":
@@ -353,6 +468,10 @@ export function formatCliUsage(): string {
     "  voicevox-task-tracker daily [--config PATH] [--scheduled-for ISO] [--report PATH]",
     "  voicevox-task-tracker dry-run [--config PATH] [--artifact PATH] [--report PATH]",
     "  voicevox-task-tracker backfill [--mode none|linked|all-open] [--repository VOICEVOX/REPO]",
+    "  voicevox-task-tracker collect-analyze [--mode none|linked|all-open] [--artifact PATH]",
+    "  voicevox-task-tracker persist-state [--config PATH] [--artifact PATH]",
+    "  voicevox-task-tracker build-pages [--config PATH] [--artifact PATH] [--output PATH]",
+    "  voicevox-task-tracker notify-discord --pages-url URL [--artifact PATH]",
     "  voicevox-task-tracker replay (--fixture PATH | --state PATH) [--artifact PATH]",
     "  voicevox-task-tracker eval --fixtures PATH [--artifact PATH]",
   ].join("\n");

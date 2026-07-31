@@ -6,7 +6,10 @@ export function createTrackingBackfillRequest(
   command: OnlineCliCommand,
   cursor: TrackingBackfillCursor,
 ): TrackingBackfillRequest {
-  if (command.kind !== "backfill" || command.mode === "none") {
+  if (
+    (command.kind !== "backfill" && command.kind !== "collect-analyze") ||
+    command.mode === "none"
+  ) {
     return Object.freeze({
       mode: "none",
     });

@@ -2,7 +2,6 @@
 
 正常運用時のVOICEVOX Task Trackerは毎日23:00 UTCに起動し、日本時間の08:00以降にPagesとDiscordを更新します。
 GitHub Actionsのscheduleには遅延があるため、厳密な投稿時刻は保証しません。
-現在のActions統合にある停止条件は[デプロイ手順](DEPLOYMENT.md)を参照してください。
 
 ## 日々の確認
 
@@ -39,6 +38,52 @@ run reportの主な確認項目は次のとおりです。
 
 `tracker-state`は自動更新専用です。
 人間がsnapshot、履歴、AI cache、通知ledgerを直接編集すると履歴とcooldownの整合を壊すため、修正はGitHub上の正本か`config.yml`で行います。
+
+## stageごとの実行
+
+日次workflowはjobの権限と副作用を一致させるため、次のstageを別processで実行します。
+各stageは`artifacts/workflow/validated-run.json`をschema検証、semantic検証、公開安全性検証へ通してから利用します。
+前stageのartifactが存在しない場合や検証に失敗した場合は明示的なエラーで停止します。
+
+収集と判定はGitHub Appの認証情報を使います。
+`ai.enabled: true`では`OPENAI_API_KEY`とlockfileで固定した`codex`も必要です。
+検証後のsnapshot、通知候補、notification ledger、run report、AI cacheを公開可能なartifactへ保存します。
+
+```console
+pnpm build
+pnpm tracker:run collect-analyze --mode none
+```
+
+backfillでは`--mode linked`か`--mode all-open`を指定し、対象を絞る場合は`--repository VOICEVOX/voicevox`を繰り返します。
+
+state永続化は収集artifactを受け取り、`tracker-state`へ一つのcommitとして保存します。
+GitHub App、OpenAI、Discordのsecretは読みません。
+
+```console
+pnpm tracker:run persist-state
+```
+
+Pages buildは同じ収集artifactから公開DTOを生成します。
+外部secretは読みません。
+
+```console
+pnpm tracker:run build-pages --output web/public/data
+pnpm build:web
+```
+
+GitHub Pagesへのdeployが成功した後だけ、deploy結果のURLを渡してDiscord stageを実行します。
+このstageが読む外部secretはDiscord webhookだけです。
+
+```console
+pnpm tracker:run notify-discord --pages-url https://voicevox.github.io/voicevox_task_tracker/
+```
+
+ローカルで全stageを1processで確認する場合は従来の`daily`を利用できます。
+この実行はstate、Pages用データ、Discordへ順に副作用を発生させるため、設定と認証情報を確認してから実行します。
+
+```console
+pnpm tracker:run --backfill none
+```
 
 ## 誤判定の直し方
 
@@ -159,6 +204,8 @@ PagesでAI unavailableと不確実性を確認し、原因を直して再実行�
 `failure`が`state_persistence`より前ならstateは更新されません。
 `pages`か`discord`で失敗した場合はstate commit後の可能性があるため、snapshotのrun IDとPagesの生成時刻を比較し、両者が同じrunか確認します。
 Pages deployに失敗した場合は最後に成功したPagesを基準にし、Discordを送信しません。
+state commit後のPages失敗は想定内であり、stateを巻き戻しません。
+次回runはcommit済みsnapshotを前回値として新しいsnapshotを作り、state commit後にPagesを更新するため、同じrun IDと生成時刻へ再び揃います。
 
 公開guardが失敗した場合は安全設定を無効化しません。
 どの入力にallowlist外repository、private sentinel、secretらしい値、長すぎる全文、安全でないURLが入ったかを、secretをlogへ出さずに調べます。

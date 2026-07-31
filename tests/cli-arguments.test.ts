@@ -60,6 +60,45 @@ describe("CLI引数解析", () => {
     });
   });
 
+  it("workflowの各stageと成果物pathを解析する", () => {
+    expect(
+      parseCliArguments([
+        "collect-analyze",
+        "--mode",
+        "linked",
+        "--repository",
+        "VOICEVOX/voicevox",
+      ]),
+    ).toMatchObject({
+      kind: "collect-analyze",
+      mode: "linked",
+      repositoryFilter: ["VOICEVOX/voicevox"],
+      artifactPath: "artifacts/workflow/validated-run.json",
+    });
+    expect(parseCliArguments(["persist-state"])).toEqual({
+      kind: "persist-state",
+      configPath: "config.yml",
+      artifactPath: "artifacts/workflow/validated-run.json",
+    });
+    expect(parseCliArguments(["build-pages"])).toEqual({
+      kind: "build-pages",
+      configPath: "config.yml",
+      artifactPath: "artifacts/workflow/validated-run.json",
+      outputDirectory: "artifacts/workflow/pages",
+    });
+    expect(
+      parseCliArguments([
+        "notify-discord",
+        "--pages-url",
+        "https://voicevox.github.io/voicevox_task_tracker/",
+      ]),
+    ).toEqual({
+      kind: "notify-discord",
+      artifactPath: "artifacts/workflow/validated-run.json",
+      pagesUrl: "https://voicevox.github.io/voicevox_task_tracker/",
+    });
+  });
+
   it("replayのfixtureとstateを区別する", () => {
     expect(parseCliArguments(["replay", "--fixture", "fixtures/run.json"])).toMatchObject({
       kind: "replay",
@@ -101,6 +140,9 @@ describe("CLI引数解析", () => {
       ["replay", "--fixture", "a.json", "--state", "b.json"],
       ["eval"],
       ["dry-run", "--artifact", "same.json", "--report", "same.json"],
+      ["collect-analyze", "--mode", "none", "--repository", "VOICEVOX/voicevox"],
+      ["notify-discord"],
+      ["notify-discord", "--pages-url", "http://example.com/"],
     ];
     for (const args of invalidArguments) {
       expect(() => parseCliArguments(args)).toThrow(CliUsageError);

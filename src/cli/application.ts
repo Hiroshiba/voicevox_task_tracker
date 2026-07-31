@@ -5,6 +5,7 @@ import {
   type DailyTransactionTypeMap,
 } from "./daily-transaction.js";
 import { OfflineRunRunner, type OfflineRunExecutionResult } from "./offline-runner.js";
+import { WorkflowStageRunner } from "./workflow-stage.js";
 
 /** CLI実行後の終了codeとreport種別。 */
 export type CliExecutionResult =
@@ -13,10 +14,14 @@ export type CliExecutionResult =
       exitCode: 0;
     }>
   | Readonly<{
-      command: "daily" | "dry-run" | "backfill";
+      command: "daily" | "dry-run" | "backfill" | "collect-analyze";
       exitCode: 0 | 1;
       execution: "executed" | "deduplicated";
       result: DailyRunExecutionResult;
+    }>
+  | Readonly<{
+      command: "persist-state" | "build-pages" | "notify-discord";
+      exitCode: 0;
     }>
   | Readonly<{
       command: "replay" | "eval";
@@ -27,6 +32,7 @@ export type CliExecutionResult =
 /** CLI applicationへ注入するonline、offline、標準出力境界。 */
 export type CliApplicationDependencies<Types extends DailyTransactionTypeMap> = Readonly<{
   dailyRunner: DailyTransactionRunner<Types>;
+  workflowStageRunner: WorkflowStageRunner;
   offlineRunner: OfflineRunRunner;
   writeStandardOutput: (source: string) => Promise<void>;
 }>;
@@ -53,7 +59,8 @@ export class CliApplication<Types extends DailyTransactionTypeMap> {
         });
       case "daily":
       case "dry-run":
-      case "backfill": {
+      case "backfill":
+      case "collect-analyze": {
         const coordinated = await this.#dependencies.dailyRunner.run(command);
         return Object.freeze({
           command: command.kind,
@@ -62,6 +69,14 @@ export class CliApplication<Types extends DailyTransactionTypeMap> {
           result: coordinated.value,
         });
       }
+      case "persist-state":
+      case "build-pages":
+      case "notify-discord":
+        await this.#dependencies.workflowStageRunner.run(command);
+        return Object.freeze({
+          command: command.kind,
+          exitCode: 0,
+        });
       case "replay":
       case "eval": {
         const result = await this.#dependencies.offlineRunner.run(command);

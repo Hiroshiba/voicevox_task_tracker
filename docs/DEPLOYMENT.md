@@ -3,19 +3,6 @@
 デプロイ先は`VOICEVOX/voicevox_task_tracker`のGitHub Actions、GitHub Pages、`tracker-state` branchです。
 追跡対象のrepositoryへは読み取り専用GitHub Appで接続し、このrepositoryのstate更新とPages公開だけを`GITHUB_TOKEN`で行います。
 
-## 現在の停止条件
-
-現行の`.github/workflows/daily.yml`には、運用開始前に解消が必要な統合上の制約があります。
-
-- `collect-analyze`が後続jobへ渡すartifactにはPages DTOだけがあり、`persist-state`と`notify-discord`が必要とする成果物を生成していません。
-- `ai.enabled`を有効にした場合に必要な`codex` executableをworkflowがインストールしていません。
-- `tracker:run`は収集job内でもstate、Pages、Discordのstageを実行するため、workflowのjob分離と副作用境界が一致していません。
-- state commit後にPagesかDiscordが失敗してもstateを戻さないため、外部公開までを一つのtransactionとして扱えません。
-
-この状態ではローカルdry-runまで確認できますが、Actionsによるstate永続化、Pages deploy、Discord通知を正常系として開始できません。
-停止条件を解消するまではActions画面からworkflowを無効にし、`notifications.discord.enabled`と`ai.enabled`を`false`にしてください。
-本タスクは文書整備だけを対象とするため、workflowと実行コードは変更していません。
-
 ## GitHub App
 
 VOICEVOX Organizationの設定からGitHub Appを作成します。
@@ -70,6 +57,11 @@ PEM private keyは改行を保持したままsecretへ登録します。
 ActionsのWorkflow permissionsは、`persist-state` jobが`tracker-state`へpushできるようにread and writeを許可します。
 workflow側では各jobが必要な権限だけを再指定しています。
 `tracker-state`へrulesetを設定する場合はGitHub Actionsによるstate更新を許可し、人間の通常作業branchとして使わないでください。
+
+`collect-analyze`は`artifacts/workflow/validated-run.json`へ検証済みsnapshot、通知候補、notification ledger、run report、AI cache、公開設定だけを書きます。
+GitHub App key、installation token、OpenAI key、Discord webhookはartifactへ含めません。
+後続jobは同じartifactを再検証してから利用します。
+権限なしの`notify-discord`でCLIを動かすため、公開sourceから作った自己完結bundleも同じActions artifactへ保存します。
 
 ## Pagesの設定
 
@@ -176,16 +168,16 @@ process.exitCode = result.exitCode;
 
 ### 2. Codexのdry-run
 
-固定versionのCodex CLIが`codex`として`PATH`にあり、実装が使う`codex exec` optionへ対応することを確認します。
+lockfileで固定したCodex CLI `0.145.0`が`codex`として`PATH`にあり、実装が使う`codex exec` optionへ対応することを確認します。
 `OPENAI_API_KEY`をsecretとして渡し、`ai.model`のplaceholderを利用可能なmodel IDへ置き換えてから`ai.enabled`を`true`にします。
 
 同じdry-runを実行し、`aiCallCount`、`aiCacheHitCount`、`estimatedInputTokens`、`diagnostics`を確認します。
 model、prompt、schemaを変更した場合は`pnpm eval:golden`も実行します。
-ActionsでCodexを有効化するのは、停止条件に記載したCLI導入をworkflowへ実装した後です。
+Actionsの`collect-analyze` jobはlockfileから同じCodex CLIをインストールし、収集前にversion確認を行います。
 
 ### 3. stateとPages
 
-停止条件を解消した後、PagesのSourceを`GitHub Actions`にして日次workflowを手動実行します。
+PagesのSourceを`GitHub Actions`にして日次workflowを手動実行します。
 入力は`backfill: none`とし、repository filterは空にします。
 `notifications.discord.enabled`は`false`のままにします。
 

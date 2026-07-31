@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
+    "build:workflow-cli": "vite build --config workflow.vite.config.ts",
     "build:web": "vite build --config web/vite.config.ts",
     "dev:web": "vite --config web/vite.config.ts",
     "eval:golden": "pnpm build && node dist/cli/tracker-run.js eval --fixtures tests/fixtures/golden --artifact artifacts/eval.json --report artifacts/run-reports/eval.json",
@@ -20,6 +21,7 @@
     "format:check": "prettier --check ."
   },
   "devDependencies": {
+    "@openai/codex": "0.145.0",
     "@eslint/js": "^9.32.0",
     "@preact/preset-vite": "^2.10.6",
     "@types/mdast": "^4.0.4",

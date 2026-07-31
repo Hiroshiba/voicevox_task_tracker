@@ -28,10 +28,8 @@ import {
 
 const CODEX_COMMAND = "codex";
 const CODEX_TEMPORARY_DIRECTORY_PREFIX = "voicevox-task-tracker-codex-";
-const SYSTEM_PROMPT_PATH = fileURLToPath(new URL("../../prompts/codex-system.md", import.meta.url));
-const OUTPUT_SCHEMA_PATH = fileURLToPath(
-  new URL("../../schemas/codex-analysis.schema.json", import.meta.url),
-);
+const SYSTEM_PROMPT_URL = new URL("../../prompts/codex-system.md", import.meta.url);
+const OUTPUT_SCHEMA_URL = new URL("../../schemas/codex-analysis.schema.json", import.meta.url);
 const OUTPUT_LAST_MESSAGE_FILE_NAME = "last-message.json";
 const MAX_TIMEOUT_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1000);
 
@@ -92,7 +90,7 @@ function createCodexEnvironment(
 
 async function readFixedSystemPrompt(): Promise<string> {
   try {
-    return await readFile(SYSTEM_PROMPT_PATH, "utf8");
+    return await readFile(fileURLToPath(SYSTEM_PROMPT_URL), "utf8");
   } catch (error: unknown) {
     throw new CodexResourceError("prompts/codex-system.md", { cause: error });
   }
@@ -100,7 +98,7 @@ async function readFixedSystemPrompt(): Promise<string> {
 
 async function assertOutputSchemaIsReadable(): Promise<void> {
   try {
-    await access(OUTPUT_SCHEMA_PATH, constants.R_OK);
+    await access(fileURLToPath(OUTPUT_SCHEMA_URL), constants.R_OK);
   } catch (error: unknown) {
     throw new CodexResourceError("schemas/codex-analysis.schema.json", { cause: error });
   }
@@ -140,7 +138,7 @@ function createProcessRequest(
       "-C",
       workingDirectory,
       "--output-schema",
-      OUTPUT_SCHEMA_PATH,
+      fileURLToPath(OUTPUT_SCHEMA_URL),
       "--output-last-message",
       outputLastMessagePath,
       "--color",

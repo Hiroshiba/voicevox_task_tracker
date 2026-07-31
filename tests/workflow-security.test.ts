@@ -8,6 +8,7 @@ import { z } from "zod";
 const WORKFLOW_DIRECTORY = join(import.meta.dirname, "..", ".github", "workflows");
 const DAILY_WORKFLOW_PATH = join(WORKFLOW_DIRECTORY, "daily.yml");
 const CI_WORKFLOW_PATH = join(WORKFLOW_DIRECTORY, "ci.yml");
+const PACKAGE_PATH = join(import.meta.dirname, "..", "package.json");
 const FULL_COMMIT_ACTION_PATTERN = /^[^@\s]+@[0-9a-f]{40}$/u;
 const VERSIONED_USES_LINE_PATTERN =
   /^\s*uses:\s+[^@\s]+@[0-9a-f]{40}\s+#\s+v\d+(?:\.\d+){0,2}\s*$/gmu;
@@ -184,6 +185,72 @@ describe("日次workflow", () => {
     expect(notifyJob.if).toContain("success()");
     expect(needs(deployJob)).toContain("build-pages");
   });
+
+  it("各jobが検証済みartifactを対応するCLI stageへ渡す", async () => {
+    const workflow = await readDailyWorkflow();
+    const collectCommands = runCommands(
+      workflow.jobs["collect-analyze"] ?? { permissions: {}, steps: [] },
+    ).join("\n");
+    const persistCommands = runCommands(
+      workflow.jobs["persist-state"] ?? { permissions: {}, steps: [] },
+    ).join("\n");
+    const buildCommands = runCommands(
+      workflow.jobs["build-pages"] ?? { permissions: {}, steps: [] },
+    ).join("\n");
+    const notifyCommands = runCommands(
+      workflow.jobs["notify-discord"] ?? { permissions: {}, steps: [] },
+    ).join("\n");
+
+    expect(collectCommands).toContain("collect-analyze");
+    expect(collectCommands).toContain("pnpm build:workflow-cli");
+    expect(persistCommands).toContain("tracker-run.mjs persist-state");
+    expect(buildCommands).toContain("tracker-run.mjs build-pages");
+    expect(notifyCommands).toContain("tracker-run.mjs notify-discord");
+    expect(notifyCommands).not.toContain("curl");
+    for (const jobName of ["persist-state", "build-pages", "notify-discord"] as const) {
+      expect(JSON.stringify(workflow.jobs[jobName])).toContain("actions/download-artifact@");
+      expect(JSON.stringify(workflow.jobs[jobName])).toContain("validated-public-run");
+    }
+  });
+
+  it("Codex CLIをexact versionで固定して収集jobへinstallする", async () => {
+    const workflow = await readDailyWorkflow();
+    const packageDefinition: unknown = JSON.parse(await readFile(PACKAGE_PATH, "utf8"));
+    const packageSchema = z
+      .object({
+        devDependencies: z
+          .object({
+            "@openai/codex": z.string(),
+          })
+          .loose(),
+      })
+      .loose();
+    const parsedPackage = packageSchema.parse(packageDefinition);
+    const collectCommands = runCommands(
+      workflow.jobs["collect-analyze"] ?? { permissions: {}, steps: [] },
+    );
+
+    expect(parsedPackage.devDependencies["@openai/codex"]).toMatch(/^\d+\.\d+\.\d+$/u);
+    expect(collectCommands).toContain("pnpm install --frozen-lockfile");
+    expect(collectCommands).toContain("pnpm exec codex --version");
+  });
+
+  it("外部secretを収集とDiscordのjobだけへ分離する", async () => {
+    const workflow = await readDailyWorkflow();
+    const collectSource = JSON.stringify(workflow.jobs["collect-analyze"]);
+    const persistSource = JSON.stringify(workflow.jobs["persist-state"]);
+    const buildSource = JSON.stringify(workflow.jobs["build-pages"]);
+    const notifySource = JSON.stringify(workflow.jobs["notify-discord"]);
+
+    expect(collectSource).toContain("GH_APP_PRIVATE_KEY");
+    expect(collectSource).toContain("OPENAI_API_KEY");
+    expect(collectSource).not.toContain("DISCORD_WEBHOOK_URL");
+    expect(persistSource).not.toContain("secrets.");
+    expect(buildSource).not.toContain("secrets.");
+    expect(notifySource).toContain("DISCORD_WEBHOOK_URL");
+    expect(notifySource).not.toContain("GH_APP_PRIVATE_KEY");
+    expect(notifySource).not.toContain("OPENAI_API_KEY");
+  });
 });
 
 describe("workflow security", () => {
@@ -249,6 +316,7 @@ describe("workflow security", () => {
       "pnpm test",
       "pnpm eval:golden",
       "pnpm build",
+      "pnpm build:workflow-cli",
       "pnpm build:web",
     ]) {
       expect(qualityCommands).toContain(command);

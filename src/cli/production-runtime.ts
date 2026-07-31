@@ -44,6 +44,7 @@ import {
   selectDiscordNotifications,
   type sendDiscordDigest,
   type DiscordDigestDelivery,
+  type DiscordDeliverySettings,
   type DiscordNotificationItem,
   type DiscordNotificationSelection,
   type DiscordSecretProvider,
@@ -95,12 +96,18 @@ import {
   type SnapshotRepository,
   type StateBranchAdapter,
   type StateNotificationLedger,
+  type StateRunReport,
   type StateSnapshot,
   type StateSnapshotReadResult,
 } from "../persistence/index.js";
 import { assertNonNullable } from "../util/index.js";
 import { CliApplication } from "./application.js";
 import { createTrackingBackfillRequest } from "./backfill.js";
+import {
+  type BuildPagesCliCommand,
+  type NotifyDiscordCliCommand,
+  type PersistStateCliCommand,
+} from "./command.js";
 import { type OnlineCliCommand } from "./daily-transaction.js";
 import {
   DailyTransactionRunner,
@@ -108,7 +115,7 @@ import {
   type DailyTransactionTypeMap,
   type DailyRunInvocation,
 } from "./daily-transaction.js";
-import { CliCredentialsError } from "./errors.js";
+import { CliCredentialsError, CliExecutableError } from "./errors.js";
 import {
   OfflineRunRunner,
   type readGoldenFixtureFiles,
@@ -119,8 +126,17 @@ import {
   type ReplayFixture,
 } from "./offline-runner.js";
 import { writeRunReport, type RunMetrics } from "./run-report.js";
+import {
+  assertWorkflowArtifactPublicSafety,
+  createWorkflowArtifact,
+  type readWorkflowArtifactFile,
+  workflowArtifactRepositoryInventory,
+  type WorkflowArtifact,
+} from "./workflow-artifact.js";
+import { WorkflowStageRunner } from "./workflow-stage.js";
 
-const CODEX_BACKEND_VERSION = "codex-cli-v1";
+const CODEX_CLI_VERSION = "0.145.0";
+const CODEX_BACKEND_VERSION = `codex-cli-${CODEX_CLI_VERSION}`;
 const CODEX_SCHEMA_VERSION = "1";
 const PAGES_BASE_URL = "https://voicevox.github.io";
 
@@ -247,6 +263,7 @@ export type ProductionRuntimeAdapters = Readonly<{
   readReplayFixture: typeof readReplayFixtureFile;
   readReplayState: typeof readReplayStateFile;
   readGoldenFixtures: typeof readGoldenFixtureFiles;
+  readWorkflowArtifact: typeof readWorkflowArtifactFile;
   createGitHubClient: (options: CreateGitHubClientOptions) => Promise<GitHubClient>;
   createStateBranchAdapter: () => StateBranchAdapter;
   codexProcessRunner: CodexProcessRunner;
@@ -314,7 +331,11 @@ function readRuntimeCredentials(
   if (openAiApiKey.length > 0) {
     knownSecrets.push(openAiApiKey);
   }
-  if (command.kind !== "dry-run" && config.notifications.discord.enabled) {
+  if (
+    command.kind !== "dry-run" &&
+    command.kind !== "collect-analyze" &&
+    config.notifications.discord.enabled
+  ) {
     knownSecrets.push(
       requireEnvironmentValue(environment, config.notifications.discord.webhookSecretName),
     );
@@ -369,6 +390,34 @@ function isolatedCodexEnvironment(
     OPENAI_API_KEY: openAiApiKey,
     PATH: requireEnvironmentValue(environment, "PATH"),
   };
+}
+
+async function assertCodexCliAvailable(
+  adapters: ProductionRuntimeAdapters,
+  openAiApiKey: string,
+): Promise<void> {
+  let result: Awaited<ReturnType<CodexProcessRunner>>;
+  try {
+    result = await adapters.codexProcessRunner({
+      command: "codex",
+      arguments: ["--version"],
+      workingDirectory: adapters.repositoryPath,
+      environment: {
+        HOME: requireEnvironmentValue(adapters.environment, "HOME"),
+        OPENAI_API_KEY: openAiApiKey,
+        PATH: requireEnvironmentValue(adapters.environment, "PATH"),
+      },
+      standardInput: "",
+      timeoutMilliseconds: 10_000,
+    });
+  } catch (error: unknown) {
+    throw new CliExecutableError("codex", { cause: error });
+  }
+  if (result.timedOut || result.exitCode !== 0 || result.signal != null) {
+    throw new CliExecutableError("codex", {
+      cause: new Error("Codex CLIのversion確認が正常終了しませんでした"),
+    });
+  }
 }
 
 function githubApiRemaining(client: GitHubClient): number {
@@ -1542,6 +1591,66 @@ function persistedMetrics(metrics: RunMetrics, validated: ValidatedRun): RunMetr
   });
 }
 
+function createPersistedRunReport(
+  invocation: DailyRunInvocation,
+  validated: ValidatedRun,
+  metrics: RunMetrics,
+  status: "success" | "fallback",
+  diagnostics: readonly string[],
+): StateRunReport {
+  return createStateRunReport({
+    schemaVersion: "1",
+    runId: invocation.runId,
+    date: invocation.startedAt.slice(0, 10),
+    status,
+    complete: true,
+    scheduledFor: invocation.scheduledFor,
+    startedAt: invocation.startedAt,
+    finishedAt: invocation.startedAt,
+    metrics: persistedMetrics(metrics, validated),
+    diagnostics,
+  });
+}
+
+function discordDeliverySettings(config: Config): DiscordDeliverySettings {
+  return Object.freeze({
+    enabled: config.notifications.discord.enabled,
+    webhookSecretName: config.notifications.discord.webhookSecretName,
+    operationsWebhookSecretName: config.notifications.discord.operationsWebhookSecretName,
+    mentions: config.notifications.discord.mentions,
+    retry: config.operations.retry,
+  });
+}
+
+function createCollectAnalyzeArtifact(
+  invocation: DailyRunInvocation,
+  configuration: RuntimeConfiguration,
+  state: RuntimeState,
+  inventory: RepositoryInventory,
+  validated: ValidatedRun,
+  metrics: RunMetrics,
+  status: "success" | "fallback",
+  diagnostics: readonly string[],
+): WorkflowArtifact {
+  const artifact = createWorkflowArtifact({
+    schemaVersion: "1",
+    kind: "validated_public_run",
+    snapshot: validated.snapshot,
+    notificationLedger: validated.notificationLedger,
+    notificationSelection: validated.notificationSelection,
+    stateRunReport: createPersistedRunReport(invocation, validated, metrics, status, diagnostics),
+    aiCacheEntries: state.session.pendingAiCacheEntries(),
+    pagesUrl: pagesUrl(configuration.config),
+    discordSettings: discordDeliverySettings(configuration.config),
+  });
+  assertWorkflowArtifactPublicSafety(
+    artifact,
+    inventory.inventory,
+    configuration.credentials.knownSecrets,
+  );
+  return artifact;
+}
+
 async function persistValidatedRun(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
@@ -1555,18 +1664,7 @@ async function persistValidatedRun(
   const result = await state.session.persist({
     snapshot: validated.snapshot,
     notificationLedger: validated.notificationLedger,
-    runReport: createStateRunReport({
-      schemaVersion: "1",
-      runId: invocation.runId,
-      date: invocation.startedAt.slice(0, 10),
-      status,
-      complete: true,
-      scheduledFor: invocation.scheduledFor,
-      startedAt: invocation.startedAt,
-      finishedAt: invocation.startedAt,
-      metrics: persistedMetrics(metrics, validated),
-      diagnostics,
-    }),
+    runReport: createPersistedRunReport(invocation, validated, metrics, status, diagnostics),
     repositoryInventory: inventory.inventory,
     knownSecrets: configuration.credentials.knownSecrets,
   });
@@ -1581,26 +1679,28 @@ function pagesUrl(config: Config): string {
 
 async function buildPublicPages(
   adapters: ProductionRuntimeAdapters,
-  configuration: RuntimeConfiguration,
-  inventory: RepositoryInventory,
+  config: Config,
+  inventory: readonly Repository[],
   validated: ValidatedRun,
+  outputDirectory: string,
+  knownSecrets: readonly string[],
 ): Promise<PagesResult> {
   const data = generatePublicData({
     snapshot: validated.snapshot,
     historyRecords: [],
-    repositoryInventory: inventory.inventory,
-    knownSecrets: configuration.credentials.knownSecrets,
+    repositoryInventory: inventory,
+    knownSecrets,
     options: {
-      labelRules: normalizeLabelRules(configuration.config),
-      maxInitialGraphNodes: configuration.config.web.graph.maxInitialNodes,
+      labelRules: normalizeLabelRules(config),
+      maxInitialGraphNodes: config.web.graph.maxInitialNodes,
       maxSummaryGzipBytes: PUBLIC_SUMMARY_GZIP_LIMIT_BYTES,
     },
   });
-  const output = await adapters.writePublicData(adapters.pagesOutputDirectory, data);
+  const output = await adapters.writePublicData(outputDirectory, data);
   return Object.freeze({
     data,
     output,
-    pagesUrl: pagesUrl(configuration.config),
+    pagesUrl: pagesUrl(config),
   });
 }
 
@@ -1614,9 +1714,9 @@ function environmentSecretProvider(
 
 async function deliverDiscord(
   adapters: ProductionRuntimeAdapters,
-  configuration: RuntimeConfiguration,
+  settings: DiscordDeliverySettings,
   validated: ValidatedRun,
-  pages: PagesResult,
+  deployedPagesUrl: string,
 ): Promise<
   Readonly<{
     value: DiscordResult;
@@ -1635,16 +1735,9 @@ async function deliverDiscord(
     generatedAt: validated.snapshot.generatedAt,
     pagesDeployment: {
       status: "succeeded",
-      pagesUrl: pages.pagesUrl,
+      pagesUrl: deployedPagesUrl,
     },
-    settings: {
-      enabled: configuration.config.notifications.discord.enabled,
-      webhookSecretName: configuration.config.notifications.discord.webhookSecretName,
-      operationsWebhookSecretName:
-        configuration.config.notifications.discord.operationsWebhookSecretName,
-      mentions: configuration.config.notifications.discord.mentions,
-      retry: configuration.config.operations.retry,
-    },
+    settings,
     dependencies: {
       secretProvider: environmentSecretProvider(adapters.environment),
       httpClient: adapters.discordHttpClient,
@@ -1702,9 +1795,13 @@ function createDailyDependencies(
     validateConfiguration: async ({ invocation, configPath }) => {
       requireEnvironmentVariables(adapters.environment, ["GH_APP_ID", "GH_APP_PRIVATE_KEY"]);
       const config = await adapters.loadConfig(resolve(adapters.repositoryPath, configPath));
+      const credentials = readRuntimeCredentials(adapters.environment, config, invocation.command);
+      if (config.ai.enabled) {
+        await assertCodexCliAvailable(adapters, credentials.openAiApiKey);
+      }
       return Object.freeze({
         config,
-        credentials: readRuntimeCredentials(adapters.environment, config, invocation.command),
+        credentials,
       });
     },
     loadState: async ({ configuration }) => {
@@ -1902,9 +1999,21 @@ function createDailyDependencies(
         diagnostics,
       ),
     buildPages: ({ configuration, repositoryInventory, validated }) =>
-      buildPublicPages(adapters, configuration, repositoryInventory, validated),
+      buildPublicPages(
+        adapters,
+        configuration.config,
+        repositoryInventory.inventory,
+        validated,
+        adapters.pagesOutputDirectory,
+        configuration.credentials.knownSecrets,
+      ),
     sendDiscord: async ({ configuration, validated, pages }) => {
-      const result = await deliverDiscord(adapters, configuration, validated, pages);
+      const result = await deliverDiscord(
+        adapters,
+        discordDeliverySettings(configuration.config),
+        validated,
+        pages.pagesUrl,
+      );
       return Object.freeze({
         value: result.value,
         notificationCount: result.notificationCount,
@@ -1912,7 +2021,100 @@ function createDailyDependencies(
       });
     },
     writeDryRunArtifact: (path, artifact) => adapters.writeJsonArtifact(path, artifact),
+    writeCollectAnalyzeArtifact: (path, input) =>
+      adapters.writeJsonArtifact(
+        path,
+        createCollectAnalyzeArtifact(
+          input.invocation,
+          input.configuration,
+          input.state,
+          input.repositoryInventory,
+          input.validated,
+          input.metrics,
+          input.status,
+          input.diagnostics,
+        ),
+      ),
     writeReport: (path, report) => writeRunReport(path, report, adapters.writeTextFile),
+  });
+}
+
+function validatedRunFromArtifact(artifact: WorkflowArtifact): ValidatedRun {
+  return Object.freeze({
+    snapshot: artifact.snapshot,
+    notificationLedger: artifact.notificationLedger,
+    notificationSelection: artifact.notificationSelection,
+  });
+}
+
+async function persistWorkflowState(
+  adapters: ProductionRuntimeAdapters,
+  command: PersistStateCliCommand,
+): Promise<void> {
+  const artifact = await adapters.readWorkflowArtifact(
+    resolve(adapters.repositoryPath, command.artifactPath),
+  );
+  const config = await adapters.loadConfig(resolve(adapters.repositoryPath, command.configPath));
+  const session = await adapters.openStateSession(
+    adapters.createStateBranchAdapter(),
+    config.state,
+  );
+  for (const entry of artifact.aiCacheEntries) {
+    await session.aiCache.write(entry);
+  }
+  await session.persist({
+    snapshot: artifact.snapshot,
+    notificationLedger: artifact.notificationLedger,
+    runReport: artifact.stateRunReport,
+    repositoryInventory: workflowArtifactRepositoryInventory(artifact),
+    knownSecrets: [],
+  });
+}
+
+async function buildWorkflowPages(
+  adapters: ProductionRuntimeAdapters,
+  command: BuildPagesCliCommand,
+): Promise<void> {
+  const artifact = await adapters.readWorkflowArtifact(
+    resolve(adapters.repositoryPath, command.artifactPath),
+  );
+  const config = await adapters.loadConfig(resolve(adapters.repositoryPath, command.configPath));
+  if (pagesUrl(config) !== artifact.pagesUrl) {
+    throw new TypeError("workflow artifactと現在の設定でPages URLが一致しません");
+  }
+  await buildPublicPages(
+    adapters,
+    config,
+    workflowArtifactRepositoryInventory(artifact),
+    validatedRunFromArtifact(artifact),
+    resolve(adapters.repositoryPath, command.outputDirectory),
+    [],
+  );
+}
+
+async function notifyWorkflowDiscord(
+  adapters: ProductionRuntimeAdapters,
+  command: NotifyDiscordCliCommand,
+): Promise<void> {
+  const artifact = await adapters.readWorkflowArtifact(
+    resolve(adapters.repositoryPath, command.artifactPath),
+  );
+  if (command.pagesUrl !== artifact.pagesUrl) {
+    throw new TypeError("deploy済みPages URLがworkflow artifactの公開先と一致しません");
+  }
+  await deliverDiscord(
+    adapters,
+    artifact.discordSettings,
+    validatedRunFromArtifact(artifact),
+    command.pagesUrl,
+  );
+}
+
+function createWorkflowStageRunner(adapters: ProductionRuntimeAdapters): WorkflowStageRunner {
+  return new WorkflowStageRunner({
+    persistState: (command) => persistWorkflowState(adapters, command),
+    buildPages: (command) => buildWorkflowPages(adapters, command),
+    notifyDiscord: (command) => notifyWorkflowDiscord(adapters, command),
   });
 }
 
@@ -1993,6 +2195,7 @@ export function createProductionCliApplication(
     dailyRunner: new DailyTransactionRunner(createDailyDependencies(adapters), {
       now: adapters.now,
     }),
+    workflowStageRunner: createWorkflowStageRunner(adapters),
     offlineRunner: createOfflineRunner(adapters),
     writeStandardOutput: adapters.writeStandardOutput,
   });

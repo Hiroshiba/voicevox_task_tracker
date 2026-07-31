@@ -29,7 +29,7 @@ const runMetricsSchema = z.strictObject({
 const runReportFields = {
   schemaVersion: z.literal("1"),
   runId: nonEmptyStringSchema,
-  command: z.enum(["daily", "dry-run", "backfill", "replay", "eval"]),
+  command: z.enum(["daily", "dry-run", "backfill", "collect-analyze", "replay", "eval"]),
   scheduledFor: dateTimeSchema,
   startedAt: dateTimeSchema,
   finishedAt: dateTimeSchema,

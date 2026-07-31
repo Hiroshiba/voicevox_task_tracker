@@ -33,3 +33,19 @@ export class CliCredentialsError extends TaskTrackerError {
     this.variableNames = Object.freeze(uniqueVariableNames);
   }
 }
+
+/** workflowの前段成果物が存在しないか検証できないことを表す。 */
+export class CliWorkflowArtifactError extends TaskTrackerError {
+  public constructor(path: string, reason: "missing" | "invalid", options: ErrorOptions) {
+    const description =
+      reason === "missing" ? "前stageの成果物がありません" : "前stageの成果物が不正です";
+    super(`${description}。対象: ${path}`, options);
+  }
+}
+
+/** 有効な機能が必要とする実行可能ファイルを起動できないことを表す。 */
+export class CliExecutableError extends TaskTrackerError {
+  public constructor(executable: string, options: ErrorOptions) {
+    super(`必要な実行可能ファイルが見つからないか起動できません。対象: ${executable}`, options);
+  }
+}

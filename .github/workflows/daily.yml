@@ -75,8 +75,12 @@ jobs:
         run: corepack enable
       - name: 依存関係をインストール
         run: pnpm install --frozen-lockfile
+      - name: Codex CLIを確認
+        run: pnpm exec codex --version
       - name: CLIをビルド
         run: pnpm build
+      - name: 後続job用CLIをビルド
+        run: pnpm build:workflow-cli
       - name: 収集と解析を実行
         env:
           BACKFILL_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.backfill || 'none' }}
@@ -85,11 +89,14 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           REPOSITORY_FILTER: ${{ inputs.repository_filter || '' }}
         run: |
+          arguments=(collect-analyze --mode "$BACKFILL_MODE")
           if [[ -n "$REPOSITORY_FILTER" ]]; then
-            pnpm tracker:run --backfill "$BACKFILL_MODE" --repository-filter "$REPOSITORY_FILTER"
-          else
-            pnpm tracker:run --backfill "$BACKFILL_MODE"
+            IFS=',' read -r -a repositories <<< "$REPOSITORY_FILTER"
+            for repository in "${repositories[@]}"; do
+              arguments+=(--repository "$repository")
+            done
           fi
+          pnpm tracker:run "${arguments[@]}"
       - name: 公開可能なrun artifactを保存
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -113,28 +120,12 @@ jobs:
         with:
           name: validated-public-run
           path: artifacts/workflow
+      - name: Node.jsを準備
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
       - name: stateをtracker-stateへ保存
-        env:
-          STATE_WORKTREE: ${{ runner.temp }}/tracker-state
-        run: |
-          if git fetch origin tracker-state; then
-            git worktree add --detach "$STATE_WORKTREE" FETCH_HEAD
-          else
-            git worktree add --detach "$STATE_WORKTREE" HEAD
-            git -C "$STATE_WORKTREE" switch --orphan tracker-state
-            git -C "$STATE_WORKTREE" rm -r --ignore-unmatch .
-          fi
-          git -C "$STATE_WORKTREE" config user.name "VOICEVOX Task Tracker"
-          git -C "$STATE_WORKTREE" config user.email "voicevox-task-tracker@users.noreply.github.com"
-          git -C "$STATE_WORKTREE" rm -r --ignore-unmatch state
-          mkdir -p "$STATE_WORKTREE/state"
-          cp -R artifacts/workflow/state/. "$STATE_WORKTREE/state/"
-          git -C "$STATE_WORKTREE" add state
-          if git -C "$STATE_WORKTREE" diff --cached --quiet; then
-            exit 0
-          fi
-          git -C "$STATE_WORKTREE" commit -m "日次stateを更新"
-          git -C "$STATE_WORKTREE" push origin HEAD:tracker-state
+        run: node artifacts/workflow/runtime/tracker-run.mjs persist-state
 
   build-pages:
     needs: persist-state
@@ -159,8 +150,8 @@ jobs:
         with:
           name: validated-public-run
           path: artifacts/workflow
-      - name: Pages用データを配置
-        run: cp -R artifacts/workflow/pages/. web/public/data/
+      - name: Pages用データを生成
+        run: node artifacts/workflow/runtime/tracker-run.mjs build-pages --output web/public/data
       - name: Pagesをビルド
         run: pnpm build:web
       - name: Pagesを構成
@@ -198,6 +189,10 @@ jobs:
     runs-on: ubuntu-24.04
     permissions: {}
     steps:
+      - name: Node.jsを準備
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24.11.1
       - name: 公開可能なrun artifactを取得
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -206,13 +201,7 @@ jobs:
       - name: Discordへ通知
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: |
-          jq -c '.[]' artifacts/workflow/discord/payloads.json |
-            while IFS= read -r payload; do
-              curl --fail --silent --show-error --output /dev/null \
-                --retry 3 --retry-delay 2 --retry-max-time 30 \
-                --header "Content-Type: application/json" \
-                --request POST \
-                --data "$payload" \
-                "${DISCORD_WEBHOOK_URL}?wait=true"
-            done
+          PAGES_URL: ${{ needs.deploy-pages.outputs.page_url }}
+        run: >-
+          node artifacts/workflow/runtime/tracker-run.mjs notify-discord
+          --pages-url "$PAGES_URL"

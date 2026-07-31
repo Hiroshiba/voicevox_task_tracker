@@ -73,6 +73,7 @@ VOICEVOX Organization全体の公開Issue/PRについて、状態・ボールの
 
 ### Phase 9: 仕上げ
 
-- [ ] T30 ドキュメント整備 — README、アーキテクチャ、デプロイ手順、運用手順
+- [x] T30 ドキュメント整備 — README、アーキテクチャ、デプロイ手順、運用手順
+- [x] T30b workflowと実行の整合 — job分離に合わせたstage実行、job間artifact、Codex CLIの導入
 - [ ] T31 動作確認 — ビルド、テスト、Playwrightによる公開ページの動作確認
 - [ ] T32 全体レビューと修正 — 要求との突き合わせ、抜けの補完

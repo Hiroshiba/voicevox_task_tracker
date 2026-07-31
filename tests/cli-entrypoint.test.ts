@@ -86,4 +86,22 @@ describe("tracker:run実行入口", () => {
       ]),
     ).toEqual(["eval", "--fixtures", "tests/fixtures/golden", "--artifact", "artifacts/eval.json"]);
   });
+
+  it("workflow stageサブコマンドを検証してそのまま渡す", () => {
+    expect(
+      createTrackerRunCliArguments([
+        "collect-analyze",
+        "--mode",
+        "none",
+        "--artifact",
+        "artifacts/workflow/validated-run.json",
+      ]),
+    ).toEqual([
+      "collect-analyze",
+      "--mode",
+      "none",
+      "--artifact",
+      "artifacts/workflow/validated-run.json",
+    ]);
+  });
 });

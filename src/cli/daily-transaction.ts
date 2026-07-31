@@ -2,8 +2,13 @@ import { createHash } from "node:crypto";
 
 import { createUtcIsoDateTime, type UtcIsoDateTime } from "../domain/index.js";
 import { serializeCanonicalJson } from "../persistence/index.js";
-import { type BackfillCliCommand, type DailyCliCommand, type DryRunCliCommand } from "./command.js";
-import { CliCredentialsError } from "./errors.js";
+import {
+  type BackfillCliCommand,
+  type CollectAnalyzeCliCommand,
+  type DailyCliCommand,
+  type DryRunCliCommand,
+} from "./command.js";
+import { CliCredentialsError, CliExecutableError } from "./errors.js";
 import { RunCoordinator, type CoordinatedRunResult } from "./run-coordinator.js";
 import {
   createEmptyRunMetrics,
@@ -14,7 +19,8 @@ import {
 } from "./run-report.js";
 
 /** ネットワークを利用する日次transaction系のサブコマンド。 */
-export type OnlineCliCommand = DailyCliCommand | DryRunCliCommand | BackfillCliCommand;
+export type OnlineCliCommand =
+  DailyCliCommand | DryRunCliCommand | BackfillCliCommand | CollectAnalyzeCliCommand;
 
 /** 各段階を型安全につなぐために利用する値の対応表。 */
 export type DailyTransactionTypeMap = Readonly<{
@@ -211,6 +217,19 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
     path: string,
     artifact: DryRunArtifact<Types["validated"]>,
   ) => Promise<void>;
+  writeCollectAnalyzeArtifact: (
+    path: string,
+    input: Readonly<{
+      invocation: DailyRunInvocation;
+      configuration: Types["configuration"];
+      state: Types["state"];
+      repositoryInventory: Types["repositoryInventory"];
+      validated: Types["validated"];
+      metrics: RunMetrics;
+      status: "success" | "fallback";
+      diagnostics: readonly string[];
+    }>,
+  ) => Promise<void>;
   writeReport: (path: string, report: RunReport) => Promise<void>;
 }>;
 
@@ -280,7 +299,7 @@ function resolveScheduledFor(command: OnlineCliCommand, startedAt: UtcIsoDateTim
 
 function createRunId(command: OnlineCliCommand, scheduledFor: UtcIsoDateTime): string {
   const commandIdentity =
-    command.kind === "backfill"
+    command.kind === "backfill" || command.kind === "collect-analyze"
       ? {
           kind: command.kind,
           configPath: command.configPath,
@@ -319,7 +338,7 @@ function updateMetrics(metrics: RunMetrics, values: Partial<RunMetrics>): RunMet
 }
 
 function safeErrorDiagnostic(stage: RunStage, error: unknown): string {
-  if (error instanceof CliCredentialsError) {
+  if (error instanceof CliCredentialsError || error instanceof CliExecutableError) {
     return `stage=${stage} message=${error.message}`;
   }
   const errorType = error instanceof Error ? error.name : typeof error;
@@ -593,7 +612,22 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         );
       }
 
-      if (invocation.command.kind !== "dry-run") {
+      if (invocation.command.kind === "collect-analyze") {
+        stage = "artifact";
+        await this.#dependencies.writeCollectAnalyzeArtifact(invocation.command.artifactPath, {
+          invocation,
+          configuration,
+          state,
+          repositoryInventory: repositoryInventory.value,
+          validated: validation.value,
+          metrics,
+          status: runStatus,
+          diagnostics,
+        });
+        effects.artifactWritten = true;
+      }
+
+      if (invocation.command.kind !== "dry-run" && invocation.command.kind !== "collect-analyze") {
         stage = "state_persistence";
         const persisted = await this.#dependencies.persistState({
           invocation,

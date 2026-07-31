@@ -84,6 +84,7 @@ type HarnessBehavior = Readonly<{
   completeness: "complete" | "incomplete";
   deterministicResolution: "clear" | "ambiguous";
   failConfiguration: boolean;
+  pagesFailureCount: number;
 }>;
 
 type Harness = Readonly<{
@@ -124,6 +125,7 @@ function defaultBehavior(): HarnessBehavior {
     completeness: "complete",
     deterministicResolution: "clear",
     failConfiguration: false,
+    pagesFailureCount: 0,
   });
 }
 
@@ -149,6 +151,7 @@ function createHarness(behavior: HarnessBehavior): Harness {
   const state = {
     lastGoodHash: "sha256:last-good",
   };
+  let remainingPagesFailures = behavior.pagesFailureCount;
 
   const dependencies = {
     validateConfiguration: () => {
@@ -282,6 +285,10 @@ function createHarness(behavior: HarnessBehavior): Harness {
     buildPages: () => {
       events.push("pages");
       counters.pagesBuilds += 1;
+      if (remainingPagesFailures > 0) {
+        remainingPagesFailures -= 1;
+        throw new TypeError("Pages build fixtureが失敗しました");
+      }
       return Promise.resolve({
         pagesUrl: "https://voicevox.github.io/voicevox_task_tracker/",
       });
@@ -298,6 +305,12 @@ function createHarness(behavior: HarnessBehavior): Harness {
       });
     },
     writeDryRunArtifact: (artifactPath, artifact) => {
+      events.push("artifact");
+      artifactPaths.push(artifactPath);
+      artifacts.push(artifact);
+      return Promise.resolve();
+    },
+    writeCollectAnalyzeArtifact: (artifactPath, artifact) => {
       events.push("artifact");
       artifactPaths.push(artifactPath);
       artifacts.push(artifact);
@@ -324,7 +337,12 @@ function createHarness(behavior: HarnessBehavior): Harness {
 
 function parseOnlineCommand(args: readonly string[]): OnlineCliCommand {
   const command = parseCliArguments(args);
-  if (command.kind !== "daily" && command.kind !== "dry-run" && command.kind !== "backfill") {
+  if (
+    command.kind !== "daily" &&
+    command.kind !== "dry-run" &&
+    command.kind !== "backfill" &&
+    command.kind !== "collect-analyze"
+  ) {
     throw new TypeError("online commandではありません");
   }
   return command;
@@ -416,6 +434,39 @@ describe("Daily transaction", () => {
     expect(harness.state.lastGoodHash).toBe("sha256:last-good");
   });
 
+  it("collect-analyzeは検証済み成果物を書き、後続stageの副作用を実行しない", async () => {
+    const harness = createHarness(defaultBehavior());
+    const result = await harness.runner.run(
+      parseOnlineCommand([
+        "collect-analyze",
+        "--mode",
+        "none",
+        "--artifact",
+        "artifacts/workflow/validated-run.json",
+        "--scheduled-for",
+        SCHEDULED_FOR,
+      ]),
+    );
+
+    expect(result.value.report.status).toBe("success");
+    expect(result.value.effects).toEqual({
+      stateCommitted: false,
+      pagesBuilt: false,
+      discordAttempted: false,
+      artifactWritten: true,
+    });
+    expect(harness.artifactPaths).toEqual(["artifacts/workflow/validated-run.json"]);
+    expect(harness.artifacts[0]).toMatchObject({
+      validated: {
+        snapshotHash: "sha256:new-state",
+      },
+      status: "success",
+    });
+    expect(harness.counters.stateCommits).toBe(0);
+    expect(harness.counters.pagesBuilds).toBe(0);
+    expect(harness.counters.discordCalls).toBe(0);
+  });
+
   it("不完全なrunはdry-run artifactを残しても公開副作用へ進めない", async () => {
     const harness = createHarness({
       ...defaultBehavior(),
@@ -461,6 +512,34 @@ describe("Daily transaction", () => {
     expect(second.value.report.runId).toBe(third.value.report.runId);
     expect(harness.counters.stateCommits).toBe(1);
     expect(harness.counters.pagesBuilds).toBe(1);
+    expect(harness.counters.discordCalls).toBe(1);
+    expect(harness.state.lastGoodHash).toBe("sha256:new-state");
+  });
+
+  it("state commit後にPagesが失敗してもstateを戻さず再実行で公開を揃える", async () => {
+    const harness = createHarness({
+      ...defaultBehavior(),
+      pagesFailureCount: 1,
+    });
+    const command = parseOnlineCommand(scheduledArgs("daily"));
+
+    const first = await harness.runner.run(command);
+    expect(first.value.report).toMatchObject({
+      status: "failure",
+      failedStage: "pages",
+    });
+    expect(first.value.effects).toEqual({
+      stateCommitted: true,
+      pagesBuilt: false,
+      discordAttempted: false,
+      artifactWritten: false,
+    });
+    expect(harness.state.lastGoodHash).toBe("sha256:new-state");
+
+    const second = await harness.runner.run(command);
+    expect(second.value.report.status).toBe("success");
+    expect(harness.counters.stateCommits).toBe(2);
+    expect(harness.counters.pagesBuilds).toBe(2);
     expect(harness.counters.discordCalls).toBe(1);
     expect(harness.state.lastGoodHash).toBe("sha256:new-state");
   });

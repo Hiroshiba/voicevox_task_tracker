@@ -5,7 +5,12 @@ import { z } from "zod";
 import { type CliExecutionResult } from "./application.js";
 import { parseCliArguments } from "./command.js";
 import { createDefaultCliApplication } from "./composition-root.js";
-import { CliCredentialsError, CliUsageError } from "./errors.js";
+import {
+  CliCredentialsError,
+  CliExecutableError,
+  CliUsageError,
+  CliWorkflowArtifactError,
+} from "./errors.js";
 
 const REPOSITORY_FILTER_SEPARATOR = ",";
 
@@ -77,10 +82,16 @@ function parseRepositoryFilter(value: string): readonly string[] {
 
 /** workflow向けoptionを日次またはbackfillサブコマンドへ変換する。 */
 export function createTrackerRunCliArguments(args: readonly string[]): readonly string[] {
-  if (args[0] === "eval") {
+  if (
+    args[0] === "eval" ||
+    args[0] === "collect-analyze" ||
+    args[0] === "persist-state" ||
+    args[0] === "build-pages" ||
+    args[0] === "notify-discord"
+  ) {
     const command = parseCliArguments(args);
-    if (command.kind !== "eval") {
-      throw new TypeError("evalサブコマンドの解析結果が一致しません");
+    if (command.kind !== args[0]) {
+      throw new TypeError("workflowサブコマンドの解析結果が一致しません");
     }
     return Object.freeze([...args]);
   }
@@ -135,7 +146,12 @@ function writeFailureDiagnostics(result: CliExecutionResult): void {
 }
 
 function safeTopLevelMessage(error: unknown): string {
-  if (error instanceof CliUsageError || error instanceof CliCredentialsError) {
+  if (
+    error instanceof CliUsageError ||
+    error instanceof CliCredentialsError ||
+    error instanceof CliExecutableError ||
+    error instanceof CliWorkflowArtifactError
+  ) {
     return error.message;
   }
   return "tracker:runの実行に失敗しました";

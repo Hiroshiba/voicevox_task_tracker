@@ -1,0 +1,400 @@
+import { readFile } from "node:fs/promises";
+
+import { z } from "zod";
+
+import { createAiCacheEntry, type AiCacheEntry } from "../codex/index.js";
+import { createGitHubNodeId, createUtcIsoDateTime, type Repository } from "../domain/index.js";
+import {
+  type DiscordDeliverySettings,
+  type DiscordNotificationSelection,
+} from "../discord/index.js";
+import {
+  assertStatePublicSafety,
+  createStateNotificationLedger,
+  createStateRunReport,
+  createStateSnapshot,
+  type StateNotificationLedger,
+  type StateRunReport,
+  type StateSnapshot,
+} from "../persistence/index.js";
+import { assertNonNullable } from "../util/index.js";
+import { CliWorkflowArtifactError } from "./errors.js";
+
+const actionsSecretNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
+const dateTimeSchema = z.iso
+  .datetime({
+    offset: true,
+    error: "タイムゾーンを含むISO 8601日時を指定してください",
+  })
+  .transform((value) => createUtcIsoDateTime(value));
+const nodeIdSchema = z
+  .string()
+  .min(1)
+  .transform((value) => createGitHubNodeId(value));
+const severitySchema = z.enum(["none", "watch", "urgent", "critical"]);
+const notificationReasonCodeSchema = z.enum([
+  "triage_overdue",
+  "review_overdue",
+  "author_overdue",
+  "owner_unknown",
+  "blocker_overdue",
+  "newly_unblocked",
+  "dependency_cycle",
+  "responsibility_changed",
+  "ready_to_merge_overdue",
+  "automation_stuck",
+]);
+const selectedReasonSchema = z.strictObject({
+  reasonCode: notificationReasonCodeSchema,
+  notificationKey: z.string().min(1).max(1000),
+  cooldownUntil: dateTimeSchema,
+});
+const notificationCandidateSchema = z.strictObject({
+  itemNodeId: nodeIdSchema,
+  reasonCode: notificationReasonCodeSchema,
+  reasons: z.array(selectedReasonSchema).min(1),
+  severity: severitySchema,
+  downstreamImpact: z.strictObject({
+    nodeId: nodeIdSchema,
+    openNodeCount: z.number().int().nonnegative(),
+    repositoryCount: z.number().int().nonnegative(),
+  }),
+  priorityWeight: z.number(),
+});
+const ledgerReservationSchema = z.strictObject({
+  notificationKey: z.string().min(1).max(1000),
+  itemNodeId: nodeIdSchema,
+  reasonCode: notificationReasonCodeSchema,
+  severity: severitySchema,
+  reservedAt: dateTimeSchema,
+  cooldownUntil: dateTimeSchema,
+  status: z.literal("reserved"),
+});
+const notificationSelectionSchema = z.discriminatedUnion("action", [
+  z.strictObject({
+    action: z.literal("skip_digest"),
+    reason: z.literal("no_candidates"),
+    candidates: z.tuple([]),
+    ledgerReservations: z.tuple([]),
+  }),
+  z.strictObject({
+    action: z.literal("create_digest"),
+    candidates: z.array(notificationCandidateSchema).min(1),
+    ledgerReservations: z.array(ledgerReservationSchema).min(1),
+  }),
+]);
+const discordSettingsSchema = z.strictObject({
+  enabled: z.boolean(),
+  webhookSecretName: actionsSecretNameSchema,
+  operationsWebhookSecretName: actionsSecretNameSchema,
+  mentions: z.strictObject({
+    enabled: z.boolean(),
+    users: z.record(z.string().min(1), z.string().regex(/^\d{17,20}$/u)),
+  }),
+  retry: z
+    .strictObject({
+      maxAttempts: z.number().int().positive(),
+      initialDelaySeconds: z.number().nonnegative(),
+      maxDelaySeconds: z.number().nonnegative(),
+    })
+    .refine((retry) => retry.initialDelaySeconds <= retry.maxDelaySeconds, {
+      message: "Discord retryの初期待機時間は最大待機時間以下にしてください",
+    }),
+});
+const workflowArtifactSchema = z.strictObject({
+  schemaVersion: z.literal("1"),
+  kind: z.literal("validated_public_run"),
+  snapshot: z.unknown(),
+  notificationLedger: z.unknown(),
+  notificationSelection: z.unknown(),
+  stateRunReport: z.unknown(),
+  aiCacheEntries: z.array(z.unknown()),
+  pagesUrl: z.url(),
+  discordSettings: discordSettingsSchema,
+});
+
+/** collect-analyzeが後続jobへ渡す公開可能な検証済み成果物。 */
+export type WorkflowArtifact = Readonly<{
+  schemaVersion: "1";
+  kind: "validated_public_run";
+  snapshot: StateSnapshot;
+  notificationLedger: StateNotificationLedger;
+  notificationSelection: DiscordNotificationSelection;
+  stateRunReport: StateRunReport;
+  aiCacheEntries: readonly AiCacheEntry[];
+  pagesUrl: string;
+  discordSettings: DiscordDeliverySettings;
+}>;
+
+function nonEmptyValues<Value>(
+  values: readonly Value[],
+  description: string,
+): readonly [Value, ...Value[]] {
+  const first = values[0];
+  assertNonNullable(first, `${description}がありません`);
+  return Object.freeze([first, ...values.slice(1)]);
+}
+
+function emptyValues(): readonly [] {
+  return Object.freeze([]);
+}
+
+function createNotificationSelection(value: unknown): DiscordNotificationSelection {
+  const result = notificationSelectionSchema.safeParse(value);
+  if (!result.success) {
+    throw new TypeError("workflow artifactの通知候補がschemaに適合しません", {
+      cause: result.error,
+    });
+  }
+  if (result.data.action === "skip_digest") {
+    return Object.freeze({
+      action: "skip_digest",
+      reason: "no_candidates",
+      candidates: emptyValues(),
+      ledgerReservations: emptyValues(),
+    });
+  }
+  const candidates = result.data.candidates.map((candidate) =>
+    Object.freeze({
+      ...candidate,
+      reasons: nonEmptyValues(candidate.reasons, "通知理由"),
+      downstreamImpact: Object.freeze({
+        ...candidate.downstreamImpact,
+      }),
+    }),
+  );
+  return Object.freeze({
+    action: "create_digest",
+    candidates: nonEmptyValues(candidates, "通知候補"),
+    ledgerReservations: nonEmptyValues(result.data.ledgerReservations, "通知予約"),
+  });
+}
+
+function compareStrings(left: string, right: string): number {
+  if (left < right) {
+    return -1;
+  }
+  if (left > right) {
+    return 1;
+  }
+  return 0;
+}
+
+function createAiCacheEntries(values: readonly unknown[]): readonly AiCacheEntry[] {
+  const entries = values.map((value) => createAiCacheEntry(value));
+  const cacheKeys = entries.map((entry) => entry.cacheKey);
+  if (new Set(cacheKeys).size !== cacheKeys.length) {
+    throw new TypeError("workflow artifactのAI cache keyが重複しています");
+  }
+  return Object.freeze(
+    [...entries].sort((left, right) => compareStrings(left.cacheKey, right.cacheKey)),
+  );
+}
+
+function repositoryInventory(snapshot: StateSnapshot): readonly Repository[] {
+  return Object.freeze(
+    snapshot.repositories.map((repository) =>
+      Object.freeze({
+        id: repository.id,
+        owner: repository.owner,
+        name: repository.name,
+        visibility: repository.visibility,
+        archived: repository.archived,
+        disabled: repository.disabled,
+        observedAt: repository.observedAt,
+      }),
+    ),
+  );
+}
+
+function assertRunConsistency(snapshot: StateSnapshot, report: StateRunReport): void {
+  if (
+    snapshot.run.id !== report.runId ||
+    snapshot.run.status !== report.status ||
+    snapshot.generatedAt !== report.finishedAt
+  ) {
+    throw new TypeError("workflow artifactのsnapshotとrun reportが一致しません");
+  }
+  if (
+    snapshot.repositories.length !== report.metrics.repositoryCount ||
+    snapshot.items.length !== report.metrics.itemCount ||
+    snapshot.relations.filter((relation) => relation.active).length !==
+      report.metrics.activeEdgeCount ||
+    snapshot.repositories.filter((repository) => repository.freshness === "stale").length !==
+      report.metrics.staleRepositoryCount
+  ) {
+    throw new TypeError("workflow artifactのsnapshotとrun reportの件数が一致しません");
+  }
+}
+
+function assertNotificationSelectionConsistency(
+  snapshot: StateSnapshot,
+  ledger: StateNotificationLedger,
+  selection: DiscordNotificationSelection,
+): void {
+  const itemIds = new Set(snapshot.items.map((item) => item.nodeId));
+  const reservations = new Map(
+    selection.ledgerReservations.map((entry) => [entry.notificationKey, entry]),
+  );
+  const ledgerEntries = new Map(ledger.entries.map((entry) => [entry.notificationKey, entry]));
+  const reasonKeys: string[] = [];
+
+  for (const candidate of selection.candidates) {
+    if (!itemIds.has(candidate.itemNodeId)) {
+      throw new TypeError("workflow artifactの通知候補がsnapshot外の項目を参照しています");
+    }
+    if (
+      candidate.downstreamImpact.nodeId !== candidate.itemNodeId ||
+      !candidate.reasons.some((reason) => reason.reasonCode === candidate.reasonCode)
+    ) {
+      throw new TypeError("workflow artifactの通知候補内で項目または主理由が一致しません");
+    }
+    for (const reason of candidate.reasons) {
+      reasonKeys.push(reason.notificationKey);
+      const reservation = reservations.get(reason.notificationKey);
+      if (reservation == null) {
+        throw new TypeError("workflow artifactの通知候補に対応する予約がありません");
+      }
+      if (
+        reservation.itemNodeId !== candidate.itemNodeId ||
+        reservation.reasonCode !== reason.reasonCode ||
+        reservation.severity !== candidate.severity ||
+        reservation.cooldownUntil !== reason.cooldownUntil
+      ) {
+        throw new TypeError("workflow artifactの通知候補と予約が一致しません");
+      }
+      const ledgerEntry = ledgerEntries.get(reason.notificationKey);
+      if (ledgerEntry == null) {
+        throw new TypeError("workflow artifactの通知予約がledgerにありません");
+      }
+      if (
+        ledgerEntry.status !== "reserved" ||
+        ledgerEntry.itemNodeId !== reservation.itemNodeId ||
+        ledgerEntry.reasonCode !== reservation.reasonCode ||
+        ledgerEntry.severity !== reservation.severity ||
+        ledgerEntry.reservedAt !== reservation.reservedAt ||
+        ledgerEntry.cooldownUntil !== reservation.cooldownUntil
+      ) {
+        throw new TypeError("workflow artifactの通知予約がledgerへ反映されていません");
+      }
+    }
+  }
+  if (new Set(reasonKeys).size !== reasonKeys.length || reasonKeys.length !== reservations.size) {
+    throw new TypeError("workflow artifactの通知候補と予約の対応が一意ではありません");
+  }
+}
+
+function normalizePagesUrl(value: string): string {
+  const url = new URL(value);
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== "voicevox.github.io" ||
+    url.username.length !== 0 ||
+    url.password.length !== 0 ||
+    url.hash.length !== 0
+  ) {
+    throw new TypeError("workflow artifactのPages URLが安全なHTTPS URLではありません");
+  }
+  return url.href;
+}
+
+/** workflow artifactを独立した公開境界で再検証する。 */
+export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
+  const result = workflowArtifactSchema.safeParse(value);
+  if (!result.success) {
+    throw new TypeError("workflow artifactがschemaに適合しません", {
+      cause: result.error,
+    });
+  }
+  const snapshot = createStateSnapshot(result.data.snapshot);
+  const notificationLedger = createStateNotificationLedger(result.data.notificationLedger);
+  const notificationSelection = createNotificationSelection(result.data.notificationSelection);
+  const stateRunReport = createStateRunReport(result.data.stateRunReport);
+  const aiCacheEntries = createAiCacheEntries(result.data.aiCacheEntries);
+  const artifact = Object.freeze({
+    schemaVersion: "1",
+    kind: "validated_public_run",
+    snapshot,
+    notificationLedger,
+    notificationSelection,
+    stateRunReport,
+    aiCacheEntries,
+    pagesUrl: normalizePagesUrl(result.data.pagesUrl),
+    discordSettings: Object.freeze({
+      ...result.data.discordSettings,
+      mentions: Object.freeze({
+        ...result.data.discordSettings.mentions,
+        users: Object.freeze({
+          ...result.data.discordSettings.mentions.users,
+        }),
+      }),
+      retry: Object.freeze({
+        ...result.data.discordSettings.retry,
+      }),
+    }),
+  } satisfies WorkflowArtifact);
+  assertRunConsistency(snapshot, stateRunReport);
+  assertNotificationSelectionConsistency(snapshot, notificationLedger, notificationSelection);
+  assertWorkflowArtifactPublicSafety(artifact, repositoryInventory(snapshot), []);
+  return artifact;
+}
+
+/** artifact全体へraw inventoryと既知secretを使った公開安全性検査を適用する。 */
+export function assertWorkflowArtifactPublicSafety(
+  artifact: WorkflowArtifact,
+  inventory: readonly Repository[],
+  knownSecrets: readonly string[],
+): void {
+  assertStatePublicSafety({
+    snapshot: artifact.snapshot,
+    repositoryInventory: inventory,
+    additionalValues: [
+      artifact.notificationLedger,
+      artifact.notificationSelection,
+      artifact.stateRunReport,
+      ...artifact.aiCacheEntries,
+      artifact.pagesUrl,
+      artifact.discordSettings,
+    ],
+    knownSecrets,
+  });
+}
+
+/** workflow artifactから公開repository inventoryを復元する。 */
+export function workflowArtifactRepositoryInventory(
+  artifact: WorkflowArtifact,
+): readonly Repository[] {
+  return repositoryInventory(artifact.snapshot);
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error != null && "code" in error && error.code === code;
+}
+
+/** 前stageが出力したJSON artifactを読み、全境界検証をやり直す。 */
+export async function readWorkflowArtifactFile(path: string): Promise<WorkflowArtifact> {
+  let source: string;
+  try {
+    source = await readFile(path, "utf8");
+  } catch (error: unknown) {
+    throw new CliWorkflowArtifactError(
+      path,
+      hasErrorCode(error, "ENOENT") ? "missing" : "invalid",
+      {
+        cause: error,
+      },
+    );
+  }
+  let value: unknown;
+  try {
+    const parseJson: (input: string) => unknown = JSON.parse;
+    value = parseJson(source);
+  } catch (error: unknown) {
+    throw new CliWorkflowArtifactError(path, "invalid", { cause: error });
+  }
+  try {
+    return createWorkflowArtifact(value);
+  } catch (error: unknown) {
+    throw new CliWorkflowArtifactError(path, "invalid", { cause: error });
+  }
+}
