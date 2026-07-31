@@ -77,6 +77,13 @@ function parseRepositoryFilter(value: string): readonly string[] {
 
 /** workflow向けoptionを日次またはbackfillサブコマンドへ変換する。 */
 export function createTrackerRunCliArguments(args: readonly string[]): readonly string[] {
+  if (args[0] === "eval") {
+    const command = parseCliArguments(args);
+    if (command.kind !== "eval") {
+      throw new TypeError("evalサブコマンドの解析結果が一致しません");
+    }
+    return Object.freeze([...args]);
+  }
   if (args.length === 1 && args[0] === "--help") {
     return Object.freeze(["help"]);
   }

@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { readFile, readdir, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { z } from "zod";
 
 import { createUtcIsoDateTime, type UtcIsoDateTime } from "../domain/index.js";
+import { evaluateGoldenRegression, type GoldenEvaluationPair } from "../eval/index.js";
 import {
   parseStateSnapshot,
   serializeCanonicalJson,
@@ -28,6 +29,11 @@ const goldenFixtureSchema = z.strictObject({
   name: z.string().min(1).max(200),
   input: z.json(),
   expected: z.json(),
+});
+const pairedGoldenFixtureSchema = z.strictObject({
+  schemaVersion: z.literal("1"),
+  name: z.string().min(1).max(200),
+  input: z.json(),
 });
 
 /** replay用fixtureの安定した最小形式。 */
@@ -177,7 +183,7 @@ async function listJsonFiles(path: string): Promise<readonly string[]> {
     const entryPath = join(path, entry.name);
     if (entry.isDirectory()) {
       files.push(...(await listJsonFiles(entryPath)));
-    } else if (entry.isFile() && entry.name.endsWith(".json")) {
+    } else if (entry.isFile() && entry.name.endsWith(".json") && entry.name !== "expected.json") {
       files.push(entryPath);
     }
   }
@@ -204,7 +210,34 @@ export async function readGoldenFixtureFiles(path: string): Promise<readonly Gol
   }
   const fixtures: GoldenFixture[] = [];
   for (const file of files) {
-    const result = goldenFixtureSchema.safeParse(parseJson(await readUtf8(file), file));
+    const value = parseJson(await readUtf8(file), file);
+    if (basename(file) === "fixture.json") {
+      const result = pairedGoldenFixtureSchema.safeParse(value);
+      if (!result.success) {
+        throw new CliFixtureError(file, {
+          cause: result.error,
+        });
+      }
+      const expectedPath = join(dirname(file), "expected.json");
+      const expected = parseJson(await readUtf8(expectedPath), expectedPath);
+      const expectedResult = z.json().safeParse(expected);
+      if (!expectedResult.success) {
+        throw new CliFixtureError(expectedPath, {
+          cause: expectedResult.error,
+        });
+      }
+      fixtures.push(
+        Object.freeze({
+          schemaVersion: "1",
+          name: result.data.name,
+          input: result.data.input,
+          expected: expectedResult.data,
+        }),
+      );
+      continue;
+    }
+
+    const result = goldenFixtureSchema.safeParse(value);
     if (!result.success) {
       throw new CliFixtureError(file, {
         cause: result.error,
@@ -472,6 +505,7 @@ export class OfflineRunRunner {
     try {
       const fixtures = await this.#dependencies.readGoldenFixtures(command.fixturesPath);
       const comparisons: EvalComparison[] = [];
+      const evaluationPairs: GoldenEvaluationPair[] = [];
       const diagnostics: string[] = [];
       let status: OfflineAnalysisResult["status"] = "success";
       for (const fixture of fixtures) {
@@ -480,6 +514,13 @@ export class OfflineRunRunner {
           input: fixture.input,
         });
         comparisons.push(compareGoldenFixture(fixture, analysis.output));
+        evaluationPairs.push(
+          Object.freeze({
+            name: fixture.name,
+            expected: fixture.expected,
+            actual: analysis.output,
+          }),
+        );
         aggregateMetrics = addMetrics(aggregateMetrics, analysis.metrics);
         diagnostics.push(...analysis.diagnostics);
         if (analysis.status === "fallback") {
@@ -489,34 +530,39 @@ export class OfflineRunRunner {
       const failedFixtureCount = comparisons.filter(
         (comparison) => comparison.status === "failed",
       ).length;
+      const regression = evaluateGoldenRegression(evaluationPairs);
+      const regressionFailed = regression?.status === "failed";
+      const evalFailed = failedFixtureCount > 0 || regressionFailed;
       await this.#dependencies.writeArtifact(command.artifactPath, {
         schemaVersion: "1",
         command: "eval",
-        status: failedFixtureCount === 0 ? "passed" : "failed",
+        status: evalFailed ? "failed" : "passed",
         fixtureCount: comparisons.length,
         passedFixtureCount: comparisons.length - failedFixtureCount,
         failedFixtureCount,
         comparisons,
+        ...(regression == null ? {} : { regression }),
       });
       artifactWritten = true;
       const finishedAt = currentTime(this.#runtime);
-      const report =
-        failedFixtureCount === 0
-          ? createCompletedReport(command, runId, scheduledFor, startedAt, finishedAt, {
-              status,
-              output: null,
-              metrics: aggregateMetrics,
-              diagnostics,
-            })
-          : createFailureReport(
-              command,
-              runId,
-              scheduledFor,
-              startedAt,
-              finishedAt,
-              aggregateMetrics,
-              `golden_mismatch_count=${failedFixtureCount.toString()}`,
-            );
+      const report = !evalFailed
+        ? createCompletedReport(command, runId, scheduledFor, startedAt, finishedAt, {
+            status,
+            output: null,
+            metrics: aggregateMetrics,
+            diagnostics,
+          })
+        : createFailureReport(
+            command,
+            runId,
+            scheduledFor,
+            startedAt,
+            finishedAt,
+            aggregateMetrics,
+            regressionFailed
+              ? `golden_regression_threshold_failed critical_urgent_recall=${regression.criticalUrgentRecall.value.toString()} false_notification_rate=${regression.falseNotificationRate.value.toString()} golden_mismatch_count=${failedFixtureCount.toString()}`
+              : `golden_mismatch_count=${failedFixtureCount.toString()}`,
+          );
       await this.#dependencies.writeReport(command.reportPath, report);
       return Object.freeze({
         report,

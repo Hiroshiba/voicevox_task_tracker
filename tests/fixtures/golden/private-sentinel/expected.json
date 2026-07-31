@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "1",
+  "kind": "standard",
+  "items": [
+    {
+      "nodeId": "private-sentinel-issue",
+      "status": "new_untriaged",
+      "waitingOn": [
+        {
+          "kind": "role",
+          "candidateId": "maintainer",
+          "role": "maintainer"
+        }
+      ],
+      "severity": "critical",
+      "stallSince": "2026-07-01T00:00:00.000Z"
+    }
+  ],
+  "relations": [],
+  "notifications": [],
+  "publication": {
+    "status": "stopped",
+    "reason": "private_repository_data"
+  },
+  "fixedAi": {
+    "acceptedOutputCount": 0,
+    "rejectedOutputCount": 0,
+    "networkCallCount": 0
+  }
+}

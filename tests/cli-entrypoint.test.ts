@@ -74,4 +74,16 @@ describe("tracker:run実行入口", () => {
   it("--helpをhelpサブコマンドへ変換する", () => {
     expect(createTrackerRunCliArguments(["--help"])).toEqual(["help"]);
   });
+
+  it("evalサブコマンドをgolden fixture指定とともに既存CLIへ渡す", () => {
+    expect(
+      createTrackerRunCliArguments([
+        "eval",
+        "--fixtures",
+        "tests/fixtures/golden",
+        "--artifact",
+        "artifacts/eval.json",
+      ]),
+    ).toEqual(["eval", "--fixtures", "tests/fixtures/golden", "--artifact", "artifacts/eval.json"]);
+  });
 });

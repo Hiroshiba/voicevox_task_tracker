@@ -69,7 +69,7 @@ VOICEVOX Organization全体の公開Issue/PRについて、状態・ボールの
 - [x] T27 CLI — daily、dry-run、backfill、replay、evalの各サブコマンドとrun report出力
 - [x] T28 GitHub Actions workflow — 日次workflowのjob分離と最小権限、full commit SHA pin、Pages deploy、CI workflow
 - [x] T28b 実行の合成 — GitHub、Codex、永続化、Pages、Discordの実アダプターを組み立て、tracker:runから日次runを実行できるようにする
-- [ ] T29 golden evalとfixture — 実運用パターンを模したfixture一式、回帰評価、受入試験の整備
+- [x] T29 golden evalとfixture — 実運用パターンを模したfixture一式、回帰評価、受入試験の整備
 
 ### Phase 9: 仕上げ
 

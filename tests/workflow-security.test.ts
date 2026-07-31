@@ -237,9 +237,8 @@ describe("workflow security", () => {
   it("CIを外部APIへ接続せず全検証とgolden evalに割り当てる", async () => {
     const workflow = await readWorkflow(CI_WORKFLOW_PATH);
     const qualityJob = workflow.jobs["quality"];
-    const goldenEvalJob = workflow.jobs["golden-eval"];
-    if (qualityJob == null || goldenEvalJob == null) {
-      throw new TypeError("CIのqualityまたはgolden-eval jobがありません");
+    if (qualityJob == null) {
+      throw new TypeError("CIのquality jobがありません");
     }
 
     const qualityCommands = runCommands(qualityJob);
@@ -248,14 +247,13 @@ describe("workflow security", () => {
       "pnpm lint",
       "pnpm format:check",
       "pnpm test",
+      "pnpm eval:golden",
       "pnpm build",
       "pnpm build:web",
     ]) {
       expect(qualityCommands).toContain(command);
     }
-    expect(runCommands(goldenEvalJob)).toContain("pnpm eval:golden");
     expect(JSON.stringify(workflow)).not.toContain("${{ secrets.");
     expect(runCommands(qualityJob).join("\n")).not.toContain("curl");
-    expect(runCommands(goldenEvalJob).join("\n")).not.toContain("curl");
   });
 });

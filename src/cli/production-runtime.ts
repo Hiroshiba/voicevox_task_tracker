@@ -49,6 +49,7 @@ import {
   type DiscordSecretProvider,
   type DiscordWebhookHttpClient,
 } from "../discord/index.js";
+import { analyzeGoldenFixture, goldenEvalInputSchema } from "../eval/index.js";
 import {
   type collectGitHubItemDetails,
   type collectGitHubTeamDirectory,
@@ -1932,15 +1933,28 @@ function createOfflineRunner(adapters: ProductionRuntimeAdapters): OfflineRunRun
   return new OfflineRunRunner(
     {
       engine: {
-        replayFixture: (fixture: ReplayFixture): Promise<OfflineAnalysisResult> =>
-          Promise.resolve(
+        replayFixture: (fixture: ReplayFixture): Promise<OfflineAnalysisResult> => {
+          const goldenInput = goldenEvalInputSchema.safeParse(fixture.input);
+          if (!goldenInput.success) {
+            return Promise.resolve(
+              Object.freeze({
+                status: "success",
+                output: fixture.input,
+                metrics: emptyOfflineMetrics(),
+                diagnostics: Object.freeze([]),
+              }),
+            );
+          }
+          const analysis = analyzeGoldenFixture(goldenInput.data);
+          return Promise.resolve(
             Object.freeze({
               status: "success",
-              output: fixture.input,
-              metrics: emptyOfflineMetrics(),
-              diagnostics: Object.freeze([]),
+              output: analysis.output,
+              metrics: analysis.metrics,
+              diagnostics: analysis.diagnostics,
             }),
-          ),
+          );
+        },
         replayState: (state): Promise<OfflineAnalysisResult> =>
           Promise.resolve(
             Object.freeze({

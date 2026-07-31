@@ -1,0 +1,83 @@
+{
+  "schemaVersion": "1",
+  "kind": "standard",
+  "items": [
+    {
+      "nodeId": "nested-core-issue",
+      "status": "new_untriaged",
+      "waitingOn": [
+        {
+          "kind": "role",
+          "candidateId": "maintainer",
+          "role": "maintainer"
+        }
+      ],
+      "severity": "critical",
+      "stallSince": "2026-07-01T00:00:00.000Z"
+    },
+    {
+      "nodeId": "nested-engine-issue",
+      "status": "new_untriaged",
+      "waitingOn": [
+        {
+          "kind": "role",
+          "candidateId": "maintainer",
+          "role": "maintainer"
+        }
+      ],
+      "severity": "critical",
+      "stallSince": "2026-07-01T00:00:00.000Z"
+    },
+    {
+      "nodeId": "nested-release-issue",
+      "status": "new_untriaged",
+      "waitingOn": [
+        {
+          "kind": "role",
+          "candidateId": "maintainer",
+          "role": "maintainer"
+        }
+      ],
+      "severity": "critical",
+      "stallSince": "2026-07-01T00:00:00.000Z"
+    }
+  ],
+  "relations": [
+    {
+      "id": "rel:checklist-core-engine",
+      "fromNodeId": "nested-core-issue",
+      "toNodeId": "nested-engine-issue",
+      "type": "parent_of",
+      "provenance": "checklist"
+    },
+    {
+      "id": "rel:checklist-release-core",
+      "fromNodeId": "nested-release-issue",
+      "toNodeId": "nested-core-issue",
+      "type": "parent_of",
+      "provenance": "checklist"
+    }
+  ],
+  "notifications": [
+    {
+      "itemNodeId": "nested-core-issue",
+      "reasonCodes": ["triage_overdue"]
+    },
+    {
+      "itemNodeId": "nested-engine-issue",
+      "reasonCodes": ["triage_overdue"]
+    },
+    {
+      "itemNodeId": "nested-release-issue",
+      "reasonCodes": ["triage_overdue"]
+    }
+  ],
+  "publication": {
+    "status": "published"
+  },
+  "fixedAi": {
+    "acceptedOutputCount": 2,
+    "rejectedOutputCount": 0,
+    "networkCallCount": 0
+  }
+}
