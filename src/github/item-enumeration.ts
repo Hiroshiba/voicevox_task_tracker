@@ -8,6 +8,7 @@ import {
   type GitHubItemDisplayReference,
   type GitHubItemUrl,
   type GitHubNodeId,
+  type ObservedGitHubItemState,
   type UtcIsoDateTime,
 } from "../domain/index.js";
 import { type GitHubApiAccountType } from "./account-types.js";
@@ -188,18 +189,6 @@ export type GitHubItemBodyLocator = Readonly<{
   number: number;
 }>;
 
-type GitHubItemState =
-  | Readonly<{
-      state: "open";
-      stateReason: "reopened" | null;
-      closedAt: null;
-    }>
-  | Readonly<{
-      state: "closed";
-      stateReason: "completed" | "not_planned" | "duplicate" | null;
-      closedAt: UtcIsoDateTime;
-    }>;
-
 type EnumeratedGitHubItemFields = Readonly<{
   nodeId: GitHubNodeId;
   repositoryId: PublicRepositoryId;
@@ -221,7 +210,7 @@ type EnumeratedGitHubItemFields = Readonly<{
 
 /** REST issues endpointから正規化した本文を含まないIssueまたはPull Request。 */
 export type EnumeratedGitHubItem = EnumeratedGitHubItemFields &
-  GitHubItemState &
+  ObservedGitHubItemState &
   (
     | Readonly<{
         type: "issue";
@@ -320,7 +309,7 @@ function normalizeMilestone(
   });
 }
 
-function normalizeState(item: ParsedItemMetadata): GitHubItemState {
+function normalizeState(item: ParsedItemMetadata): ObservedGitHubItemState {
   if (item.state === "open") {
     if (item.state_reason != null && item.state_reason !== "reopened") {
       throw new GitHubResponseValidationError("IssueまたはPull Requestのstate", {
@@ -387,7 +376,7 @@ function createItemFingerprint(
     author: GitHubItemAuthor;
     createdAt: UtcIsoDateTime;
     updatedAt: UtcIsoDateTime;
-    state: GitHubItemState;
+    state: ObservedGitHubItemState;
     draft: boolean | "not_applicable";
     assignees: readonly GitHubItemAccount[];
     labels: readonly string[];

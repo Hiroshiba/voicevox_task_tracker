@@ -2,6 +2,15 @@ import {
   type GitHubItemUrl,
   type GitHubNodeId,
   type GitHubRepositoryId,
+  type ObservedGitHubAutoMerge,
+  type ObservedGitHubCommitPushedAt,
+  type ObservedGitHubHeadChecks,
+  type ObservedGitHubMergeQueue,
+  type ObservedGitHubPullRequestCommit,
+  type ObservedGitHubPullRequestMergeState,
+  type ObservedGitHubReviewRequest,
+  type ObservedGitHubReviewRequestTarget,
+  type ObservedGitHubReviewRequestTimestamp,
   type SourceId,
   type UtcIsoDateTime,
 } from "../domain/index.js";
@@ -36,14 +45,7 @@ export type GitHubReviewRequestTarget =
       login: string;
       apiType: GitHubApiAccountType;
     }>
-  | Readonly<{
-      type: "team";
-      sourceId: SourceId;
-      nodeId: GitHubNodeId;
-      organizationLogin: string;
-      slug: string;
-      name: string;
-    }>;
+  | Extract<ObservedGitHubReviewRequestTarget, { type: "team" }>;
 
 /** GitHub上の公開IssueまたはPull Requestへの参照。 */
 export type GitHubReferencedItem = Readonly<{
@@ -122,43 +124,19 @@ export type GitHubPullRequestReviewThread = Readonly<{
 }>;
 
 /** レビュー依頼時刻の取得結果。 */
-export type GitHubReviewRequestTimestamp =
-  | Readonly<{
-      status: "available";
-      value: UtcIsoDateTime;
-    }>
-  | Readonly<{
-      status: "unavailable";
-      reason: "timeline_event_not_found";
-    }>;
+export type GitHubReviewRequestTimestamp = ObservedGitHubReviewRequestTimestamp;
 
 /** GitHubが返した現行review request。 */
-export type GitHubCurrentReviewRequest = Readonly<{
-  sourceId: SourceId;
-  nodeId: GitHubNodeId;
-  target: GitHubReviewRequestTarget;
-  requestedAt: GitHubReviewRequestTimestamp;
-}>;
+export type GitHubCurrentReviewRequest = Omit<ObservedGitHubReviewRequest, "target"> &
+  Readonly<{
+    target: GitHubReviewRequestTarget;
+  }>;
 
 /** Pull RequestのcommitがGitHubへpushされた時刻の取得結果。 */
-export type GitHubCommitPushedAt =
-  | Readonly<{
-      status: "available";
-      value: UtcIsoDateTime;
-    }>
-  | Readonly<{
-      status: "unavailable";
-      reason: "github_did_not_return_pushed_at";
-    }>;
+export type GitHubCommitPushedAt = ObservedGitHubCommitPushedAt;
 
 /** Pull Request timelineまたはheadから取得したcommit。 */
-export type GitHubPullRequestCommit = Readonly<{
-  sourceId: SourceId;
-  nodeId: GitHubNodeId;
-  sha: string;
-  committedAt: UtcIsoDateTime;
-  pushedAt: GitHubCommitPushedAt;
-}>;
+export type GitHubPullRequestCommit = ObservedGitHubPullRequestCommit;
 
 type GitHubTimelineEventBase = Readonly<{
   sourceId: SourceId;
@@ -315,51 +293,32 @@ export type GitHubCheckContext =
 
 /** head commitのstatus check rollup取得結果。 */
 export type GitHubHeadChecks =
-  | Readonly<{
-      status: "configured";
-      sourceId: SourceId;
-      nodeId: GitHubNodeId;
-      combinedState: "error" | "expected" | "failure" | "pending" | "success";
-      contexts: readonly GitHubCheckContext[];
-    }>
-  | Readonly<{
-      status: "not_configured";
-    }>;
+  | Extract<ObservedGitHubHeadChecks, { status: "not_configured" }>
+  | (Omit<Extract<ObservedGitHubHeadChecks, { status: "configured" }>, "contexts"> &
+      Readonly<{
+        contexts: readonly GitHubCheckContext[];
+      }>);
 
 /** Pull Requestのauto-merge取得結果。 */
 export type GitHubAutoMerge =
-  | Readonly<{
-      status: "enabled";
-      sourceId: SourceId;
-      nodeId: GitHubNodeId;
-      enabledAt: UtcIsoDateTime;
-      enabledBy: GitHubDetailActor;
-      mergeMethod: "merge" | "rebase" | "squash";
-    }>
-  | Readonly<{
-      status: "not_enabled";
-    }>;
+  | (Omit<Extract<ObservedGitHubAutoMerge, { status: "enabled" }>, "enabledBy"> &
+      Readonly<{
+        enabledBy: GitHubDetailActor;
+      }>)
+  | Extract<ObservedGitHubAutoMerge, { status: "not_enabled" }>;
 
 /** Pull Requestのmerge queue相当の取得結果。 */
-export type GitHubMergeQueue =
-  | Readonly<{
-      status: "queued";
-      sourceId: SourceId;
-      nodeId: GitHubNodeId;
-    }>
-  | Readonly<{
-      status: "not_queued";
-    }>;
+export type GitHubMergeQueue = ObservedGitHubMergeQueue;
 
 /** Pull Requestのmergeability、merge state、automation、checks取得結果。 */
-export type GitHubPullRequestMergeState = Readonly<{
-  mergeability: "mergeable" | "conflicting" | "unknown";
-  mergeState:
-    "behind" | "blocked" | "clean" | "dirty" | "draft" | "has_hooks" | "unknown" | "unstable";
-  autoMerge: GitHubAutoMerge;
-  mergeQueue: GitHubMergeQueue;
-  checks: GitHubHeadChecks;
-}>;
+export type GitHubPullRequestMergeState = Omit<
+  ObservedGitHubPullRequestMergeState,
+  "autoMerge" | "checks"
+> &
+  Readonly<{
+    autoMerge: GitHubAutoMerge;
+    checks: GitHubHeadChecks;
+  }>;
 
 /** 現行review requestと追加・解除履歴。 */
 export type GitHubPullRequestReviewRequests = Readonly<{

@@ -5,12 +5,38 @@ export {
   type BotPredicateInput,
 } from "./actor-resolution.js";
 export {
+  type FreshObservedGitHubItemBase,
+  type FreshObservedGitHubPullRequest,
+  type ObservedGitHubAutoMerge,
+  type ObservedGitHubCommitPushedAt,
+  type ObservedGitHubHeadChecks,
+  type ObservedGitHubItemAuthor,
+  type ObservedGitHubItemState,
+  type ObservedGitHubMergeQueue,
+  type ObservedGitHubPullRequestCommit,
+  type ObservedGitHubPullRequestMergeState,
+  type ObservedGitHubReviewRequest,
+  type ObservedGitHubReviewRequestTarget,
+  type ObservedGitHubReviewRequestTimestamp,
+  type ObservedGitHubReviewThread,
+} from "./github-item-observation.js";
+export {
   createLabelEffectsResolver,
   type LabelEffectsResolver,
   type LabelRule,
   type LabelRuleEffects,
   type ResolvedLabelEffects,
 } from "./label-resolution.js";
+export {
+  determinePullRequestState,
+  PULL_REQUEST_DETERMINISTIC_RULES_VERSION,
+  type PullRequestBlocker,
+  type PullRequestCheckFailureAssessment,
+  type PullRequestPrimaryWaitingOn,
+  type PullRequestStateDecision,
+  type PullRequestStateMachineInput,
+  type PullRequestTransitionBasis,
+} from "./pull-request-state-machine.js";
 export { compareSeverity } from "./severity.js";
 export { buildSourceId, parseSourceId, type SourceId, type SourceIdParts } from "./source-id.js";
 export { isTerminalStatus } from "./status.js";

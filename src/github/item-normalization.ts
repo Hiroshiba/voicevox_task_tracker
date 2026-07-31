@@ -1,10 +1,19 @@
 import {
   type Actor,
+  type FreshObservedGitHubItemBase,
+  type FreshObservedGitHubPullRequest,
   type GitHubAccountActor,
   type GitHubItemDisplayReference,
   type GitHubItemUrl,
   type GitHubNodeId,
   type NormalizedEvent,
+  type ObservedGitHubAutoMerge,
+  type ObservedGitHubItemAuthor,
+  type ObservedGitHubItemState,
+  type ObservedGitHubPullRequestMergeState,
+  type ObservedGitHubReviewRequest,
+  type ObservedGitHubReviewRequestTarget,
+  type ObservedGitHubReviewThread,
   type SourceId,
   type SystemActor,
   type UtcIsoDateTime,
@@ -22,7 +31,6 @@ import {
   type GitHubPullRequestCommit,
   type GitHubPullRequestMergeState,
   type GitHubReviewRequestTarget,
-  type GitHubReviewRequestTimestamp,
   type GitHubTimelineEvent,
 } from "./item-detail-types.js";
 import {
@@ -50,8 +58,7 @@ export type GitHubBotPredicateInput = Readonly<{
 /** GitHubアカウントをbotとして扱うか判定する純粋関数。 */
 export type GitHubBotPredicate = (account: GitHubBotPredicateInput) => boolean;
 
-/** GitHubがアカウントを返したかどうかを保持する観測アクター。 */
-export type ObservedGitHubActor =
+type GitHubActorObservation =
   | Readonly<{
       status: "identified";
       actor: GitHubAccountActor;
@@ -61,90 +68,18 @@ export type ObservedGitHubActor =
       reason: "github_did_not_return_actor";
     }>;
 
-/** GitHub項目の作成者を保持する観測値。 */
-export type ObservedGitHubItemAuthor =
-  | Readonly<{
-      status: "identified";
-      actor: GitHubAccountActor;
-    }>
-  | Readonly<{
-      status: "unavailable";
-      reason: "deleted_account";
-    }>;
+type GitHubReviewThreadNormalizationResult = ObservedGitHubReviewThread &
+  Readonly<{
+    path: string;
+    resolvedBy: GitHubActorObservation;
+  }>;
 
-/** 本文を除いたreview threadの観測値。 */
-export type ObservedGitHubReviewThread = Readonly<{
-  sourceId: SourceId;
-  nodeId: GitHubNodeId;
-  isResolved: boolean;
-  isOutdated: boolean;
-  path: string;
-  resolvedBy: ObservedGitHubActor;
-  commentSourceIds: readonly SourceId[];
-}>;
+type GitHubPullRequestMergeStateNormalizationResult = ObservedGitHubPullRequestMergeState &
+  Readonly<{
+    checks: GitHubHeadChecks;
+  }>;
 
-/** bot種別を解決済みのreview request先。 */
-export type ObservedGitHubReviewRequestTarget =
-  | Readonly<{
-      type: "user";
-      actor: GitHubAccountActor;
-    }>
-  | Readonly<{
-      type: "team";
-      sourceId: SourceId;
-      nodeId: GitHubNodeId;
-      organizationLogin: string;
-      slug: string;
-      name: string;
-    }>;
-
-/** 現行review requestの観測値。 */
-export type ObservedGitHubReviewRequest = Readonly<{
-  sourceId: SourceId;
-  nodeId: GitHubNodeId;
-  target: ObservedGitHubReviewRequestTarget;
-  requestedAt: GitHubReviewRequestTimestamp;
-}>;
-
-/** auto-mergeの観測値。 */
-export type ObservedGitHubAutoMerge =
-  | Readonly<{
-      status: "enabled";
-      sourceId: SourceId;
-      nodeId: GitHubNodeId;
-      enabledAt: UtcIsoDateTime;
-      enabledBy: Actor;
-      mergeMethod: "merge" | "rebase" | "squash";
-    }>
-  | Readonly<{
-      status: "not_enabled";
-    }>;
-
-/** 判定前のPull Request merge情報。 */
-export type ObservedGitHubPullRequestMergeState = Readonly<{
-  mergeability: GitHubPullRequestMergeState["mergeability"];
-  mergeState: GitHubPullRequestMergeState["mergeState"];
-  autoMerge: ObservedGitHubAutoMerge;
-  mergeQueue: GitHubPullRequestMergeState["mergeQueue"];
-  checks: GitHubHeadChecks;
-}>;
-
-type ObservedGitHubItemState =
-  | Readonly<{
-      state: "open";
-      stateReason: "reopened" | null;
-      closedAt: null;
-    }>
-  | Readonly<{
-      state: "closed";
-      stateReason: "completed" | "not_planned" | "duplicate" | null;
-      closedAt: UtcIsoDateTime;
-    }>;
-
-type FreshObservedGitHubItemFields = Readonly<{
-  freshness: "fresh";
-  sourceId: SourceId;
-  nodeId: GitHubNodeId;
+type FreshObservedGitHubItemMetadata = Readonly<{
   repositoryId: PublicRepositoryId;
   displayReference: GitHubItemDisplayReference;
   number: number;
@@ -153,19 +88,17 @@ type FreshObservedGitHubItemFields = Readonly<{
   bodySourceId: SourceId;
   bodyFingerprint: Sha256Fingerprint;
   itemFingerprint: Sha256Fingerprint;
-  author: ObservedGitHubItemAuthor;
   createdAt: UtcIsoDateTime;
   githubUpdatedAt: UtcIsoDateTime;
   assignees: readonly GitHubAccountActor[];
   labels: readonly string[];
   milestone: GitHubItemMilestone | null;
   inboundCrossReferences: readonly GitHubInboundCrossReferenceCandidate[];
-  events: readonly NormalizedEvent[];
-  observedAt: UtcIsoDateTime;
 }>;
 
 /** 最新取得に成功したIssueの判定前観測値。 */
-export type FreshObservedGitHubIssue = FreshObservedGitHubItemFields &
+export type FreshObservedGitHubIssue = FreshObservedGitHubItemBase &
+  FreshObservedGitHubItemMetadata &
   ObservedGitHubItemState &
   Readonly<{
     type: "issue";
@@ -174,21 +107,16 @@ export type FreshObservedGitHubIssue = FreshObservedGitHubItemFields &
     nativeHierarchy: GitHubNativeHierarchyCollection;
   }>;
 
-/** 最新取得に成功したPull Requestの判定前観測値。 */
-export type FreshObservedGitHubPullRequest = FreshObservedGitHubItemFields &
-  ObservedGitHubItemState &
+type GitHubPullRequestNormalizationResult = FreshObservedGitHubPullRequest &
+  FreshObservedGitHubItemMetadata &
   Readonly<{
-    type: "pull_request";
-    draft: boolean;
-    headSha: string;
-    headCommit: GitHubPullRequestCommit;
-    reviewThreads: readonly ObservedGitHubReviewThread[];
-    reviewRequests: readonly ObservedGitHubReviewRequest[];
-    mergeState: ObservedGitHubPullRequestMergeState;
+    reviewThreads: readonly GitHubReviewThreadNormalizationResult[];
+    mergeState: GitHubPullRequestMergeStateNormalizationResult;
   }>;
 
 /** 最新取得に成功したGitHub項目の判定前観測値。 */
-export type FreshObservedGitHubItem = FreshObservedGitHubIssue | FreshObservedGitHubPullRequest;
+export type FreshObservedGitHubItem =
+  FreshObservedGitHubIssue | GitHubPullRequestNormalizationResult;
 
 /** 取得失敗により前回観測値だけを保持するGitHub項目。 */
 export type StaleObservedGitHubItem = Readonly<{
@@ -253,7 +181,7 @@ export function normalizeGitHubActor(actor: GitHubDetailActor, isBot: GitHubBotP
 function normalizeObservedActor(
   actor: GitHubDetailActor,
   isBot: GitHubBotPredicate,
-): ObservedGitHubActor {
+): GitHubActorObservation {
   if (actor.status === "unavailable") {
     return Object.freeze({
       status: "unavailable",
@@ -719,7 +647,7 @@ function normalizeReviewRequestObservation(
 function normalizeReviewThreads(
   detail: Extract<GitHubItemDetail, { type: "pull_request" }>,
   isBot: GitHubBotPredicate,
-): readonly ObservedGitHubReviewThread[] {
+): readonly GitHubReviewThreadNormalizationResult[] {
   return Object.freeze(
     detail.reviewThreads.map((thread) =>
       Object.freeze({
@@ -757,7 +685,7 @@ function normalizeAutoMerge(
 function normalizeMergeState(
   mergeState: GitHubPullRequestMergeState,
   isBot: GitHubBotPredicate,
-): ObservedGitHubPullRequestMergeState {
+): GitHubPullRequestMergeStateNormalizationResult {
   return Object.freeze({
     mergeability: mergeState.mergeability,
     mergeState: mergeState.mergeState,
@@ -784,7 +712,7 @@ function createItemState(item: EnumeratedGitHubItem): ObservedGitHubItemState {
 
 function createFreshItemFields(
   options: NormalizeObservedGitHubItemOptions,
-): FreshObservedGitHubItemFields & ObservedGitHubItemState {
+): FreshObservedGitHubItemBase & FreshObservedGitHubItemMetadata & ObservedGitHubItemState {
   return Object.freeze({
     freshness: "fresh",
     sourceId: options.detail.sourceId,
