@@ -1,5 +1,25 @@
 export { extractRelationCandidates } from "./extract-relation-candidates.js";
+export { deriveBlockedBy, reconcileGraph } from "./reconcile-graph.js";
 export { buildRelationCandidateId } from "./relation-candidate-id.js";
+export {
+  type ActiveRelationCandidateResolution,
+  type BlockedByEntry,
+  type GraphEdgeAddedEvent,
+  type GraphEdgeChangedEvent,
+  type GraphEdgeChangedField,
+  type GraphEdgeHistoryEvent,
+  type GraphEdgeRemovedEvent,
+  type PendingRelationCandidateResolution,
+  type ReconcileGraphInput,
+  type ReconcileGraphResult,
+  type ReconciledGraphEdge,
+  type ReconciledGraphState,
+  type RejectedRelationCandidateResolution,
+  type RelationAssessmentVerdict,
+  type RelationCandidateAssessment,
+  type RelationCandidateResolution,
+  type RelationContradiction,
+} from "./reconcile-graph-types.js";
 export {
   type CandidateBlocksRelation,
   type CandidateImplementsRelation,
