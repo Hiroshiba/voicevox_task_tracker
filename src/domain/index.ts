@@ -172,6 +172,7 @@ export {
   type NotificationReasonCode,
   type OperationsAlertKind,
   type OperationsAlertLedgerEntry,
+  type PrimaryWaitingOn,
   type Relation,
   type RelationProvenance,
   type RelationType,

@@ -84,6 +84,7 @@ ai:
     maxInputCharactersPerItem: 60000
     maxTotalInputCharactersPerRun: 2000000
     maxEstimatedCostUsdPerRun: 10
+    estimatedInputCostUsdPerMillionTokens: 1.25
   execution:
     timeoutSeconds: 120
     maxAttempts: 2

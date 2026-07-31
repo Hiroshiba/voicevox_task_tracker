@@ -45,6 +45,7 @@ describe("設定の読み込みと検証", () => {
     );
     expect(config.ai.provider).toBe("codex");
     expect(config.ai.budget.maxEstimatedCostUsdPerRun).toBe(10);
+    expect(config.ai.budget.estimatedInputCostUsdPerMillionTokens).toBe(1.25);
     expect(config.notifications.discord.mentions.enabled).toBe(false);
     expect(config.state.runReportsDirectory).toBe("state/run-reports");
   });
@@ -182,6 +183,18 @@ describe("設定の読み込みと検証", () => {
 
     expect(error.message).toContain("ai.budget.maxEstimatedCostUsdPerRun");
     expect(error.message).toContain("0以上");
+  });
+
+  it("AI入力token単価に0を指定できない", () => {
+    const source = replaceRequired(
+      validConfigSource,
+      "    estimatedInputCostUsdPerMillionTokens: 1.25",
+      "    estimatedInputCostUsdPerMillionTokens: 0",
+    );
+    const error = captureConfigError(source);
+
+    expect(error.message).toContain("ai.budget.estimatedInputCostUsdPerMillionTokens");
+    expect(error.message).toContain("0より大きい必要があります");
   });
 
   it("停滞閾値がwatch、urgent、criticalの順でなければ拒否する", () => {

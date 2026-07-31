@@ -73,8 +73,19 @@ export type BuildPagesCliCommand = Readonly<{
 /** Pagesのdeploy成功後にDiscord通知を送るCLI入力。 */
 export type NotifyDiscordCliCommand = Readonly<{
   kind: "notify-discord";
+  configPath: string;
   artifactPath: string;
   pagesUrl: string;
+}>;
+
+/** workflow障害時に運用障害通知だけを送るCLI入力。 */
+export type NotifyOperationsCliCommand = Readonly<{
+  kind: "notify-operations";
+  configPath: string;
+  incidentKind: "collection" | "pages";
+  incidentId: string;
+  occurredAt: UtcIsoDateTime;
+  retryAttempts: number;
 }>;
 
 /** replayへ渡すfixtureまたは過去stateの入力元。 */
@@ -120,6 +131,7 @@ export type CliCommand =
   | PersistStateCliCommand
   | BuildPagesCliCommand
   | NotifyDiscordCliCommand
+  | NotifyOperationsCliCommand
   | ReplayCliCommand
   | EvalCliCommand
   | HelpCliCommand;
@@ -349,11 +361,54 @@ function parsePagesUrl(options: ParsedOptions): string {
 }
 
 function parseNotifyDiscord(args: readonly string[]): NotifyDiscordCliCommand {
-  const options = parseOptions(args, new Set(["--artifact", "--pages-url"]));
+  const options = parseOptions(args, new Set(["--artifact", "--config", "--pages-url"]));
   return Object.freeze({
     kind: "notify-discord",
+    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
     artifactPath: singleOption(options, "--artifact", DEFAULT_WORKFLOW_ARTIFACT_PATH),
     pagesUrl: parsePagesUrl(options),
+  });
+}
+
+function parseNotifyOperations(args: readonly string[]): NotifyOperationsCliCommand {
+  const options = parseOptions(
+    args,
+    new Set(["--config", "--incident-id", "--kind", "--occurred-at", "--retry-attempts"]),
+  );
+  const incidentKind = optionalSingleOption(options, "--kind");
+  if (incidentKind !== "collection" && incidentKind !== "pages") {
+    throw usageError("--kindにはcollectionまたはpagesを指定してください");
+  }
+  const incidentId = optionalSingleOption(options, "--incident-id");
+  if (incidentId == null) {
+    throw usageError("notify-operationsには--incident-idが必要です");
+  }
+  const occurredAtSource = optionalSingleOption(options, "--occurred-at");
+  if (occurredAtSource == null) {
+    throw usageError("notify-operationsには--occurred-atが必要です");
+  }
+  let occurredAt: UtcIsoDateTime;
+  try {
+    occurredAt = createUtcIsoDateTime(occurredAtSource);
+  } catch (error: unknown) {
+    throw usageError("--occurred-atにはタイムゾーン付きISO 8601日時を指定してください", error);
+  }
+  const retryAttemptsSource = singleOption(options, "--retry-attempts", "1");
+  const retryAttempts = Number.parseInt(retryAttemptsSource, 10);
+  if (
+    !/^\d+$/u.test(retryAttemptsSource) ||
+    !Number.isSafeInteger(retryAttempts) ||
+    retryAttempts < 1
+  ) {
+    throw usageError("--retry-attemptsには1以上の整数を指定してください");
+  }
+  return Object.freeze({
+    kind: "notify-operations",
+    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
+    incidentKind,
+    incidentId,
+    occurredAt,
+    retryAttempts,
   });
 }
 
@@ -452,6 +507,8 @@ export function parseCliArguments(args: readonly string[]): CliCommand {
       return parseBuildPages(options);
     case "notify-discord":
       return parseNotifyDiscord(options);
+    case "notify-operations":
+      return parseNotifyOperations(options);
     case "replay":
       return parseReplay(options);
     case "eval":
@@ -472,6 +529,7 @@ export function formatCliUsage(): string {
     "  voicevox-task-tracker persist-state [--config PATH] [--artifact PATH]",
     "  voicevox-task-tracker build-pages [--config PATH] [--artifact PATH] [--output PATH]",
     "  voicevox-task-tracker notify-discord --pages-url URL [--artifact PATH]",
+    "  voicevox-task-tracker notify-operations --kind collection|pages --incident-id ID --occurred-at ISO",
     "  voicevox-task-tracker replay (--fixture PATH | --state PATH) [--artifact PATH]",
     "  voicevox-task-tracker eval --fixtures PATH [--artifact PATH]",
   ].join("\n");

@@ -10,6 +10,7 @@ import {
 import {
   analyzeGraph,
   type AnalyzeGraphResult,
+  type GraphAnalysisNode,
   type ReconciledGraphEdge,
   type RelationCandidateId,
 } from "../graph/index.js";
@@ -362,8 +363,8 @@ function createPublicGraphEdge(
   relation: Relation,
   itemByNodeId: ReadonlyMap<string, TrackedItem>,
 ): PublicGraphEdgeDto {
-  const sourceItem = itemByNodeId.get(relation.fromNodeId);
-  assertNonNullable(sourceItem, `relation ${relation.id}の始点itemがありません`);
+  const sourceItem = itemByNodeId.get(relation.fromNodeId) ?? itemByNodeId.get(relation.toNodeId);
+  assertNonNullable(sourceItem, `relation ${relation.id}にOrganization内itemがありません`);
   const fields = {
     id: relation.id,
     fromNodeId: relation.fromNodeId,
@@ -392,8 +393,12 @@ function createPublicGraph(snapshot: StateSnapshot): PublicGraph {
   const itemByNodeId = new Map<string, TrackedItem>(
     snapshot.items.map((item) => [item.nodeId, item]),
   );
+  const graphNodeIds = new Set([
+    ...itemByNodeId.keys(),
+    ...snapshot.externalReferences.map((reference) => reference.nodeId),
+  ]);
   for (const relation of snapshot.relations) {
-    if (!itemByNodeId.has(relation.fromNodeId) || !itemByNodeId.has(relation.toNodeId)) {
+    if (!graphNodeIds.has(relation.fromNodeId) || !graphNodeIds.has(relation.toNodeId)) {
       throw new PublicDtoSemanticError(
         `relation ${relation.id}がsnapshotにないnodeを参照しています`,
       );
@@ -408,15 +413,29 @@ function createPublicGraph(snapshot: StateSnapshot): PublicGraph {
       return [edge.id, relation.id];
     }),
   );
-  const analysis = analyzeGraph({
-    current: {
-      nodes: snapshot.items.map((item) => ({
+  const analysisNodes: GraphAnalysisNode[] = [
+    ...snapshot.items.map((item) =>
+      Object.freeze({
         kind: item.type,
         nodeId: item.nodeId,
         repositoryId: item.repositoryId,
         state: item.state,
         directNotification: "eligible",
-      })),
+      } satisfies GraphAnalysisNode),
+    ),
+    ...snapshot.externalReferences.map((reference) =>
+      Object.freeze({
+        kind: reference.kind,
+        nodeId: reference.nodeId,
+        repositoryFullName: reference.repositoryFullName,
+        state: reference.state,
+        directNotification: reference.directNotification,
+      } satisfies GraphAnalysisNode),
+    ),
+  ];
+  const analysis = analyzeGraph({
+    current: {
+      nodes: analysisNodes,
       edges: analysisEdges,
     },
     previous: {
@@ -431,6 +450,17 @@ function createPublicGraph(snapshot: StateSnapshot): PublicGraph {
     status: item.status,
     severity: item.severity,
   }));
+  nodes.push(
+    ...snapshot.externalReferences.map((reference) => ({
+      nodeId: reference.nodeId,
+      kind: reference.kind,
+      repositoryFullName: reference.repositoryFullName,
+      displayReference: `${reference.repositoryFullName}#${reference.number.toString()}`,
+      url: reference.url,
+      title: reference.title,
+      state: reference.state,
+    })),
+  );
   const edges = snapshot.relations.map((relation) => createPublicGraphEdge(relation, itemByNodeId));
 
   return Object.freeze({
@@ -454,23 +484,30 @@ function createBlockersByNodeId(snapshot: StateSnapshot): ReadonlyMap<string, re
   const itemByNodeId = new Map<string, TrackedItem>(
     snapshot.items.map((item) => [item.nodeId, item]),
   );
+  const graphStateByNodeId = new Map<string, TrackedItem["state"]>();
+  for (const item of snapshot.items) {
+    graphStateByNodeId.set(item.nodeId, item.state);
+  }
+  for (const reference of snapshot.externalReferences) {
+    graphStateByNodeId.set(reference.nodeId, reference.state);
+  }
   const blockersByNodeId = new Map<string, Set<string>>();
   for (const relation of snapshot.relations) {
     if (!relation.active || relation.type !== "blocks") {
       continue;
     }
-    const blocker = itemByNodeId.get(relation.fromNodeId);
+    const blockerState = graphStateByNodeId.get(relation.fromNodeId);
     const blocked = itemByNodeId.get(relation.toNodeId);
-    assertNonNullable(blocker, `blocks relation ${relation.id}のblockerがありません`);
+    assertNonNullable(blockerState, `blocks relation ${relation.id}のblockerがありません`);
     assertNonNullable(blocked, `blocks relation ${relation.id}のblocked itemがありません`);
-    if (blocker.state !== "open" || blocked.state !== "open") {
+    if (blockerState !== "open" || blocked.state !== "open") {
       continue;
     }
     const blockers = blockersByNodeId.get(blocked.nodeId);
     if (blockers == null) {
-      blockersByNodeId.set(blocked.nodeId, new Set([blocker.nodeId]));
+      blockersByNodeId.set(blocked.nodeId, new Set([relation.fromNodeId]));
     } else {
-      blockers.add(blocker.nodeId);
+      blockers.add(relation.fromNodeId);
     }
   }
   return new Map(
@@ -518,6 +555,9 @@ function createItemSummary(
       ...waitingOn,
       sourceIds: [...waitingOn.sourceIds],
     })),
+    primaryWaitingOn: {
+      ...item.primaryWaitingOn,
+    },
     nextAction: item.nextAction,
     severity: item.severity,
     priorityWeight,
@@ -558,17 +598,6 @@ function graphNodeImpact(
   repositoryCount: number;
 }> {
   const impact = impactByNodeId.get(node.nodeId);
-  if (node.kind === "external_reference") {
-    if (impact != null) {
-      throw new PublicDtoSemanticError(
-        `external reference ${node.nodeId}にdownstream impactが設定されています`,
-      );
-    }
-    return {
-      openNodeCount: 0,
-      repositoryCount: 0,
-    };
-  }
   assertNonNullable(impact, `node ${node.nodeId}のimpactがありません`);
   return impact;
 }
@@ -757,13 +786,15 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
   const components = graph.analysis.connectedComponents.map((component) => {
     const repositoryIds = [
       ...new Set(
-        component.nodeIds.map((nodeId) => {
+        component.nodeIds.flatMap((nodeId) => {
           const item = snapshot.items.find((candidate) => candidate.nodeId === nodeId);
-          assertNonNullable(item, `component ${component.id}のitem ${nodeId}がありません`);
-          return item.repositoryId;
+          return item == null ? [] : [item.repositoryId];
         }),
       ),
     ].sort(compareStrings);
+    if (repositoryIds.length === 0) {
+      throw new PublicDtoSemanticError(`component ${component.id}にOrganization内itemがありません`);
+    }
     return {
       id: component.id,
       nodeIds: [...component.nodeIds],

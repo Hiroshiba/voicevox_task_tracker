@@ -28,7 +28,9 @@ export {
   type PreviousAiResultReuseDecision,
 } from "./analysis-selection.js";
 export {
+  estimateAiInputCost,
   planAiAnalysisBudget,
+  type AiInputCostEstimate,
   type AiAnalysisDeferReason,
   type AiBudgetPlan,
   type AiBudgetUsage,

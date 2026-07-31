@@ -2,12 +2,12 @@
 
 `hiho_requirements/docs/REQUIREMENTS.md`第13章と`hiho_requirements/TRACEABILITY.csv`にある166件を、実装と受入テストへ突き合わせた結果です。
 
-MUST 165件のうち148件は充足、17件は一部未達です。
+MUST 165件のうち164件は充足、1件は一部未達です。
 完全未実装のMUSTはありません。
-SHOULD 1件は一部未達です。
+SHOULD 1件は充足しています。
 
 `充足`は本番経路まで実装済み、`一部未達`はpureな判定やadapterの実装があっても本番経路または要求の一部が不足している状態です。
-一部未達は大きなデータモデル変更や収集フロー変更を要するため、T32では不足内容を記録しています。
+残る一部未達はend-to-end性能profileです。
 
 | 要求ID  | レベル | 状況     | 実装箇所と判定根拠                                                                                                                                                                                                                                |
 | ------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -27,7 +27,7 @@ SHOULD 1件は一部未達です。
 | SCP-006 | MUST   | 充足     | `src/github/item-enumeration.ts`と`src/github/item-detail-collection.ts`でPull Requestを収集する。                                                                                                                                                |
 | SCP-007 | MUST   | 充足     | 収集queryと公開DTOはIssueとPull Requestだけをschemaで許可し、Discussionsを扱う実装がない。該当箇所は`src/github/item-enumeration.ts`と`src/pages/public-dto.ts`。                                                                                 |
 | SCP-008 | MUST   | 充足     | `src/domain`と`src/graph`の判定はProjects fieldへ依存しない。収集schemaにもProjects fieldはない。                                                                                                                                                 |
-| SCP-009 | SHOULD | 一部未達 | `src/domain/tracking-selection.ts`と`src/graph/analyze-graph.ts`は外部ghost nodeを扱える。`src/cli/production-runtime.ts`がOrganization外nodeを本番graphから除外している。                                                                        |
+| SCP-009 | SHOULD | 充足     | `src/cli/production-runtime.ts`でOrganization外のpublic参照を`ExternalGhostNode`へ変換し、graph、snapshot、公開DTOへ保持する。直接通知は`not_eligible`とし、本番経路を`tests/cli-production-collection.test.ts`で検証する。                       |
 | SCP-010 | MUST   | 充足     | `src/domain/tracking-selection.ts`はbot作成項目も通常項目として選び、`src/discord/notification-selection.ts`が通知noiseだけを別判定する。                                                                                                         |
 | CFG-001 | MUST   | 充足     | `src/config/schema.ts`で`schemaVersion: 1`と未知field拒否を定義する。                                                                                                                                                                             |
 | CFG-002 | MUST   | 充足     | `src/config/schema.ts`と`src/domain/team-resolution.ts`で既定メンテナーチームを検証して解決する。                                                                                                                                                 |
@@ -77,7 +77,7 @@ SHOULD 1件は一部未達です。
 | RSP-002 | MUST   | 充足     | `src/domain/types.ts`でuser、team、role、item、automation、unknownを型として定義する。                                                                                                                                                            |
 | RSP-003 | MUST   | 充足     | `src/domain/issue-state-machine.ts`で未アサインかつ依頼なしのIssueをmaintainer判断待ちにする。                                                                                                                                                    |
 | RSP-004 | MUST   | 充足     | `src/domain/issue-state-machine.ts`でassigneeがいるIssueをassignee待ちにする。                                                                                                                                                                    |
-| RSP-005 | MUST   | 一部未達 | `src/domain/issue-state-machine.ts`は未回答依頼のassessmentを反映できる。`src/cli/production-runtime.ts`は常に`not_assessed`を渡し、本文やコメントで言及されたuserとteamをCodex候補へ追加していない。                                             |
+| RSP-005 | MUST   | 充足     | `src/cli/production-runtime.ts`で本文とコメントのuser、team mentionをCodex候補へ加え、検証済みの未回答依頼assessmentを`src/domain/issue-state-machine.ts`へ渡す。本番経路を`tests/cli-production-collection.test.ts`で検証する。                  |
 | RSP-006 | MUST   | 充足     | `src/domain/issue-state-machine.ts`はmaintainer作成でもauthor情報だけで責務を消さず、依頼、assignee、blockerを優先する。                                                                                                                          |
 | RSP-007 | MUST   | 充足     | `src/domain/issue-state-machine.ts`と`src/domain/pull-request-state-machine.ts`でopen blockerを他の責務より優先する。                                                                                                                             |
 | RSP-008 | MUST   | 充足     | `src/domain/pull-request-state-machine.ts`でdraft PRをauthor待ちにする。                                                                                                                                                                          |
@@ -91,13 +91,13 @@ SHOULD 1件は一部未達です。
 | RSP-016 | MUST   | 充足     | `src/domain/pull-request-state-machine.ts`でbot reviewとbot commentだけでは責務を移さない。                                                                                                                                                       |
 | RSP-017 | MUST   | 充足     | `src/domain/pull-request-state-machine.ts`で必要承認、check成功、merge可能をready-to-mergeにする。                                                                                                                                                |
 | RSP-018 | MUST   | 充足     | `src/domain/pull-request-state-machine.ts`でauto-mergeとmerge queueをautomation待ちにする。                                                                                                                                                       |
-| RSP-019 | MUST   | 一部未達 | `src/domain/pull-request-state-machine.ts`は高信頼のコード起因check失敗をauthor待ちにできる。`src/cli/production-runtime.ts`はcheck failure assessmentを常に未評価として渡している。                                                              |
-| RSP-020 | MUST   | 一部未達 | `src/domain/pull-request-state-machine.ts`はinfraまたはflaky判定と低信頼fallbackを扱える。本番経路はcheck failureをCodex評価する入力とreducerを接続していない。                                                                                   |
+| RSP-019 | MUST   | 充足     | `src/cli/production-runtime.ts`でrequired check rollupと失敗contextをCodex入力へ加え、高信頼のコード起因assessmentを`src/domain/pull-request-state-machine.ts`へ渡してauthor待ちにする。                                                          |
+| RSP-020 | MUST   | 充足     | `src/cli/production-runtime.ts`でrequired check失敗のinfra、flaky、曖昧判定を`src/domain/pull-request-state-machine.ts`へ渡し、author断定を避ける。本番経路を`tests/cli-production-collection.test.ts`で検証する。                                |
 | RSP-021 | MUST   | 充足     | `src/domain/pull-request-state-machine.ts`でmerge conflictをauthorまたはmaintainer判断待ちへ分類する。                                                                                                                                            |
 | RSP-022 | MUST   | 充足     | `src/domain/issue-state-machine.ts`と`src/domain/pull-request-state-machine.ts`でmerged、completed、not plannedをterminal状態へ変換する。                                                                                                         |
-| RSP-023 | MUST   | 一部未達 | `src/domain/issue-state-machine.ts`と`src/domain/pull-request-state-machine.ts`で全blockerとprimary選定理由を返す。`src/cli/production-runtime.ts`から永続化と公開DTOへ渡す際にprimaryと選定理由を失っており、Webで表示していない。               |
+| RSP-023 | MUST   | 充足     | `src/domain/types.ts`、`src/cli/production-runtime.ts`、`src/persistence/snapshot.ts`、`src/pages/generate-public-data.ts`で全blockerとprimary選定理由を保持し、`web/src/item-details.tsx`でprimary、理由、全一覧を表示する。                     |
 | RSP-024 | MUST   | 充足     | `src/domain/staleness.ts`でstatusSince、ownerSince、stallSinceを根拠event時刻から継続計算する。                                                                                                                                                   |
-| RSP-025 | MUST   | 一部未達 | `src/domain/meaningful-progress.ts`はhumanのpush、review、回答、依存解消、設定済みlabelを進捗として扱い、自然言語assessmentも受け取れる。本番経路は自然言語assessmentを常に空配列としている。                                                     |
+| RSP-025 | MUST   | 充足     | `src/cli/production-runtime.ts`でCodexのcomment判定を`NaturalLanguageProgressAssessment`へ変換し、`src/domain/meaningful-progress.ts`へ渡す。雑談と回答で進捗時刻が異なる本番経路を`tests/cli-production-collection.test.ts`で検証する。          |
 | RSP-026 | MUST   | 充足     | `src/domain/meaningful-progress.ts`でbot activityだけではlastProgressAtを更新しない。                                                                                                                                                             |
 | RSP-027 | MUST   | 充足     | `src/domain/meaningful-progress.ts`と`src/domain/label-resolution.ts`でlabel変更を既定非進捗とし、設定時だけ進捗にする。                                                                                                                          |
 | RSP-028 | MUST   | 充足     | `src/codex/reducer.ts`、`src/pages/generate-public-data.ts`、`web/src/model.ts`、`web/src/item-details.tsx`で不確実性、confidence、候補表示を公開する。                                                                                           |
@@ -116,7 +116,7 @@ SHOULD 1件は一部未達です。
 | GRF-013 | MUST   | 充足     | `src/graph/analyze-graph.ts`でopenかつ未blockのactionable frontierを算出する。                                                                                                                                                                    |
 | GRF-014 | MUST   | 充足     | `src/graph/analyze-graph.ts`で推移的なopen node数とrepository数を算出する。                                                                                                                                                                       |
 | GRF-015 | MUST   | 充足     | `src/graph/extract-relation-candidates.ts`、`src/graph/analyze-graph.ts`、`src/pages/generate-public-data.ts`でOrganization内のcross-repository edgeを保持する。                                                                                  |
-| GRF-016 | MUST   | 一部未達 | `src/graph/analyze-graph.ts`は隣接変化、再分類対象、新規unblockを検出し、本番通知も前回graphを参照する。`src/cli/production-runtime.ts`はinferred edge変化後の再分類対象を状態機械へ戻していない。                                                |
+| GRF-016 | MUST   | 充足     | `src/cli/production-runtime.ts`で一度目の判定からgraphを構築し、inferred edgeを含むblockerと`newlyUnblockedNodeIds`を二度目の状態判定と進捗判定へ戻す。本文未変更の本番経路を`tests/cli-production-collection.test.ts`で検証する。                |
 | AIC-001 | MUST   | 充足     | 自然言語推定adapterは`src/codex/adapter.ts`だけであり、他のLLM API依存はない。                                                                                                                                                                    |
 | AIC-002 | MUST   | 充足     | `src/codex/analysis-selection.ts`、`src/codex/cache.ts`、`src/cli/production-runtime.ts`で曖昧な状態またはinferred関係を持ち、入力か隣接hashが変わった候補だけを実行する。                                                                        |
 | AIC-003 | MUST   | 充足     | `src/codex/cache.ts`で正規化入力、model、backend、prompt、schema versionからcontent-addressed keyを生成する。                                                                                                                                     |
@@ -132,8 +132,8 @@ SHOULD 1件は一部未達です。
 | AIC-013 | MUST   | 充足     | `src/codex/analysis-runner.ts`と`src/codex/reducer.ts`で失敗を候補単位に隔離し、決定論的fallbackとAI unavailableを返す。                                                                                                                          |
 | AIC-014 | MUST   | 充足     | `src/codex/cache.ts`と`src/codex/analysis-selection.ts`で同一入力だけを再利用し、変更入力へ旧結果を流用しない。                                                                                                                                   |
 | AIC-015 | MUST   | 充足     | `src/codex/cache.ts`でmodel、backend、prompt、schema version、input hash、output hash、実行時刻を保存する。                                                                                                                                       |
-| AIC-016 | MUST   | 一部未達 | `src/codex/budget.ts`はcall数、入力文字数、推定費用を制限する。`src/cli/production-runtime.ts`が全候補の`estimatedCostUsd`を0にしているため、本番の費用上限は機能しない。                                                                         |
-| AIC-017 | MUST   | 一部未達 | `src/codex/analysis-selection.ts`はseverity候補、owner unknown、blocker変化、downstream impactを優先できる。本番経路はblocker変化をfalse、impactを0に固定している。                                                                               |
+| AIC-016 | MUST   | 充足     | `src/codex/budget.ts`で正規化入力のUTF-8 byte数からtoken数と費用を見積もり、`src/cli/production-runtime.ts`から設定済み単価と実費用をrun予算へ渡す。費用0上限の本番経路を`tests/cli-production-collection.test.ts`で検証する。                    |
+| AIC-017 | MUST   | 充足     | `src/cli/production-runtime.ts`で前回graphとの差分からblocker変化を求め、前回graph解析のdownstream impactを候補優先度へ渡す。予算不足時の選定順を`tests/cli-production-collection.test.ts`で検証する。                                            |
 | AIC-018 | MUST   | 充足     | `src/eval/golden-engine.ts`と`tests/fixtures/golden`にreview変更要求、stale blocker、checklist、bot noise、明示review request、prompt injection、private sentinel、大規模fixtureがある。                                                          |
 | AIC-019 | MUST   | 充足     | `.github/workflows/ci.yml`と`.github/workflows/daily.yml`で`pnpm eval:golden`を変更の回帰判定に含める。                                                                                                                                           |
 | AIC-020 | MUST   | 充足     | `src/codex/adapter.ts`はread-onlyで、Codex出力は`src/codex/reducer.ts`と各公開安全性検証を経由する。外部書き込み経路はない。                                                                                                                      |
@@ -160,7 +160,7 @@ SHOULD 1件は一部未達です。
 | NTF-009 | MUST   | 充足     | `src/discord/notification-selection.ts`でfresh作業中、bot-only、unchanged watch、recent draft、低信頼AI、automation noiseを除外する。                                                                                                             |
 | NTF-010 | MUST   | 充足     | `src/discord/notification-selection.ts`、`src/persistence/state-documents.ts`、`src/cli/production-runtime.ts`で通知予約を先に永続化し、同日再実行とcooldownを抑制する。                                                                          |
 | NTF-011 | MUST   | 充足     | `src/discord/notification-selection.ts`と`src/discord/delivery.ts`で候補0件ならWebhookを呼ばない。                                                                                                                                                |
-| NTF-012 | MUST   | 一部未達 | `src/discord/delivery.ts`はcollection、Pages、Discordの運用障害payloadと重複抑制を実装する。日次transactionとworkflowは通常の成功後通知だけを呼ぶため、collection失敗とPages失敗をops alertへ接続していない。                                     |
+| NTF-012 | MUST   | 充足     | `src/cli/daily-transaction.ts`と`.github/workflows/daily.yml`で収集失敗とPages失敗を独立したops alertへ接続し、`src/persistence/state-persistence-session.ts`で送信ledgerを保存する。重複抑止を`tests/cli-composition.test.ts`で検証する。        |
 | DAT-001 | MUST   | 充足     | `src/persistence/state-persistence-session.ts`と`.github/workflows/daily.yml`は日次stateをmainではなくtracker-stateへ書く。mainにはsource、設定、schema、prompt、文書、testだけを置く。                                                           |
 | DAT-002 | MUST   | 充足     | `src/persistence/git-state-branch-adapter.ts`で初回orphan branchと後続commitを作り、`.github/workflows/daily.yml`でtracker-stateを取得してpushする。                                                                                              |
 | DAT-003 | MUST   | 充足     | `src/persistence/snapshot.ts`と`src/persistence/canonical-json.ts`でschema version付きcurrent snapshotをcanonical JSONとして保存する。                                                                                                            |
@@ -176,21 +176,10 @@ SHOULD 1件は一部未達です。
 | OPS-001 | MUST   | 充足     | `.github/workflows/daily.yml`のconcurrency、`src/persistence/git-state-branch-adapter.ts`のcompare-and-swap、通知予約ledgerで同時runと再実行を安全にする。                                                                                        |
 | OPS-002 | MUST   | 充足     | `src/github/retry.ts`、`src/codex/adapter.ts`、`src/discord/webhook.ts`で上限付きretryを行い、`src/cli/daily-transaction.ts`で完全性検証前のstateとPages更新を禁止する。                                                                          |
 | OPS-003 | MUST   | 充足     | `src/cli/run-report.ts`、`src/cli/daily-transaction.ts`、`src/persistence/state-documents.ts`でrepo、item、change、edge、AI、cache、token見積、API残量、stale、通知、所要時間を記録する。                                                         |
-| OPS-004 | MUST   | 一部未達 | `src/eval/golden-engine.ts`で5,000 items、10,000 edges、変更100件を評価し、`src/github/rate-limit.ts`と`src/pages/summary-size.ts`でAPI予算とgzip 1 MiBを制限する。本番の増分詳細収集は接続済みだが、Codex費用見積とend-to-end性能profileがない。 |
+| OPS-004 | MUST   | 一部未達 | `src/eval/golden-engine.ts`で5,000 items、10,000 edges、変更100件を評価し、`src/github/rate-limit.ts`と`src/pages/summary-size.ts`でAPI予算とgzip 1 MiBを制限する。本番の増分詳細収集とCodex費用見積は接続済みだが、end-to-end性能profileがない。 |
 
 ## 一部未達のMUST
 
-| 要求ID  | 必要な追加対応                                                                   |
-| ------- | -------------------------------------------------------------------------------- |
-| RSP-005 | 本文とコメントの依頼対象を候補化し、未回答依頼assessmentを状態機械へ渡す。       |
-| RSP-019 | required check failureのコード起因assessmentを本番判定へ渡す。                   |
-| RSP-020 | infraまたはflaky check failureをCodex入力、validation、reducerへ接続する。       |
-| RSP-023 | primary waitingOnと選定理由をTrackedItem、公開DTO、Web詳細へ保持する。           |
-| RSP-025 | 回答や決定を判定する自然言語進捗assessmentを本番staleness計算へ渡す。            |
-| GRF-016 | graphの再分類対象を状態機械へ戻し、inferred blockerの変化を同じrunへ反映する。   |
-| AIC-016 | 入力tokenとmodel価格から候補費用を見積もり、本番予算判定へ渡す。                 |
-| AIC-017 | 前回graphとの差分とdownstream impactを本番候補の優先度へ渡す。                   |
-| NTF-012 | 収集失敗とPages失敗でも独立したops alert stageを実行し、結果ledgerを永続化する。 |
-| OPS-004 | AIC-016を本番へ接続し、end-to-end性能profileを追加する。                         |
-
-SHOULDのSCP-009は、外部公開repository参照を安全に収集してghost nodeへ変換する本番経路が残っています。
+| 要求ID  | 必要な追加対応                    |
+| ------- | --------------------------------- |
+| OPS-004 | end-to-end性能profileを追加する。 |

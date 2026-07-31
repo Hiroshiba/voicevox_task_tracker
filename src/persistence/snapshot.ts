@@ -9,6 +9,7 @@ import {
 } from "./errors.js";
 import {
   isTerminalStatus,
+  type ExternalGhostNode,
   type GitHubNodeId,
   type Relation,
   type Repository,
@@ -89,6 +90,7 @@ export type StateSnapshot = Readonly<{
   collection: SnapshotCollectionState;
   repositories: readonly SnapshotRepository[];
   items: readonly SnapshotTrackedItem[];
+  externalReferences: readonly ExternalGhostNode[];
   relations: readonly Relation[];
   run: SnapshotRun;
 }>;
@@ -143,6 +145,10 @@ function assertSnapshotSemantics(snapshot: StateSnapshot): void {
   assertUnique(
     snapshot.items.map((item) => item.nodeId),
     "item node ID",
+  );
+  assertUnique(
+    snapshot.externalReferences.map((reference) => reference.nodeId),
+    "外部参照node ID",
   );
   assertUnique(
     snapshot.relations.map((relation) => relation.id),
@@ -223,6 +229,12 @@ function assertSnapshotSemantics(snapshot: StateSnapshot): void {
     if (isTerminalStatus(item.status) && item.waitingOn.length !== 0) {
       throw new StateSnapshotSemanticError("terminal itemにwaitingOnを保存できません");
     }
+    if (item.waitingOn.length === 0 && item.primaryWaitingOn.index !== "not_applicable") {
+      throw new StateSnapshotSemanticError("waitingOnがないitemにprimaryを保存できません");
+    }
+    if (item.waitingOn.length > 0 && item.primaryWaitingOn.index !== 0) {
+      throw new StateSnapshotSemanticError("waitingOnがあるitemにはprimaryが必要です");
+    }
     assertUnique(
       item.assignees.map((assignee) => assignee.nodeId),
       "itemのassignee node ID",
@@ -240,7 +252,14 @@ function assertSnapshotSemantics(snapshot: StateSnapshot): void {
       assertUtcDateTime(dateTime, "itemの日時");
     }
   }
+  const graphNodeIds = new Set([
+    ...snapshot.items.map((item) => item.nodeId),
+    ...snapshot.externalReferences.map((reference) => reference.nodeId),
+  ]);
   for (const relation of snapshot.relations) {
+    if (!graphNodeIds.has(relation.fromNodeId) || !graphNodeIds.has(relation.toNodeId)) {
+      throw new StateSnapshotSemanticError("relationがsnapshotにないnodeを参照しています");
+    }
     assertUtcDateTime(relation.firstSeenAt, "relation firstSeenAt");
     assertUtcDateTime(relation.lastConfirmedAt, "relation lastConfirmedAt");
     if (!relation.active) {
@@ -273,6 +292,11 @@ function normalizeSnapshot(snapshot: StateSnapshot): StateSnapshot {
     ),
     items: Object.freeze(
       [...snapshot.items].sort((left, right) => compareStrings(left.nodeId, right.nodeId)),
+    ),
+    externalReferences: Object.freeze(
+      [...snapshot.externalReferences].sort((left, right) =>
+        compareStrings(left.nodeId, right.nodeId),
+      ),
     ),
     relations: Object.freeze(
       [...snapshot.relations].sort((left, right) => compareStrings(left.id, right.id)),

@@ -53,6 +53,14 @@ export type StatePublicSafetyInput = Readonly<{
   knownSecrets: readonly string[];
 }>;
 
+function assertKnownSecrets(knownSecrets: readonly string[]): void {
+  for (const secret of knownSecrets) {
+    if (secret.length === 0) {
+      throw new StateConfigurationError("knownSecretsに空文字は指定できません");
+    }
+  }
+}
+
 function normalizedFieldName(value: string): string {
   return value.replaceAll(/[-_]/gu, "").toLowerCase();
 }
@@ -121,11 +129,7 @@ function scanValues(
 
 /** 直列化直前に公開allowlistとsecret・全文転載制約を独立検証する。 */
 export function assertStatePublicSafety(input: StatePublicSafetyInput): void {
-  for (const secret of input.knownSecrets) {
-    if (secret.length === 0) {
-      throw new StateConfigurationError("knownSecretsに空文字は指定できません");
-    }
-  }
+  assertKnownSecrets(input.knownSecrets);
 
   const allowlist = createPublicRepositoryAllowlist(input.repositoryInventory);
   const violationCodes: string[] = [];
@@ -151,6 +155,18 @@ export function assertStatePublicSafety(input: StatePublicSafetyInput): void {
     ),
   );
 
+  if (violationCodes.length > 0) {
+    throw new StatePublicSafetyError(violationCodes);
+  }
+}
+
+/** snapshotを伴わないstate更新値のsecretと不要な全文を検査する。 */
+export function assertStateValuesPublicSafety(
+  values: readonly unknown[],
+  knownSecrets: readonly string[],
+): void {
+  assertKnownSecrets(knownSecrets);
+  const violationCodes = scanValues(values, [], knownSecrets);
   if (violationCodes.length > 0) {
     throw new StatePublicSafetyError(violationCodes);
   }

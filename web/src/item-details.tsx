@@ -2,6 +2,7 @@ import { type ComponentChildren } from "preact";
 import { useEffect, useRef } from "preact/hooks";
 
 import {
+  type PublicGraphNodeDto,
   type PublicItemDetailsDto,
   type PublicItemHistoryEventDto,
   type PublicSummaryDto,
@@ -32,6 +33,7 @@ export type ItemDetailsState =
   | Readonly<{
       status: "loaded";
       itemsByNodeId: ReadonlyMap<string, PublicItemDetailsDto>;
+      graphNodesByNodeId: ReadonlyMap<string, PublicGraphNodeDto>;
     }>
   | Readonly<{
       status: "failed";
@@ -81,6 +83,7 @@ type ItemDetailsProps = Readonly<{
   clearSelectionHref: string;
   createItemHref: (nodeId: string) => string;
   details: PublicItemDetailsDto;
+  graphNodesByNodeId: ReadonlyMap<string, PublicGraphNodeDto>;
   locale: string;
   now: Date;
   onClearSelection: () => void;
@@ -314,6 +317,7 @@ function ItemDetails({
   clearSelectionHref,
   createItemHref,
   details,
+  graphNodesByNodeId,
   locale,
   now,
   onClearSelection,
@@ -326,6 +330,21 @@ function ItemDetails({
   const itemsByNodeId = new Map(
     summary.items.map((summaryItem) => [summaryItem.nodeId, summaryItem]),
   );
+  let primaryWaitingOnLabelText: string | undefined;
+  if (item.status === "blocked") {
+    if (item.primaryWaitingOn.index !== 0) {
+      throw new TypeError(`block中の項目 ${item.nodeId}にprimary blockerがありません`);
+    }
+    const primaryWaitingOn = item.waitingOn[0];
+    assertNonNullable(primaryWaitingOn, `項目 ${item.nodeId}のprimary waitingOnがありません`);
+    if (
+      primaryWaitingOn.kind !== "item" ||
+      !item.blockerNodeIds.includes(primaryWaitingOn.candidateId)
+    ) {
+      throw new TypeError(`項目 ${item.nodeId}のprimary blockerがblocker一覧にありません`);
+    }
+    primaryWaitingOnLabelText = waitingOnCandidateLabel(primaryWaitingOn);
+  }
   const timestampFields = [
     {
       label: "作成",
@@ -478,23 +497,47 @@ function ItemDetails({
 
       <section aria-labelledby="item-blockers-heading" class="detail-subsection">
         <h3 id="item-blockers-heading">blocker一覧</h3>
+        <h4>primary blocker</h4>
+        {primaryWaitingOnLabelText == null ? (
+          <p>primary blockerはありません。</p>
+        ) : (
+          <div>
+            <p>{primaryWaitingOnLabelText}</p>
+            <p>選定理由: {item.primaryWaitingOn.selectionReason}</p>
+          </div>
+        )}
+        <h4>全blocker</h4>
         {item.blockerNodeIds.length === 0 ? (
           <p>blockerはありません。</p>
         ) : (
           <ul class="blocker-list">
             {item.blockerNodeIds.map((nodeId) => {
               const blocker = itemsByNodeId.get(nodeId);
-              assertNonNullable(blocker, `blocker ${nodeId}の公開項目がありません`);
+              if (blocker != null) {
+                return (
+                  <li key={nodeId}>
+                    <ItemDetailsLink
+                      href={createItemHref(nodeId)}
+                      nodeId={nodeId}
+                      onSelect={onSelectItem}
+                    >
+                      {blocker.displayReference} {blocker.title}
+                    </ItemDetailsLink>
+                    <SafeGitHubLink href={blocker.url}>GitHubで開く</SafeGitHubLink>
+                  </li>
+                );
+              }
+              const graphNode = graphNodesByNodeId.get(nodeId);
+              assertNonNullable(graphNode, `blocker ${nodeId}の公開graph nodeがありません`);
+              if (graphNode.kind !== "external_reference") {
+                throw new TypeError(`blocker ${nodeId}の公開項目詳細がありません`);
+              }
               return (
                 <li key={nodeId}>
-                  <ItemDetailsLink
-                    href={createItemHref(nodeId)}
-                    nodeId={nodeId}
-                    onSelect={onSelectItem}
-                  >
-                    {blocker.displayReference} {blocker.title}
-                  </ItemDetailsLink>
-                  <SafeGitHubLink href={blocker.url}>GitHubで開く</SafeGitHubLink>
+                  <span>
+                    {graphNode.displayReference} {graphNode.title}
+                  </span>
+                  <SafeGitHubLink href={graphNode.url}>GitHubで開く</SafeGitHubLink>
                 </li>
               );
             })}
@@ -639,6 +682,7 @@ export function ItemWorkspace({
             clearSelectionHref={clearSelectionHref}
             createItemHref={createItemHref}
             details={details}
+            graphNodesByNodeId={detailsState.graphNodesByNodeId}
             locale={locale}
             now={now}
             onClearSelection={onClearSelection}

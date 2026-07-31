@@ -54,6 +54,7 @@ export type DiscordPagesDeployment =
   | Readonly<{
       status: "failed";
       incidentId: string;
+      kind: Extract<DiscordOperationsIncident["kind"], "collection" | "pages">;
       failedAt: UtcIsoDateTime;
       retryAttempts: number;
     }>;
@@ -297,7 +298,7 @@ export async function sendDiscordDigest(
     const operationsAlert = await sendDiscordOperationsAlert({
       incident: {
         incidentId: input.pagesDeployment.incidentId,
-        kind: "pages",
+        kind: input.pagesDeployment.kind,
         occurredAt: input.pagesDeployment.failedAt,
         retryAttempts: input.pagesDeployment.retryAttempts,
       },

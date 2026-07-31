@@ -284,6 +284,17 @@ export type WaitingOn = Readonly<{
   confidence: number;
 }>;
 
+/** waitingOn配列でprimaryに選んだ要素と選定理由。 */
+export type PrimaryWaitingOn =
+  | Readonly<{
+      index: 0;
+      selectionReason: string;
+    }>
+  | Readonly<{
+      index: "not_applicable";
+      selectionReason: string;
+    }>;
+
 /** リポジトリの公開範囲。 */
 export type RepositoryVisibility = "public" | "private" | "internal";
 
@@ -324,6 +335,7 @@ type TrackedItemFields = Readonly<{
   url: GitHubItemUrl;
   title: string;
   state: TrackedItemState;
+  primaryWaitingOn: PrimaryWaitingOn;
   nextAction: string;
   createdAt: UtcIsoDateTime;
   githubUpdatedAt: UtcIsoDateTime;

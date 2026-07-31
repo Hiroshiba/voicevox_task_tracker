@@ -98,6 +98,10 @@
           "confidence": 1
         }
       ],
+      "primaryWaitingOn": {
+        "index": 0,
+        "selectionReason": "waitingOnの先頭候補をprimaryとして選びました"
+      },
       "nextAction": "メンテナーが内容を確認してマージする",
       "severity": "critical",
       "priorityWeight": 25,
@@ -133,6 +137,10 @@
           "confidence": 1
         }
       ],
+      "primaryWaitingOn": {
+        "index": 0,
+        "selectionReason": "waitingOnの先頭候補をprimaryとして選びました"
+      },
       "nextAction": "レビューチームが変更内容を確認する",
       "severity": "critical",
       "priorityWeight": 12,
@@ -168,6 +176,10 @@
           "confidence": 0.95
         }
       ],
+      "primaryWaitingOn": {
+        "index": 0,
+        "selectionReason": "waitingOnの先頭候補をprimaryとして選びました"
+      },
       "nextAction": "メンテナーが配布方針を決める",
       "severity": "urgent",
       "priorityWeight": 25,
@@ -203,6 +215,10 @@
           "confidence": 1
         }
       ],
+      "primaryWaitingOn": {
+        "index": 0,
+        "selectionReason": "複数blockerから影響度が最も高い項目を選びました"
+      },
       "nextAction": "依存項目の完了後に実装を再開する",
       "severity": "watch",
       "priorityWeight": 12,
@@ -238,6 +254,10 @@
           "confidence": 0.9
         }
       ],
+      "primaryWaitingOn": {
+        "index": 0,
+        "selectionReason": "waitingOnの先頭候補をprimaryとして選びました"
+      },
       "nextAction": "作成者がレビュー指摘へ対応する",
       "severity": "urgent",
       "priorityWeight": 25,

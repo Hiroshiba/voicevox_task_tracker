@@ -108,6 +108,16 @@ function createTrackedItem(number: number, options: ItemOptions): TrackedItem {
     state: "open",
     status: "waiting_for_review",
     waitingOn: Object.freeze([...options.waitingOn]),
+    primaryWaitingOn:
+      options.waitingOn.length === 0
+        ? Object.freeze({
+            index: "not_applicable",
+            selectionReason: "waitingOnがないためprimaryはありません",
+          })
+        : Object.freeze({
+            index: 0,
+            selectionReason: "waitingOnの先頭候補をprimaryとして選びました",
+          }),
     nextAction: "次の対応を行う",
     createdAt: STALL_SINCE,
     githubUpdatedAt: STALL_SINCE,
@@ -593,6 +603,7 @@ describe("Discord digest delivery", () => {
       pagesDeployment: {
         status: "failed",
         incidentId: "pages-run-20260810",
+        kind: "pages",
         failedAt: GENERATED_AT,
         retryAttempts: 4,
       },

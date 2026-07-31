@@ -144,6 +144,15 @@ function createItem(options: ItemFixtureOptions): unknown {
             confidence: 0.9,
           },
         ],
+    primaryWaitingOn: terminal
+      ? {
+          index: "not_applicable",
+          selectionReason: "terminal項目にwaitingOnはありません",
+        }
+      : {
+          index: 0,
+          selectionReason: "fixtureの先頭候補をprimaryとして選びました",
+        },
     nextAction: terminal ? "対応は完了しています" : "次の担当が確認する",
     createdAt: CREATED_AT,
     githubUpdatedAt: options.observedAt,
@@ -220,6 +229,7 @@ function createSnapshot(options: SnapshotFixtureOptions): StateSnapshot {
         : {}),
     })),
     items: options.items,
+    externalReferences: [],
     relations: options.relations,
     run: {
       id: options.runId,

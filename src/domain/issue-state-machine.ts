@@ -9,6 +9,7 @@ import {
   type EvidenceSupport,
   type GitHubAccountActor,
   type NormalizedEvent,
+  type PrimaryWaitingOn,
   type Status,
   type UtcIsoDateTime,
   type WaitingOn,
@@ -90,15 +91,7 @@ export type IssueTransitionBasis = Readonly<{
 }>;
 
 /** primary waitingOnの選定結果。 */
-export type IssuePrimaryWaitingOn =
-  | Readonly<{
-      index: 0;
-      selectionReason: string;
-    }>
-  | Readonly<{
-      index: "not_applicable";
-      selectionReason: string;
-    }>;
+export type IssuePrimaryWaitingOn = PrimaryWaitingOn;
 
 /** 決定論的なIssue状態機械の判定結果。 */
 export type IssueStateDecision = Readonly<{

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { createUtcIsoDateTime, type UtcIsoDateTime } from "../domain/index.js";
+import { GitHubRetryExhaustedError } from "../github/index.js";
 import { serializeCanonicalJson } from "../persistence/index.js";
 import {
   type BackfillCliCommand,
@@ -208,9 +209,19 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
     input: Readonly<{
       invocation: DailyRunInvocation;
       configuration: Types["configuration"];
+      state: Types["state"];
       validated: Types["validated"];
       persisted: Types["persisted"];
       pages: Types["pages"];
+    }>,
+  ) => Promise<DiscordStageResult<Types["discord"]>>;
+  sendOperationsAlert: (
+    input: Readonly<{
+      invocation: DailyRunInvocation;
+      configuration: Types["configuration"];
+      state: Types["state"];
+      kind: "collection" | "pages";
+      retryAttempts: number;
     }>,
   ) => Promise<DiscordStageResult<Types["discord"]>>;
   writeDryRunArtifact: (
@@ -439,6 +450,20 @@ function initialEffects(): MutableEffects {
   };
 }
 
+function operationsAlertKind(stage: RunStage): "collection" | "pages" | undefined {
+  if (stage === "repository_inventory" || stage === "incremental_collection") {
+    return "collection";
+  }
+  if (stage === "pages") {
+    return "pages";
+  }
+  return undefined;
+}
+
+function operationsAlertRetryAttempts(error: unknown): number {
+  return error instanceof GitHubRetryExhaustedError ? error.attempts : 1;
+}
+
 /** Daily transactionを順序保証付きで実行する。 */
 export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
   readonly #coordinator: RunCoordinator<DailyRunExecutionResult>;
@@ -481,13 +506,15 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
     const diagnostics: string[] = [];
     const effects = initialEffects();
     let discordSentAt: UtcIsoDateTime | null = null;
+    let configuration: Types["configuration"] | undefined;
+    let state: Types["state"] | undefined;
 
     try {
-      const configuration = await this.#dependencies.validateConfiguration({
+      configuration = await this.#dependencies.validateConfiguration({
         invocation,
         configPath: invocation.command.configPath,
       });
-      const state = await this.#dependencies.loadState({
+      state = await this.#dependencies.loadState({
         invocation,
         configuration,
       });
@@ -656,6 +683,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         const discord = await this.#dependencies.sendDiscord({
           invocation,
           configuration,
+          state,
           validated: validation.value,
           persisted,
           pages,
@@ -680,6 +708,30 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         effects: freezeEffects(effects),
       });
     } catch (error: unknown) {
+      const alertKind = operationsAlertKind(stage);
+      if (
+        alertKind != null &&
+        configuration != null &&
+        state != null &&
+        (invocation.command.kind === "daily" || invocation.command.kind === "backfill")
+      ) {
+        effects.discordAttempted = true;
+        try {
+          const alert = await this.#dependencies.sendOperationsAlert({
+            invocation,
+            configuration,
+            state,
+            kind: alertKind,
+            retryAttempts: operationsAlertRetryAttempts(error),
+          });
+          discordSentAt = alert.discordSentAt;
+          metrics = updateMetrics(metrics, {
+            notificationCount: alert.notificationCount,
+          });
+        } catch (alertError: unknown) {
+          diagnostics.push(safeErrorDiagnostic("discord", alertError));
+        }
+      }
       return this.#writeFailure(
         invocation,
         invocation.command.reportPath,

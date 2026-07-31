@@ -908,6 +908,16 @@ function createTrackedItem(repositoryName: string, analysis: ItemAnalysis): Trac
     url: itemUrl(repositoryName, item),
     title: item.title,
     state: item.state,
+    primaryWaitingOn:
+      decision.waitingOn.length === 0
+        ? Object.freeze({
+            index: "not_applicable",
+            selectionReason: "waitingOnがないためprimaryはありません",
+          })
+        : Object.freeze({
+            index: 0,
+            selectionReason: "waitingOnの先頭候補をprimaryとして選びました",
+          }),
     nextAction: decision.nextAction,
     createdAt: createUtcIsoDateTime(item.createdAt),
     githubUpdatedAt: createUtcIsoDateTime(item.githubUpdatedAt),
@@ -994,6 +1004,7 @@ function createSnapshot(
         severity: analysis.staleness.severity,
       };
     }),
+    externalReferences: [],
     relations: edges.map(toStateRelation),
     run: {
       id: "golden-eval",
@@ -1308,6 +1319,10 @@ function createLargeItems(itemCount: number, evaluatedAt: UtcIsoDateTime): reado
         state: "open",
         status: "in_progress",
         waitingOn: Object.freeze([largeWaitingOn(nodeId)]),
+        primaryWaitingOn: Object.freeze({
+          index: 0,
+          selectionReason: "waitingOnの先頭候補をprimaryとして選びました",
+        }),
         nextAction: "担当者が作業を進める",
         createdAt,
         githubUpdatedAt: index < 100 ? evaluatedAt : createdAt,
@@ -1434,6 +1449,7 @@ function analyzeLargeFixture(
       ...item,
       severity: "none",
     })),
+    externalReferences: [],
     relations: edges.map(toStateRelation),
     run: {
       id: "golden-eval-large",

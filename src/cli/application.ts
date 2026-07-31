@@ -20,7 +20,7 @@ export type CliExecutionResult =
       result: DailyRunExecutionResult;
     }>
   | Readonly<{
-      command: "persist-state" | "build-pages" | "notify-discord";
+      command: "persist-state" | "build-pages" | "notify-discord" | "notify-operations";
       exitCode: 0;
     }>
   | Readonly<{
@@ -72,6 +72,7 @@ export class CliApplication<Types extends DailyTransactionTypeMap> {
       case "persist-state":
       case "build-pages":
       case "notify-discord":
+      case "notify-operations":
         await this.#dependencies.workflowStageRunner.run(command);
         return Object.freeze({
           command: command.kind,

@@ -11,6 +11,7 @@ import {
   createCodexAnalysisInput,
   createFileAiCacheStore,
   determinePreviousAiResultReuse,
+  estimateAiInputCost,
   hashCanonicalJson,
   prepareAiAnalysisCandidate,
   runAiAnalyses,
@@ -580,6 +581,17 @@ describe("content-addressed AI cache", () => {
 });
 
 describe("AI run予算", () => {
+  it("UTF-8入力byte数とtoken単価から0ではない費用を見積もる", () => {
+    expect(estimateAiInputCost("abcd", 2)).toEqual({
+      estimatedInputTokens: 1,
+      estimatedCostUsd: 0.000002,
+    });
+    expect(estimateAiInputCost("あいうえ", 1)).toEqual({
+      estimatedInputTokens: 3,
+      estimatedCostUsd: 0.000003,
+    });
+  });
+
   it("10候補で上限3回なら優先順位どおり3件を分析して残りをdeferredにする", async () => {
     const priorities: readonly (readonly [
       string,

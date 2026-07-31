@@ -17,6 +17,7 @@ export {
   type EvalCliCommand,
   type HelpCliCommand,
   type NotifyDiscordCliCommand,
+  type NotifyOperationsCliCommand,
   type PersistStateCliCommand,
   type ReplayCliCommand,
   type ReplaySource,

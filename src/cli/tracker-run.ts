@@ -87,7 +87,8 @@ export function createTrackerRunCliArguments(args: readonly string[]): readonly 
     args[0] === "collect-analyze" ||
     args[0] === "persist-state" ||
     args[0] === "build-pages" ||
-    args[0] === "notify-discord"
+    args[0] === "notify-discord" ||
+    args[0] === "notify-operations"
   ) {
     const command = parseCliArguments(args);
     if (command.kind !== args[0]) {

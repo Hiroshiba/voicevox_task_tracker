@@ -1,6 +1,7 @@
 import { type AiAnalysisPriority, type PreparedAiAnalysisCandidate } from "./analysis-selection.js";
 
 const MICRO_USD_PER_USD = 1_000_000;
+const TOKENS_PER_MILLION = 1_000_000;
 
 /** 1 runのCodex呼び出し予算。 */
 export type AiRunBudget = Readonly<{
@@ -14,6 +15,12 @@ export type AiRunBudget = Readonly<{
 export type AiBudgetUsage = Readonly<{
   calls: number;
   inputCharacters: number;
+  estimatedCostUsd: number;
+}>;
+
+/** 正規化入力のtoken数とmodel入力単価から算出した費用見積。 */
+export type AiInputCostEstimate = Readonly<{
+  estimatedInputTokens: number;
   estimatedCostUsd: number;
 }>;
 
@@ -112,6 +119,22 @@ function validateFiniteNonNegativeNumber(value: number, name: string): void {
   if (!Number.isFinite(value) || value < 0) {
     throw new RangeError(`${name}は0以上の有限値にしてください`);
   }
+}
+
+/** UTF-8 byte数を基にCodex入力token数とmodel入力費用を保守的に見積もる。 */
+export function estimateAiInputCost(
+  normalizedInput: string,
+  inputCostUsdPerMillionTokens: number,
+): AiInputCostEstimate {
+  validateFiniteNonNegativeNumber(inputCostUsdPerMillionTokens, "100万入力tokenあたりの見積費用");
+  if (inputCostUsdPerMillionTokens === 0) {
+    throw new RangeError("100万入力tokenあたりの見積費用は正の値にしてください");
+  }
+  const estimatedInputTokens = Math.ceil(new TextEncoder().encode(normalizedInput).length / 4);
+  return Object.freeze({
+    estimatedInputTokens,
+    estimatedCostUsd: (estimatedInputTokens * inputCostUsdPerMillionTokens) / TOKENS_PER_MILLION,
+  });
 }
 
 function convertEstimatedCostToMicroUsd(

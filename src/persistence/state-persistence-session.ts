@@ -25,7 +25,7 @@ import {
   type StateHistoryDiff,
   type StateHistoryRecord,
 } from "./history.js";
-import { assertStatePublicSafety } from "./public-safety.js";
+import { assertStatePublicSafety, assertStateValuesPublicSafety } from "./public-safety.js";
 import {
   createStateSnapshot,
   parseStateSnapshot,
@@ -42,7 +42,7 @@ import {
   type StateNotificationLedger,
   type StateRunReport,
 } from "./state-documents.js";
-import { type Repository } from "../domain/index.js";
+import { type Repository, type UtcIsoDateTime } from "../domain/index.js";
 
 const CACHE_KEY_PREFIX = "sha256:";
 const HISTORY_FILE_PATTERN = /^(\d{4}-\d{2}-\d{2})\.jsonl$/u;
@@ -71,6 +71,13 @@ export type PersistStateTransactionResult = StateBranchCommitResult &
   Readonly<{
     updatedPaths: readonly string[];
   }>;
+
+/** 通知送信直後にledgerだけを更新する入力。 */
+export type PersistNotificationLedgerInput = Readonly<{
+  notificationLedger: StateNotificationLedger;
+  committedAt: UtcIsoDateTime;
+  knownSecrets: readonly string[];
+}>;
 
 function compareStrings(left: string, right: string): number {
   if (left < right) {
@@ -336,6 +343,38 @@ export class StatePersistenceSession {
         compareStrings(left.cacheKey, right.cacheKey),
       ),
     );
+  }
+
+  /** 通知送信結果を既存state branchのledgerへatomic commitする。 */
+  public async persistNotificationLedger(
+    input: PersistNotificationLedgerInput,
+  ): Promise<PersistStateTransactionResult> {
+    if (this.#head.status === "missing") {
+      throw new StateFormatError("notification ledger", {
+        cause: new TypeError("state branch作成前にnotification ledgerだけを保存できません"),
+      });
+    }
+    const notificationLedger = createStateNotificationLedger(input.notificationLedger);
+    assertStateValuesPublicSafety([notificationLedger], input.knownSecrets);
+    const update = Object.freeze({
+      path: this.#configuration.notificationLedgerPath,
+      bytes: encodeStateFile(serializeStateNotificationLedger(notificationLedger)),
+    } satisfies StateFileUpdate);
+    const result = await this.#adapter.commit({
+      branch: this.#configuration.branch,
+      expectedHead: this.#head,
+      updates: [update],
+      message: `tracker notification ledger ${input.committedAt}`,
+      committedAt: input.committedAt,
+    });
+    this.#head = Object.freeze({
+      status: "present",
+      revision: result.revision,
+    });
+    return Object.freeze({
+      ...result,
+      updatedPaths: Object.freeze([update.path]),
+    });
   }
 
   /** 全検証後にsnapshot・履歴・cache・ledger・reportをatomic commitする。 */

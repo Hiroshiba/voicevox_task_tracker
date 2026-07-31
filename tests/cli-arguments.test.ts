@@ -94,8 +94,27 @@ describe("CLI引数解析", () => {
       ]),
     ).toEqual({
       kind: "notify-discord",
+      configPath: "config.yml",
       artifactPath: "artifacts/workflow/validated-run.json",
       pagesUrl: "https://voicevox.github.io/voicevox_task_tracker/",
+    });
+    expect(
+      parseCliArguments([
+        "notify-operations",
+        "--kind",
+        "collection",
+        "--incident-id",
+        "collection-run-1",
+        "--occurred-at",
+        "2026-08-01T00:00:00.000Z",
+      ]),
+    ).toEqual({
+      kind: "notify-operations",
+      configPath: "config.yml",
+      incidentKind: "collection",
+      incidentId: "collection-run-1",
+      occurredAt: "2026-08-01T00:00:00.000Z",
+      retryAttempts: 1,
     });
   });
 

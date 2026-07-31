@@ -18,6 +18,7 @@ const requiredStringSchema = z.string().min(1, "空文字は指定できませ�
 const positiveIntegerSchema = z.number().int().positive();
 const nonNegativeIntegerSchema = z.number().int().nonnegative();
 const nonNegativeNumberSchema = z.number().nonnegative();
+const positiveNumberSchema = z.number().positive();
 const probabilitySchema = z.number().min(0).max(1);
 const statePathSchema = requiredStringSchema.superRefine((value, context) => {
   const segments = value.split("/");
@@ -362,6 +363,7 @@ const configSchema = z.strictObject({
         maxInputCharactersPerItem: positiveIntegerSchema,
         maxTotalInputCharactersPerRun: positiveIntegerSchema,
         maxEstimatedCostUsdPerRun: nonNegativeNumberSchema,
+        estimatedInputCostUsdPerMillionTokens: positiveNumberSchema,
       }),
       execution: z.strictObject({
         timeoutSeconds: positiveIntegerSchema,

@@ -47,6 +47,7 @@ function createEmptyWorkflowArtifact(): WorkflowArtifact {
       },
       repositories: [],
       items: [],
+      externalReferences: [],
       relations: [],
       run: {
         id: runId,
@@ -101,7 +102,8 @@ function parseWorkflowStageCommand(args: readonly string[]): WorkflowStageCliCom
   if (
     command.kind !== "persist-state" &&
     command.kind !== "build-pages" &&
-    command.kind !== "notify-discord"
+    command.kind !== "notify-discord" &&
+    command.kind !== "notify-operations"
   ) {
     throw new TypeError("workflow stage commandではありません");
   }
@@ -155,15 +157,26 @@ describe("workflow stage", () => {
     const persistState = vi.fn(() => Promise.resolve());
     const buildPages = vi.fn(() => Promise.resolve());
     const notifyDiscord = vi.fn(() => Promise.resolve());
+    const notifyOperations = vi.fn(() => Promise.resolve());
     const runner = new WorkflowStageRunner({
       persistState,
       buildPages,
       notifyDiscord,
+      notifyOperations,
     });
     const commands = [
       parseWorkflowStageCommand(["persist-state"]),
       parseWorkflowStageCommand(["build-pages"]),
       parseWorkflowStageCommand(["notify-discord", "--pages-url", PAGES_URL]),
+      parseWorkflowStageCommand([
+        "notify-operations",
+        "--kind",
+        "pages",
+        "--incident-id",
+        "pages-fixture",
+        "--occurred-at",
+        NOW,
+      ]),
     ];
 
     for (const command of commands) {
@@ -173,6 +186,7 @@ describe("workflow stage", () => {
     expect(persistState).toHaveBeenCalledOnce();
     expect(buildPages).toHaveBeenCalledOnce();
     expect(notifyDiscord).toHaveBeenCalledOnce();
+    expect(notifyOperations).toHaveBeenCalledOnce();
   });
 
   it("各stageは前stageのartifactが無ければ失敗する", async () => {
@@ -184,11 +198,21 @@ describe("workflow stage", () => {
       persistState: readMissingArtifact,
       buildPages: readMissingArtifact,
       notifyDiscord: readMissingArtifact,
+      notifyOperations: readMissingArtifact,
     });
     const commands = [
       parseWorkflowStageCommand(["persist-state"]),
       parseWorkflowStageCommand(["build-pages"]),
       parseWorkflowStageCommand(["notify-discord", "--pages-url", PAGES_URL]),
+      parseWorkflowStageCommand([
+        "notify-operations",
+        "--kind",
+        "collection",
+        "--incident-id",
+        "collection-fixture",
+        "--occurred-at",
+        NOW,
+      ]),
     ];
 
     for (const command of commands) {

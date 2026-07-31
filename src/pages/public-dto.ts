@@ -57,6 +57,16 @@ const waitingOnSchema = z.strictObject({
   sourceIds: z.array(identifierSchema).min(1),
   confidence: z.number().min(0).max(1),
 });
+const primaryWaitingOnSchema = z.discriminatedUnion("index", [
+  z.strictObject({
+    index: z.literal(0),
+    selectionReason: shortStringSchema,
+  }),
+  z.strictObject({
+    index: z.literal("not_applicable"),
+    selectionReason: shortStringSchema,
+  }),
+]);
 const publicEvidenceSchema = z.strictObject({
   sourceId: identifierSchema,
   supports: z.enum(["status", "waiting_on", "relation", "progress", "notification", "uncertainty"]),
@@ -97,6 +107,7 @@ const publicItemSummarySchema = z.strictObject({
   state: z.enum(["open", "closed", "merged"]),
   status: statusSchema,
   waitingOn: z.array(waitingOnSchema),
+  primaryWaitingOn: primaryWaitingOnSchema,
   nextAction: shortStringSchema,
   severity: severitySchema,
   priorityWeight: z.number(),

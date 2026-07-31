@@ -93,6 +93,7 @@ type Harness = Readonly<{
   reports: RunReport[];
   artifactPaths: string[];
   artifacts: unknown[];
+  operationsRetryAttempts: number[];
   persistedCommands: OnlineCliCommand[];
   counters: {
     apiAttempts: number;
@@ -140,6 +141,7 @@ function createHarness(behavior: HarnessBehavior): Harness {
   const reports: RunReport[] = [];
   const artifactPaths: string[] = [];
   const artifacts: unknown[] = [];
+  const operationsRetryAttempts: number[] = [];
   const persistedCommands: OnlineCliCommand[] = [];
   const counters = {
     apiAttempts: 0,
@@ -304,6 +306,18 @@ function createHarness(behavior: HarnessBehavior): Harness {
         discordSentAt: NOW_UTC,
       });
     },
+    sendOperationsAlert: ({ retryAttempts }) => {
+      events.push("operations_alert");
+      operationsRetryAttempts.push(retryAttempts);
+      counters.discordCalls += 1;
+      return Promise.resolve({
+        value: {
+          messageIds: Object.freeze(["discord-operations-message-1"]),
+        },
+        notificationCount: 1,
+        discordSentAt: NOW_UTC,
+      });
+    },
     writeDryRunArtifact: (artifactPath, artifact) => {
       events.push("artifact");
       artifactPaths.push(artifactPath);
@@ -329,6 +343,7 @@ function createHarness(behavior: HarnessBehavior): Harness {
     reports,
     artifactPaths,
     artifacts,
+    operationsRetryAttempts,
     persistedCommands,
     counters,
     state,
@@ -531,7 +546,7 @@ describe("Daily transaction", () => {
     expect(first.value.effects).toEqual({
       stateCommitted: true,
       pagesBuilt: false,
-      discordAttempted: false,
+      discordAttempted: true,
       artifactWritten: false,
     });
     expect(harness.state.lastGoodHash).toBe("sha256:new-state");
@@ -540,7 +555,9 @@ describe("Daily transaction", () => {
     expect(second.value.report.status).toBe("success");
     expect(harness.counters.stateCommits).toBe(2);
     expect(harness.counters.pagesBuilds).toBe(2);
-    expect(harness.counters.discordCalls).toBe(1);
+    expect(harness.counters.discordCalls).toBe(2);
+    expect(harness.events).toContain("operations_alert");
+    expect(harness.operationsRetryAttempts).toEqual([1]);
     expect(harness.state.lastGoodHash).toBe("sha256:new-state");
   });
 
@@ -561,7 +578,9 @@ describe("Daily transaction", () => {
     expect(harness.counters.apiAttempts).toBe(3);
     expect(harness.counters.stateCommits).toBe(0);
     expect(harness.counters.pagesBuilds).toBe(0);
-    expect(harness.counters.discordCalls).toBe(0);
+    expect(harness.counters.discordCalls).toBe(1);
+    expect(harness.events).toContain("operations_alert");
+    expect(harness.operationsRetryAttempts).toEqual([3]);
     expect(harness.state.lastGoodHash).toBe("sha256:last-good");
   });
 

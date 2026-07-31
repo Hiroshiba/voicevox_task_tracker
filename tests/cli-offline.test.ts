@@ -39,6 +39,7 @@ function emptySnapshot(): StateSnapshot {
     },
     repositories: [],
     items: [],
+    externalReferences: [],
     relations: [],
     run: {
       id: "fixture-state-run",

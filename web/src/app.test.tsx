@@ -513,6 +513,11 @@ describe("Web UI", () => {
     expect(details.textContent).toContain("各種時刻");
     expect(details.querySelectorAll(".timestamp-grid time")).toHaveLength(8);
     expect(details.textContent).toContain("blocker一覧");
+    expect(details.textContent).toContain("primary blocker");
+    expect(details.textContent).toContain("全blocker");
+    expect(details.textContent).toContain(
+      "選定理由: 複数blockerから影響度が最も高い項目を選びました",
+    );
     expect(details.textContent).toContain("VOICEVOX/sample-editor#103");
     expect(details.textContent).toContain("判定根拠");
     expect(details.textContent).toContain("GitHub上の根拠を開く");

@@ -2,8 +2,10 @@ import { resolve } from "node:path";
 
 import {
   createCodexAnalysisInput,
+  estimateAiInputCost,
   reduceCodexAnalysis,
   runAiAnalyses,
+  serializeCanonicalJson,
   type executeCodexAnalysis,
   type AiAnalysisCandidate,
   type AiAnalysisRunResult,
@@ -12,6 +14,7 @@ import {
   type CodexProcessRunner,
   type DeterministicCodexDecision,
   type ReducedCodexDecision,
+  type ValidatedCodexAnalysisOutput,
 } from "../codex/index.js";
 import { type Config, type loadConfig } from "../config/index.js";
 import {
@@ -30,19 +33,29 @@ import {
   selectTrackingItems,
   type LabelRule,
   type NotificationLedgerEntry,
+  type OperationsAlertLedgerEntry,
   type GitHubNodeId,
   type GitHubRepositoryId,
+  type GraphNodeId,
   type IssueBlocker,
+  type IssueExplicitRequestAssessment,
+  type IssueExplicitRequestTarget,
   type IssueStateDecision,
   type BlockedParentContext,
   type BlockerRanking,
   type OrganizationTrackingCandidate,
+  type TrackingCandidate,
   type PullRequestStateDecision,
+  type PullRequestCheckFailureAssessment,
+  type PrimaryWaitingOn,
   type Relation,
   type Repository,
   type SourceId,
   type Severity,
   type StalenessResult,
+  type NaturalLanguageProgressAssessment,
+  type DependencyResolutionProgress,
+  type ExternalGhostNode,
   type TrackedItem,
   type TrackingConnection,
   type TrackedItemWorkDecision,
@@ -55,6 +68,7 @@ import {
   type DiscordDeliverySettings,
   type DiscordNotificationItem,
   type DiscordNotificationSelection,
+  type DiscordOperationsIncident,
   type DiscordSecretProvider,
   type DiscordWebhookHttpClient,
 } from "../discord/index.js";
@@ -129,6 +143,7 @@ import { createTrackingBackfillRequest } from "./backfill.js";
 import {
   type BuildPagesCliCommand,
   type NotifyDiscordCliCommand,
+  type NotifyOperationsCliCommand,
   type PersistStateCliCommand,
 } from "./command.js";
 import { type OnlineCliCommand } from "./daily-transaction.js";
@@ -163,6 +178,8 @@ const CODEX_BACKEND_VERSION = `codex-cli-${CODEX_CLI_VERSION}`;
 const CODEX_SCHEMA_VERSION = "1";
 const PAGES_BASE_URL = "https://voicevox.github.io";
 const INCREMENTAL_COLLECTION_OVERLAP_MILLISECONDS = 5 * 60 * 1000;
+const GITHUB_MENTION_PATTERN =
+  /(?<![A-Za-z0-9-])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))(?:\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,99})))?/gu;
 
 type RuntimeCredentials = Readonly<{
   github: GitHubAppCredentials;
@@ -195,6 +212,7 @@ type CollectedItems = Readonly<{
   trackedNodeIds: ReadonlySet<GitHubNodeId>;
   analysisNodeIds: ReadonlySet<GitHubNodeId>;
   changedNodeIds: ReadonlySet<GitHubNodeId>;
+  externalReferences: readonly ExternalGhostNode[];
   relationCandidates: readonly RelationCandidate[];
   repositoryResults: readonly RepositoryCollectionResult<SnapshotCollectionRepository>[];
   collectionRepositories: readonly SnapshotCollectionRepository[];
@@ -211,6 +229,12 @@ type FreshRepositoryRuntimeCollection = Readonly<{
 type RuntimeTrackingSelection = Readonly<{
   result: ReturnType<typeof selectTrackingItems>;
   workByNodeId: ReadonlyMap<GitHubNodeId, TrackedItemWorkDecision>;
+}>;
+
+type MentionedWaitingOnCandidate = Readonly<{
+  id: string;
+  kind: "user" | "team";
+  sourceIds: readonly [SourceId, ...SourceId[]];
 }>;
 
 type DeterministicItemAnalysis = Readonly<{
@@ -235,6 +259,7 @@ type ReducedItemAnalysis = Readonly<{
   item: FreshObservedGitHubItem;
   detail: GitHubItemDetail;
   decision: ReducedCodexDecision;
+  primaryWaitingOn: PrimaryWaitingOn;
   staleness: StalenessResult;
 }>;
 
@@ -247,6 +272,7 @@ type ReducedAnalysis = Readonly<{
 
 type GraphResult = Readonly<{
   edges: readonly ReconciledGraphEdge[];
+  externalReferences: readonly ExternalGhostNode[];
   analysis: AnalyzeGraphResult;
   previousAnalysis:
     | Readonly<{
@@ -390,6 +416,10 @@ function readRuntimeCredentials(
   ) {
     knownSecrets.push(
       requireEnvironmentValue(environment, config.notifications.discord.webhookSecretName),
+      requireEnvironmentValue(
+        environment,
+        config.notifications.discord.operationsWebhookSecretName,
+      ),
     );
   }
   return Object.freeze({
@@ -560,12 +590,18 @@ function previousItemCollection(
 
 function previousGraphAdjacentNodeIds(state: RuntimeState): ReadonlySet<GitHubNodeId> {
   const nodeIds = new Set<GitHubNodeId>();
-  for (const relation of previousSnapshot(state)?.relations ?? []) {
+  const snapshot = previousSnapshot(state);
+  const trackedNodeIds = new Set<string>(snapshot?.items.map((item) => item.nodeId) ?? []);
+  for (const relation of snapshot?.relations ?? []) {
     if (!relation.active) {
       continue;
     }
-    nodeIds.add(createGitHubNodeId(relation.fromNodeId));
-    nodeIds.add(createGitHubNodeId(relation.toNodeId));
+    if (trackedNodeIds.has(relation.fromNodeId)) {
+      nodeIds.add(createGitHubNodeId(relation.fromNodeId));
+    }
+    if (trackedNodeIds.has(relation.toNodeId)) {
+      nodeIds.add(createGitHubNodeId(relation.toNodeId));
+    }
   }
   return nodeIds;
 }
@@ -839,7 +875,7 @@ function collectTrackingCandidates(
   const observedItemsByNodeId = new Map(observedItems.map((item) => [item.nodeId, item]));
   const currentNodeIds = new Set(enumeratedItems.map((item) => item.nodeId));
   const isBot = createGitHubBotPredicate(configuration.config.actors.bots);
-  const candidates: OrganizationTrackingCandidate[] = enumeratedItems.map((item) => {
+  const organizationCandidates: OrganizationTrackingCandidate[] = enumeratedItems.map((item) => {
     const repository = findRepository(inventory, item.repositoryId);
     const previous = previousItems.get(item.nodeId);
     const observed = observedItemsByNodeId.get(item.nodeId);
@@ -911,6 +947,30 @@ function collectTrackingCandidates(
       terminalAt: item.closedAt,
     });
   });
+  const externalCandidates = deduplicateByStableId(
+    relationCandidates.flatMap((candidate) =>
+      relationNodes(candidate.relation).flatMap((node) =>
+        node.scope === "external_public"
+          ? [
+              Object.freeze({
+                scope: "external_public",
+                nodeId: node.nodeId,
+                repositoryFullName: `${node.repositoryOwner}/${node.repositoryName}`,
+                number: node.number,
+                url: node.url,
+                title: `${node.repositoryOwner}/${node.repositoryName}#${node.number.toString()}`,
+                state: node.state,
+              } satisfies TrackingCandidate),
+            ]
+          : [],
+      ),
+    ),
+    (candidate) => candidate.nodeId,
+  );
+  const candidates: readonly TrackingCandidate[] = Object.freeze([
+    ...organizationCandidates,
+    ...externalCandidates,
+  ]);
   const result = selectTrackingItems({
     startAt: trackingStartAt(configuration, state, invocation),
     evaluatedAt: invocation.startedAt,
@@ -1033,6 +1093,83 @@ function createIssueRequestCandidates(
   return deduplicateByStableId(candidates, (candidate) => candidate.sourceId);
 }
 
+function mentionedCandidatesInSource(
+  sourceId: SourceId,
+  content: string,
+): readonly MentionedWaitingOnCandidate[] {
+  const candidates = new Map<string, MentionedWaitingOnCandidate>();
+  for (const match of content.matchAll(GITHUB_MENTION_PATTERN)) {
+    const accountOrOrganization = match[1];
+    assertNonNullable(accountOrOrganization, "GitHub mentionのaccountを取得できませんでした");
+    const teamSlug = match[2];
+    const kind = teamSlug == null ? "user" : "team";
+    const id = teamSlug == null ? accountOrOrganization : `${accountOrOrganization}/${teamSlug}`;
+    candidates.set(
+      `${kind}:${id.toLowerCase()}`,
+      Object.freeze({
+        id,
+        kind,
+        sourceIds: Object.freeze([sourceId] satisfies [SourceId]),
+      }),
+    );
+  }
+  return Object.freeze([...candidates.values()]);
+}
+
+function createMentionedWaitingOnCandidates(
+  detail: GitHubItemDetail,
+): readonly MentionedWaitingOnCandidate[] {
+  const sourceCandidates = [
+    ...mentionedCandidatesInSource(detail.bodySourceId, detail.body),
+    ...detail.comments.flatMap((comment) =>
+      mentionedCandidatesInSource(comment.sourceId, comment.body),
+    ),
+  ];
+  const grouped = new Map<
+    string,
+    Readonly<{
+      id: string;
+      kind: MentionedWaitingOnCandidate["kind"];
+      sourceIds: Set<SourceId>;
+    }>
+  >();
+  for (const candidate of sourceCandidates) {
+    const key = `${candidate.kind}:${candidate.id.toLowerCase()}`;
+    const existing = grouped.get(key);
+    if (existing == null) {
+      grouped.set(
+        key,
+        Object.freeze({
+          id: candidate.id,
+          kind: candidate.kind,
+          sourceIds: new Set(candidate.sourceIds),
+        }),
+      );
+      continue;
+    }
+    for (const sourceId of candidate.sourceIds) {
+      existing.sourceIds.add(sourceId);
+    }
+  }
+  return Object.freeze(
+    [...grouped.values()]
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map((candidate) => {
+        const sourceIds = [...candidate.sourceIds].sort();
+        const firstSourceId = sourceIds[0];
+        assertNonNullable(firstSourceId, `mention候補 ${candidate.id}のsource IDがありません`);
+        return Object.freeze({
+          id: candidate.id,
+          kind: candidate.kind,
+          sourceIds: Object.freeze([firstSourceId, ...sourceIds.slice(1)] satisfies [
+            SourceId,
+            ...SourceId[],
+          ]),
+        } satisfies MentionedWaitingOnCandidate);
+      }),
+  );
+}
+
 function applyDeterministicAnalysis(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
@@ -1130,14 +1267,52 @@ function relationTargetUrl(
   return target.url;
 }
 
+function relationAssessmentOwnerNodeId(candidate: RelationCandidate): GraphNodeId {
+  switch (candidate.relation.type) {
+    case "blocks":
+      return candidate.relation.blocked.nodeId;
+    case "parent_of":
+      return candidate.relation.parent.nodeId;
+    case "implements":
+      return candidate.relation.implementation.nodeId;
+    case "unclassified":
+      return candidate.relation.referencing.nodeId;
+  }
+}
+
 function createCodexInput(
   invocation: DailyRunInvocation,
   analysis: DeterministicItemAnalysis,
 ): CodexAnalysisInput {
-  const waitingOnCandidateIds = new Set(
-    analysis.decision.waitingOn.map((waitingOn) => waitingOn.candidateId),
+  const relationCandidates = deduplicateByStableId(
+    analysis.relationCandidates.filter(
+      (candidate) => relationAssessmentOwnerNodeId(candidate) === analysis.item.nodeId,
+    ),
+    (candidate) => candidate.id,
   );
-  waitingOnCandidateIds.add(codexAuthorCandidateId(analysis.item));
+  const mentionedCandidates = createMentionedWaitingOnCandidates(analysis.detail);
+  const waitingOnCandidates = new Map(
+    analysis.decision.waitingOn.map((waitingOn) => [
+      waitingOn.candidateId,
+      Object.freeze({
+        id: waitingOn.candidateId,
+        kind: waitingOn.kind,
+        sourceIds: waitingOn.sourceIds,
+      }),
+    ]),
+  );
+  const authorCandidateId = codexAuthorCandidateId(analysis.item);
+  waitingOnCandidates.set(
+    authorCandidateId,
+    Object.freeze({
+      id: authorCandidateId,
+      kind: "user",
+      sourceIds: Object.freeze([analysis.item.sourceId] satisfies [SourceId]),
+    }),
+  );
+  for (const candidate of mentionedCandidates) {
+    waitingOnCandidates.set(candidate.id, candidate);
+  }
   const sourceRecords = new Map<string, unknown>();
   sourceRecords.set(
     analysis.item.sourceId,
@@ -1182,6 +1357,44 @@ function createCodexInput(
       }),
     );
   }
+  if (
+    analysis.detail.type === "pull_request" &&
+    analysis.detail.mergeState.checks.status === "configured"
+  ) {
+    const checks = analysis.detail.mergeState.checks;
+    sourceRecords.set(
+      checks.sourceId,
+      Object.freeze({
+        id: checks.sourceId,
+        kind: "required_check_rollup",
+        actorType: "system",
+        createdAt: analysis.item.observedAt,
+        combinedState: checks.combinedState,
+      }),
+    );
+    for (const context of checks.contexts) {
+      sourceRecords.set(
+        context.sourceId,
+        Object.freeze({
+          id: context.sourceId,
+          kind: context.type,
+          actorType: "system",
+          createdAt:
+            context.type === "commit_status" ? context.createdAt : analysis.item.observedAt,
+          ...(context.type === "check_run"
+            ? {
+                name: context.name,
+                status: context.status,
+                conclusion: context.conclusion,
+              }
+            : {
+                context: context.context,
+                state: context.state,
+              }),
+        }),
+      );
+    }
+  }
   return createCodexAnalysisInput({
     schemaVersion: "1",
     now: invocation.startedAt,
@@ -1198,8 +1411,8 @@ function createCodexInput(
         : {}),
     },
     candidates: {
-      waitingOn: [...waitingOnCandidateIds].map((id) => ({ id })),
-      relations: analysis.relationCandidates.map((candidate) => ({
+      waitingOn: [...waitingOnCandidates.values()],
+      relations: relationCandidates.map((candidate) => ({
         id: candidate.id,
         targetUrl: relationTargetUrl(analysis.item.nodeId, candidate),
       })),
@@ -1208,7 +1421,15 @@ function createCodexInput(
     deterministicSignals: {
       status: analysis.decision.status,
       waitingOn: analysis.decision.waitingOn,
-      relationCandidateIds: analysis.relationCandidates.map((candidate) => candidate.id),
+      relationCandidateIds: relationCandidates.map((candidate) => candidate.id),
+      mentionedWaitingOnCandidates: mentionedCandidates,
+      requiredCheckFailure:
+        analysis.detail.type === "pull_request" &&
+        analysis.detail.mergeState.checks.status === "configured" &&
+        (analysis.detail.mergeState.checks.combinedState === "failure" ||
+          analysis.detail.mergeState.checks.combinedState === "error")
+          ? analysis.detail.mergeState.checks
+          : null,
       uncertainties: analysis.decision.uncertainties,
     },
     priorAnalysis: null,
@@ -1217,19 +1438,77 @@ function createCodexInput(
 
 function createAiCandidates(
   invocation: DailyRunInvocation,
+  configuration: RuntimeConfiguration,
+  state: RuntimeState,
+  collection: CollectedItems,
   deterministicAnalysis: DeterministicAnalysis,
 ): Readonly<{
   candidates: readonly AiAnalysisCandidate[];
   inputByNodeId: ReadonlyMap<GitHubNodeId, CodexAnalysisInput>;
 }> {
   const inputByNodeId = new Map<GitHubNodeId, CodexAnalysisInput>();
+  const previousGraph = previousGraphSnapshot(state);
+  const previousGraphAnalysis =
+    previousGraph == null
+      ? undefined
+      : analyzeGraph({
+          current: previousGraph,
+          previous: {
+            availability: "unavailable",
+          },
+        });
+  const previousImpactByNodeId = new Map(
+    (previousGraphAnalysis?.downstreamImpacts ?? []).map((impact) => [impact.nodeId, impact]),
+  );
+  const previousRelations = previousSnapshot(state)?.relations ?? [];
   const candidates = deterministicAnalysis.items.map((analysis) => {
     const input = createCodexInput(invocation, analysis);
     inputByNodeId.set(analysis.item.nodeId, input);
+    const naturalLanguageProgressCandidate = analysis.item.events.some(
+      (event) => event.kind === "comment" && event.actor.type === "human",
+    );
+    const previousIncomingBlockers = new Set<string>(
+      previousRelations
+        .filter(
+          (relation) =>
+            relation.active &&
+            relation.type === "blocks" &&
+            relation.toNodeId === analysis.item.nodeId,
+        )
+        .map((relation) => relation.id),
+    );
+    const currentPotentialBlockers = new Set<string>(
+      analysis.relationCandidates
+        .filter((candidate) => {
+          if (candidate.relation.type === "blocks") {
+            return candidate.relation.blocked.nodeId === analysis.item.nodeId;
+          }
+          return candidate.authority === "inferred";
+        })
+        .map((candidate) => candidate.id),
+    );
+    const relatedNodeChanged = analysis.relationCandidates.some((candidate) =>
+      relationNodes(candidate.relation).some(
+        (node) =>
+          node.nodeId !== analysis.item.nodeId &&
+          node.scope === "organization" &&
+          collection.changedNodeIds.has(node.nodeId),
+      ),
+    );
+    const changedBlocker =
+      relatedNodeChanged ||
+      previousIncomingBlockers.size !== currentPotentialBlockers.size ||
+      [...previousIncomingBlockers].some((id) => !currentPotentialBlockers.has(id));
+    const previousImpact = previousImpactByNodeId.get(analysis.item.nodeId);
+    const estimatedCost = estimateAiInputCost(
+      `${serializeCanonicalJson(input)}\n`,
+      configuration.config.ai.budget.estimatedInputCostUsdPerMillionTokens,
+    );
     return Object.freeze({
       id: analysis.item.nodeId,
       deterministicResolution:
         analysis.decision.determination === "determined" &&
+        !naturalLanguageProgressCandidate &&
         analysis.relationCandidates.every((candidate) => candidate.authority === "authoritative")
           ? "high_confidence"
           : "ambiguous",
@@ -1243,13 +1522,13 @@ function createAiCandidates(
       priority: Object.freeze({
         severityCandidate: analysis.decision.determination === "codex_candidate",
         ownerUnknown: analysis.decision.waitingOn.some((waitingOn) => waitingOn.kind === "unknown"),
-        changedBlocker: false,
+        changedBlocker,
         downstreamImpact: Object.freeze({
-          openNodeCount: 0,
-          repositoryCount: 0,
+          openNodeCount: previousImpact?.openNodeCount ?? 0,
+          repositoryCount: previousImpact?.repositoryCount ?? 0,
         }),
       }),
-      estimatedCostUsd: 0,
+      estimatedCostUsd: estimatedCost.estimatedCostUsd,
     } satisfies AiAnalysisCandidate);
   });
   return Object.freeze({
@@ -1263,6 +1542,7 @@ async function analyzeCodex(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
   state: RuntimeState,
+  collection: CollectedItems,
   deterministicAnalysis: DeterministicAnalysis,
 ): Promise<
   Readonly<{
@@ -1274,7 +1554,13 @@ async function analyzeCodex(
     diagnostics: readonly string[];
   }>
 > {
-  const prepared = createAiCandidates(invocation, deterministicAnalysis);
+  const prepared = createAiCandidates(
+    invocation,
+    configuration,
+    state,
+    collection,
+    deterministicAnalysis,
+  );
   if (!configuration.config.ai.enabled) {
     return Object.freeze({
       stage: Object.freeze({
@@ -1422,6 +1708,358 @@ function reductionForAnalysis(
   return undefined;
 }
 
+function codexOutputForAnalysis(
+  analysis: DeterministicItemAnalysis,
+  codexAnalysis: CodexAnalysis,
+): ValidatedCodexAnalysisOutput | undefined {
+  return codexAnalysis.run?.results.find(
+    (candidate) => candidate.candidateId === analysis.item.nodeId,
+  )?.output;
+}
+
+function nonEmptySourceIds(
+  sourceIds: readonly SourceId[],
+  context: string,
+): readonly [SourceId, ...SourceId[]] {
+  const uniqueSourceIds = [...new Set(sourceIds)].sort();
+  const firstSourceId = uniqueSourceIds[0];
+  assertNonNullable(firstSourceId, `${context}のsource IDがありません`);
+  return Object.freeze([firstSourceId, ...uniqueSourceIds.slice(1)]);
+}
+
+function explicitRequestAssessment(
+  item: Extract<FreshObservedGitHubItem, Readonly<{ type: "issue" }>>,
+  detail: Extract<GitHubItemDetail, Readonly<{ type: "issue" }>>,
+  output: ValidatedCodexAnalysisOutput | undefined,
+): IssueExplicitRequestAssessment {
+  const candidates = createIssueRequestCandidates(item, detail);
+  if (output == null || candidates.length === 0) {
+    return Object.freeze({
+      status: "not_assessed",
+    });
+  }
+  const candidateSourceIds = nonEmptySourceIds(
+    candidates.map((candidate) => candidate.sourceId),
+    "明示依頼候補",
+  );
+  const mentionedCandidates = createMentionedWaitingOnCandidates(detail);
+  const mentionedByKey = new Map(
+    mentionedCandidates.map((candidate) => [
+      `${candidate.kind}:${candidate.id.toLowerCase()}`,
+      candidate,
+    ]),
+  );
+  const targets: IssueExplicitRequestTarget[] = output.waitingOn.flatMap((waitingOn) => {
+    if (waitingOn.kind !== "user" && waitingOn.kind !== "team") {
+      return [];
+    }
+    const mentioned = mentionedByKey.get(
+      `${waitingOn.kind}:${waitingOn.candidateId.toLowerCase()}`,
+    );
+    if (
+      mentioned == null ||
+      !waitingOn.sourceIds.some((sourceId) => mentioned.sourceIds.includes(sourceId))
+    ) {
+      return [];
+    }
+    const role =
+      waitingOn.role === "dependency" ||
+      waitingOn.role === "merge_decider" ||
+      waitingOn.role === "ci"
+        ? "unknown"
+        : waitingOn.role;
+    return [
+      Object.freeze({
+        kind: waitingOn.kind,
+        candidateId: waitingOn.candidateId,
+        role,
+        sourceIds: waitingOn.sourceIds,
+        confidence: Math.min(output.confidence, waitingOn.confidence),
+      }),
+    ];
+  });
+  if (targets.length === 0) {
+    return Object.freeze({
+      status: "assessed",
+      candidateSourceIds,
+      verdict: "no_unanswered_request",
+      confidence: output.confidence,
+      sourceIds: candidateSourceIds,
+    });
+  }
+  const requestCandidate = [...candidates]
+    .filter((candidate) => targets.some((target) => target.sourceIds.includes(candidate.sourceId)))
+    .sort((left, right) => {
+      if (left.occurredAt !== right.occurredAt) {
+        return left.occurredAt > right.occurredAt ? -1 : 1;
+      }
+      return left.sourceId.localeCompare(right.sourceId);
+    })[0];
+  assertNonNullable(requestCandidate, "未回答の明示依頼に対応する候補がありません");
+  const latestTargets = targets.filter((target) =>
+    target.sourceIds.includes(requestCandidate.sourceId),
+  );
+  const firstTarget = latestTargets[0];
+  assertNonNullable(firstTarget, "最新の明示依頼先がありません");
+  return Object.freeze({
+    status: "assessed",
+    candidateSourceIds,
+    verdict: "unanswered_request",
+    requestSourceId: requestCandidate.sourceId,
+    targets: Object.freeze([firstTarget, ...latestTargets.slice(1)] satisfies [
+      IssueExplicitRequestTarget,
+      ...IssueExplicitRequestTarget[],
+    ]),
+    confidence: Math.min(output.confidence, ...latestTargets.map((target) => target.confidence)),
+    sourceIds: nonEmptySourceIds(
+      latestTargets.flatMap((target) => target.sourceIds),
+      "未回答の明示依頼判定",
+    ),
+  });
+}
+
+function checkFailureSourceIds(
+  detail: Extract<GitHubItemDetail, Readonly<{ type: "pull_request" }>>,
+): readonly [SourceId, ...SourceId[]] | undefined {
+  if (
+    detail.mergeState.checks.status !== "configured" ||
+    (detail.mergeState.checks.combinedState !== "failure" &&
+      detail.mergeState.checks.combinedState !== "error")
+  ) {
+    return undefined;
+  }
+  const failingContextSourceIds = detail.mergeState.checks.contexts.flatMap((context) => {
+    if (context.type === "commit_status") {
+      return context.state === "failure" || context.state === "error" ? [context.sourceId] : [];
+    }
+    return context.conclusion === "failure" ||
+      context.conclusion === "timed_out" ||
+      context.conclusion === "startup_failure" ||
+      context.conclusion === "action_required"
+      ? [context.sourceId]
+      : [];
+  });
+  return nonEmptySourceIds(
+    [detail.mergeState.checks.sourceId, ...failingContextSourceIds],
+    "required check失敗",
+  );
+}
+
+function checkFailureAssessment(
+  detail: Extract<GitHubItemDetail, Readonly<{ type: "pull_request" }>>,
+  output: ValidatedCodexAnalysisOutput | undefined,
+): PullRequestCheckFailureAssessment {
+  const sourceIds = checkFailureSourceIds(detail);
+  if (sourceIds == null || output == null) {
+    return Object.freeze({
+      cause: "not_assessed",
+    });
+  }
+  const effectiveConfidence = Math.min(
+    output.confidence,
+    ...output.waitingOn.map((waitingOn) => waitingOn.confidence),
+  );
+  const authorAction =
+    output.status === "waiting_for_author" ||
+    output.waitingOn.some((waitingOn) => waitingOn.role === "author");
+  if (authorAction) {
+    return Object.freeze({
+      cause: "pull_request_change",
+      confidence: effectiveConfidence,
+      sourceIds,
+    });
+  }
+  const infrastructureOrFlaky =
+    output.status === "waiting_for_automation" ||
+    output.status === "needs_maintainer_decision" ||
+    output.status === "unknown" ||
+    output.waitingOn.some(
+      (waitingOn) =>
+        waitingOn.kind === "automation" ||
+        waitingOn.kind === "unknown" ||
+        waitingOn.role === "ci" ||
+        waitingOn.role === "maintainer" ||
+        waitingOn.role === "unknown",
+    );
+  return Object.freeze({
+    cause: infrastructureOrFlaky ? "infrastructure_or_flaky" : "ambiguous",
+    confidence: effectiveConfidence,
+    sourceIds,
+  });
+}
+
+function naturalLanguageProgressAssessments(
+  analysis: DeterministicItemAnalysis,
+  output: ValidatedCodexAnalysisOutput | undefined,
+): readonly NaturalLanguageProgressAssessment[] {
+  if (output == null) {
+    return Object.freeze([]);
+  }
+  return Object.freeze(
+    analysis.item.events
+      .filter((event) => event.kind === "comment" && event.actor.type === "human")
+      .map((event) =>
+        Object.freeze({
+          candidateSourceId: event.sourceId,
+          verdict:
+            output.progress.latestMeaningfulSourceId === event.sourceId
+              ? "meaningful_progress"
+              : "not_meaningful_progress",
+          confidence: Math.min(output.confidence, output.progress.confidence),
+          sourceIds: Object.freeze([event.sourceId] satisfies [SourceId]),
+        }),
+      ),
+  );
+}
+
+function graphNodeState(
+  state: RuntimeState,
+  deterministicAnalysis: DeterministicAnalysis,
+  graph: GraphResult,
+  nodeId: GraphNodeId,
+): TrackedItem["state"] {
+  const currentItem = deterministicAnalysis.items.find(
+    (analysis) => analysis.item.nodeId === nodeId,
+  )?.item;
+  if (currentItem != null) {
+    return currentItem.state;
+  }
+  const externalReference = graph.externalReferences.find(
+    (reference) => reference.nodeId === nodeId,
+  );
+  if (externalReference != null) {
+    return externalReference.state;
+  }
+  const previousItem = previousSnapshot(state)?.items.find((item) => item.nodeId === nodeId);
+  assertNonNullable(previousItem, `blocker ${nodeId}の状態がありません`);
+  return previousItem.state;
+}
+
+function graphBlockers(
+  state: RuntimeState,
+  deterministicAnalysis: DeterministicAnalysis,
+  graph: GraphResult,
+  nodeId: GitHubNodeId,
+): readonly IssueBlocker[] {
+  return Object.freeze(
+    graph.edges
+      .filter((edge) => edge.active && edge.type === "blocks" && edge.toNodeId === nodeId)
+      .map((edge) =>
+        Object.freeze({
+          candidateId: edge.fromNodeId,
+          state: graphNodeState(state, deterministicAnalysis, graph, edge.fromNodeId),
+          authority: edge.authoritative ? "authoritative" : "inferred",
+          confidence: edge.confidence,
+          sourceIds: nonEmptySourceIds(
+            edge.evidence.map((evidence) => evidence.sourceId),
+            `blocker edge ${edge.id}`,
+          ),
+          becameBlockingAt: edge.firstSeenAt,
+        }),
+      ),
+  );
+}
+
+function reassessDeterministicAnalysis(
+  invocation: DailyRunInvocation,
+  configuration: RuntimeConfiguration,
+  state: RuntimeState,
+  inventory: RepositoryInventory,
+  deterministicAnalysis: DeterministicAnalysis,
+  analysis: DeterministicItemAnalysis,
+  output: ValidatedCodexAnalysisOutput | undefined,
+  graph: GraphResult | undefined,
+): DeterministicItemAnalysis {
+  const repository = findRepository(inventory, analysis.item.repositoryId);
+  const teams = resolveRepositoryTeams(
+    repositoryFullName(repository),
+    configuration.config.teams,
+    inventory.teams,
+  );
+  const blockers =
+    graph == null
+      ? createNativeBlockers(analysis.item, analysis.relationCandidates)
+      : graphBlockers(state, deterministicAnalysis, graph, analysis.item.nodeId);
+  if (analysis.item.type === "issue" && analysis.detail.type === "issue") {
+    return Object.freeze({
+      ...analysis,
+      decision: determineIssueState({
+        issue: analysis.item,
+        blockers,
+        explicitRequestCandidates: createIssueRequestCandidates(analysis.item, analysis.detail),
+        explicitRequestAssessment: explicitRequestAssessment(
+          analysis.item,
+          analysis.detail,
+          output,
+        ),
+        teams,
+        confidenceThresholds: configuration.config.ai.confidence,
+        evaluatedAt: invocation.startedAt,
+      }),
+    });
+  }
+  if (analysis.item.type === "pull_request" && analysis.detail.type === "pull_request") {
+    const resolveLabelEffects = createLabelEffectsResolver(
+      normalizeLabelRules(configuration.config),
+    );
+    return Object.freeze({
+      ...analysis,
+      decision: determinePullRequestState({
+        pullRequest: analysis.item,
+        blockers,
+        checkFailureAssessment: checkFailureAssessment(analysis.detail, output),
+        labelEffects: resolveLabelEffects(repositoryFullName(repository), analysis.item.labels),
+        teams,
+        confidenceThresholds: configuration.config.ai.confidence,
+        evaluatedAt: invocation.startedAt,
+      }),
+    });
+  }
+  throw new TypeError(`GitHub項目と詳細の種別が一致しません。対象: ${analysis.item.nodeId}`);
+}
+
+function dependencyResolutions(
+  invocation: DailyRunInvocation,
+  state: RuntimeState,
+  graph: GraphResult | undefined,
+  nodeId: GitHubNodeId,
+): readonly DependencyResolutionProgress[] {
+  if (graph?.analysis.newlyUnblockedNodeIds.includes(nodeId) !== true) {
+    return Object.freeze([]);
+  }
+  const sourceIds = [...(previousSnapshot(state)?.relations ?? []), ...graph.edges]
+    .filter((edge) => edge.type === "blocks" && edge.toNodeId === nodeId)
+    .flatMap((edge) => edge.evidence.map((evidence) => evidence.sourceId));
+  if (sourceIds.length === 0) {
+    throw new TypeError(`newly unblocked項目 ${nodeId}の依存解消根拠がありません`);
+  }
+  return Object.freeze([
+    Object.freeze({
+      occurredAt: invocation.startedAt,
+      sourceIds: nonEmptySourceIds(sourceIds, `newly unblocked項目 ${nodeId}`),
+    }),
+  ]);
+}
+
+function primaryWaitingOnForDecision(
+  deterministicDecision: IssueStateDecision | PullRequestStateDecision,
+  decision: ReducedCodexDecision,
+): PrimaryWaitingOn {
+  if (decision.origin === "deterministic") {
+    return deterministicDecision.primaryWaitingOn;
+  }
+  if (decision.waitingOn.length === 0) {
+    return Object.freeze({
+      index: "not_applicable",
+      selectionReason: "Codex判定にwaitingOnがないためprimaryはありません",
+    });
+  }
+  return Object.freeze({
+    index: 0,
+    selectionReason: "Codexが返したwaitingOnの優先順でprimaryを選定しました",
+  });
+}
+
 function transitionBasisForDecision(
   invocation: DailyRunInvocation,
   analysis: DeterministicItemAnalysis,
@@ -1486,6 +2124,7 @@ function createTrackedItem(
   invocation: DailyRunInvocation,
   analysis: DeterministicItemAnalysis,
   decision: ReducedCodexDecision,
+  primaryWaitingOn: PrimaryWaitingOn,
   staleness: StalenessResult,
 ): TrackedItem {
   const commonFields = {
@@ -1497,6 +2136,7 @@ function createTrackedItem(
     url: analysis.item.url,
     title: analysis.item.title,
     state: trackedItemState(analysis.item, decision),
+    primaryWaitingOn,
     nextAction: decision.nextAction,
     createdAt: analysis.item.createdAt,
     githubUpdatedAt: analysis.item.githubUpdatedAt,
@@ -1531,6 +2171,7 @@ function createTrackedItem(
 function blockedParentContext(
   state: RuntimeState,
   decision: ReducedCodexDecision,
+  graph: GraphResult | undefined,
 ): BlockedParentContext {
   if (decision.status !== "blocked") {
     return Object.freeze({
@@ -1542,11 +2183,27 @@ function blockedParentContext(
   const previousSeverityByNodeId = new Map<string, Severity>(
     (previousSnapshot(state)?.items ?? []).map((item) => [item.nodeId, item.severity]),
   );
+  const previousGraph = previousGraphSnapshot(state);
+  const previousImpact =
+    previousGraph == null
+      ? Object.freeze([])
+      : analyzeGraph({
+          current: previousGraph,
+          previous: {
+            availability: "unavailable",
+          },
+        }).downstreamImpacts;
+  const downstreamImpactByNodeId = new Map<string, number>(
+    (graph?.analysis.downstreamImpacts ?? previousImpact).map((impact) => [
+      impact.nodeId,
+      impact.openNodeCount,
+    ]),
+  );
   const createRanking = (waitingOn: ReducedCodexDecision["waitingOn"][number]): BlockerRanking =>
     Object.freeze({
       candidateId: waitingOn.candidateId,
       severity: previousSeverityByNodeId.get(waitingOn.candidateId) ?? "none",
-      downstreamImpact: 0,
+      downstreamImpact: downstreamImpactByNodeId.get(waitingOn.candidateId) ?? 0,
     });
   const blockers: [BlockerRanking, ...BlockerRanking[]] = [
     createRanking(firstWaitingOn),
@@ -1558,7 +2215,7 @@ function blockedParentContext(
   });
 }
 
-function reduceAllAnalyses(
+function reduceAnalysisPass(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
   state: RuntimeState,
@@ -1566,15 +2223,28 @@ function reduceAllAnalyses(
   collection: CollectedItems,
   deterministicAnalysis: DeterministicAnalysis,
   codexAnalysis: CodexAnalysis,
+  graph: GraphResult | undefined,
 ): ReducedAnalysis {
   const resolveLabelEffects = createLabelEffectsResolver(normalizeLabelRules(configuration.config));
   const currentItems: ReducedItemAnalysis[] = [];
   const items: TrackedItem[] = [];
   const relationAssessments: RelationCandidateAssessment[] = [];
   let runStatus: ReducedAnalysis["runStatus"] = "success";
-  for (const analysis of deterministicAnalysis.items) {
+  for (const originalAnalysis of deterministicAnalysis.items) {
+    const output = codexOutputForAnalysis(originalAnalysis, codexAnalysis);
+    const analysis = reassessDeterministicAnalysis(
+      invocation,
+      configuration,
+      state,
+      inventory,
+      deterministicAnalysis,
+      originalAnalysis,
+      output,
+      graph,
+    );
     const reduction = reductionForAnalysis(configuration, analysis, codexAnalysis);
     const decision = reduction?.decision ?? reducedDeterministicDecision(analysis.decision);
+    const primaryWaitingOn = primaryWaitingOnForDecision(analysis.decision, decision);
     if (reduction?.ai.status === "unavailable") {
       runStatus = "fallback";
     }
@@ -1593,24 +2263,25 @@ function reduceAllAnalyses(
       },
       previousState: previousStalenessState(state, analysis.item.nodeId),
       events: analysis.item.events,
-      dependencyResolutions: [],
-      naturalLanguageAssessments: [],
+      dependencyResolutions: dependencyResolutions(invocation, state, graph, analysis.item.nodeId),
+      naturalLanguageAssessments: naturalLanguageProgressAssessments(analysis, output),
       minimumAiConfidence: configuration.config.ai.confidence.medium,
       repositoryFullName: repositoryFullName(repository),
       currentLabels: analysis.item.labels,
       resolveLabelEffects,
       thresholdsHours: configuration.config.staleness.thresholdsHours,
-      blockedParentContext: blockedParentContext(state, decision),
+      blockedParentContext: blockedParentContext(state, decision, graph),
     });
     currentItems.push(
       Object.freeze({
         item: analysis.item,
         detail: analysis.detail,
         decision,
+        primaryWaitingOn,
         staleness,
       }),
     );
-    items.push(createTrackedItem(invocation, analysis, decision, staleness));
+    items.push(createTrackedItem(invocation, analysis, decision, primaryWaitingOn, staleness));
   }
   const currentNodeIds = new Set(items.map((item) => item.nodeId));
   const currentRepositoryIds = new Set<string>(
@@ -1633,6 +2304,44 @@ function reduceAllAnalyses(
   });
 }
 
+function reduceAllAnalyses(
+  invocation: DailyRunInvocation,
+  configuration: RuntimeConfiguration,
+  state: RuntimeState,
+  inventory: RepositoryInventory,
+  collection: CollectedItems,
+  deterministicAnalysis: DeterministicAnalysis,
+  codexAnalysis: CodexAnalysis,
+): ReducedAnalysis {
+  const initialReduction = reduceAnalysisPass(
+    invocation,
+    configuration,
+    state,
+    inventory,
+    collection,
+    deterministicAnalysis,
+    codexAnalysis,
+    undefined,
+  );
+  const provisionalGraph = reconcileCurrentGraph(
+    invocation,
+    configuration,
+    state,
+    collection,
+    initialReduction,
+  );
+  return reduceAnalysisPass(
+    invocation,
+    configuration,
+    state,
+    inventory,
+    collection,
+    deterministicAnalysis,
+    codexAnalysis,
+    provisionalGraph,
+  );
+}
+
 function graphAnalysisNode(item: TrackedItem): GraphAnalysisNode {
   return Object.freeze({
     kind: item.type,
@@ -1640,6 +2349,16 @@ function graphAnalysisNode(item: TrackedItem): GraphAnalysisNode {
     repositoryId: item.repositoryId,
     state: item.state,
     directNotification: "eligible",
+  });
+}
+
+function externalGraphAnalysisNode(reference: ExternalGhostNode): GraphAnalysisNode {
+  return Object.freeze({
+    kind: reference.kind,
+    nodeId: reference.nodeId,
+    repositoryFullName: reference.repositoryFullName,
+    state: reference.state,
+    directNotification: reference.directNotification,
   });
 }
 
@@ -1683,7 +2402,10 @@ function previousGraphSnapshot(state: RuntimeState): GraphAnalysisSnapshot | und
     return undefined;
   }
   return Object.freeze({
-    nodes: Object.freeze(snapshot.items.map(graphAnalysisNode)),
+    nodes: Object.freeze([
+      ...snapshot.items.map(graphAnalysisNode),
+      ...snapshot.externalReferences.map(externalGraphAnalysisNode),
+    ]),
     edges: Object.freeze(snapshot.relations.map(previousGraphEdge)),
   });
 }
@@ -1718,11 +2440,13 @@ function reconcileCurrentGraph(
 ): GraphResult {
   const previous = previousGraphSnapshot(state);
   const nodeIds = new Set(reduction.items.map((item) => item.nodeId));
-  const candidates = collection.relationCandidates.filter((candidate) =>
-    relationNodes(candidate.relation).every(
-      (node) => node.scope === "organization" && nodeIds.has(node.nodeId),
-    ),
-  );
+  const candidates = collection.relationCandidates.filter((candidate) => {
+    const nodes = relationNodes(candidate.relation);
+    return (
+      nodes.some((node) => node.scope === "organization" && nodeIds.has(node.nodeId)) &&
+      nodes.every((node) => node.scope === "external_public" || nodeIds.has(node.nodeId))
+    );
+  });
   const candidateIds = new Set(candidates.map((candidate) => candidate.id));
   const reconciled: ReconcileGraphResult = reconcileGraph({
     previousGraph: {
@@ -1737,7 +2461,41 @@ function reconcileCurrentGraph(
     reconciledAt: invocation.startedAt,
   });
   const edges = preserveStaleGraphEdges(collection, previous?.edges ?? [], reconciled.edges);
-  const graphNodes = reduction.items.map(graphAnalysisNode);
+  const referencedNodeIds = new Set(edges.flatMap((edge) => [edge.fromNodeId, edge.toNodeId]));
+  const externalReferencesByNodeId = new Map(
+    [
+      ...(previousSnapshot(state)?.externalReferences ?? []),
+      ...collection.externalReferences,
+      ...candidates.flatMap((candidate) =>
+        relationNodes(candidate.relation).flatMap((node) =>
+          node.scope === "external_public"
+            ? [
+                Object.freeze({
+                  kind: "external_reference",
+                  nodeId: node.nodeId,
+                  repositoryFullName: `${node.repositoryOwner}/${node.repositoryName}`,
+                  number: node.number,
+                  url: node.url,
+                  title: `${node.repositoryOwner}/${node.repositoryName}#${node.number.toString()}`,
+                  state: node.state,
+                  recursiveTracking: "not_allowed",
+                  directNotification: "not_eligible",
+                } satisfies ExternalGhostNode),
+              ]
+            : [],
+        ),
+      ),
+    ].map((reference) => [reference.nodeId, reference]),
+  );
+  const externalReferences = Object.freeze(
+    [...externalReferencesByNodeId.values()]
+      .filter((reference) => referencedNodeIds.has(reference.nodeId))
+      .sort((left, right) => left.nodeId.localeCompare(right.nodeId)),
+  );
+  const graphNodes = [
+    ...reduction.items.map(graphAnalysisNode),
+    ...externalReferences.map(externalGraphAnalysisNode),
+  ];
   const analysis = analyzeGraph({
     current: {
       nodes: graphNodes,
@@ -1755,6 +2513,7 @@ function reconcileCurrentGraph(
   });
   return Object.freeze({
     edges,
+    externalReferences,
     analysis,
     previousAnalysis:
       previous == null
@@ -2010,6 +2769,7 @@ function validateRunCompleteness(
         severity,
       };
     }),
+    externalReferences: graph.externalReferences,
     relations: graph.edges.map(toStateRelation),
     run: {
       id: invocation.runId,
@@ -2175,6 +2935,16 @@ function environmentSecretProvider(
   });
 }
 
+function operationsAlertLedgerEntry(
+  entry: StateNotificationLedger["operationsAlerts"][number],
+): OperationsAlertLedgerEntry {
+  return Object.freeze({
+    ...entry,
+    occurredAt: createUtcIsoDateTime(entry.occurredAt),
+    sentAt: createUtcIsoDateTime(entry.sentAt),
+  });
+}
+
 async function deliverDiscord(
   adapters: ProductionRuntimeAdapters,
   settings: DiscordDeliverySettings,
@@ -2183,13 +2953,20 @@ async function deliverDiscord(
 ): Promise<
   Readonly<{
     value: DiscordResult;
+    notificationLedger: StateNotificationLedger;
     notificationCount: number;
     discordSentAt: UtcIsoDateTime | null;
   }>
 > {
   const sentNotificationEntries: NotificationLedgerEntry[] = [];
-  const knownOperationsAlerts = new Set(
-    validated.notificationLedger.operationsAlerts.map((entry) => entry.alertKey),
+  const notificationEntriesByKey = new Map(
+    validated.notificationLedger.entries.map((entry) => [entry.notificationKey, entry]),
+  );
+  const operationsAlertsByKey = new Map<string, OperationsAlertLedgerEntry>(
+    validated.notificationLedger.operationsAlerts.map((entry) => [
+      entry.alertKey,
+      operationsAlertLedgerEntry(entry),
+    ]),
   );
   const delivery = await adapters.sendDiscord({
     candidates: validated.notificationSelection.candidates,
@@ -2210,13 +2987,16 @@ async function deliverDiscord(
         random: adapters.random,
       },
       ledger: {
-        hasOperationsAlert: (alertKey) => Promise.resolve(knownOperationsAlerts.has(alertKey)),
+        hasOperationsAlert: (alertKey) => Promise.resolve(operationsAlertsByKey.has(alertKey)),
         recordNotifications: (entries) => {
           sentNotificationEntries.push(...entries);
+          for (const entry of entries) {
+            notificationEntriesByKey.set(entry.notificationKey, entry);
+          }
           return Promise.resolve();
         },
         recordOperationsAlert: (entry) => {
-          knownOperationsAlerts.add(entry.alertKey);
+          operationsAlertsByKey.set(entry.alertKey, entry);
           return Promise.resolve();
         },
       },
@@ -2236,8 +3016,103 @@ async function deliverDiscord(
     value: Object.freeze({
       delivery,
     }),
+    notificationLedger: createStateNotificationLedger({
+      schemaVersion: "1",
+      entries: [...notificationEntriesByKey.values()],
+      operationsAlerts: [...operationsAlertsByKey.values()],
+    }),
     notificationCount: sentNotificationEntries.length,
     discordSentAt: sentAt,
+  });
+}
+
+async function deliverOperationsAlert(
+  adapters: ProductionRuntimeAdapters,
+  config: Config,
+  knownSecrets: readonly string[],
+  state: RuntimeState,
+  incident: DiscordOperationsIncident & Readonly<{ kind: "collection" | "pages" }>,
+): Promise<
+  Readonly<{
+    value: DiscordResult;
+    notificationCount: number;
+    discordSentAt: UtcIsoDateTime | null;
+  }>
+> {
+  const notificationEntriesByKey = new Map(
+    state.notificationLedger.entries.map((entry) => [entry.notificationKey, entry]),
+  );
+  const operationsAlertsByKey = new Map<string, OperationsAlertLedgerEntry>(
+    state.notificationLedger.operationsAlerts.map((entry) => [
+      entry.alertKey,
+      operationsAlertLedgerEntry(entry),
+    ]),
+  );
+  const delivery = await adapters.sendDiscord({
+    candidates: [],
+    ledgerReservations: [],
+    items: previousSnapshot(state)?.items ?? [],
+    generatedAt: incident.occurredAt,
+    pagesDeployment: {
+      status: "failed",
+      incidentId: incident.incidentId,
+      kind: incident.kind,
+      failedAt: incident.occurredAt,
+      retryAttempts: incident.retryAttempts,
+    },
+    settings: discordDeliverySettings(config),
+    dependencies: {
+      secretProvider: environmentSecretProvider(adapters.environment),
+      httpClient: adapters.discordHttpClient,
+      runtime: {
+        now: adapters.now,
+        sleep: adapters.sleep,
+        random: adapters.random,
+      },
+      ledger: {
+        hasOperationsAlert: (alertKey) => Promise.resolve(operationsAlertsByKey.has(alertKey)),
+        recordNotifications: (entries) => {
+          for (const entry of entries) {
+            notificationEntriesByKey.set(entry.notificationKey, entry);
+          }
+          return Promise.resolve();
+        },
+        recordOperationsAlert: (entry) => {
+          operationsAlertsByKey.set(entry.alertKey, entry);
+          return Promise.resolve();
+        },
+      },
+    },
+  });
+  if (delivery.status !== "skipped" || delivery.reason !== "pages_deployment_failed") {
+    return Object.freeze({
+      value: Object.freeze({ delivery }),
+      notificationCount: 0,
+      discordSentAt: null,
+    });
+  }
+  const operationsDelivery = delivery.operationsAlert;
+  if (operationsDelivery.status !== "sent") {
+    return Object.freeze({
+      value: Object.freeze({ delivery }),
+      notificationCount: 0,
+      discordSentAt: null,
+    });
+  }
+  const notificationLedger = createStateNotificationLedger({
+    schemaVersion: "1",
+    entries: [...notificationEntriesByKey.values()],
+    operationsAlerts: [...operationsAlertsByKey.values()],
+  });
+  await state.session.persistNotificationLedger({
+    notificationLedger,
+    committedAt: operationsDelivery.ledgerEntry.sentAt,
+    knownSecrets,
+  });
+  return Object.freeze({
+    value: Object.freeze({ delivery }),
+    notificationCount: 1,
+    discordSentAt: operationsDelivery.ledgerEntry.sentAt,
   });
 }
 
@@ -2467,6 +3342,7 @@ async function collectProductionItems(
       trackedNodeIds,
       analysisNodeIds,
       changedNodeIds,
+      externalReferences: tracking.result.ghostNodes,
       relationCandidates,
       repositoryResults,
       collectionRepositories: Object.freeze(collectionRepositories),
@@ -2575,12 +3451,19 @@ function createDailyDependencies(
           collection,
         ),
       ),
-    analyzeWithCodex: async ({ invocation, configuration, state, deterministicAnalysis }) => {
+    analyzeWithCodex: async ({
+      invocation,
+      configuration,
+      state,
+      collection,
+      deterministicAnalysis,
+    }) => {
       const analysis = await analyzeCodex(
         adapters,
         invocation,
         configuration,
         state,
+        collection,
         deterministicAnalysis,
       );
       return Object.freeze({
@@ -2673,19 +3556,40 @@ function createDailyDependencies(
         adapters.pagesOutputDirectory,
         configuration.credentials.knownSecrets,
       ),
-    sendDiscord: async ({ configuration, validated, pages }) => {
+    sendDiscord: async ({ configuration, state, validated, pages }) => {
       const result = await deliverDiscord(
         adapters,
         discordDeliverySettings(configuration.config),
         validated,
         pages.pagesUrl,
       );
+      if (result.notificationCount > 0) {
+        assertNonNullable(result.discordSentAt, "Discord通知の送信時刻がありません");
+        await state.session.persistNotificationLedger({
+          notificationLedger: result.notificationLedger,
+          committedAt: result.discordSentAt,
+          knownSecrets: configuration.credentials.knownSecrets,
+        });
+      }
       return Object.freeze({
         value: result.value,
         notificationCount: result.notificationCount,
         discordSentAt: result.discordSentAt,
       });
     },
+    sendOperationsAlert: ({ invocation, configuration, state, kind, retryAttempts }) =>
+      deliverOperationsAlert(
+        adapters,
+        configuration.config,
+        configuration.credentials.knownSecrets,
+        state,
+        {
+          incidentId: `${invocation.runId}:${kind}`,
+          kind,
+          occurredAt: invocation.startedAt,
+          retryAttempts,
+        },
+      ),
     writeDryRunArtifact: (path, artifact) => adapters.writeJsonArtifact(path, artifact),
     writeCollectAnalyzeArtifact: (path, input) =>
       adapters.writeJsonArtifact(
@@ -2778,15 +3682,75 @@ async function notifyWorkflowDiscord(
   const artifact = await adapters.readWorkflowArtifact(
     resolve(adapters.repositoryPath, command.artifactPath),
   );
+  const config = await adapters.loadConfig(resolve(adapters.repositoryPath, command.configPath));
   if (command.pagesUrl !== artifact.pagesUrl) {
     throw new TypeError("deploy済みPages URLがworkflow artifactの公開先と一致しません");
   }
-  await deliverDiscord(
+  const session = await adapters.openStateSession(
+    adapters.createStateBranchAdapter(),
+    config.state,
+  );
+  const snapshot = await session.loadSnapshot();
+  if (snapshot.status === "missing_branch") {
+    throw new TypeError("Discord通知対象のstate branchがありません");
+  }
+  const state = Object.freeze({
+    session,
+    snapshot,
+    notificationLedger: await session.loadNotificationLedger(),
+  });
+  const result = await deliverDiscord(
     adapters,
     artifact.discordSettings,
-    validatedRunFromArtifact(artifact),
+    Object.freeze({
+      snapshot: artifact.snapshot,
+      notificationLedger: state.notificationLedger,
+      notificationSelection: artifact.notificationSelection,
+    }),
     command.pagesUrl,
   );
+  if (result.notificationCount > 0) {
+    assertNonNullable(result.discordSentAt, "Discord通知の送信時刻がありません");
+    await state.session.persistNotificationLedger({
+      notificationLedger: result.notificationLedger,
+      committedAt: result.discordSentAt,
+      knownSecrets: [],
+    });
+  }
+}
+
+async function notifyWorkflowOperations(
+  adapters: ProductionRuntimeAdapters,
+  command: NotifyOperationsCliCommand,
+): Promise<void> {
+  const config = await adapters.loadConfig(resolve(adapters.repositoryPath, command.configPath));
+  const session = await adapters.openStateSession(
+    adapters.createStateBranchAdapter(),
+    config.state,
+  );
+  const snapshot = await session.loadSnapshot();
+  if (snapshot.status === "missing_branch") {
+    throw new TypeError("運用障害通知を記録するstate branchがありません");
+  }
+  const state = Object.freeze({
+    session,
+    snapshot,
+    notificationLedger: await session.loadNotificationLedger(),
+  });
+  const knownSecrets = config.notifications.discord.enabled
+    ? Object.freeze([
+        requireEnvironmentValue(
+          adapters.environment,
+          config.notifications.discord.operationsWebhookSecretName,
+        ),
+      ])
+    : Object.freeze([]);
+  await deliverOperationsAlert(adapters, config, knownSecrets, state, {
+    incidentId: command.incidentId,
+    kind: command.incidentKind,
+    occurredAt: command.occurredAt,
+    retryAttempts: command.retryAttempts,
+  });
 }
 
 function createWorkflowStageRunner(adapters: ProductionRuntimeAdapters): WorkflowStageRunner {
@@ -2794,6 +3758,7 @@ function createWorkflowStageRunner(adapters: ProductionRuntimeAdapters): Workflo
     persistState: (command) => persistWorkflowState(adapters, command),
     buildPages: (command) => buildWorkflowPages(adapters, command),
     notifyDiscord: (command) => notifyWorkflowDiscord(adapters, command),
+    notifyOperations: (command) => notifyWorkflowOperations(adapters, command),
   });
 }
 

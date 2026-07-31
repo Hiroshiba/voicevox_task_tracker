@@ -710,6 +710,7 @@ export function App({ loadDetails, locale, now, summary, title }: AppProps) {
         setDetailsState({
           status: "loaded",
           itemsByNodeId: createItemDetailsMap(summary, details),
+          graphNodesByNodeId: new Map(details.graph.nodes.map((node) => [node.nodeId, node])),
         });
       })
       .catch((error: unknown) => {

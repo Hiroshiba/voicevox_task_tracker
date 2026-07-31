@@ -167,7 +167,12 @@ describe("日次workflow", () => {
         pages: "write",
         "id-token": "write",
       },
-      "notify-discord": {},
+      "notify-discord": {
+        contents: "write",
+      },
+      "notify-operations": {
+        contents: "write",
+      },
     });
   });
 
@@ -200,6 +205,9 @@ describe("日次workflow", () => {
     const notifyCommands = runCommands(
       workflow.jobs["notify-discord"] ?? { permissions: {}, steps: [] },
     ).join("\n");
+    const operationsCommands = runCommands(
+      workflow.jobs["notify-operations"] ?? { permissions: {}, steps: [] },
+    ).join("\n");
 
     expect(collectCommands).toContain("collect-analyze");
     expect(collectCommands).toContain("pnpm build:workflow-cli");
@@ -216,6 +224,9 @@ describe("日次workflow", () => {
     );
     expect(notifyCommands).toContain("tracker-run.mjs notify-discord");
     expect(notifyCommands).not.toContain("curl");
+    expect(operationsCommands).toContain("tracker:run notify-operations");
+    expect(operationsCommands).toContain("incident_kind=collection");
+    expect(operationsCommands).not.toContain("curl");
     for (const jobName of ["persist-state", "build-pages", "notify-discord"] as const) {
       expect(JSON.stringify(workflow.jobs[jobName])).toContain("actions/download-artifact@");
       expect(JSON.stringify(workflow.jobs[jobName])).toContain("validated-public-run");
@@ -250,6 +261,7 @@ describe("日次workflow", () => {
     const persistSource = JSON.stringify(workflow.jobs["persist-state"]);
     const buildSource = JSON.stringify(workflow.jobs["build-pages"]);
     const notifySource = JSON.stringify(workflow.jobs["notify-discord"]);
+    const operationsSource = JSON.stringify(workflow.jobs["notify-operations"]);
 
     expect(collectSource).toContain("GH_APP_PRIVATE_KEY");
     expect(collectSource).toContain("OPENAI_API_KEY");
@@ -259,6 +271,9 @@ describe("日次workflow", () => {
     expect(notifySource).toContain("DISCORD_WEBHOOK_URL");
     expect(notifySource).not.toContain("GH_APP_PRIVATE_KEY");
     expect(notifySource).not.toContain("OPENAI_API_KEY");
+    expect(operationsSource).toContain("DISCORD_OPERATIONS_WEBHOOK_URL");
+    expect(operationsSource).not.toContain("GH_APP_PRIVATE_KEY");
+    expect(operationsSource).not.toContain("OPENAI_API_KEY");
   });
 });
 
@@ -299,7 +314,11 @@ describe("workflow security", () => {
 
     const dailyWorkflow = await readWorkflow(DAILY_WORKFLOW_PATH);
     expect(Object.keys(dailyWorkflow.on).sort()).toEqual(["schedule", "workflow_dispatch"]);
-    expect(secretJobNames(dailyWorkflow)).toEqual(["collect-analyze", "notify-discord"]);
+    expect(secretJobNames(dailyWorkflow)).toEqual([
+      "collect-analyze",
+      "notify-discord",
+      "notify-operations",
+    ]);
     for (const jobName of secretJobNames(dailyWorkflow)) {
       expect(dailyWorkflow.jobs[jobName]?.if, jobName).toContain(
         "github.event.repository.default_branch",
@@ -308,6 +327,13 @@ describe("workflow security", () => {
     expect(needs(dailyWorkflow.jobs["notify-discord"] ?? { permissions: {}, steps: [] })).toContain(
       "collect-analyze",
     );
+    const operationsJob = dailyWorkflow.jobs["notify-operations"];
+    expect(needs(operationsJob ?? { permissions: {}, steps: [] })).toContain("collect-analyze");
+    expect(needs(operationsJob ?? { permissions: {}, steps: [] })).toContain("build-pages");
+    expect(needs(operationsJob ?? { permissions: {}, steps: [] })).toContain("deploy-pages");
+    expect(operationsJob?.if).toContain("needs.collect-analyze.result == 'failure'");
+    expect(operationsJob?.if).toContain("needs.build-pages.result == 'failure'");
+    expect(operationsJob?.if).toContain("needs.deploy-pages.result == 'failure'");
   });
 
   it("CIを外部APIへ接続せず全検証とgolden evalに割り当てる", async () => {

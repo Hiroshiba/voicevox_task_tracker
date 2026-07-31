@@ -50,7 +50,11 @@ export {
   type StateHistoryValue,
 } from "./history.js";
 export { MemoryStateBranchAdapter } from "./memory-state-branch-adapter.js";
-export { assertStatePublicSafety, type StatePublicSafetyInput } from "./public-safety.js";
+export {
+  assertStatePublicSafety,
+  assertStateValuesPublicSafety,
+  type StatePublicSafetyInput,
+} from "./public-safety.js";
 export {
   createStateSnapshot,
   parseStateSnapshot,
@@ -65,6 +69,7 @@ export {
 } from "./snapshot.js";
 export {
   StatePersistenceSession,
+  type PersistNotificationLedgerInput,
   type PersistStateTransactionInput,
   type PersistStateTransactionResult,
   type StateSnapshotReadResult,

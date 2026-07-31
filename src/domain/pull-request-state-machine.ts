@@ -13,6 +13,7 @@ import {
   type GitHubAccountActor,
   type GitHubNodeId,
   type NormalizedEvent,
+  type PrimaryWaitingOn,
   type Status,
   type UtcIsoDateTime,
   type WaitingOn,
@@ -67,15 +68,7 @@ export type PullRequestTransitionBasis = Readonly<{
 }>;
 
 /** primary waitingOnの選定結果。 */
-export type PullRequestPrimaryWaitingOn =
-  | Readonly<{
-      index: 0;
-      selectionReason: string;
-    }>
-  | Readonly<{
-      index: "not_applicable";
-      selectionReason: string;
-    }>;
+export type PullRequestPrimaryWaitingOn = PrimaryWaitingOn;
 
 /** 決定論的なPull Request状態機械の判定結果。 */
 export type PullRequestStateDecision = Readonly<{

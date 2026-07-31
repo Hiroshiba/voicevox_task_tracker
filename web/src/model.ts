@@ -414,6 +414,7 @@ export function validateGitHubUrl(value: string): GitHubUrlResult {
 function blockerText(
   item: PublicItemSummaryDto,
   itemsByNodeId: ReadonlyMap<string, PublicItemSummaryDto>,
+  initialGraphNodesByNodeId: ReadonlyMap<string, PublicSummaryDto["graph"]["nodes"][number]>,
 ): string {
   if (item.blockerNodeIds.length === 0) {
     return "なし";
@@ -421,8 +422,14 @@ function blockerText(
   return item.blockerNodeIds
     .map((nodeId) => {
       const blocker = itemsByNodeId.get(nodeId);
-      assertNonNullable(blocker, `blocker ${nodeId}の公開項目がありません`);
-      return blocker.displayReference;
+      if (blocker != null) {
+        return blocker.displayReference;
+      }
+      const graphNode = initialGraphNodesByNodeId.get(nodeId);
+      if (graphNode?.kind === "external_reference") {
+        return graphNode.displayReference;
+      }
+      return nodeId;
     })
     .join("、");
 }
@@ -437,6 +444,7 @@ export function createItemTableRows(
     summary.repositories.map((repository) => [repository.id, repository]),
   );
   const itemsByNodeId = new Map(summary.items.map((item) => [item.nodeId, item]));
+  const initialGraphNodesByNodeId = new Map(summary.graph.nodes.map((node) => [node.nodeId, node]));
 
   return summary.items.map((item) => {
     const repository = repositoriesById.get(item.repositoryId);
@@ -453,7 +461,7 @@ export function createItemTableRows(
         .map((waitingOn) => waitingOn.reasonSummary)
         .join(" ")}`,
       stallText: `${formatStallDuration(item.stallSince, now)} ${item.stallSince}`,
-      blockerText: blockerText(item, itemsByNodeId),
+      blockerText: blockerText(item, itemsByNodeId, initialGraphNodesByNodeId),
       updatedText: `${formatJstDateTime(item.githubUpdatedAt, locale)} ${formatRelativeTime(
         item.githubUpdatedAt,
         now,

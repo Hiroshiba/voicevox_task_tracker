@@ -11,6 +11,7 @@
     "collection",
     "repositories",
     "items",
+    "externalReferences",
     "relations",
     "run"
   ],
@@ -37,6 +38,12 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/item"
+      }
+    },
+    "externalReferences": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/externalReference"
       }
     },
     "relations": {
@@ -258,6 +265,87 @@
         }
       }
     },
+    "primaryWaitingOn": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["index", "selectionReason"],
+          "properties": {
+            "index": {
+              "const": 0
+            },
+            "selectionReason": {
+              "$ref": "#/$defs/shortString"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["index", "selectionReason"],
+          "properties": {
+            "index": {
+              "const": "not_applicable"
+            },
+            "selectionReason": {
+              "$ref": "#/$defs/shortString"
+            }
+          }
+        }
+      ]
+    },
+    "externalReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "nodeId",
+        "repositoryFullName",
+        "number",
+        "url",
+        "title",
+        "state",
+        "recursiveTracking",
+        "directNotification"
+      ],
+      "properties": {
+        "kind": {
+          "const": "external_reference"
+        },
+        "nodeId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "repositoryFullName": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 513
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "pattern": "^https://github\\.com/"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "state": {
+          "enum": ["open", "closed", "merged"]
+        },
+        "recursiveTracking": {
+          "const": "not_allowed"
+        },
+        "directNotification": {
+          "const": "not_eligible"
+        }
+      }
+    },
     "repository": {
       "type": "object",
       "additionalProperties": false,
@@ -344,6 +432,7 @@
         "state",
         "status",
         "waitingOn",
+        "primaryWaitingOn",
         "nextAction",
         "createdAt",
         "githubUpdatedAt",
@@ -417,6 +506,9 @@
           "items": {
             "$ref": "#/$defs/waitingOn"
           }
+        },
+        "primaryWaitingOn": {
+          "$ref": "#/$defs/primaryWaitingOn"
         },
         "nextAction": {
           "$ref": "#/$defs/shortString"
