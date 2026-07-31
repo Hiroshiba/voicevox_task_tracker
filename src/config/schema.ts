@@ -170,6 +170,7 @@ const labelEffectsSchema = z
     severityLift: z.number().int().min(0).max(1).optional(),
     requiresMaintainerDecision: z.boolean().optional(),
     suppressNotifications: z.boolean().optional(),
+    countsAsProgress: z.boolean().optional(),
   })
   .refine((effects) => Object.keys(effects).length > 0, {
     message: "effectを1件以上指定してください",

@@ -29,6 +29,16 @@ export {
   type ResolvedLabelEffects,
 } from "./label-resolution.js";
 export {
+  determineMeaningfulProgress,
+  type DependencyResolutionProgress,
+  type MeaningfulProgress,
+  type MeaningfulProgressInput,
+  type MeaningfulProgressResult,
+  type NaturalLanguageProgressAssessment,
+  type NaturalLanguageProgressCandidate,
+  type PreviousActivityState,
+} from "./meaningful-progress.js";
+export {
   determineIssueState,
   ISSUE_DETERMINISTIC_RULES_VERSION,
   type IssueBlocker,
@@ -50,8 +60,33 @@ export {
   type PullRequestStateMachineInput,
   type PullRequestTransitionBasis,
 } from "./pull-request-state-machine.js";
-export { compareSeverity } from "./severity.js";
+export {
+  compareSeverity,
+  determineDirectSeverity,
+  type CrossedSeverityThreshold,
+  type DirectSeverityDecision,
+  type DirectSeverityInput,
+  type DirectSeverityReason,
+  type SeverityThreshold,
+  type SeverityThresholds,
+} from "./severity.js";
 export { buildSourceId, parseSourceId, type SourceId, type SourceIdParts } from "./source-id.js";
+export {
+  calculateStaleness,
+  type BlockedParentContext,
+  type BlockedParentSeverityReason,
+  type BlockerRanking,
+  type CalculateStalenessInput,
+  type PreviousStalenessState,
+  type StalenessElapsedHours,
+  type StalenessResult,
+  type StalenessSeverityReason,
+  type StalenessState,
+  type StalenessTransitionBasis,
+  type StalenessWaitClass,
+  type StateDecisionForStaleness,
+  type TerminalSeverityReason,
+} from "./staleness.js";
 export { isTerminalStatus } from "./status.js";
 export {
   listConfiguredTeamReferences,

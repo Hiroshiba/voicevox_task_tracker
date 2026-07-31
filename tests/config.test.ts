@@ -149,6 +149,17 @@ describe("設定の読み込みと検証", () => {
     expect(error.message).toContain("criticalはurgent以上にしてください");
   });
 
+  it("ラベル変更を意味のある進捗として設定できる", () => {
+    const source = replaceRequired(
+      validConfigSource,
+      "        requiresMaintainerDecision: true",
+      "        requiresMaintainerDecision: true\n        countsAsProgress: true",
+    );
+    const config = parseConfig(source);
+
+    expect(config.labels.rules[1]?.effects.countsAsProgress).toBe(true);
+  });
+
   it("startAtをUTCへ正規化し、再解析しても変化させない", () => {
     const source = replaceRequired(
       validConfigSource,

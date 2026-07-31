@@ -46,6 +46,7 @@ const labelEffects = {
   severityLift: 0,
   requiresMaintainerDecision: false,
   suppressNotifications: false,
+  countsAsProgress: false,
 } satisfies ResolvedLabelEffects;
 
 const teams = {

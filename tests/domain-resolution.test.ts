@@ -157,6 +157,13 @@ describe("ラベル効果解決", () => {
         requiresMaintainerDecision: true,
       },
     },
+    {
+      repository: "VOICEVOX/*",
+      namePattern: "^進捗確認済み$",
+      effects: {
+        countsAsProgress: true,
+      },
+    },
   ]);
 
   it("同名ラベルをリポジトリ別に異なる意味へ解決する", () => {
@@ -165,12 +172,14 @@ describe("ラベル効果解決", () => {
       severityLift: 1,
       requiresMaintainerDecision: false,
       suppressNotifications: false,
+      countsAsProgress: false,
     });
     expect(resolveLabelEffects("VOICEVOX/engine", ["優先度高"])).toEqual({
       priorityWeight: 15,
       severityLift: 1,
       requiresMaintainerDecision: true,
       suppressNotifications: true,
+      countsAsProgress: false,
     });
   });
 
@@ -182,6 +191,7 @@ describe("ラベル効果解決", () => {
       severityLift: 1,
       requiresMaintainerDecision: true,
       suppressNotifications: true,
+      countsAsProgress: false,
     });
   });
 
@@ -198,7 +208,13 @@ describe("ラベル効果解決", () => {
       severityLift: 0,
       requiresMaintainerDecision: false,
       suppressNotifications: false,
+      countsAsProgress: false,
     });
+  });
+
+  it("設定したラベルだけを意味のある進捗として解決する", () => {
+    expect(resolveLabelEffects("VOICEVOX/other", ["進捗確認済み"]).countsAsProgress).toBe(true);
+    expect(resolveLabelEffects("VOICEVOX/other", ["優先度高"]).countsAsProgress).toBe(false);
   });
 
   it("設定検証を経ず不正な正規表現が渡っても明示的な例外にする", () => {

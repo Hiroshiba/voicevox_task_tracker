@@ -6,6 +6,7 @@ export type LabelRuleEffects = Readonly<{
   severityLift?: number;
   requiresMaintainerDecision?: boolean;
   suppressNotifications?: boolean;
+  countsAsProgress?: boolean;
 }>;
 
 /** リポジトリとラベル名に対する意味付けルール。 */
@@ -21,6 +22,7 @@ export type ResolvedLabelEffects = Readonly<{
   severityLift: number;
   requiresMaintainerDecision: boolean;
   suppressNotifications: boolean;
+  countsAsProgress: boolean;
 }>;
 
 /** リポジトリとラベル一覧からラベル効果を解決する関数。 */
@@ -70,6 +72,7 @@ export function createLabelEffectsResolver(rules: readonly LabelRule[]): LabelEf
     let severityLift = 0;
     let requiresMaintainerDecision = false;
     let suppressNotifications = false;
+    let countsAsProgress = false;
 
     for (const rule of compiledRules) {
       if (!matchesRepository(repositoryFullName, rule.repositoryPattern)) {
@@ -83,6 +86,7 @@ export function createLabelEffectsResolver(rules: readonly LabelRule[]): LabelEf
       severityLift = Math.max(severityLift, rule.effects.severityLift ?? 0);
       requiresMaintainerDecision ||= rule.effects.requiresMaintainerDecision ?? false;
       suppressNotifications ||= rule.effects.suppressNotifications ?? false;
+      countsAsProgress ||= rule.effects.countsAsProgress ?? false;
     }
 
     return Object.freeze({
@@ -90,6 +94,7 @@ export function createLabelEffectsResolver(rules: readonly LabelRule[]): LabelEf
       severityLift,
       requiresMaintainerDecision,
       suppressNotifications,
+      countsAsProgress,
     });
   };
 }
