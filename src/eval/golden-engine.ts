@@ -741,10 +741,10 @@ function transitionBasis(
   }
   const sourceId = decision.evidence[0]?.sourceId ?? deterministic.evidence[0]?.sourceId;
   assertNonNullable(sourceId, "AI判定の遷移根拠がありません");
-  const basis = Object.freeze({
+  const basis: IssueStateDecision["statusBasis"] = Object.freeze({
     sourceIds: Object.freeze([sourceId] satisfies [SourceId]),
     occurredAt: evaluatedAt,
-    precision: "inferred" as const,
+    precision: "inferred",
   });
   return Object.freeze({
     statusBasis: basis,
@@ -762,10 +762,10 @@ function createBlockedParentContext(
       status: "not_applicable",
     });
   }
-  const blockers = waitingOn.map((value) =>
+  const blockers: BlockerRanking[] = waitingOn.map((value) =>
     Object.freeze({
       candidateId: value.candidateId,
-      severity: "none" as const,
+      severity: "none",
       downstreamImpact: 0,
     }),
   );
@@ -786,13 +786,13 @@ function createStaleness(
 ): StalenessResult {
   const evaluatedAt = createUtcIsoDateTime(input.evaluatedAt);
   const basis = transitionBasis(evaluatedAt, deterministic, decision);
-  const previousState =
+  const previousState: Parameters<typeof calculateStaleness>[0]["previousState"] =
     item.previousState.availability === "not_available"
       ? Object.freeze({
-          availability: "not_available" as const,
+          availability: "not_available",
         })
       : Object.freeze({
-          availability: "available" as const,
+          availability: "available",
           value: Object.freeze({
             status: decision.status,
             waitingOn: decision.waitingOn,
@@ -1027,6 +1027,7 @@ function publicationStatus(
       repositoryInventory: inventory,
       knownSecrets: Object.freeze([]),
       options: Object.freeze({
+        confidenceThresholds: CONFIDENCE_THRESHOLDS,
         labelRules: Object.freeze([]),
         maxInitialGraphNodes: DEFAULT_INITIAL_GRAPH_NODE_LIMIT,
         maxSummaryGzipBytes: PUBLIC_SUMMARY_GZIP_LIMIT_BYTES,
@@ -1083,7 +1084,7 @@ function selectNotifications(
   graph: ReturnType<typeof analyzeGraph>,
   previousGraphAvailable: boolean,
 ): readonly StandardGoldenOutput["notifications"][number][] {
-  const notificationItems = analyses.map((analysis) => {
+  const notificationItems = analyses.map((analysis): DiscordNotificationItem => {
     const nodeId = createGitHubNodeId(analysis.input.nodeId);
     const cycleIds = graph.dependencyCycles
       .filter((cycle) => cycle.nodeIds.includes(nodeId))
@@ -1104,10 +1105,10 @@ function selectNotifications(
       decisionBasis:
         analysis.decision.origin === "deterministic"
           ? Object.freeze({
-              source: "deterministic" as const,
+              source: "deterministic",
             })
           : Object.freeze({
-              source: "ai_only" as const,
+              source: "ai_only",
               confidence: analysis.decision.confidence,
             }),
       priorityWeight: analysis.input.priorityWeight,
@@ -1128,14 +1129,14 @@ function selectNotifications(
         currentDependencyCycleIds: Object.freeze(cycleIds),
         previousDependencyCycles: previousGraphAvailable
           ? Object.freeze({
-              availability: "available" as const,
+              availability: "available",
               cycleIds: Object.freeze([]),
             })
           : Object.freeze({
-              availability: "not_available" as const,
+              availability: "not_available",
             }),
       }),
-    } satisfies DiscordNotificationItem);
+    });
   });
   const selection = selectDiscordNotifications({
     evaluatedAt: createUtcIsoDateTime(input.evaluatedAt),
@@ -1379,27 +1380,27 @@ function analyzeLargeFixture(
   const evaluatedAt = createUtcIsoDateTime(input.evaluatedAt);
   const items = createLargeItems(input.itemCount, evaluatedAt);
   const edges = createLargeEdges(input.itemCount, input.edgeCount, evaluatedAt);
-  const repositories = Object.freeze(
+  const repositories: readonly Repository[] = Object.freeze(
     Array.from({ length: 10 }, (_, index) =>
       Object.freeze({
         id: largeRepositoryId(index),
         owner: ORGANIZATION,
         name: `fixture-large-${index.toString().padStart(2, "0")}`,
-        visibility: "public" as const,
+        visibility: "public",
         archived: false,
         disabled: false,
         observedAt: evaluatedAt,
       }),
     ),
   );
-  const nodes = Object.freeze(
+  const nodes: readonly GraphAnalysisNode[] = Object.freeze(
     items.map((item) =>
       Object.freeze({
         kind: item.type,
         nodeId: item.nodeId,
         repositoryId: item.repositoryId,
         state: item.state,
-        directNotification: "eligible" as const,
+        directNotification: "eligible",
       }),
     ),
   );
@@ -1440,6 +1441,7 @@ function analyzeLargeFixture(
     repositoryInventory: repositories,
     knownSecrets: Object.freeze([]),
     options: Object.freeze({
+      confidenceThresholds: CONFIDENCE_THRESHOLDS,
       labelRules: Object.freeze([]),
       maxInitialGraphNodes: DEFAULT_INITIAL_GRAPH_NODE_LIMIT,
       maxSummaryGzipBytes: PUBLIC_SUMMARY_GZIP_LIMIT_BYTES,

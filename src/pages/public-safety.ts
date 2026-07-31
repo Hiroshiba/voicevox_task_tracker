@@ -4,7 +4,7 @@ import { type StateHistoryRecord, type StateSnapshot } from "../persistence/inde
 import { PagesPublicSafetyError } from "./errors.js";
 
 const MAX_PUBLIC_SOURCE_STRING_LENGTH = 4096;
-const SECRET_PATTERNS = [
+const SECRET_PATTERNS: readonly RegExp[] = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/iu,
   /\bauthorization\b\s*[:=]\s*(?:basic|bearer|token)\s+\S+/iu,
   /\b(?:github_pat_[A-Za-z0-9_]{8,}|gh[pousr]_[A-Za-z0-9]{8,})\b/u,
@@ -13,7 +13,7 @@ const SECRET_PATTERNS = [
   /\bxox[baprs]-[A-Za-z0-9-]{8,}\b/u,
   /\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/u,
   /https:\/\/(?:canary\.|ptb\.)?discord(?:app)?\.com\/api\/webhooks\/\d+\/[A-Za-z0-9._-]+/iu,
-] as const;
+];
 const CREDENTIAL_FIELD_NAMES = new Set([
   "accesstoken",
   "appid",

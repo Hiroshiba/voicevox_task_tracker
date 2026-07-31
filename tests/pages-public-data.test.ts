@@ -41,6 +41,10 @@ const PUBLIC_REPOSITORY_ID = "R_PUBLIC";
 const STALE_REPOSITORY_ID = "R_STALE";
 const PRIVATE_REPOSITORY_ID = "R_PRIVATE_SENTINEL";
 const defaultGenerationOptions = Object.freeze({
+  confidenceThresholds: {
+    high: 0.85,
+    medium: 0.65,
+  },
   labelRules: [
     {
       repository: "VOICEVOX/*",
@@ -499,6 +503,9 @@ describe("公開DTO生成", () => {
       defaultGenerationOptions,
     );
 
+    expect(generated.summary.confidenceThresholds).toEqual(
+      defaultGenerationOptions.confidenceThresholds,
+    );
     expect(generated.summary.aggregates).toMatchObject({
       repositoryCount: 1,
       itemCount: 3,
@@ -723,6 +730,7 @@ describe("公開summaryサイズと書き出し", () => {
       }),
     });
     const options = {
+      confidenceThresholds: defaultGenerationOptions.confidenceThresholds,
       labelRules: defaultGenerationOptions.labelRules,
       maxInitialGraphNodes: 100,
       maxSummaryGzipBytes: PUBLIC_SUMMARY_GZIP_LIMIT_BYTES,
@@ -740,6 +748,7 @@ describe("公開summaryサイズと書き出し", () => {
   it("設定した上限を超えるfixtureではDTO生成を失敗させる", () => {
     const snapshot = createSingleItemSnapshot("gzip上限超過fixture");
     const options = {
+      confidenceThresholds: defaultGenerationOptions.confidenceThresholds,
       labelRules: defaultGenerationOptions.labelRules,
       maxInitialGraphNodes: 1,
       maxSummaryGzipBytes: 64,

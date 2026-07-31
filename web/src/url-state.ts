@@ -7,7 +7,7 @@ import {
   type TableSort,
 } from "./model.js";
 
-const URL_PARAMETER_NAMES = [
+const URL_PARAMETER_NAMES: readonly string[] = [
   "q",
   "repo",
   "type",
@@ -19,7 +19,7 @@ const URL_PARAMETER_NAMES = [
   "sort",
   "direction",
   "item",
-] as const;
+];
 
 const tableColumnKeySchema = z.enum([
   "repository",

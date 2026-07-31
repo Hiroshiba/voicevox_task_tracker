@@ -44,6 +44,7 @@ export const DEFAULT_INITIAL_GRAPH_NODE_LIMIT = 500;
 
 /** 公開DTO生成時のラベルルール、初期graph、summaryサイズ設定。 */
 export type PublicDtoGenerationOptions = Readonly<{
+  confidenceThresholds: PublicSummaryDto["confidenceThresholds"];
   labelRules: readonly LabelRule[];
   maxInitialGraphNodes: number;
   maxSummaryGzipBytes: number;
@@ -168,6 +169,7 @@ function edgeHistoryValue(value: StateHistoryEdge | undefined): EdgeHistoryValue
     state: "present",
     value: {
       ...value,
+      evidence: value.evidence.map((entry) => ({ ...entry })),
     },
   };
 }
@@ -780,6 +782,9 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
     observedAt: latestRepositoryObservedAt(snapshot.repositories),
     trackingStartAt: snapshot.trackingStartAt,
     aiAvailable: snapshot.run.status === "success",
+    confidenceThresholds: {
+      ...input.options.confidenceThresholds,
+    },
     aggregates: {
       repositoryCount: snapshot.repositories.length,
       itemCount: snapshot.items.length,

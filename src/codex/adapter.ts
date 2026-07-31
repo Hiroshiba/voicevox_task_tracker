@@ -34,7 +34,11 @@ const OUTPUT_LAST_MESSAGE_FILE_NAME = "last-message.json";
 const MAX_TIMEOUT_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1000);
 
 /** Codex subprocessへ渡すことを許可した環境変数名。 */
-export const CODEX_ENVIRONMENT_VARIABLE_ALLOWLIST = ["HOME", "OPENAI_API_KEY", "PATH"] as const;
+export const CODEX_ENVIRONMENT_VARIABLE_ALLOWLIST: readonly string[] = [
+  "HOME",
+  "OPENAI_API_KEY",
+  "PATH",
+];
 
 const codexAdapterConfigurationSchema = z.strictObject({
   model: z.string().min(1, "modelは空にできません"),

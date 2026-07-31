@@ -187,8 +187,13 @@ function decisionFieldLabel(label: string, presentation: ConfidencePresentation)
 function ConfidenceDisplay({
   confidence,
   locale,
-}: Readonly<{ confidence: number; locale: string }>) {
-  const presentation = confidencePresentation(confidence);
+  thresholds,
+}: Readonly<{
+  confidence: number;
+  locale: string;
+  thresholds: PublicSummaryDto["confidenceThresholds"];
+}>) {
+  const presentation = confidencePresentation(confidence, thresholds);
   return (
     <div
       class={`confidence-panel confidence-${presentation.level}`}
@@ -317,7 +322,7 @@ function ItemDetails({
 }: ItemDetailsProps) {
   const item = details.summary;
   const heading = useRef<HTMLHeadingElement>(null);
-  const presentation = confidencePresentation(item.confidence);
+  const presentation = confidencePresentation(item.confidence, summary.confidenceThresholds);
   const itemsByNodeId = new Map(
     summary.items.map((summaryItem) => [summaryItem.nodeId, summaryItem]),
   );
@@ -382,7 +387,11 @@ function ItemDetails({
         </a>
       </div>
 
-      <ConfidenceDisplay confidence={item.confidence} locale={locale} />
+      <ConfidenceDisplay
+        confidence={item.confidence}
+        locale={locale}
+        thresholds={summary.confidenceThresholds}
+      />
 
       <dl class="detail-summary-grid">
         <div>
@@ -424,7 +433,10 @@ function ItemDetails({
         ) : (
           <ul class="waiting-on-list">
             {item.waitingOn.map((waitingOn) => {
-              const waitingOnPresentation = confidencePresentation(waitingOn.confidence);
+              const waitingOnPresentation = confidencePresentation(
+                waitingOn.confidence,
+                summary.confidenceThresholds,
+              );
               return (
                 <li key={`${waitingOn.kind}:${waitingOn.candidateId}:${waitingOn.role}`}>
                   <div>

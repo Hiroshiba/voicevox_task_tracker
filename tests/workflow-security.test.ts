@@ -203,8 +203,17 @@ describe("日次workflow", () => {
 
     expect(collectCommands).toContain("collect-analyze");
     expect(collectCommands).toContain("pnpm build:workflow-cli");
+    expect(collectCommands).toContain(
+      "git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state",
+    );
     expect(persistCommands).toContain("tracker-run.mjs persist-state");
+    expect(persistCommands).toContain(
+      "git push origin refs/heads/tracker-state:refs/heads/tracker-state",
+    );
     expect(buildCommands).toContain("tracker-run.mjs build-pages");
+    expect(buildCommands).toContain(
+      "git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state",
+    );
     expect(notifyCommands).toContain("tracker-run.mjs notify-discord");
     expect(notifyCommands).not.toContain("curl");
     for (const jobName of ["persist-state", "build-pages", "notify-discord"] as const) {

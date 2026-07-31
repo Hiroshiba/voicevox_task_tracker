@@ -671,6 +671,51 @@ describe("Web UI", () => {
     expect(details.textContent).toContain("判断者を確定できる根拠が不足");
   });
 
+  it("公開DTOのconfidence閾値を表示区分へ反映する", async () => {
+    const targetNodeId = "sample-item-editor-103";
+    const configuredSummary = createPublicSummaryDto({
+      ...sampleSummary,
+      confidenceThresholds: {
+        high: 0.9,
+        medium: 0.7,
+      },
+      items: sampleSummary.items.map((item) =>
+        item.nodeId === targetNodeId
+          ? {
+              ...item,
+              confidence: 0.8,
+              waitingOn: item.waitingOn.map((waitingOn) => ({
+                ...waitingOn,
+                confidence: 0.8,
+              })),
+            }
+          : item,
+      ),
+    });
+    const configuredItem = configuredSummary.items.find((item) => item.nodeId === targetNodeId);
+    assertNonNullable(configuredItem, "閾値確認用のsummary項目がありません");
+    const configuredDetails = createPublicDetailsDto({
+      ...sampleDetails,
+      items: sampleDetails.items.map((details) =>
+        details.summary.nodeId === targetNodeId
+          ? {
+              ...details,
+              summary: configuredItem,
+            }
+          : details,
+      ),
+    });
+    window.history.replaceState({}, "", `/?item=${targetNodeId}#item-details`);
+
+    renderAppWithDetails(configuredSummary, configuredDetails);
+    await flushUi();
+
+    const details = requiredElement<HTMLElement>(".item-details-card");
+    expect(details.querySelector(".confidence-estimate")).not.toBeNull();
+    expect(details.querySelector(".confidence-high_estimate")).toBeNull();
+    expect(details.textContent).toContain("判定: 推定");
+  });
+
   it("keyboard focusとlink activationだけで検索結果から詳細を開いて閉じる", async () => {
     renderApp(sampleSummary);
     const search = requiredElement<HTMLInputElement>("#item-search-input");

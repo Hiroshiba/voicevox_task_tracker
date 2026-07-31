@@ -84,7 +84,9 @@ DiscordはPages guardを通過したsnapshot由来の通知候補だけを受け
 
 CodexはGitHubの確定情報で解決できず、入力hashまたは隣接graph hashが変わった項目だけを分析します。
 model、backend version、prompt version、schema version、入力hashからcache keyを作り、同一入力だけを再利用します。
-call数、入力文字数、推定費用の上限を超えた候補は優先順位に従って延期します。
+call数、入力文字数、推定費用の上限を超えた候補を優先順位に従って延期できる設計です。
+現在の本番経路ではcall数と入力文字数だけが有効で、推定費用、blocker変化、downstream impactの入力は未接続です。
+本番経路へ未接続の機能は[要求トレーサビリティ](TRACEABILITY.md)に記録しています。
 
 実行時は空の一時directoryを作り、`codex exec`へ次の制約を渡します。
 

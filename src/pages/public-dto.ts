@@ -256,12 +256,37 @@ const publicDependencyCycleSchema = z.strictObject({
   nodeIds: z.array(identifierSchema).min(1),
   edgeIds: z.array(identifierSchema).min(1),
 });
-const edgeHistoryValueSchema = z.strictObject({
+const edgeHistoryEvidenceSchema = z.strictObject({
+  sourceId: identifierSchema,
+  supports: publicEvidenceSchema.shape.supports,
+  summary: shortStringSchema,
+});
+const edgeHistoryFieldsSchema = z.strictObject({
   fromNodeId: identifierSchema,
   toNodeId: identifierSchema,
   type: z.enum(["blocks", "parent_of", "implements", "related_to", "duplicates"]),
-  active: z.boolean(),
+  provenance: z.enum([
+    "native",
+    "explicit_text",
+    "closing_keyword",
+    "checklist",
+    "cross_reference",
+    "ai_inference",
+  ]),
+  confidence: z.number().min(0).max(1),
+  evidence: z.array(edgeHistoryEvidenceSchema),
+  firstSeenAt: dateTimeSchema,
+  lastConfirmedAt: dateTimeSchema,
 });
+const edgeHistoryValueSchema = z.discriminatedUnion("active", [
+  edgeHistoryFieldsSchema.extend({
+    active: z.literal(true),
+  }),
+  edgeHistoryFieldsSchema.extend({
+    active: z.literal(false),
+    removedAt: dateTimeSchema,
+  }),
+]);
 const edgeHistoryStateSchema = z.discriminatedUnion("state", [
   z.strictObject({
     state: z.literal("absent"),
@@ -335,6 +360,15 @@ const publicGraphSchema = z.strictObject({
   downstreamImpacts: z.array(downstreamImpactSchema),
   history: z.array(publicGraphHistoryEventSchema),
 });
+const publicConfidenceThresholdsSchema = z
+  .strictObject({
+    high: z.number().min(0).max(1),
+    medium: z.number().min(0).max(1),
+  })
+  .refine((thresholds) => thresholds.high >= thresholds.medium, {
+    message: "high confidence閾値はmedium confidence閾値以上にしてください",
+    path: ["high"],
+  });
 const publicSummaryDtoSchema = z.strictObject({
   schemaVersion: z.literal("1"),
   runId: identifierSchema,
@@ -342,6 +376,7 @@ const publicSummaryDtoSchema = z.strictObject({
   observedAt: dateTimeSchema,
   trackingStartAt: dateTimeSchema,
   aiAvailable: z.boolean(),
+  confidenceThresholds: publicConfidenceThresholdsSchema,
   aggregates: publicAggregateSchema,
   repositories: z.array(publicRepositorySchema),
   items: z.array(publicItemSummarySchema),

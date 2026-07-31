@@ -46,9 +46,11 @@ const graphQLResponseSchema = z.record(z.string(), z.unknown());
 function parseGraphQLDocument(query: string): DocumentNode {
   try {
     return parse(query);
-  } catch {
+  } catch (error: unknown) {
     throw new GitHubGraphQLDocumentError({
-      cause: new SyntaxError("GraphQL文書の構文が不正です"),
+      cause: new SyntaxError("GraphQL文書の構文が不正です", {
+        cause: error,
+      }),
     });
   }
 }

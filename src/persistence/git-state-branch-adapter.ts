@@ -76,8 +76,10 @@ function decodeUtf8(bytes: Uint8Array): string {
     return new TextDecoder("utf-8", {
       fatal: true,
     }).decode(bytes);
-  } catch {
-    throw new TypeError("git出力がUTF-8ではありません");
+  } catch (error: unknown) {
+    throw new TypeError("git出力がUTF-8ではありません", {
+      cause: error,
+    });
   }
 }
 

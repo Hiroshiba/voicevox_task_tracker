@@ -90,9 +90,11 @@ function decodeStateFile(result: StateFileReadResult, kind: string): string | un
     return new TextDecoder("utf-8", {
       fatal: true,
     }).decode(result.bytes);
-  } catch {
+  } catch (error: unknown) {
     throw new StateFormatError(kind, {
-      cause: new TypeError("stateファイルがUTF-8ではありません"),
+      cause: new TypeError("stateファイルがUTF-8ではありません", {
+        cause: error,
+      }),
     });
   }
 }
@@ -192,9 +194,11 @@ export class StatePersistenceSession {
     try {
       const parseJson: (text: string) => unknown = JSON.parse;
       value = parseJson(source);
-    } catch {
+    } catch (error: unknown) {
       throw new StateFormatError("AI cache", {
-        cause: new SyntaxError("JSON構文が不正です"),
+        cause: new SyntaxError("JSON構文が不正です", {
+          cause: error,
+        }),
       });
     }
     try {
@@ -206,9 +210,11 @@ export class StatePersistenceSession {
         status: "hit",
         entry,
       });
-    } catch {
+    } catch (error: unknown) {
       throw new StateFormatError("AI cache", {
-        cause: new TypeError("AI cache entryの検証に失敗しました"),
+        cause: new TypeError("AI cache entryの検証に失敗しました", {
+          cause: error,
+        }),
       });
     }
   }
@@ -218,10 +224,12 @@ export class StatePersistenceSession {
       const validated = createAiCacheEntry(entry);
       this.#pendingAiCacheEntries.set(validated.cacheKey, validated);
       return Promise.resolve();
-    } catch {
+    } catch (error: unknown) {
       return Promise.reject(
         new StateFormatError("AI cache", {
-          cause: new TypeError("AI cache entryの検証に失敗しました"),
+          cause: new TypeError("AI cache entryの検証に失敗しました", {
+            cause: error,
+          }),
         }),
       );
     }
@@ -309,6 +317,11 @@ export class StatePersistenceSession {
       records.push(...fileRecords);
     }
     return Object.freeze(records);
+  }
+
+  /** sessionの固定revisionにある全日次履歴を読み取る。 */
+  public async loadHistoryRecords(): Promise<readonly StateHistoryRecord[]> {
+    return this.#loadAllHistoryRecords();
   }
 
   /** branch上の日次履歴を再生して任意の二日間の差分を返す。 */

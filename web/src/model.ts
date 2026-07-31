@@ -7,6 +7,7 @@ import {
 import { assertNonNullable, UnreachableError } from "../../src/util/index.js";
 
 type PublicRepositoryDto = PublicSummaryDto["repositories"][number];
+type ConfidenceThresholds = PublicSummaryDto["confidenceThresholds"];
 type Status = PublicItemSummaryDto["status"];
 type Severity = PublicItemSummaryDto["severity"];
 
@@ -252,7 +253,10 @@ export function waitingOnRoleLabel(
 }
 
 /** confidenceを確定、推定、候補の表示へ変換する。 */
-export function confidencePresentation(confidence: number): ConfidencePresentation {
+export function confidencePresentation(
+  confidence: number,
+  thresholds: ConfidenceThresholds,
+): ConfidencePresentation {
   if (confidence < 0 || confidence > 1) {
     throw new RangeError("confidenceは0以上1以下でなければなりません");
   }
@@ -263,14 +267,14 @@ export function confidencePresentation(confidence: number): ConfidencePresentati
       fieldQualifier: "",
     };
   }
-  if (confidence >= 0.85) {
+  if (confidence >= thresholds.high) {
     return {
       level: "high_estimate",
       label: "確度の高い推定",
       fieldQualifier: "推定",
     };
   }
-  if (confidence >= 0.65) {
+  if (confidence >= thresholds.medium) {
     return {
       level: "estimate",
       label: "推定",
@@ -296,7 +300,10 @@ export function formatConfidence(confidence: number, locale: string): string {
 }
 
 /** waitingOn配列を日本語の表示文字列へ変換する。 */
-export function formatWaitingOn(item: PublicItemSummaryDto): string {
+export function formatWaitingOn(
+  item: PublicItemSummaryDto,
+  thresholds: ConfidenceThresholds,
+): string {
   if (item.waitingOn.length === 0) {
     if (
       item.status !== "terminal_merged" &&
@@ -309,7 +316,7 @@ export function formatWaitingOn(item: PublicItemSummaryDto): string {
   }
   return item.waitingOn
     .map((waitingOn) => {
-      const presentation = confidencePresentation(waitingOn.confidence);
+      const presentation = confidencePresentation(waitingOn.confidence, thresholds);
       return presentation.fieldQualifier.length === 0
         ? waitingOnCandidateLabel(waitingOn)
         : `${presentation.fieldQualifier}: ${waitingOnCandidateLabel(waitingOn)}`;
@@ -442,7 +449,7 @@ export function createItemTableRows(
       statusText: `${statusLabel(item.status)} ${item.status} ${severityLabel(
         item.severity,
       )} 優先度 ${item.priorityWeight.toString()}`,
-      waitingOnText: `${formatWaitingOn(item)} ${item.waitingOn
+      waitingOnText: `${formatWaitingOn(item, summary.confidenceThresholds)} ${item.waitingOn
         .map((waitingOn) => waitingOn.reasonSummary)
         .join(" ")}`,
       stallText: `${formatStallDuration(item.stallSince, now)} ${item.stallSince}`,

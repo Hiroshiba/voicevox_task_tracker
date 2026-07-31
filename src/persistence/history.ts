@@ -58,12 +58,37 @@ const responsibilitySchema = z.strictObject({
   waitingOn: z.array(waitingOnSchema),
 });
 const severitySchema = z.enum(["none", "watch", "urgent", "critical"]);
-const edgeSchema = z.strictObject({
+const evidenceSchema = z.strictObject({
+  sourceId: identifierSchema,
+  supports: z.enum(["status", "waiting_on", "relation", "progress", "notification", "uncertainty"]),
+  summary: z.string().max(1000),
+});
+const edgeFieldsSchema = z.strictObject({
   fromNodeId: identifierSchema,
   toNodeId: identifierSchema,
   type: z.enum(["blocks", "parent_of", "implements", "related_to", "duplicates"]),
-  active: z.boolean(),
+  provenance: z.enum([
+    "native",
+    "explicit_text",
+    "closing_keyword",
+    "checklist",
+    "cross_reference",
+    "ai_inference",
+  ]),
+  confidence: z.number().min(0).max(1),
+  evidence: z.array(evidenceSchema),
+  firstSeenAt: dateTimeSchema,
+  lastConfirmedAt: dateTimeSchema,
 });
+const edgeSchema = z.discriminatedUnion("active", [
+  edgeFieldsSchema.extend({
+    active: z.literal(true),
+  }),
+  edgeFieldsSchema.extend({
+    active: z.literal(false),
+    removedAt: dateTimeSchema,
+  }),
+]);
 const historyEventSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("responsibility_set"),
@@ -204,12 +229,30 @@ function createProjection(snapshot: StateSnapshot): StateHistoryProjection {
     edges: new Map(
       snapshot.relations.map((relation) => [
         relation.id,
-        Object.freeze({
-          fromNodeId: relation.fromNodeId,
-          toNodeId: relation.toNodeId,
-          type: relation.type,
-          active: relation.active,
-        }),
+        relation.active
+          ? Object.freeze({
+              fromNodeId: relation.fromNodeId,
+              toNodeId: relation.toNodeId,
+              type: relation.type,
+              provenance: relation.provenance,
+              confidence: relation.confidence,
+              evidence: relation.evidence.map((entry) => ({ ...entry })),
+              firstSeenAt: relation.firstSeenAt,
+              lastConfirmedAt: relation.lastConfirmedAt,
+              active: true,
+            })
+          : Object.freeze({
+              fromNodeId: relation.fromNodeId,
+              toNodeId: relation.toNodeId,
+              type: relation.type,
+              provenance: relation.provenance,
+              confidence: relation.confidence,
+              evidence: relation.evidence.map((entry) => ({ ...entry })),
+              firstSeenAt: relation.firstSeenAt,
+              lastConfirmedAt: relation.lastConfirmedAt,
+              active: false,
+              removedAt: relation.removedAt,
+            }),
       ]),
     ),
     severities: new Map(snapshot.items.map((item) => [item.nodeId, item.severity])),
@@ -362,9 +405,11 @@ export function parseStateHistoryRecords(source: string): readonly StateHistoryR
       try {
         const parseJson: (text: string) => unknown = JSON.parse;
         value = parseJson(line);
-      } catch {
+      } catch (error: unknown) {
         throw new StateFormatError("state history", {
-          cause: new SyntaxError("JSON Linesの構文が不正です"),
+          cause: new SyntaxError("JSON Linesの構文が不正です", {
+            cause: error,
+          }),
         });
       }
       return validateHistoryRecord(value);

@@ -210,9 +210,11 @@ export function parseStateNotificationLedger(source: string): StateNotificationL
   try {
     const parseJson: (text: string) => unknown = JSON.parse;
     value = parseJson(source);
-  } catch {
+  } catch (error: unknown) {
     throw new StateFormatError("notification ledger", {
-      cause: new SyntaxError("JSON構文が不正です"),
+      cause: new SyntaxError("JSON構文が不正です", {
+        cause: error,
+      }),
     });
   }
   return createStateNotificationLedger(value);
@@ -224,9 +226,11 @@ export function parseStateRunReport(source: string): StateRunReport {
   try {
     const parseJson: (text: string) => unknown = JSON.parse;
     value = parseJson(source);
-  } catch {
+  } catch (error: unknown) {
     throw new StateFormatError("run report", {
-      cause: new SyntaxError("JSON構文が不正です"),
+      cause: new SyntaxError("JSON構文が不正です", {
+        cause: error,
+      }),
     });
   }
   return createStateRunReport(value);

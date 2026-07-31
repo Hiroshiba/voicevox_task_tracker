@@ -261,13 +261,13 @@ const stateSchema = z
     }),
   })
   .superRefine((state, context) => {
-    const paths = [
+    const paths: readonly (readonly [string, string])[] = [
       ["snapshotPath", state.snapshotPath],
       ["historyDirectory", state.historyDirectory],
       ["aiCacheDirectory", state.aiCacheDirectory],
       ["notificationLedgerPath", state.notificationLedgerPath],
       ["runReportsDirectory", state.runReportsDirectory],
-    ] as const;
+    ];
     const seen = new Set<string>();
     for (const [name, path] of paths) {
       if (seen.has(path)) {

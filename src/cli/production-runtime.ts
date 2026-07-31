@@ -30,11 +30,14 @@ import {
   type GitHubNodeId,
   type IssueBlocker,
   type IssueStateDecision,
+  type BlockedParentContext,
+  type BlockerRanking,
   type OrganizationTrackingCandidate,
   type PullRequestStateDecision,
   type Relation,
   type Repository,
   type SourceId,
+  type Severity,
   type StalenessResult,
   type TrackedItem,
   type TrackingConnection,
@@ -76,10 +79,13 @@ import {
   type CandidateRelation,
   type PublicGitHubRelationItem,
   type ReconciledGraphEdge,
+  type GraphAnalysisNode,
+  type GraphAnalysisSnapshot,
   type ReconcileGraphResult,
   type RelationCandidate,
   type RelationCandidateAssessment,
   type RelationCandidateNode,
+  type RelationCandidateId,
 } from "../graph/index.js";
 import {
   generatePublicData,
@@ -97,6 +103,7 @@ import {
   type StateBranchAdapter,
   type StateNotificationLedger,
   type StateRunReport,
+  type StateHistoryRecord,
   type StateSnapshot,
   type StateSnapshotReadResult,
 } from "../persistence/index.js";
@@ -206,6 +213,14 @@ type ReducedAnalysis = Readonly<{
 type GraphResult = Readonly<{
   edges: readonly ReconciledGraphEdge[];
   analysis: AnalyzeGraphResult;
+  previousAnalysis:
+    | Readonly<{
+        availability: "unavailable";
+      }>
+    | Readonly<{
+        availability: "available";
+        value: AnalyzeGraphResult;
+      }>;
 }>;
 
 type ValidatedRun = Readonly<{
@@ -216,6 +231,7 @@ type ValidatedRun = Readonly<{
 
 type PersistedRun = Readonly<{
   result: PersistStateTransactionResult;
+  historyRecords: readonly StateHistoryRecord[];
 }>;
 
 type PagesResult = Readonly<{
@@ -934,7 +950,10 @@ function createAiCandidates(
     return Object.freeze({
       id: analysis.item.nodeId,
       deterministicResolution:
-        analysis.decision.determination === "determined" ? "high_confidence" : "ambiguous",
+        analysis.decision.determination === "determined" &&
+        analysis.relationCandidates.every((candidate) => candidate.authority === "authoritative")
+          ? "high_confidence"
+          : "ambiguous",
       input,
       graphNeighborhood: Object.freeze(
         analysis.relationCandidates.map((candidate) => candidate.id),
@@ -1230,6 +1249,36 @@ function createTrackedItem(
   });
 }
 
+function blockedParentContext(
+  state: RuntimeState,
+  decision: ReducedCodexDecision,
+): BlockedParentContext {
+  if (decision.status !== "blocked") {
+    return Object.freeze({
+      status: "not_applicable",
+    });
+  }
+  const firstWaitingOn = decision.waitingOn[0];
+  assertNonNullable(firstWaitingOn, "blocked項目にwaitingOnがありません");
+  const previousSeverityByNodeId = new Map<string, Severity>(
+    (previousSnapshot(state)?.items ?? []).map((item) => [item.nodeId, item.severity]),
+  );
+  const createRanking = (waitingOn: ReducedCodexDecision["waitingOn"][number]): BlockerRanking =>
+    Object.freeze({
+      candidateId: waitingOn.candidateId,
+      severity: previousSeverityByNodeId.get(waitingOn.candidateId) ?? "none",
+      downstreamImpact: 0,
+    });
+  const blockers: [BlockerRanking, ...BlockerRanking[]] = [
+    createRanking(firstWaitingOn),
+    ...decision.waitingOn.slice(1).map(createRanking),
+  ];
+  return Object.freeze({
+    status: "available",
+    blockers: Object.freeze(blockers),
+  });
+}
+
 function reduceAllAnalyses(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
@@ -1271,9 +1320,7 @@ function reduceAllAnalyses(
       currentLabels: analysis.item.labels,
       resolveLabelEffects,
       thresholdsHours: configuration.config.staleness.thresholdsHours,
-      blockedParentContext: {
-        status: "not_applicable",
-      },
+      blockedParentContext: blockedParentContext(state, decision),
     });
     currentItems.push(
       Object.freeze({
@@ -1285,6 +1332,19 @@ function reduceAllAnalyses(
     );
     items.push(createTrackedItem(invocation, analysis, decision, staleness));
   }
+  const currentNodeIds = new Set(items.map((item) => item.nodeId));
+  const currentRepositoryIds = new Set<string>(
+    inventory.allowlist.repositories.map((repository) => repository.id),
+  );
+  for (const previousItem of previousSnapshot(state)?.items ?? []) {
+    if (
+      isTerminalStatus(previousItem.status) &&
+      !currentNodeIds.has(previousItem.nodeId) &&
+      currentRepositoryIds.has(previousItem.repositoryId)
+    ) {
+      items.push(previousItem);
+    }
+  }
   return Object.freeze({
     items: Object.freeze(items),
     currentItems: Object.freeze(currentItems),
@@ -1293,12 +1353,69 @@ function reduceAllAnalyses(
   });
 }
 
+function graphAnalysisNode(item: TrackedItem): GraphAnalysisNode {
+  return Object.freeze({
+    kind: item.type,
+    nodeId: item.nodeId,
+    repositoryId: item.repositoryId,
+    state: item.state,
+    directNotification: "eligible",
+  });
+}
+
+function persistedRelationCandidateId(value: string): RelationCandidateId {
+  if (!value.startsWith("rel:") || value.length === "rel:".length) {
+    throw new TypeError(`永続化済みrelation IDの形式が不正です。対象: ${value}`);
+  }
+  return `rel:${value.slice("rel:".length)}`;
+}
+
+function previousGraphEdge(relation: Relation): ReconciledGraphEdge {
+  const fields = {
+    id: persistedRelationCandidateId(relation.id),
+    fromNodeId: relation.fromNodeId,
+    toNodeId: relation.toNodeId,
+    type: relation.type,
+    provenance: relation.provenance,
+    confidence: relation.confidence,
+    evidence: relation.evidence,
+    authoritative: relation.provenance === "native",
+    contradictions: Object.freeze([]),
+    firstSeenAt: relation.firstSeenAt,
+    lastConfirmedAt: relation.lastConfirmedAt,
+  };
+  if (relation.active) {
+    return Object.freeze({
+      ...fields,
+      active: true,
+    });
+  }
+  return Object.freeze({
+    ...fields,
+    active: false,
+    removedAt: relation.removedAt,
+  });
+}
+
+function previousGraphSnapshot(state: RuntimeState): GraphAnalysisSnapshot | undefined {
+  const snapshot = previousSnapshot(state);
+  if (snapshot == null) {
+    return undefined;
+  }
+  return Object.freeze({
+    nodes: Object.freeze(snapshot.items.map(graphAnalysisNode)),
+    edges: Object.freeze(snapshot.relations.map(previousGraphEdge)),
+  });
+}
+
 function reconcileCurrentGraph(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
+  state: RuntimeState,
   collection: CollectedItems,
   reduction: ReducedAnalysis,
 ): GraphResult {
+  const previous = previousGraphSnapshot(state);
   const nodeIds = new Set(reduction.items.map((item) => item.nodeId));
   const candidates = collection.relationCandidates.filter((candidate) =>
     relationNodes(candidate.relation).every(
@@ -1308,7 +1425,7 @@ function reconcileCurrentGraph(
   const candidateIds = new Set(candidates.map((candidate) => candidate.id));
   const reconciled: ReconcileGraphResult = reconcileGraph({
     previousGraph: {
-      edges: [],
+      edges: previous?.edges ?? [],
       historyEvents: [],
     },
     candidates,
@@ -1318,27 +1435,39 @@ function reconcileCurrentGraph(
     minimumInferredConfidence: configuration.config.ai.confidence.medium,
     reconciledAt: invocation.startedAt,
   });
-  const graphNodes = reduction.items.map((item) =>
-    Object.freeze({
-      kind: item.type,
-      nodeId: item.nodeId,
-      repositoryId: item.repositoryId,
-      state: item.state,
-      directNotification: "eligible",
-    }),
-  );
+  const graphNodes = reduction.items.map(graphAnalysisNode);
   const analysis = analyzeGraph({
     current: {
       nodes: graphNodes,
       edges: reconciled.edges,
     },
-    previous: {
-      availability: "unavailable",
-    },
+    previous:
+      previous == null
+        ? {
+            availability: "unavailable",
+          }
+        : {
+            availability: "available",
+            snapshot: previous,
+          },
   });
   return Object.freeze({
     edges: reconciled.edges,
     analysis,
+    previousAnalysis:
+      previous == null
+        ? Object.freeze({
+            availability: "unavailable",
+          })
+        : Object.freeze({
+            availability: "available",
+            value: analyzeGraph({
+              current: previous,
+              previous: {
+                availability: "unavailable",
+              },
+            }),
+          }),
   });
 }
 
@@ -1455,6 +1584,19 @@ function notificationItem(
   const cycleIds = graph.analysis.dependencyCycles
     .filter((cycle) => cycle.nodeIds.includes(item.nodeId))
     .map((cycle) => cycle.id);
+  const previousDependencyCycles: DiscordNotificationItem["graph"]["previousDependencyCycles"] =
+    graph.previousAnalysis.availability === "unavailable"
+      ? Object.freeze({
+          availability: "not_available",
+        })
+      : Object.freeze({
+          availability: "available",
+          cycleIds: Object.freeze(
+            graph.previousAnalysis.value.dependencyCycles
+              .filter((cycle) => cycle.nodeIds.includes(item.nodeId))
+              .map((cycle) => cycle.id),
+          ),
+        });
   return Object.freeze({
     nodeId: item.nodeId,
     createdAt: item.createdAt,
@@ -1503,9 +1645,7 @@ function notificationItem(
       downstreamImpact,
       newlyUnblocked: graph.analysis.newlyUnblockedNodeIds.includes(item.nodeId),
       currentDependencyCycleIds: cycleIds,
-      previousDependencyCycles: Object.freeze({
-        availability: "not_available",
-      }),
+      previousDependencyCycles,
     }),
   });
 }
@@ -1538,13 +1678,17 @@ function validateRunCompleteness(
   const severityByNodeId = new Map(
     reduction.currentItems.map((item) => [item.item.nodeId, item.staleness.severity]),
   );
+  const previousSeverityByNodeId = new Map(
+    (previousSnapshot(state)?.items ?? []).map((item) => [item.nodeId, item.severity]),
+  );
   const snapshot = createStateSnapshot({
     schemaVersion: "1",
     generatedAt: invocation.startedAt,
     trackingStartAt: trackingStartAt(configuration, state, invocation),
     repositories: snapshotRepositories(inventory),
     items: reduction.items.map((item) => {
-      const severity = severityByNodeId.get(item.nodeId);
+      const severity =
+        severityByNodeId.get(item.nodeId) ?? previousSeverityByNodeId.get(item.nodeId);
       assertNonNullable(severity, `追跡項目 ${item.nodeId}のseverityがありません`);
       return {
         ...item,
@@ -1668,8 +1812,10 @@ async function persistValidatedRun(
     repositoryInventory: inventory.inventory,
     knownSecrets: configuration.credentials.knownSecrets,
   });
+  const historyRecords = await state.session.loadHistoryRecords();
   return Object.freeze({
     result,
+    historyRecords,
   });
 }
 
@@ -1682,15 +1828,17 @@ async function buildPublicPages(
   config: Config,
   inventory: readonly Repository[],
   validated: ValidatedRun,
+  historyRecords: readonly StateHistoryRecord[],
   outputDirectory: string,
   knownSecrets: readonly string[],
 ): Promise<PagesResult> {
   const data = generatePublicData({
     snapshot: validated.snapshot,
-    historyRecords: [],
+    historyRecords,
     repositoryInventory: inventory,
     knownSecrets,
     options: {
+      confidenceThresholds: config.ai.confidence,
       labelRules: normalizeLabelRules(config),
       maxInitialGraphNodes: config.web.graph.maxInitialNodes,
       maxSummaryGzipBytes: PUBLIC_SUMMARY_GZIP_LIMIT_BYTES,
@@ -1947,8 +2095,8 @@ function createDailyDependencies(
           codexAnalysis,
         ),
       ),
-    reconcileGraph: ({ invocation, configuration, collection, reduction }) => {
-      const graph = reconcileCurrentGraph(invocation, configuration, collection, reduction);
+    reconcileGraph: ({ invocation, configuration, state, collection, reduction }) => {
+      const graph = reconcileCurrentGraph(invocation, configuration, state, collection, reduction);
       return Promise.resolve(
         Object.freeze({
           value: graph,
@@ -1998,12 +2146,13 @@ function createDailyDependencies(
         status,
         diagnostics,
       ),
-    buildPages: ({ configuration, repositoryInventory, validated }) =>
+    buildPages: ({ configuration, repositoryInventory, validated, persisted }) =>
       buildPublicPages(
         adapters,
         configuration.config,
         repositoryInventory.inventory,
         validated,
+        persisted.historyRecords,
         adapters.pagesOutputDirectory,
         configuration.credentials.knownSecrets,
       ),
@@ -2082,11 +2231,24 @@ async function buildWorkflowPages(
   if (pagesUrl(config) !== artifact.pagesUrl) {
     throw new TypeError("workflow artifactと現在の設定でPages URLが一致しません");
   }
+  const session = await adapters.openStateSession(
+    adapters.createStateBranchAdapter(),
+    config.state,
+  );
+  const persistedSnapshot = await session.loadSnapshot();
+  if (
+    persistedSnapshot.status === "missing_branch" ||
+    persistedSnapshot.snapshot.run.id !== artifact.snapshot.run.id
+  ) {
+    throw new TypeError("Pages生成対象のrunがtracker-state branchにありません");
+  }
+  const historyRecords = await session.loadHistoryRecords();
   await buildPublicPages(
     adapters,
     config,
     workflowArtifactRepositoryInventory(artifact),
     validatedRunFromArtifact(artifact),
+    historyRecords,
     resolve(adapters.repositoryPath, command.outputDirectory),
     [],
   );

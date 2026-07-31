@@ -208,9 +208,11 @@ export function parseStateSnapshot(source: string): StateSnapshot {
   try {
     const parseJson: (text: string) => unknown = JSON.parse;
     value = parseJson(source);
-  } catch {
+  } catch (error: unknown) {
     throw new StateFormatError("snapshot", {
-      cause: new SyntaxError("JSON構文が不正です"),
+      cause: new SyntaxError("JSON構文が不正です", {
+        cause: error,
+      }),
     });
   }
 
@@ -221,7 +223,9 @@ export function parseStateSnapshot(source: string): StateSnapshot {
       throw error;
     }
     throw new StateFormatError("snapshot", {
-      cause: new TypeError("snapshot検証中に予期しないエラーが発生しました"),
+      cause: new TypeError("snapshot検証中に予期しないエラーが発生しました", {
+        cause: error,
+      }),
     });
   }
 }

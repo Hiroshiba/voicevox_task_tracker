@@ -399,7 +399,7 @@ function AttentionQueue({
                   <dl class="attention-details">
                     <div>
                       <dt>waitingOn</dt>
-                      <dd>{formatWaitingOn(item)}</dd>
+                      <dd>{formatWaitingOn(item, summary.confidenceThresholds)}</dd>
                     </div>
                     <div>
                       <dt>停滞時間</dt>
@@ -590,7 +590,7 @@ function ItemTable({
                   </span>
                   <span class="priority-badge">優先度 {attentionPriority(row.item).label}</span>
                 </td>
-                <td>{formatWaitingOn(row.item)}</td>
+                <td>{formatWaitingOn(row.item, summary.confidenceThresholds)}</td>
                 <td>
                   <strong>{formatStallDuration(row.item.stallSince, now)}</strong>
                   <time dateTime={row.item.stallSince}>

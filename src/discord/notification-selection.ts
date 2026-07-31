@@ -232,12 +232,12 @@ function validateCurrentState(item: DiscordNotificationItem, evaluatedTimestamp:
   }
 
   const createdTimestamp = parseTimestamp(item.createdAt, `${item.nodeId}の作成時刻`);
-  const currentTimes = [
+  const currentTimes: readonly (readonly [string, UtcIsoDateTime])[] = [
     ["statusSince", item.current.statusSince],
     ["ownerSince", item.current.ownerSince],
     ["stallSince", item.current.stallSince],
     ["lastProgressAt", item.current.lastProgressAt],
-  ] as const;
+  ];
   for (const [name, value] of currentTimes) {
     const timestamp = parseTimestamp(value, `${item.nodeId}の${name}`);
     if (timestamp < createdTimestamp || timestamp > evaluatedTimestamp) {

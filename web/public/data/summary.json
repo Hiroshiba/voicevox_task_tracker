@@ -5,6 +5,10 @@
   "observedAt": "2026-07-31T00:00:00.000Z",
   "trackingStartAt": "2026-07-01T00:00:00.000Z",
   "aiAvailable": false,
+  "confidenceThresholds": {
+    "high": 0.85,
+    "medium": 0.65
+  },
   "aggregates": {
     "repositoryCount": 3,
     "itemCount": 5,

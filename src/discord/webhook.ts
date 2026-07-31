@@ -83,12 +83,8 @@ async function parseResponseBody(response: Response): Promise<unknown> {
   if (source.length === 0) {
     return undefined;
   }
-  try {
-    const parseJson: (text: string) => unknown = JSON.parse;
-    return parseJson(source);
-  } catch {
-    return undefined;
-  }
+  const parseJson: (text: string) => unknown = JSON.parse;
+  return parseJson(source);
 }
 
 function validateRetrySettings(settings: DiscordWebhookRetrySettings): void {
@@ -113,9 +109,11 @@ function readWebhookSecret(secretName: string, secretProvider: DiscordSecretProv
   let value: string | undefined;
   try {
     value = secretProvider.read(secretName);
-  } catch {
+  } catch (error: unknown) {
     throw new DiscordWebhookSecretReadError(secretName, {
-      cause: new Error("secret providerの読み取り処理が失敗しました"),
+      cause: new Error("secret providerの読み取り処理が失敗しました", {
+        cause: error,
+      }),
     });
   }
   if (value == null || value.trim().length === 0) {

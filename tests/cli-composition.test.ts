@@ -106,6 +106,54 @@ function createMissingStateAdapter(onCommit: () => void): StateBranchAdapter {
   });
 }
 
+function createMutableStateAdapter(onCommit: () => void): StateBranchAdapter {
+  const files = new Map<string, Uint8Array>();
+  let revision: string | undefined;
+  return Object.freeze({
+    resolveHead: () =>
+      Promise.resolve(
+        revision == null
+          ? Object.freeze({
+              status: "missing",
+            })
+          : Object.freeze({
+              status: "present",
+              revision,
+            }),
+      ),
+    readFile: (_resolvedRevision, path) => {
+      const bytes = files.get(path);
+      return Promise.resolve(
+        bytes == null
+          ? Object.freeze({
+              status: "missing",
+            })
+          : Object.freeze({
+              status: "present",
+              bytes,
+            }),
+      );
+    },
+    listFiles: (_resolvedRevision, directory) =>
+      Promise.resolve(
+        Object.freeze([...files.keys()].filter((path) => path.startsWith(`${directory}/`))),
+      ),
+    commit: (request) => {
+      for (const update of request.updates) {
+        files.set(update.path, update.bytes);
+      }
+      revision = "0000000000000000000000000000000000000001";
+      onCommit();
+      return Promise.resolve(
+        Object.freeze({
+          revision,
+          branchCreated: true,
+        }),
+      );
+    },
+  });
+}
+
 function createEmptyWorkflowArtifact(): WorkflowArtifact {
   const runId = "tracker-run:composition-workflow-stage";
   const metrics = {
@@ -381,6 +429,9 @@ describe("CLI合成root", () => {
     let discordSendCount = 0;
     const artifact = createEmptyWorkflowArtifact();
     const harness = createHarness({});
+    const stateAdapter = createMutableStateAdapter(() => {
+      stateCommitCount += 1;
+    });
     const runtimeAdapters: ProductionRuntimeAdapters = Object.freeze({
       ...harness.adapters,
       loadConfig,
@@ -396,10 +447,7 @@ describe("CLI合成root", () => {
       readReplayState: () => Promise.reject(new TypeError("replay stateは読みません")),
       readGoldenFixtures: () => Promise.reject(new TypeError("golden fixtureは読みません")),
       readWorkflowArtifact: () => Promise.resolve(artifact),
-      createStateBranchAdapter: () =>
-        createMissingStateAdapter(() => {
-          stateCommitCount += 1;
-        }),
+      createStateBranchAdapter: () => stateAdapter,
       writePublicData: () => {
         pagesWriteCount += 1;
         return Promise.resolve({
