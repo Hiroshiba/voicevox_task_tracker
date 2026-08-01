@@ -51,6 +51,10 @@ export {
   type IssueTransitionBasis,
 } from "./issue-state-machine.js";
 export {
+  aggregatePullRequestCheckState,
+  aggregatePullRequestReviewState,
+} from "./pull-request-aggregate-state.js";
+export {
   determinePullRequestState,
   PULL_REQUEST_DETERMINISTIC_RULES_VERSION,
   type PullRequestBlocker,

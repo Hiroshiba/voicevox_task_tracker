@@ -1515,6 +1515,81 @@ describe("本番収集の接続", () => {
 });
 
 describe("本番判定入力の接続", () => {
+  it("reviewとcheckの集約状態をsnapshotと公開DTOへ保存する", async () => {
+    const repository = createRepository("R_pr_aggregate", "pr-aggregate", FIRST_RUN_AT);
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const item = createPullRequestItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "aggregate-state",
+      updatedAt: observedAt,
+      observedAt,
+    });
+    const detail = createFailedCheckPullRequestDetail(item, observedAt);
+    fixture.openItems = [item];
+    fixture.details.set(
+      item.nodeId,
+      Object.freeze({
+        ...detail,
+        reviews: Object.freeze([
+          Object.freeze({
+            sourceId: buildSourceId("github_pull_request_review", "approved"),
+            nodeId: createGitHubNodeId("V_approved"),
+            sequence: 0,
+            state: "approved",
+            author: Object.freeze({
+              status: "identified",
+              account: Object.freeze({
+                sourceId: buildSourceId("github_account", "U_reviewer"),
+                nodeId: createGitHubNodeId("U_reviewer"),
+                login: "reviewer",
+                apiType: "User",
+              }),
+            }),
+            commit: Object.freeze({
+              status: "available",
+              sourceId: detail.headCommit.sourceId,
+              nodeId: detail.headCommit.nodeId,
+              sha: detail.headSha,
+            }),
+            submittedAt: observedAt,
+            body: "承認します",
+          } satisfies (typeof detail.reviews)[number]),
+        ]),
+      }),
+    );
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: false,
+    });
+    const harness = createCollectionHarness({ repositories: [fixture], config });
+
+    const result = await harness.runDaily(FIRST_RUN_AT);
+    const files = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const snapshotBytes = files.get("state/snapshot.json");
+    if (snapshotBytes == null) {
+      throw new TypeError("PR集約状態のsnapshotがありません");
+    }
+    const snapshot = parseStateSnapshot(new TextDecoder().decode(snapshotBytes));
+    const snapshotItem = snapshot.items.find((candidate) => candidate.nodeId === item.nodeId);
+    const publicItem = harness.publicData[0]?.details.items.find(
+      (candidate) => candidate.summary.nodeId === item.nodeId,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(snapshotItem).toMatchObject({
+      reviewState: "approved",
+      checkState: "failing",
+    });
+    expect(publicItem).toMatchObject({
+      reviewState: "approved",
+      checkState: "failing",
+    });
+  });
+
   it("mentionの明示依頼とhuman commentの意味判定を状態と進捗時刻へ反映する", async () => {
     const repository = createRepository("R_codex_issue", "codex-issue", FIRST_RUN_AT);
     const fixture = createRepositoryFixture(repository);

@@ -318,7 +318,7 @@ export type ReviewState =
 
 /** Pull Requestの集約check状態。 */
 export type CheckState =
-  "not_applicable" | "not_required" | "pending" | "passing" | "failing" | "unknown";
+  "not_applicable" | "not_required" | "pending" | "passing" | "failing" | "conflict" | "unknown";
 
 /** owner/repository#number形式の表示用別名。 */
 export type GitHubItemDisplayReference = `${string}/${string}#${number}`;

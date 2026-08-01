@@ -700,6 +700,7 @@
             "pending",
             "passing",
             "failing",
+            "conflict",
             "unknown"
           ]
         },

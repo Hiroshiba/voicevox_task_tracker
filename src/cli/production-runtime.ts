@@ -21,6 +21,8 @@ import {
 } from "../codex/index.js";
 import { type Config, type loadConfig } from "../config/index.js";
 import {
+  aggregatePullRequestCheckState,
+  aggregatePullRequestReviewState,
   createUtcIsoDateTime,
   createGitHubNodeId,
   createGitHubBotPredicate,
@@ -2357,8 +2359,14 @@ function createTrackedItem(
     observedAt: invocation.startedAt,
     labels: analysis.item.labels,
     assignees: analysis.item.assignees,
-    reviewState: analysis.item.type === "issue" ? "not_applicable" : "unknown",
-    checkState: analysis.item.type === "issue" ? "not_applicable" : "unknown",
+    reviewState:
+      analysis.item.type === "issue"
+        ? "not_applicable"
+        : aggregatePullRequestReviewState(analysis.item),
+    checkState:
+      analysis.item.type === "issue"
+        ? "not_applicable"
+        : aggregatePullRequestCheckState(analysis.item.mergeState),
     confidence: decision.confidence,
     evidence: decision.evidence,
     uncertainties: decision.uncertainties,

@@ -191,6 +191,7 @@ const publicItemDetailsSchema = z.strictObject({
     "pending",
     "passing",
     "failing",
+    "conflict",
     "unknown",
   ]),
   evidence: z.array(publicEvidenceSchema),

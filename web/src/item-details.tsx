@@ -116,6 +116,7 @@ const CHECK_STATE_LABELS = {
   pending: "実行中",
   passing: "成功",
   failing: "失敗",
+  conflict: "競合あり",
   unknown: "不明",
 } satisfies Readonly<Record<PublicItemDetailsDto["checkState"], string>>;
 
