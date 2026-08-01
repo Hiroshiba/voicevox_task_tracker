@@ -335,7 +335,7 @@ function createProfileComment(
     body: `次の担当を自然言語から判定します v${changedVersion.toString()}`,
     createdAt: BASELINE_RUN_AT,
     updatedAt: changedVersion === 1 ? BASELINE_RUN_AT : PROFILE_RUN_AT,
-    url: item.url,
+    url: `${item.url}#issuecomment-${item.number.toString()}`,
   });
 }
 

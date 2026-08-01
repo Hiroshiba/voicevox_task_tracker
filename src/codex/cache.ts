@@ -13,6 +13,7 @@ import { AiCacheFormatError, AiCacheReadError, AiCacheWriteError } from "./error
 import {
   createUtcIsoDateTime,
   REASONING_EFFORTS,
+  type AiCacheEntryId,
   type AnalysisMetadata,
   type ReasoningEffort,
 } from "../domain/index.js";
@@ -53,7 +54,7 @@ export type AiCacheIdentity = Readonly<{
 }>;
 
 /** content-addressed AI cacheのkey。 */
-export type AiCacheKey = `sha256:${string}`;
+export type AiCacheKey = AiCacheEntryId;
 
 /** 再現metadataとAI出力を保持するcache entry。 */
 export type AiCacheEntry = Readonly<{

@@ -238,6 +238,10 @@ function createSnapshot(options: SnapshotFixtureOptions): StateSnapshot {
         assignees: [],
         reviewState: "not_applicable",
         checkState: "not_applicable",
+        aiAnalysis: {
+          status: "not_used",
+        },
+        inputEvents: [],
         confidence: 1,
         evidence: [
           {

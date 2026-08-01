@@ -5,8 +5,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  buildSourceId,
   createGitHubRepositoryId,
   createUtcIsoDateTime,
+  type GitHubItemUrl,
   type Repository,
   type Severity,
   type StalenessWaitClass,
@@ -29,11 +31,14 @@ import {
   PUBLIC_SUMMARY_GZIP_LIMIT_BYTES,
   PagesPublicSafetyError,
   PublicSummarySizeError,
+  createEvidenceSourceUrlMap,
   generatePublicData,
+  resolveEvidenceSourceUrl,
   writePublicDataFiles,
   type GeneratedPublicData,
   type PublicDtoGenerationOptions,
 } from "../src/pages/index.js";
+import { assertNonNullable } from "../src/util/index.js";
 
 const TRACKING_START_AT = "2026-07-01T00:00:00.000Z";
 const CREATED_AT = "2026-07-02T00:00:00.000Z";
@@ -153,13 +158,15 @@ function createItem(options: ItemFixtureOptions): unknown {
     options.status === "terminal_merged" ||
     options.status === "terminal_completed" ||
     options.status === "terminal_not_planned";
+  const itemUrl = `https://github.com/VOICEVOX/${options.repositoryName}/issues/${options.number.toString()}`;
+  const evidenceSourceId = `github_item_detail:${options.nodeId}`;
   return {
     nodeId: options.nodeId,
     type: options.number % 2 === 0 ? "pull_request" : "issue",
     repositoryId: options.repositoryId,
     displayReference: `VOICEVOX/${options.repositoryName}#${options.number.toString()}`,
     number: options.number,
-    url: `https://github.com/VOICEVOX/${options.repositoryName}/issues/${options.number.toString()}`,
+    url: itemUrl,
     title: options.title,
     state: terminal ? "closed" : "open",
     notificationClass: "standard",
@@ -172,7 +179,7 @@ function createItem(options: ItemFixtureOptions): unknown {
             candidateId: `candidate:${options.nodeId}`,
             role: options.waitingOnRole,
             reasonSummary: "次の担当による対応待ちです",
-            sourceIds: [`fixture:${options.nodeId}`],
+            sourceIds: [evidenceSourceId],
             confidence: 0.9,
           },
         ],
@@ -198,10 +205,19 @@ function createItem(options: ItemFixtureOptions): unknown {
     assignees: [],
     reviewState: options.number % 2 === 0 ? "requested" : "not_applicable",
     checkState: options.number % 2 === 0 ? "pending" : "not_applicable",
+    aiAnalysis: {
+      status: "not_used",
+    },
+    inputEvents: [
+      {
+        sourceId: `github_timeline_event:${options.nodeId}`,
+        url: itemUrl,
+      },
+    ],
     confidence: 0.9,
     evidence: [
       {
-        sourceId: `fixture:${options.nodeId}`,
+        sourceId: evidenceSourceId,
         supports: "status",
         summary: "公開用の短い判定根拠です",
       },
@@ -230,7 +246,7 @@ function createRelation(
     confidence: 1,
     evidence: [
       {
-        sourceId: `fixture:${id}`,
+        sourceId: `github_native_dependency:${id}`,
         supports: "relation",
         summary: "公開用の短い関係根拠です",
       },
@@ -332,6 +348,126 @@ function generateFixture(
     options,
   });
 }
+
+describe("公開evidence URL", () => {
+  const individualSourceCases = [
+    {
+      kind: "github_issue_comment",
+      sourceUrl: "https://github.com/VOICEVOX/public/issues/1#issuecomment-101",
+    },
+    {
+      kind: "github_pull_request_review",
+      sourceUrl: "https://github.com/VOICEVOX/public/issues/1#pullrequestreview-202",
+    },
+    {
+      kind: "github_pull_request_review_comment",
+      sourceUrl: "https://github.com/VOICEVOX/public/issues/1#discussion_r303",
+    },
+  ] satisfies readonly Readonly<{ kind: string; sourceUrl: GitHubItemUrl }>[];
+
+  it.each(individualSourceCases)("$kindは個別anchorへ解決する", ({ kind, sourceUrl }) => {
+    const itemUrl = "https://github.com/VOICEVOX/public/issues/1";
+    const sourceId = buildSourceId(kind, "source");
+
+    expect(
+      resolveEvidenceSourceUrl(
+        sourceId,
+        itemUrl,
+        createEvidenceSourceUrlMap([
+          {
+            sourceId,
+            url: sourceUrl,
+          },
+        ]),
+      ),
+    ).toBe(sourceUrl);
+  });
+
+  it("項目単位のsourceは項目URLへ解決し未知の種別を拒否する", () => {
+    const itemUrl = "https://github.com/VOICEVOX/public/issues/1";
+
+    expect(
+      resolveEvidenceSourceUrl(
+        buildSourceId("github_item_body", "item"),
+        itemUrl,
+        createEvidenceSourceUrlMap([]),
+      ),
+    ).toBe(itemUrl);
+    expect(() =>
+      resolveEvidenceSourceUrl(
+        buildSourceId("unexpected_source", "event"),
+        itemUrl,
+        createEvidenceSourceUrlMap([]),
+      ),
+    ).toThrow("公開evidence URLへ解決できないsource ID種別です");
+  });
+
+  it("source ID別URL MapはURL衝突と入力イベント重複を拒否する", () => {
+    const sourceId = buildSourceId("github_issue_comment", "comment");
+    const firstUrl = "https://github.com/VOICEVOX/public/issues/1#issuecomment-101";
+    const secondUrl = "https://github.com/VOICEVOX/public/issues/1#issuecomment-102";
+
+    expect(() =>
+      createEvidenceSourceUrlMap([
+        { sourceId, url: firstUrl },
+        { sourceId, url: secondUrl },
+      ]),
+    ).toThrow("同じsource IDに異なるURLがあります");
+    expect(() =>
+      createEvidenceSourceUrlMap([
+        { sourceId, url: firstUrl },
+        { sourceId, url: firstUrl },
+      ]),
+    ).toThrow("同じsource IDの入力イベントが複数あります");
+    expect(() =>
+      resolveEvidenceSourceUrl(
+        sourceId,
+        "https://github.com/VOICEVOX/public/issues/1",
+        createEvidenceSourceUrlMap([]),
+      ),
+    ).toThrow("個別sourceに対応する入力イベントが1件ではありません");
+  });
+
+  it("公開詳細のcomment evidenceを個別anchorへ解決する", () => {
+    const source = createSingleItemSnapshot("comment evidenceを持つ項目");
+    const item = source.items[0];
+    assertNonNullable(item, "公開詳細の項目fixtureがありません");
+    const sourceId = buildSourceId("github_issue_comment", "comment");
+    const sourceUrl = "https://github.com/VOICEVOX/public/issues/1#issuecomment-101";
+    const snapshot = createStateSnapshot({
+      ...source,
+      items: [
+        {
+          ...item,
+          inputEvents: [
+            ...item.inputEvents,
+            {
+              sourceId,
+              url: sourceUrl,
+            },
+          ],
+          evidence: [
+            {
+              sourceId,
+              supports: "status",
+              summary: "個別commentが判定根拠です",
+            },
+          ],
+        },
+      ],
+    });
+
+    const generated = generateFixture(
+      snapshot,
+      [],
+      publicInventory(),
+      [],
+      defaultGenerationOptions,
+    );
+
+    expect(generated.details.items[0]?.evidence[0]?.sourceUrl).toBe(sourceUrl);
+  });
+});
 
 function publicInventory(): readonly Repository[] {
   return createInventory([
@@ -477,7 +613,7 @@ describe("Pages公開安全性", () => {
     expect(serialized).not.toContain(fullBody);
     expect(serialized).not.toContain('"body"');
     expect(generated.details.items[0]?.evidence[0]).toMatchObject({
-      sourceId: "fixture:I_SINGLE",
+      sourceId: "github_item_detail:I_SINGLE",
       sourceUrl: "https://github.com/VOICEVOX/public/issues/1",
       summary: "公開用の短い判定根拠です",
     });

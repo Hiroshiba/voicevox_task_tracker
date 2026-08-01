@@ -63,6 +63,8 @@
       ],
       "reviewState": "approved",
       "checkState": "passing",
+      "aiAnalysis": { "status": "not_used" },
+      "inputEvents": [],
       "evidence": [
         {
           "sourceId": "sample-source-editor-101",
@@ -134,6 +136,8 @@
       ],
       "reviewState": "requested",
       "checkState": "passing",
+      "aiAnalysis": { "status": "not_used" },
+      "inputEvents": [],
       "evidence": [
         {
           "sourceId": "sample-source-engine-202",
@@ -205,6 +209,8 @@
       ],
       "reviewState": "not_applicable",
       "checkState": "not_applicable",
+      "aiAnalysis": { "status": "not_used" },
+      "inputEvents": [],
       "evidence": [
         {
           "sourceId": "sample-source-editor-103",
@@ -284,6 +290,8 @@
       ],
       "reviewState": "not_applicable",
       "checkState": "not_applicable",
+      "aiAnalysis": { "status": "not_used" },
+      "inputEvents": [],
       "evidence": [
         {
           "sourceId": "sample-source-engine-204",
@@ -420,6 +428,8 @@
       ],
       "reviewState": "changes_requested",
       "checkState": "failing",
+      "aiAnalysis": { "status": "not_used" },
+      "inputEvents": [],
       "evidence": [
         {
           "sourceId": "sample-source-core-305",

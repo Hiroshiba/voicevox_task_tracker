@@ -658,6 +658,7 @@ describe("content-addressed AI cache", () => {
 
       expect(first.results[0]?.origin).toBe("executed");
       expect(second.results[0]?.origin).toBe("cache");
+      expect(second.results[0]?.cacheKey).toBe(first.results[0]?.cacheKey);
       expect(execute).toHaveBeenCalledTimes(1);
       expect(await readdir(cacheDirectory)).toHaveLength(1);
     } finally {

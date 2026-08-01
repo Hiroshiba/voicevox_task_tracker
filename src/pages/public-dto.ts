@@ -23,6 +23,7 @@ const githubUrlSchema = z
       url.password === ""
     );
   }, "GitHubのHTTPS URLを指定してください");
+const aiCacheKeySchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u, "AI cache keyが不正です");
 const nonNegativeIntegerSchema = z.number().int().nonnegative();
 const statusSchema = z.enum([
   "new_untriaged",
@@ -72,6 +73,19 @@ const publicEvidenceSchema = z.strictObject({
   supports: z.enum(["status", "waiting_on", "relation", "progress", "notification", "uncertainty"]),
   summary: shortStringSchema,
   sourceUrl: githubUrlSchema,
+});
+const trackedItemAiAnalysisSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("not_used"),
+  }),
+  z.strictObject({
+    status: z.literal("used"),
+    cacheKey: aiCacheKeySchema,
+  }),
+]);
+const trackedItemInputEventSchema = z.strictObject({
+  sourceId: identifierSchema,
+  url: githubUrlSchema,
 });
 const repositoryFreshnessSchema = z.discriminatedUnion("status", [
   z.strictObject({
@@ -194,6 +208,8 @@ const publicItemDetailsSchema = z.strictObject({
     "conflict",
     "unknown",
   ]),
+  aiAnalysis: trackedItemAiAnalysisSchema,
+  inputEvents: z.array(trackedItemInputEventSchema),
   evidence: z.array(publicEvidenceSchema),
   uncertainties: z.array(shortStringSchema),
   history: z.array(publicItemHistoryEventSchema),

@@ -155,6 +155,7 @@ const GRAPHQL_FRAGMENTS = `
 
   fragment DetailReviewFields on PullRequestReview {
     id
+    url
     author {
       ...DetailActorFields
     }
@@ -1096,6 +1097,7 @@ const commentConnectionSchema = z.object({
 });
 const reviewSchema = z.object({
   id: opaqueIdSchema,
+  url: githubItemUrlSchema,
   author: actorSchema,
   body: z.string(),
   state: z.enum(["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED"]),
@@ -2158,6 +2160,7 @@ function normalizeReviews(nodes: readonly RawReview[]): readonly GitHubPullReque
         commit: normalizeReviewCommit(review.commit),
         submittedAt: review.submittedAt,
         body: review.body,
+        url: review.url,
       } satisfies GitHubPullRequestReview);
     }),
   );

@@ -4,6 +4,7 @@ import {
   type LabelRule,
   type Relation,
   type Severity,
+  type SourceId,
   type Status,
   type TrackedItem,
 } from "../domain/index.js";
@@ -25,6 +26,7 @@ import {
   type StateSnapshot,
 } from "../persistence/index.js";
 import { assertNonNullable } from "../util/index.js";
+import { createEvidenceSourceUrlMap, resolveEvidenceSourceUrl } from "./evidence-source-url.js";
 import { PublicDtoSemanticError } from "./errors.js";
 import {
   createPublicDetailsDto,
@@ -345,6 +347,7 @@ function createAnalysisEdge(relation: Relation, index: number): ReconciledGraphE
 function createPublicEvidence(
   evidence: readonly Evidence[],
   sourceUrl: TrackedItem["url"],
+  sourceUrlsById: ReadonlyMap<SourceId, TrackedItem["url"]>,
 ): {
   sourceId: string;
   supports: Evidence["supports"];
@@ -355,13 +358,14 @@ function createPublicEvidence(
     sourceId: entry.sourceId,
     supports: entry.supports,
     summary: entry.summary,
-    sourceUrl,
+    sourceUrl: resolveEvidenceSourceUrl(entry.sourceId, sourceUrl, sourceUrlsById),
   }));
 }
 
 function createPublicGraphEdge(
   relation: Relation,
   itemByNodeId: ReadonlyMap<string, TrackedItem>,
+  sourceUrlsById: ReadonlyMap<SourceId, TrackedItem["url"]>,
 ): PublicGraphEdgeDto {
   const sourceItem = itemByNodeId.get(relation.fromNodeId) ?? itemByNodeId.get(relation.toNodeId);
   assertNonNullable(sourceItem, `relation ${relation.id}にOrganization内itemがありません`);
@@ -372,7 +376,7 @@ function createPublicGraphEdge(
     type: relation.type,
     provenance: relation.provenance,
     confidence: relation.confidence,
-    evidence: createPublicEvidence(relation.evidence, sourceItem.url),
+    evidence: createPublicEvidence(relation.evidence, sourceItem.url, sourceUrlsById),
     firstSeenAt: relation.firstSeenAt,
     lastConfirmedAt: relation.lastConfirmedAt,
   };
@@ -389,7 +393,10 @@ function createPublicGraphEdge(
   };
 }
 
-function createPublicGraph(snapshot: StateSnapshot): PublicGraph {
+function createPublicGraph(
+  snapshot: StateSnapshot,
+  sourceUrlsById: ReadonlyMap<SourceId, TrackedItem["url"]>,
+): PublicGraph {
   const itemByNodeId = new Map<string, TrackedItem>(
     snapshot.items.map((item) => [item.nodeId, item]),
   );
@@ -461,7 +468,9 @@ function createPublicGraph(snapshot: StateSnapshot): PublicGraph {
       state: reference.state,
     })),
   );
-  const edges = snapshot.relations.map((relation) => createPublicGraphEdge(relation, itemByNodeId));
+  const edges = snapshot.relations.map((relation) =>
+    createPublicGraphEdge(relation, itemByNodeId, sourceUrlsById),
+  );
 
   return Object.freeze({
     analysis,
@@ -745,7 +754,10 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
   const snapshot = createStateSnapshot(input.snapshot);
   const historyRecords = validateHistoryRecords(input.historyRecords, snapshot.generatedAt);
   const history = createPublicHistory(historyRecords);
-  const graph = createPublicGraph(snapshot);
+  const sourceUrlsById = createEvidenceSourceUrlMap(
+    snapshot.items.flatMap((item) => item.inputEvents),
+  );
+  const graph = createPublicGraph(snapshot, sourceUrlsById);
   const repositoriesById = new Map(
     snapshot.repositories.map((repository) => [repository.id, repository]),
   );
@@ -882,7 +894,13 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
         })),
         reviewState: item.reviewState,
         checkState: item.checkState,
-        evidence: createPublicEvidence(item.evidence, item.url),
+        aiAnalysis: {
+          ...item.aiAnalysis,
+        },
+        inputEvents: item.inputEvents.map((event) => ({
+          ...event,
+        })),
+        evidence: createPublicEvidence(item.evidence, item.url, sourceUrlsById),
         uncertainties: [...item.uncertainties],
         history: [...(history.itemEventsByNodeId.get(item.nodeId) ?? [])],
       };

@@ -109,6 +109,49 @@
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
     },
+    "trackedItemAiAnalysis": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": {
+              "const": "not_used"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "cacheKey"],
+          "properties": {
+            "status": {
+              "const": "used"
+            },
+            "cacheKey": {
+              "$ref": "#/$defs/fingerprint"
+            }
+          }
+        }
+      ]
+    },
+    "trackedItemInputEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceId", "url"],
+      "properties": {
+        "sourceId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "pattern": "^https://github\\.com/"
+        }
+      }
+    },
     "ai": {
       "oneOf": [
         {
@@ -577,6 +620,8 @@
         "assignees",
         "reviewState",
         "checkState",
+        "aiAnalysis",
+        "inputEvents",
         "confidence",
         "evidence",
         "uncertainties",
@@ -707,6 +752,15 @@
             "conflict",
             "unknown"
           ]
+        },
+        "aiAnalysis": {
+          "$ref": "#/$defs/trackedItemAiAnalysis"
+        },
+        "inputEvents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/trackedItemInputEvent"
+          }
         },
         "confidence": {
           "type": "number",

@@ -97,6 +97,7 @@ export type GitHubPullRequestReview = Readonly<{
   commit: GitHubReviewCommit;
   submittedAt: UtcIsoDateTime;
   body: string;
+  url: GitHubItemUrl;
 }>;
 
 /** 信頼できないbodyはCodex入力データだけに利用し、永続化や公開用DTOへ渡してはならないinline review comment取得値。 */

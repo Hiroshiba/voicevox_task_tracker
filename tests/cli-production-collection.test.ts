@@ -7,7 +7,7 @@ import {
   createProductionCliApplication,
   type ProductionRuntimeAdapters,
 } from "../src/cli/production-runtime.js";
-import { type CodexAnalysisInput } from "../src/codex/index.js";
+import { createAiCacheEntry, type CodexAnalysisInput } from "../src/codex/index.js";
 import { loadConfig, type Config } from "../src/config/index.js";
 import { type DiscordDigestDelivery } from "../src/discord/index.js";
 import {
@@ -302,7 +302,7 @@ function createDuplicateComments(
     body: "overlapで重複したコメント",
     createdAt: occurredAt,
     updatedAt: occurredAt,
-    url: item.url,
+    url: `${item.url}#issuecomment-${nodeId}`,
   } satisfies GitHubIssueComment);
   return Object.freeze([
     comment,
@@ -1633,6 +1633,7 @@ describe("本番判定入力の接続", () => {
             }),
             submittedAt: observedAt,
             body: "承認します",
+            url: `${item.url}#pullrequestreview-1`,
           } satisfies (typeof detail.reviews)[number]),
         ]),
       }),
@@ -1697,6 +1698,7 @@ describe("本番判定入力の接続", () => {
       body: "ありがとうございます。今日は暑いですね",
       createdAt: observedAt,
       updatedAt: observedAt,
+      url: `${item.url}#issuecomment-${chatCommentNodeId}`,
     } satisfies GitHubIssueComment);
     const comments = Object.freeze([meaningfulComment, chatComment]);
     fixture.openItems = [item];
@@ -1743,10 +1745,28 @@ describe("本番判定入力の接続", () => {
       },
     });
 
-    const result = await harness.runDry(FIRST_RUN_AT);
-    const snapshot = requireDryRunSnapshot(harness.artifacts);
+    const result = await harness.runDaily(FIRST_RUN_AT);
+    const files = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const snapshotSource = files.get("state/snapshot.json");
+    if (snapshotSource == null) {
+      throw new TypeError("判定追跡情報のsnapshotがありません");
+    }
+    const snapshot = parseStateSnapshot(new TextDecoder().decode(snapshotSource));
     const input = harness.codexInputs[0];
     const trackedItem = snapshot.items[0];
+    if (trackedItem?.aiAnalysis.status !== "used") {
+      throw new TypeError("判定からAI cache entryを参照できません");
+    }
+    const cachePath = `state/ai-cache/${trackedItem.aiAnalysis.cacheKey.slice("sha256:".length)}.json`;
+    const cacheSource = files.get(cachePath);
+    if (cacheSource == null) {
+      throw new TypeError("判定が参照するAI cache entryがありません");
+    }
+    const parseJson: (source: string) => unknown = JSON.parse;
+    const cacheEntry = createAiCacheEntry(parseJson(new TextDecoder().decode(cacheSource)));
+    const publicItem = harness.publicData[0]?.details.items.find(
+      (candidate) => candidate.summary.nodeId === item.nodeId,
+    );
 
     expect(result.exitCode).toBe(0);
     expect(input?.candidates.waitingOn.map((candidate) => candidate.id)).toEqual(
@@ -1780,6 +1800,36 @@ describe("本番判定入力の接続", () => {
           kind: "user",
         }),
       ],
+    });
+    expect(cacheEntry.cacheKey).toBe(trackedItem.aiAnalysis.cacheKey);
+    expect(cacheEntry.metadata).toEqual({
+      deterministicRulesVersion: "daily-rules-v1",
+      model: config.ai.model,
+      reasoningEffort: config.ai.execution.reasoningEffort,
+      backendVersion: "codex-cli-0.145.0",
+      promptVersion: config.ai.promptVersion,
+      schemaVersion: "1",
+      inputHash: cacheEntry.metadata.inputHash,
+      outputHash: cacheEntry.metadata.outputHash,
+      executedAt: FIRST_RUN_AT,
+    });
+    expect(cacheEntry.metadata.inputHash).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    expect(cacheEntry.metadata.outputHash).toMatch(/^sha256:[0-9a-f]{64}$/u);
+    expect(trackedItem.inputEvents).toEqual(
+      expect.arrayContaining([
+        {
+          sourceId: meaningfulComment.sourceId,
+          url: meaningfulComment.url,
+        },
+        {
+          sourceId: chatComment.sourceId,
+          url: chatComment.url,
+        },
+      ]),
+    );
+    expect(publicItem).toMatchObject({
+      aiAnalysis: trackedItem.aiAnalysis,
+      inputEvents: trackedItem.inputEvents,
     });
   });
 

@@ -689,6 +689,7 @@ function createReview(
 ): unknown {
   return {
     id,
+    url: `https://github.com/VOICEVOX/example/pull/7#pullrequestreview-${index.toString()}`,
     author: createActor(index),
     body: `レビュー${index.toString()}`,
     state,

@@ -6,6 +6,7 @@ export {
   PublicDtoValidationError,
   PublicSummarySizeError,
 } from "./errors.js";
+export { createEvidenceSourceUrlMap, resolveEvidenceSourceUrl } from "./evidence-source-url.js";
 export {
   DEFAULT_INITIAL_GRAPH_NODE_LIMIT,
   generatePublicData,

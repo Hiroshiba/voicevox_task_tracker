@@ -133,6 +133,10 @@ function createTrackedItem(number: number, options: ItemOptions): TrackedItem {
     assignees: Object.freeze([]),
     reviewState: "requested",
     checkState: "not_applicable",
+    aiAnalysis: Object.freeze({
+      status: "not_used",
+    }),
+    inputEvents: Object.freeze([]),
     confidence: 1,
     evidence: Object.freeze([]),
     uncertainties: Object.freeze([]),

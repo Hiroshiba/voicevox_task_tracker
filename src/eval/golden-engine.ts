@@ -933,6 +933,17 @@ function createTrackedItem(repositoryName: string, analysis: ItemAnalysis): Trac
     assignees: Object.freeze(item.assignees.map(createAccountActor)),
     reviewState: item.type === "issue" ? "not_applicable" : "unknown",
     checkState: item.type === "issue" ? "not_applicable" : "unknown",
+    aiAnalysis: Object.freeze({
+      status: "not_used",
+    }),
+    inputEvents: Object.freeze(
+      item.events.map((event) =>
+        Object.freeze({
+          sourceId: eventSourceId(event.id),
+          url: itemUrl(repositoryName, item),
+        }),
+      ),
+    ),
     confidence: decision.confidence,
     evidence: decision.evidence,
     uncertainties: decision.uncertainties,
@@ -1350,6 +1361,10 @@ function createLargeItems(itemCount: number, evaluatedAt: UtcIsoDateTime): reado
         assignees: Object.freeze([]),
         reviewState: index % 2 === 0 ? "not_applicable" : "requested",
         checkState: index % 2 === 0 ? "not_applicable" : "pending",
+        aiAnalysis: Object.freeze({
+          status: "not_used",
+        }),
+        inputEvents: Object.freeze([]),
         confidence: 1,
         evidence: Object.freeze([
           Object.freeze({

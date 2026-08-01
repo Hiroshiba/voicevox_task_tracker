@@ -298,6 +298,10 @@ function assertSnapshotSemantics(snapshot: StateSnapshot): void {
       item.assignees.map((assignee) => assignee.nodeId),
       "itemのassignee node ID",
     );
+    assertUnique(
+      item.inputEvents.map((event) => event.sourceId),
+      "itemの入力イベントsource ID",
+    );
     for (const dateTime of [
       item.createdAt,
       item.githubUpdatedAt,
@@ -376,6 +380,18 @@ function normalizeSnapshot(snapshot: StateSnapshot): StateSnapshot {
         .map((item) =>
           Object.freeze({
             ...item,
+            aiAnalysis: Object.freeze({
+              ...item.aiAnalysis,
+            }),
+            inputEvents: Object.freeze(
+              [...item.inputEvents]
+                .sort((left, right) => compareStrings(left.sourceId, right.sourceId))
+                .map((event) =>
+                  Object.freeze({
+                    ...event,
+                  }),
+                ),
+            ),
             severityContext: Object.freeze({
               ...item.severityContext,
             }),

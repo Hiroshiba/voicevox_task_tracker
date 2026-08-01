@@ -229,6 +229,7 @@ function createDetail(): Extract<GitHubItemDetail, { type: "pull_request" }> {
         },
         submittedAt: occurredAt,
         body: "公開結果へ残してはいけないレビュー全文",
+        url: "https://github.com/VOICEVOX/example/pull/1#pullrequestreview-1",
       },
     ],
     reviewThreads: [],

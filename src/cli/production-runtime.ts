@@ -36,6 +36,7 @@ import {
   determineTerminalRetention,
   determineTrackedItemWork,
   isTerminalStatus,
+  parseSourceId,
   resolveTrackingStartAt,
   resolveRepositoryTeams,
   selectTrackingItems,
@@ -67,6 +68,8 @@ import {
   type DependencyResolutionProgress,
   type ExternalGhostNode,
   type TrackedItem,
+  type TrackedItemAiAnalysis,
+  type TrackedItemInputEvent,
   type TrackingConnection,
   type TrackingNotificationClass,
   type TrackingRunCompletion,
@@ -2348,12 +2351,94 @@ function trackedItemState(
   return item.state;
 }
 
+function inputCommentUrl(
+  analysis: DeterministicItemAnalysis,
+  sourceId: SourceId,
+): TrackedItemInputEvent["url"] {
+  const sourceKind = parseSourceId(sourceId).kind;
+  if (sourceKind === "github_issue_comment") {
+    const comment = analysis.detail.comments.find((candidate) => candidate.sourceId === sourceId);
+    assertNonNullable(comment, `Issue commentのURLがありません。対象: ${sourceId}`);
+    return comment.url;
+  }
+  if (sourceKind === "github_pull_request_review_comment") {
+    if (analysis.detail.type !== "pull_request") {
+      throw new TypeError(`IssueにPull Request review commentがあります。対象: ${sourceId}`);
+    }
+    const comment = analysis.detail.reviewThreads
+      .flatMap((thread) => thread.comments)
+      .find((candidate) => candidate.sourceId === sourceId);
+    assertNonNullable(comment, `Pull Request review commentのURLがありません。対象: ${sourceId}`);
+    return comment.url;
+  }
+  throw new TypeError(`commentイベントのsource ID種別が不正です。対象: ${sourceId}`);
+}
+
+function inputReviewUrl(
+  analysis: DeterministicItemAnalysis,
+  sourceId: SourceId,
+): TrackedItemInputEvent["url"] {
+  if (parseSourceId(sourceId).kind !== "github_pull_request_review") {
+    throw new TypeError(`reviewイベントのsource ID種別が不正です。対象: ${sourceId}`);
+  }
+  if (analysis.detail.type !== "pull_request") {
+    throw new TypeError(`IssueにPull Request reviewがあります。対象: ${sourceId}`);
+  }
+  const review = analysis.detail.reviews.find((candidate) => candidate.sourceId === sourceId);
+  assertNonNullable(review, `Pull Request reviewのURLがありません。対象: ${sourceId}`);
+  return review.url;
+}
+
+function trackedItemInputEventUrl(
+  analysis: DeterministicItemAnalysis,
+  event: FreshObservedGitHubItem["events"][number],
+): TrackedItemInputEvent["url"] {
+  switch (event.kind) {
+    case "comment":
+      return inputCommentUrl(analysis, event.sourceId);
+    case "review":
+      return inputReviewUrl(analysis, event.sourceId);
+    default:
+      return analysis.item.url;
+  }
+}
+
+function trackedItemInputEvents(
+  analysis: DeterministicItemAnalysis,
+): readonly TrackedItemInputEvent[] {
+  return Object.freeze(
+    analysis.item.events.map((event) =>
+      Object.freeze({
+        sourceId: event.sourceId,
+        url: trackedItemInputEventUrl(analysis, event),
+      }),
+    ),
+  );
+}
+
+function trackedItemAiAnalysis(
+  codexAnalysis: CodexAnalysis,
+  nodeId: GitHubNodeId,
+): TrackedItemAiAnalysis {
+  const result = codexAnalysis.run?.results.find((candidate) => candidate.candidateId === nodeId);
+  if (result == null) {
+    return Object.freeze({
+      status: "not_used",
+    });
+  }
+  return Object.freeze({
+    status: "used",
+    cacheKey: result.cacheKey,
+  });
+}
+
 function createTrackedItem(
   invocation: DailyRunInvocation,
   analysis: DeterministicItemAnalysis,
   decision: ReducedCodexDecision,
   primaryWaitingOn: PrimaryWaitingOn,
   staleness: StalenessResult,
+  codexAnalysis: CodexAnalysis,
 ): TrackedItem {
   const commonFields = {
     nodeId: analysis.item.nodeId,
@@ -2385,6 +2470,8 @@ function createTrackedItem(
       analysis.item.type === "issue"
         ? "not_applicable"
         : aggregatePullRequestCheckState(analysis.item.mergeState),
+    aiAnalysis: trackedItemAiAnalysis(codexAnalysis, analysis.item.nodeId),
+    inputEvents: trackedItemInputEvents(analysis),
     confidence: decision.confidence,
     evidence: decision.evidence,
     uncertainties: decision.uncertainties,
@@ -2573,7 +2660,9 @@ function reduceAnalysisPass(
       }),
     );
     stalenessByNodeId.set(analysis.item.nodeId, trackedItemStaleness(staleness));
-    items.push(createTrackedItem(invocation, analysis, decision, primaryWaitingOn, staleness));
+    items.push(
+      createTrackedItem(invocation, analysis, decision, primaryWaitingOn, staleness, codexAnalysis),
+    );
   }
   const currentNodeIds = new Set(items.map((item) => item.nodeId));
   const currentRepositoryIds = new Set<string>(

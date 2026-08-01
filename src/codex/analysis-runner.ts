@@ -11,6 +11,7 @@ import {
   createAiCacheKey,
   determineAiCacheReuse,
   type AiCacheIdentity,
+  type AiCacheKey,
   type AiCacheStore,
 } from "./cache.js";
 import { hashCanonicalJson } from "./canonical-json.js";
@@ -53,6 +54,7 @@ export type AiAnalysisRunDependencies = Readonly<{
 export type AiAnalysisRunItemResult = Readonly<{
   candidateId: string;
   origin: "cache" | "executed";
+  cacheKey: AiCacheKey;
   fingerprint: AiAnalysisFingerprint;
   output: ValidatedCodexAnalysisOutput;
   metadata: AnalysisMetadata;
@@ -106,12 +108,14 @@ function createCacheIdentity(
 function createResult(
   candidate: PreparedAiAnalysisCandidate,
   origin: AiAnalysisRunItemResult["origin"],
+  cacheKey: AiCacheKey,
   output: ValidatedCodexAnalysisOutput,
   metadata: AnalysisMetadata,
 ): AiAnalysisRunItemResult {
   return Object.freeze({
     candidateId: candidate.id,
     origin,
+    cacheKey,
     fingerprint: candidate.fingerprint,
     output,
     metadata,
@@ -139,7 +143,9 @@ async function resolveCacheEntries(
       if (reuse.status === "reusable") {
         try {
           const output = validateCodexAnalysisOutput(reuse.entry.output, candidate.input);
-          results.push(createResult(candidate, "cache", output, reuse.entry.metadata));
+          results.push(
+            createResult(candidate, "cache", reuse.entry.cacheKey, output, reuse.entry.metadata),
+          );
           continue;
         } catch (error: unknown) {
           if (!(error instanceof CodexOutputValidationError)) {
@@ -227,7 +233,7 @@ async function executeSelectedCandidates(
       output,
     });
     await dependencies.cache.write(entry);
-    results.push(createResult(candidate, "executed", output, entry.metadata));
+    results.push(createResult(candidate, "executed", entry.cacheKey, output, entry.metadata));
   }
   return Object.freeze({
     results: Object.freeze(results),

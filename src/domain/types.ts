@@ -329,6 +329,22 @@ export type GitHubItemDisplayReference = `${string}/${string}#${number}`;
 /** GitHub上の項目を指す表示用URL。 */
 export type GitHubItemUrl = `https://github.com/${string}`;
 
+export type AiCacheEntryId = `sha256:${string}`;
+
+export type TrackedItemAiAnalysis =
+  | Readonly<{
+      status: "not_used";
+    }>
+  | Readonly<{
+      status: "used";
+      cacheKey: AiCacheEntryId;
+    }>;
+
+export type TrackedItemInputEvent = Readonly<{
+  sourceId: SourceId;
+  url: GitHubItemUrl;
+}>;
+
 type TrackedItemFields = Readonly<{
   nodeId: GitHubNodeId;
   type: TrackedItemType;
@@ -353,6 +369,8 @@ type TrackedItemFields = Readonly<{
   assignees: readonly GitHubAccountActor[];
   reviewState: ReviewState;
   checkState: CheckState;
+  aiAnalysis: TrackedItemAiAnalysis;
+  inputEvents: readonly TrackedItemInputEvent[];
   confidence: number;
   evidence: readonly Evidence[];
   uncertainties: readonly string[];
