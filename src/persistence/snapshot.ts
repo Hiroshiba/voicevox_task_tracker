@@ -9,8 +9,10 @@ import {
   StateSnapshotSemanticError,
 } from "./errors.js";
 import {
+  type Actor,
   isTerminalStatus,
   type ExternalGhostNode,
+  type GitHubAccountActor,
   type GitHubNodeId,
   type Relation,
   type Repository,
@@ -181,6 +183,28 @@ function assertUtcDateTime(value: string, description: string): void {
   if (new Date(value).toISOString() !== value) {
     throw new StateSnapshotSemanticError(`${description}はUTCへ正規化してください`);
   }
+}
+
+function normalizeActor(actor: Actor): Actor {
+  if (actor.type === "system") {
+    return Object.freeze({
+      type: actor.type,
+      name: actor.name,
+    });
+  }
+  return Object.freeze({
+    type: actor.type,
+    nodeId: actor.nodeId,
+    login: actor.login,
+  });
+}
+
+function normalizeAccountActor(actor: GitHubAccountActor): GitHubAccountActor {
+  return Object.freeze({
+    type: actor.type,
+    nodeId: actor.nodeId,
+    login: actor.login,
+  });
 }
 
 function assertSnapshotSemantics(snapshot: StateSnapshot): void {
@@ -391,6 +415,20 @@ function normalizeSnapshot(snapshot: StateSnapshot): StateSnapshot {
         .map((item) =>
           Object.freeze({
             ...item,
+            author:
+              item.author.status === "unavailable"
+                ? Object.freeze({ ...item.author })
+                : Object.freeze({
+                    ...item.author,
+                    actor: normalizeAccountActor(item.author.actor),
+                  }),
+            latestEventActor:
+              item.latestEventActor.status === "absent"
+                ? Object.freeze({ ...item.latestEventActor })
+                : Object.freeze({
+                    ...item.latestEventActor,
+                    actor: normalizeActor(item.latestEventActor.actor),
+                  }),
             aiAnalysis: Object.freeze({
               ...item.aiAnalysis,
             }),

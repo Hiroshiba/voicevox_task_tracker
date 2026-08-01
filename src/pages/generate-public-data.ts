@@ -888,6 +888,28 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
           stallSince: item.stallSince,
           observedAt: item.observedAt,
         },
+        author:
+          item.author.status === "unavailable"
+            ? {
+                ...item.author,
+              }
+            : {
+                ...item.author,
+                actor: {
+                  ...item.author.actor,
+                },
+              },
+        latestEventActor:
+          item.latestEventActor.status === "absent"
+            ? {
+                ...item.latestEventActor,
+              }
+            : {
+                ...item.latestEventActor,
+                actor: {
+                  ...item.latestEventActor.actor,
+                },
+              },
         labels: [...item.labels],
         assignees: item.assignees.map((assignee) => ({
           ...assignee,

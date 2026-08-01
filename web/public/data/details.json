@@ -53,6 +53,15 @@
         "stallSince": "2026-07-20T00:00:00.000Z",
         "observedAt": "2026-07-31T00:00:00.000Z"
       },
+      "author": {
+        "status": "identified",
+        "actor": {
+          "type": "human",
+          "nodeId": "sample-actor-dictionary-author",
+          "login": "sample-dictionary-author"
+        }
+      },
+      "latestEventActor": { "status": "absent" },
       "labels": ["優先度：高", "辞書"],
       "assignees": [
         {
@@ -125,6 +134,22 @@
         "ownerSince": "2026-07-15T00:00:00.000Z",
         "stallSince": "2026-07-15T00:00:00.000Z",
         "observedAt": "2026-07-31T00:00:00.000Z"
+      },
+      "author": {
+        "status": "identified",
+        "actor": {
+          "type": "human",
+          "nodeId": "sample-actor-api-creator",
+          "login": "sample-api-creator"
+        }
+      },
+      "latestEventActor": {
+        "status": "present",
+        "actor": {
+          "type": "human",
+          "nodeId": "sample-actor-reviewer",
+          "login": "sample-review-actor"
+        }
       },
       "labels": ["優先度：中", "API"],
       "assignees": [
@@ -199,6 +224,15 @@
         "stallSince": "2026-07-10T00:00:00.000Z",
         "observedAt": "2026-07-31T00:00:00.000Z"
       },
+      "author": {
+        "status": "identified",
+        "actor": {
+          "type": "human",
+          "nodeId": "sample-actor-discussion-author",
+          "login": "sample-discussion-author"
+        }
+      },
+      "latestEventActor": { "status": "absent" },
       "labels": ["優先度：高", "要議論", "配布方針"],
       "assignees": [
         {
@@ -279,6 +313,17 @@
         "ownerSince": "2026-07-10T00:00:00.000Z",
         "stallSince": "2026-07-01T00:00:00.000Z",
         "observedAt": "2026-07-31T00:00:00.000Z"
+      },
+      "author": {
+        "status": "unavailable",
+        "reason": "deleted_account"
+      },
+      "latestEventActor": {
+        "status": "present",
+        "actor": {
+          "type": "system",
+          "name": "GitHub System"
+        }
       },
       "labels": ["優先度：中", "blocked", "配布"],
       "assignees": [
@@ -417,6 +462,22 @@
         "ownerSince": "2026-07-05T00:00:00.000Z",
         "stallSince": "2026-07-05T00:00:00.000Z",
         "observedAt": "2026-07-28T00:00:00.000Z"
+      },
+      "author": {
+        "status": "identified",
+        "actor": {
+          "type": "human",
+          "nodeId": "sample-actor-bug-author",
+          "login": "sample-bug-author"
+        }
+      },
+      "latestEventActor": {
+        "status": "present",
+        "actor": {
+          "type": "bot",
+          "nodeId": "sample-actor-ci-bot",
+          "login": "sample-ci-bot"
+        }
       },
       "labels": ["優先度：高", "bug", "review"],
       "assignees": [

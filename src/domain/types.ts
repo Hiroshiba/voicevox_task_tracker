@@ -147,6 +147,16 @@ export type SystemActor = Readonly<{
 /** 正規化イベントを起こしたアクター。 */
 export type Actor = GitHubAccountActor | SystemActor;
 
+export type ObservedGitHubItemAuthor =
+  | Readonly<{
+      status: "identified";
+      actor: GitHubAccountActor;
+    }>
+  | Readonly<{
+      status: "unavailable";
+      reason: "deleted_account";
+    }>;
+
 type NormalizedEventBase = Readonly<{
   sourceId: SourceId;
   itemNodeId: GitHubNodeId;
@@ -345,6 +355,40 @@ export type TrackedItemInputEvent = Readonly<{
   url: GitHubItemUrl;
 }>;
 
+export type TrackedItemLatestEventActor =
+  | Readonly<{
+      status: "absent";
+    }>
+  | Readonly<{
+      status: "present";
+      actor: Actor;
+    }>;
+
+/** 正規化イベント列から時刻とsource IDが最も新しいアクターを取得する。 */
+export function createTrackedItemLatestEventActor(
+  events: readonly NormalizedEvent[],
+): TrackedItemLatestEventActor {
+  let latestEvent = events[0];
+  for (const event of events.slice(1)) {
+    if (
+      latestEvent == null ||
+      event.occurredAt > latestEvent.occurredAt ||
+      (event.occurredAt === latestEvent.occurredAt && event.sourceId > latestEvent.sourceId)
+    ) {
+      latestEvent = event;
+    }
+  }
+  if (latestEvent == null) {
+    return Object.freeze({
+      status: "absent",
+    });
+  }
+  return Object.freeze({
+    status: "present",
+    actor: Object.freeze({ ...latestEvent.actor }),
+  });
+}
+
 type TrackedItemFields = Readonly<{
   nodeId: GitHubNodeId;
   type: TrackedItemType;
@@ -353,6 +397,8 @@ type TrackedItemFields = Readonly<{
   number: number;
   url: GitHubItemUrl;
   title: string;
+  author: ObservedGitHubItemAuthor;
+  latestEventActor: TrackedItemLatestEventActor;
   state: TrackedItemState;
   notificationClass: TrackingNotificationClass;
   primaryWaitingOn: PrimaryWaitingOn;

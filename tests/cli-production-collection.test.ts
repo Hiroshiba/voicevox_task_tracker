@@ -1827,6 +1827,15 @@ describe("本番判定入力の接続", () => {
       sourceId: buildSourceId("github_issue_comment", chatCommentNodeId),
       nodeId: chatCommentNodeId,
       sequence: 1,
+      author: Object.freeze({
+        status: "identified",
+        account: Object.freeze({
+          sourceId: buildSourceId("github_account", "U_chat_commenter"),
+          nodeId: createGitHubNodeId("U_chat_commenter"),
+          login: "chat-commenter",
+          apiType: "User",
+        }),
+      }),
       body: "ありがとうございます。今日は暑いですね",
       createdAt: observedAt,
       updatedAt: observedAt,
@@ -1931,6 +1940,18 @@ describe("本番判定入力の接続", () => {
       status: "waiting_for_assignee",
       lastHumanActivityAt: FIRST_RUN_AT,
       lastProgressAt: meaningfulAt,
+      author: {
+        status: "identified",
+        actor: {
+          login: "author-1",
+        },
+      },
+      latestEventActor: {
+        status: "present",
+        actor: {
+          login: "chat-commenter",
+        },
+      },
       waitingOn: [
         expect.objectContaining({
           candidateId: "requested-user",
@@ -1965,6 +1986,8 @@ describe("本番判定入力の接続", () => {
       ]),
     );
     expect(publicItem).toMatchObject({
+      author: trackedItem.author,
+      latestEventActor: trackedItem.latestEventActor,
       aiAnalysis: trackedItem.aiAnalysis,
       inputEvents: trackedItem.inputEvents,
     });

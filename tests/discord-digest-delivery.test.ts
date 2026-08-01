@@ -106,6 +106,17 @@ function createTrackedItem(number: number, options: ItemOptions): TrackedItem {
     number,
     url,
     title: options.title,
+    author: Object.freeze({
+      status: "identified",
+      actor: Object.freeze({
+        type: "human",
+        nodeId: createGitHubNodeId(`U_author_${numberText}`),
+        login: `author-${numberText}`,
+      }),
+    }),
+    latestEventActor: Object.freeze({
+      status: "absent",
+    }),
     state: "open",
     notificationClass: "standard",
     status: "waiting_for_review",

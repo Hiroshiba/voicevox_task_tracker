@@ -4,19 +4,12 @@ import {
   type GitHubAccountActor,
   type GitHubNodeId,
   type NormalizedEvent,
+  type ObservedGitHubItemAuthor as DomainObservedGitHubItemAuthor,
   type UtcIsoDateTime,
 } from "./types.js";
 
 /** GitHub項目の作成者を保持する観測値。 */
-export type ObservedGitHubItemAuthor =
-  | Readonly<{
-      status: "identified";
-      actor: GitHubAccountActor;
-    }>
-  | Readonly<{
-      status: "unavailable";
-      reason: "deleted_account";
-    }>;
+export type ObservedGitHubItemAuthor = DomainObservedGitHubItemAuthor;
 
 /** 最新取得に成功したGitHub項目で判定に使う共通観測値。 */
 export type FreshObservedGitHubItemBase = Readonly<{

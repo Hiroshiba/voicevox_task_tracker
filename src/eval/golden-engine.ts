@@ -16,6 +16,7 @@ import {
   createGitHubNodeId,
   createGitHubRepositoryId,
   createLabelEffectsResolver,
+  createTrackedItemLatestEventActor,
   createUtcIsoDateTime,
   determineIssueState,
   determinePullRequestState,
@@ -931,6 +932,13 @@ function createTrackedItem(repositoryName: string, analysis: ItemAnalysis): Trac
     number: item.number,
     url: itemUrl(repositoryName, item),
     title: item.title,
+    author: Object.freeze({
+      status: "identified",
+      actor: createAccountActor(item.author),
+    }),
+    latestEventActor: createTrackedItemLatestEventActor(
+      item.events.map((event) => createEvent(createGitHubNodeId(item.nodeId), event)),
+    ),
     state: item.state,
     notificationClass: item.notificationClass,
     primaryWaitingOn:
@@ -1357,6 +1365,11 @@ function largeWaitingOn(nodeId: GitHubNodeId): WaitingOn {
 
 function createLargeItems(itemCount: number, evaluatedAt: UtcIsoDateTime): readonly TrackedItem[] {
   const createdAt = createUtcIsoDateTime("2026-01-01T00:00:00.000Z");
+  const author = Object.freeze({
+    type: "human",
+    nodeId: createGitHubNodeId("large-fixture-author"),
+    login: "large-fixture-author",
+  } satisfies GitHubAccountActor);
   return Object.freeze(
     Array.from({ length: itemCount }, (_, index) => {
       const nodeId = largeNodeId(index);
@@ -1370,6 +1383,13 @@ function createLargeItems(itemCount: number, evaluatedAt: UtcIsoDateTime): reado
         number: index + 1,
         url: `https://github.com/${ORGANIZATION}/${repositoryName}/${index % 2 === 0 ? "issues" : "pull"}/${(index + 1).toString()}`,
         title: `匿名性能項目 ${index.toString().padStart(4, "0")}`,
+        author: Object.freeze({
+          status: "identified",
+          actor: author,
+        }),
+        latestEventActor: Object.freeze({
+          status: "absent",
+        }),
         state: "open",
         notificationClass: "standard",
         status: "in_progress",

@@ -148,6 +148,32 @@ const accountActorSchema = z.strictObject({
   nodeId: identifierSchema,
   login: z.string().min(1).max(256),
 });
+const actorSchema = z.discriminatedUnion("type", [
+  accountActorSchema,
+  z.strictObject({
+    type: z.literal("system"),
+    name: z.string().min(1).max(512),
+  }),
+]);
+const itemAuthorSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("identified"),
+    actor: accountActorSchema,
+  }),
+  z.strictObject({
+    status: z.literal("unavailable"),
+    reason: z.literal("deleted_account"),
+  }),
+]);
+const latestEventActorSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("absent"),
+  }),
+  z.strictObject({
+    status: z.literal("present"),
+    actor: actorSchema,
+  }),
+]);
 const responsibilitySchema = z.strictObject({
   status: statusSchema,
   waitingOn: z.array(waitingOnSchema),
@@ -189,6 +215,8 @@ const publicItemHistoryEventSchema = z.discriminatedUnion("kind", [
 const publicItemDetailsSchema = z.strictObject({
   summary: publicItemSummarySchema,
   timestamps: itemTimestampsSchema,
+  author: itemAuthorSchema,
+  latestEventActor: latestEventActorSchema,
   labels: z.array(z.string().min(1).max(256)),
   assignees: z.array(accountActorSchema),
   reviewState: z.enum([

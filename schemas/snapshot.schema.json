@@ -390,6 +390,85 @@
         }
       }
     },
+    "actor": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/accountActor"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "name"],
+          "properties": {
+            "type": {
+              "const": "system"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          }
+        }
+      ]
+    },
+    "itemAuthor": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "actor"],
+          "properties": {
+            "status": {
+              "const": "identified"
+            },
+            "actor": {
+              "$ref": "#/$defs/accountActor"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "reason"],
+          "properties": {
+            "status": {
+              "const": "unavailable"
+            },
+            "reason": {
+              "const": "deleted_account"
+            }
+          }
+        }
+      ]
+    },
+    "latestEventActor": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": {
+              "const": "absent"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "actor"],
+          "properties": {
+            "status": {
+              "const": "present"
+            },
+            "actor": {
+              "$ref": "#/$defs/actor"
+            }
+          }
+        }
+      ]
+    },
     "waitingOn": {
       "type": "object",
       "additionalProperties": false,
@@ -602,6 +681,8 @@
         "number",
         "url",
         "title",
+        "author",
+        "latestEventActor",
         "state",
         "notificationClass",
         "status",
@@ -657,6 +738,12 @@
         "title": {
           "type": "string",
           "maxLength": 500
+        },
+        "author": {
+          "$ref": "#/$defs/itemAuthor"
+        },
+        "latestEventActor": {
+          "$ref": "#/$defs/latestEventActor"
         },
         "state": {
           "enum": ["open", "closed", "merged"]

@@ -209,6 +209,17 @@ function createSnapshot(options: SnapshotFixtureOptions): StateSnapshot {
         number: 1,
         url: "https://github.com/VOICEVOX/example/issues/1",
         title: "追跡対象",
+        author: {
+          status: "identified",
+          actor: {
+            type: "human",
+            nodeId: "U_AUTHOR",
+            login: "author",
+          },
+        },
+        latestEventActor: {
+          status: "absent",
+        },
         state: "open",
         notificationClass: "standard",
         status: options.responsibility.status,

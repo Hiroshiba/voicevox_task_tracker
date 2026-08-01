@@ -581,6 +581,14 @@ describe("Web UI", () => {
         nodeIds: ["sample-item-editor-103"],
       },
       {
+        query: "sample-dictionary-author",
+        nodeIds: ["sample-item-editor-101"],
+      },
+      {
+        query: "sample-review-actor",
+        nodeIds: ["sample-item-engine-202"],
+      },
+      {
         query: "sample-reviewers",
         nodeIds: ["sample-item-engine-202"],
       },

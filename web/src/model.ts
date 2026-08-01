@@ -10,6 +10,10 @@ type PublicRepositoryDto = PublicSummaryDto["repositories"][number];
 type ConfidenceThresholds = PublicSummaryDto["confidenceThresholds"];
 type Status = PublicItemSummaryDto["status"];
 type Severity = PublicItemSummaryDto["severity"];
+type PublicActor = Extract<
+  PublicItemDetailsDto["latestEventActor"],
+  Readonly<{ status: "present" }>
+>["actor"];
 
 /** attention queueで使う対応優先度。 */
 export type AttentionPriority = Readonly<{
@@ -512,6 +516,10 @@ export function createItemDetailsMap(
   return detailsByNodeId;
 }
 
+function actorSearchName(actor: PublicActor): string {
+  return actor.type === "system" ? actor.name : actor.login;
+}
+
 /** 公開DTO内のリポジトリ、番号、タイトル、アクター、team、ラベルを検索する。 */
 export function searchItemNodeIds(
   summary: PublicSummaryDto,
@@ -543,6 +551,10 @@ export function searchItemNodeIds(
             waitingOn.candidateId,
             waitingOn.reasonSummary,
           ]),
+          ...(details.author.status === "identified" ? [details.author.actor.login] : []),
+          ...(details.latestEventActor.status === "present"
+            ? [actorSearchName(details.latestEventActor.actor)]
+            : []),
           ...details.assignees.map((assignee) => assignee.login),
           ...details.labels,
         ].join("\n"),

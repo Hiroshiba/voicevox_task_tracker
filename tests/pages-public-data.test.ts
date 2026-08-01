@@ -168,6 +168,22 @@ function createItem(options: ItemFixtureOptions): unknown {
     number: options.number,
     url: itemUrl,
     title: options.title,
+    author: {
+      status: "identified",
+      actor: {
+        type: "human",
+        nodeId: `U_author_${options.nodeId}`,
+        login: `author-${options.nodeId}`,
+      },
+    },
+    latestEventActor: {
+      status: "present",
+      actor: {
+        type: "human",
+        nodeId: `U_event_actor_${options.nodeId}`,
+        login: `event-actor-${options.nodeId}`,
+      },
+    },
     state: terminal ? "closed" : "open",
     notificationClass: "standard",
     status: options.status,
@@ -861,6 +877,18 @@ describe("公開DTO生成", () => {
     const itemA = generated.details.items.find((item) => item.summary.nodeId === "I_A");
     expect(itemA?.summary.blockerNodeIds).toEqual(["I_B"]);
     expect(itemA?.summary.priorityWeight).toBe(25);
+    expect(itemA?.author).toMatchObject({
+      status: "identified",
+      actor: {
+        login: "author-I_A",
+      },
+    });
+    expect(itemA?.latestEventActor).toMatchObject({
+      status: "present",
+      actor: {
+        login: "event-actor-I_A",
+      },
+    });
     expect(itemA?.history.at(-2)).toMatchObject({
       kind: "responsibility_changed",
       before: {
