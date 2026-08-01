@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+
+import { GraphqlResponseError } from "@octokit/graphql";
 import {
   Kind,
   OperationTypeNode,
@@ -13,11 +16,28 @@ import { z } from "zod";
 import {
   GitHubGraphQLDocumentError,
   GitHubGraphQLReadOnlyViolationError,
-  GitHubResponseValidationError,
+  GitHubGraphQLResponseError,
+  GitHubResponseSchemaValidationError,
+  type GitHubGraphQLErrorDiagnostic,
+  type GitHubGraphQLResponseDiagnostics,
 } from "./errors.js";
 import { graphQLRateLimitSchema, type GraphQLRateLimit } from "./rate-limit.js";
+import { SecretRedactor } from "./redaction.js";
 
 const RATE_LIMIT_ALIAS = "voicevoxTaskTrackerRateLimit";
+
+const graphQLIdentifierSchema = z.string().regex(/^[_A-Za-z][_0-9A-Za-z]*$/u);
+const graphQLErrorLocationsSchema = z.array(
+  z.object({
+    line: z.number().int().positive(),
+    column: z.number().int().positive(),
+  }),
+);
+const graphQLErrorPathSchema = z.array(z.union([z.string(), z.number()]));
+const graphQLErrorCollectionSchema = z.array(z.unknown());
+const diagnosticStringSchema = z.string().min(1);
+const fieldTypeReferenceSchema = z.tuple([graphQLIdentifierSchema, graphQLIdentifierSchema]);
+const FIELD_TYPE_MESSAGE_PATTERN = /^Field '([^']+)' doesn't exist on type '([^']+)'$/u;
 
 const rateLimitField = {
   kind: Kind.FIELD,
@@ -42,6 +62,11 @@ const rateLimitField = {
 } satisfies FieldNode;
 
 const graphQLResponseSchema = z.record(z.string(), z.unknown());
+
+type GraphQLExecutor = (
+  query: string,
+  variables: Readonly<Record<string, unknown>>,
+) => Promise<unknown>;
 
 function parseGraphQLDocument(query: string): DocumentNode {
   try {
@@ -86,6 +111,94 @@ function instrumentDefinition(definition: DefinitionNode): DefinitionNode {
   return instrumented;
 }
 
+function extractOperationName(document: DocumentNode): string | undefined {
+  let operationCount = 0;
+  let operationNameValue: unknown;
+  for (const definition of document.definitions) {
+    if (definition.kind !== Kind.OPERATION_DEFINITION) {
+      continue;
+    }
+    operationCount += 1;
+    operationNameValue = definition.name?.value;
+  }
+  if (operationCount !== 1) {
+    return undefined;
+  }
+  const result = graphQLIdentifierSchema.safeParse(operationNameValue);
+  return result.success ? result.data : undefined;
+}
+
+function createQueryHash(query: string): string {
+  return createHash("sha256").update(query, "utf8").digest("hex").slice(0, 16);
+}
+
+function extractFieldTypeReference(message: unknown): Readonly<{
+  fieldName?: string;
+  typeName?: string;
+}> {
+  const messageResult = z.string().safeParse(message);
+  if (!messageResult.success) {
+    return {};
+  }
+  const match = FIELD_TYPE_MESSAGE_PATTERN.exec(messageResult.data);
+  const referenceResult = fieldTypeReferenceSchema.safeParse(match?.slice(1));
+  if (!referenceResult.success) {
+    return {};
+  }
+  return {
+    fieldName: referenceResult.data[0],
+    typeName: referenceResult.data[1],
+  };
+}
+
+function extractGraphQLErrorDiagnostic(value: unknown): GitHubGraphQLErrorDiagnostic | undefined {
+  const errorResult = graphQLResponseSchema.safeParse(value);
+  if (!errorResult.success) {
+    return undefined;
+  }
+  const locationsResult = graphQLErrorLocationsSchema.safeParse(errorResult.data["locations"]);
+  const pathResult = graphQLErrorPathSchema.safeParse(errorResult.data["path"]);
+  const typeResult = diagnosticStringSchema.safeParse(errorResult.data["type"]);
+  const extensionsResult = graphQLResponseSchema.safeParse(errorResult.data["extensions"]);
+  const codeResult = diagnosticStringSchema.safeParse(
+    extensionsResult.success ? extensionsResult.data["code"] : undefined,
+  );
+  const fieldTypeReference = extractFieldTypeReference(errorResult.data["message"]);
+  const diagnostic = {
+    ...(locationsResult.success ? { locations: locationsResult.data } : {}),
+    ...(pathResult.success ? { path: pathResult.data } : {}),
+    ...(typeResult.success ? { type: typeResult.data } : {}),
+    ...(codeResult.success ? { code: codeResult.data } : {}),
+    ...fieldTypeReference,
+  } satisfies GitHubGraphQLErrorDiagnostic;
+  return Object.keys(diagnostic).length === 0 ? undefined : diagnostic;
+}
+
+function createGraphQLResponseError(
+  error: GraphqlResponseError<unknown>,
+  document: DocumentNode,
+  query: string,
+  redactor: SecretRedactor,
+): GitHubGraphQLResponseError {
+  const errorsResult = graphQLErrorCollectionSchema.safeParse(error.errors);
+  const rawErrors = errorsResult.success ? errorsResult.data : [];
+  const errors = rawErrors.flatMap((rawError) => {
+    const diagnostic = extractGraphQLErrorDiagnostic(rawError);
+    return diagnostic == null ? [] : [diagnostic];
+  });
+  const operationName = extractOperationName(document);
+  const requestIdResult = diagnosticStringSchema.safeParse(error.headers["x-github-request-id"]);
+  const diagnostics = {
+    ...(operationName == null ? {} : { operationName }),
+    queryHash: createQueryHash(query),
+    errorCount: rawErrors.length,
+    errors,
+    ...(requestIdResult.success ? { requestId: requestIdResult.data } : {}),
+  } satisfies GitHubGraphQLResponseDiagnostics;
+  const cause = redactor.createSafeCause(error);
+  return new GitHubGraphQLResponseError(diagnostics, { cause });
+}
+
 /** GraphQL文書がqueryだけで構成されていることを確認する。 */
 export function assertReadOnlyGraphQL(query: string): void {
   const document = parseGraphQLDocument(query);
@@ -99,14 +212,27 @@ export function assertReadOnlyGraphQL(query: string): void {
   }
 }
 
-/** 読み取り専用GraphQL文書へrate limit監視用fieldを追加する。 */
-export function instrumentReadOnlyGraphQL(query: string): string {
+/** 読み取り専用GraphQL文書を計装して実行し、GraphQLレスポンスエラーを安全に変換する。 */
+export async function executeReadOnlyGraphQL(
+  query: string,
+  variables: Readonly<Record<string, unknown>>,
+  execute: GraphQLExecutor,
+  redactor: SecretRedactor,
+): Promise<unknown> {
   const document = parseGraphQLDocument(query);
   const instrumentedDocument = {
     ...document,
     definitions: document.definitions.map(instrumentDefinition),
   } satisfies DocumentNode;
-  return print(instrumentedDocument);
+  const instrumentedQuery = print(instrumentedDocument);
+  try {
+    return await execute(instrumentedQuery, variables);
+  } catch (error: unknown) {
+    if (!(error instanceof GraphqlResponseError)) {
+      throw error;
+    }
+    throw createGraphQLResponseError(error, instrumentedDocument, instrumentedQuery, redactor);
+  }
 }
 
 /** GraphQLレスポンスからrate limitを分離する。 */
@@ -116,16 +242,12 @@ export function extractGraphQLRateLimit(response: unknown): Readonly<{
 }> {
   const result = graphQLResponseSchema.safeParse(response);
   if (!result.success) {
-    throw new GitHubResponseValidationError("GraphQL response", {
-      cause: new TypeError("GraphQL responseがobjectではありません"),
-    });
+    throw new GitHubResponseSchemaValidationError("GraphQL response", result.error);
   }
 
   const rateLimitResult = graphQLRateLimitSchema.safeParse(result.data[RATE_LIMIT_ALIAS]);
   if (!rateLimitResult.success) {
-    throw new GitHubResponseValidationError("GraphQL rateLimit", {
-      cause: new TypeError("GraphQL rateLimitが不足または不正です"),
-    });
+    throw new GitHubResponseSchemaValidationError("GraphQL rateLimit", rateLimitResult.error);
   }
 
   const data: Record<string, unknown> = {};

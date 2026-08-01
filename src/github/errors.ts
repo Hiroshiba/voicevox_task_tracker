@@ -1,4 +1,104 @@
+import { z } from "zod";
+
 import { TaskTrackerError } from "../util/task-tracker-error.js";
+
+const RESPONSE_VALIDATION_ISSUE_LIMIT = 10;
+const graphQLIdentifierSchema = z.string().regex(/^[_A-Za-z][_0-9A-Za-z]*$/u);
+const diagnosticPathSchema = z.array(z.union([z.string(), z.number()]));
+const responseValidationIssueSchema = z.object({
+  path: diagnosticPathSchema,
+  code: z.string(),
+  expected: z.string().optional(),
+});
+const graphQLErrorLocationSchema = z.object({
+  line: z.number().int().positive(),
+  column: z.number().int().positive(),
+});
+const graphQLErrorDiagnosticSchema = z.object({
+  locations: z.array(graphQLErrorLocationSchema).optional(),
+  path: diagnosticPathSchema.optional(),
+  type: z.string().min(1).optional(),
+  code: z.string().min(1).optional(),
+  fieldName: graphQLIdentifierSchema.optional(),
+  typeName: graphQLIdentifierSchema.optional(),
+});
+const graphQLResponseDiagnosticsSchema = z.object({
+  operationName: graphQLIdentifierSchema.optional(),
+  queryHash: z.string().regex(/^[0-9a-f]{16}$/u),
+  errorCount: z.number().int().nonnegative(),
+  errors: z.array(graphQLErrorDiagnosticSchema),
+  requestId: z.string().min(1).optional(),
+});
+
+export type GitHubResponseValidationIssue = Readonly<{
+  path: readonly (string | number)[];
+  code: string;
+  expected?: string;
+}>;
+
+export type GitHubGraphQLErrorDiagnostic = Readonly<{
+  locations?: readonly Readonly<{
+    line: number;
+    column: number;
+  }>[];
+  path?: readonly (string | number)[];
+  type?: string;
+  code?: string;
+  fieldName?: string;
+  typeName?: string;
+}>;
+
+export type GitHubGraphQLResponseDiagnostics = Readonly<{
+  operationName?: string;
+  queryHash: string;
+  errorCount: number;
+  errors: readonly GitHubGraphQLErrorDiagnostic[];
+  requestId?: string;
+}>;
+
+function extractResponseValidationIssues(
+  error: z.ZodError,
+): readonly GitHubResponseValidationIssue[] {
+  const diagnostics: GitHubResponseValidationIssue[] = [];
+  for (const issue of error.issues.slice(0, RESPONSE_VALIDATION_ISSUE_LIMIT)) {
+    const result = responseValidationIssueSchema.safeParse(issue);
+    if (!result.success) {
+      continue;
+    }
+    const diagnostic =
+      result.data.expected == null
+        ? {
+            path: Object.freeze([...result.data.path]),
+            code: result.data.code,
+          }
+        : {
+            path: Object.freeze([...result.data.path]),
+            code: result.data.code,
+            expected: result.data.expected,
+          };
+    diagnostics.push(Object.freeze(diagnostic));
+  }
+  return Object.freeze(diagnostics);
+}
+
+function normalizeGraphQLErrorDiagnostic(
+  diagnostic: z.output<typeof graphQLErrorDiagnosticSchema>,
+): GitHubGraphQLErrorDiagnostic {
+  return Object.freeze({
+    ...(diagnostic.locations == null
+      ? {}
+      : {
+          locations: Object.freeze(
+            diagnostic.locations.map((location) => Object.freeze({ ...location })),
+          ),
+        }),
+    ...(diagnostic.path == null ? {} : { path: Object.freeze([...diagnostic.path]) }),
+    ...(diagnostic.type == null ? {} : { type: diagnostic.type }),
+    ...(diagnostic.code == null ? {} : { code: diagnostic.code }),
+    ...(diagnostic.fieldName == null ? {} : { fieldName: diagnostic.fieldName }),
+    ...(diagnostic.typeName == null ? {} : { typeName: diagnostic.typeName }),
+  });
+}
 
 export type GitHubRateLimitSnapshot =
   | Readonly<{
@@ -55,6 +155,29 @@ export class GitHubGraphQLDocumentError extends GitHubClientError {
   }
 }
 
+/** GitHub GraphQLがerrorsを含むレスポンスを返したことを表す。 */
+export class GitHubGraphQLResponseError extends GitHubClientError {
+  public readonly operationName: string | undefined;
+  public readonly queryHash: string;
+  public readonly errorCount: number;
+  public readonly errors: readonly GitHubGraphQLErrorDiagnostic[];
+  public readonly requestId: string | undefined;
+
+  public constructor(diagnostics: GitHubGraphQLResponseDiagnostics, options: ErrorOptions) {
+    const result = graphQLResponseDiagnosticsSchema.parse(diagnostics);
+    const operationName = result.operationName ?? "不明";
+    super(
+      `GitHub GraphQLレスポンスにエラーが含まれています。operation: ${operationName} queryHash: ${result.queryHash} errorCount: ${result.errorCount.toString()}`,
+      options,
+    );
+    this.operationName = result.operationName;
+    this.queryHash = result.queryHash;
+    this.errorCount = result.errorCount;
+    this.errors = Object.freeze(result.errors.map(normalizeGraphQLErrorDiagnostic));
+    this.requestId = result.requestId;
+  }
+}
+
 /** GitHub API予算の安全余裕へ到達したことを表す。 */
 export class GitHubApiBudgetExceededError extends GitHubClientError {
   public readonly snapshot: GitHubRateLimitSnapshot;
@@ -72,6 +195,27 @@ export class GitHubApiBudgetExceededError extends GitHubClientError {
 export class GitHubResponseValidationError extends GitHubClientError {
   public constructor(context: string, options: ErrorOptions) {
     super(`GitHub APIレスポンスが不正です。対象: ${context}`, options);
+  }
+}
+
+/** GitHub APIレスポンスがZod schemaへ適合しないことを表す。 */
+export class GitHubResponseSchemaValidationError extends GitHubResponseValidationError {
+  public readonly issueCount: number;
+  public readonly issues: readonly GitHubResponseValidationIssue[];
+  public readonly omittedIssueCount: number;
+
+  public constructor(context: string, error: z.ZodError) {
+    const issueCount = error.issues.length;
+    const issues = extractResponseValidationIssues(error);
+    const omittedIssueCount = issueCount - issues.length;
+    super(context, {
+      cause: new TypeError(
+        `GitHub APIレスポンスのschema検証に失敗しました。問題件数: ${issueCount.toString()}`,
+      ),
+    });
+    this.issueCount = issueCount;
+    this.issues = issues;
+    this.omittedIssueCount = omittedIssueCount;
   }
 }
 

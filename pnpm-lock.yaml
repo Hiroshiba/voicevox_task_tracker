@@ -17,6 +17,9 @@ importers:
       '@octokit/core':
         specifier: ^7.0.6
         version: 7.0.6
+      '@octokit/graphql':
+        specifier: ^9.0.3
+        version: 9.0.3
       ajv:
         specifier: ^8.20.0
         version: 8.20.0

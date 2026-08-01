@@ -12,7 +12,11 @@ import {
 } from "../domain/index.js";
 import { assertNonNullable, UnreachableError } from "../util/index.js";
 import { type GitHubClient } from "./client.js";
-import { GitHubPublicBoundaryViolationError, GitHubResponseValidationError } from "./errors.js";
+import {
+  GitHubPublicBoundaryViolationError,
+  GitHubResponseSchemaValidationError,
+  GitHubResponseValidationError,
+} from "./errors.js";
 import { type EnumeratedGitHubItem } from "./item-enumeration.js";
 import {
   type GitHubAutoMerge,
@@ -1485,9 +1489,7 @@ function parseGraphqlResponse<Schema extends z.ZodType>(
 ): z.output<Schema> {
   const result = schema.safeParse(value);
   if (!result.success) {
-    throw new GitHubResponseValidationError(context, {
-      cause: new TypeError("GraphQL responseの形式が不正です"),
-    });
+    throw new GitHubResponseSchemaValidationError(context, result.error);
   }
   return result.data;
 }

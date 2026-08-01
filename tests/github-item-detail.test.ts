@@ -17,6 +17,7 @@ import {
   createGitHubClient,
   createPublicRepositoryAllowlist,
   GITHUB_APP_READ_PERMISSIONS,
+  GitHubResponseSchemaValidationError,
   type CreateGitHubClientOptions,
   type EnumeratedGitHubItem,
   type GitHubClient,
@@ -380,6 +381,64 @@ function requireDetail(details: readonly GitHubItemDetail[], index: number): Git
 }
 
 describe("Issue詳細収集", () => {
+  it("Zod検証失敗の先頭10件から安全な診断情報だけを保持する", async () => {
+    const allowlist = createAllowlist();
+    const item = createItem(allowlist, "I_invalid_response", 1, "issue");
+    const actualValueCanary = "item-detail-actual-value-canary";
+    const mock = createGraphqlHttpMock((operation) => {
+      if (operation !== "GitHubItemDetailCapabilities") {
+        throw new Error(`未定義のGraphQL operationです。対象: ${operation}`);
+      }
+      return {
+        issueType: {
+          fields: Array.from({ length: 12 }, (_, index) => ({
+            name: {
+              actual: `${actualValueCanary}-${index.toString()}`,
+            },
+          })),
+        },
+      };
+    });
+
+    try {
+      await collectGitHubItemDetails({
+        allowlist,
+        items: [item],
+        observedAt,
+        eventWindow: Object.freeze({ mode: "initial" }),
+        graphql: mock.graphql,
+      });
+      throw new Error("GitHubResponseSchemaValidationErrorが発生しませんでした");
+    } catch (error: unknown) {
+      if (!(error instanceof GitHubResponseSchemaValidationError)) {
+        throw error;
+      }
+      expect(error.issueCount).toBe(12);
+      expect(error.omittedIssueCount).toBe(2);
+      expect(error.issues).toHaveLength(10);
+      expect(error.issues[0]).toEqual({
+        path: ["issueType", "fields", 0, "name"],
+        code: "invalid_type",
+        expected: "string",
+      });
+      expect(error.issues[9]).toEqual({
+        path: ["issueType", "fields", 9, "name"],
+        code: "invalid_type",
+        expected: "string",
+      });
+      const diagnosticText = JSON.stringify({
+        message: error.message,
+        cause: error.cause instanceof Error ? error.cause.message : error.cause,
+        issueCount: error.issueCount,
+        issues: error.issues,
+        omittedIssueCount: error.omittedIssueCount,
+      });
+      expect(diagnosticText).not.toContain(actualValueCanary);
+      expect(diagnosticText).not.toContain("input");
+      expect(diagnosticText).not.toContain("received");
+    }
+  });
+
   it("100件を超えるコメントの順序とIDを保持し、native関係とinbound sourceを返す", async () => {
     const allowlist = createAllowlist();
     const item = createItem(allowlist, "I_target", 1, "issue");

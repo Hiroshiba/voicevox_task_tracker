@@ -5,11 +5,12 @@ import {
   GitHubGraphQLReadOnlyViolationError,
   GitHubRateLimitController,
   GitHubRequestError,
+  GitHubResponseSchemaValidationError,
   GitHubRetryExhaustedError,
   SecretRedactor,
+  assertReadOnlyGraphQL,
   executeWithGitHubRetry,
   extractGraphQLRateLimit,
-  instrumentReadOnlyGraphQL,
   isGitHubApiBudgetExceeded,
   type GitHubRetryRuntime,
   type GitHubRetrySettings,
@@ -256,8 +257,7 @@ describe("GitHub API rate limit管理", () => {
 });
 
 describe("GraphQL rate limit監視", () => {
-  it("queryへrateLimit costを自動追加してレスポンスから分離する", () => {
-    const instrumented = instrumentReadOnlyGraphQL("query { viewer { login } }");
+  it("レスポンスからrateLimitを分離する", () => {
     const extracted = extractGraphQLRateLimit({
       viewer: {
         login: "octocat",
@@ -270,8 +270,6 @@ describe("GraphQL rate limit監視", () => {
       },
     });
 
-    expect(instrumented).toContain("voicevoxTaskTrackerRateLimit: rateLimit");
-    expect(instrumented).toContain("cost");
     expect(extracted.data).toEqual({
       viewer: {
         login: "octocat",
@@ -280,16 +278,55 @@ describe("GraphQL rate limit監視", () => {
     expect(extracted.rateLimit.cost).toBe(1);
   });
 
+  it("Zod検証失敗からpathとcodeと期待型だけを保持する", () => {
+    const actualValueCanary = "actual-value-canary";
+
+    try {
+      extractGraphQLRateLimit({
+        voicevoxTaskTrackerRateLimit: {
+          cost: actualValueCanary,
+          limit: 5000,
+          remaining: 4999,
+          resetAt: "2026-08-01T01:00:00Z",
+        },
+      });
+      throw new Error("GitHubResponseSchemaValidationErrorが発生しませんでした");
+    } catch (error: unknown) {
+      if (!(error instanceof GitHubResponseSchemaValidationError)) {
+        throw error;
+      }
+      expect(error.issueCount).toBe(1);
+      expect(error.omittedIssueCount).toBe(0);
+      expect(error.issues).toEqual([
+        {
+          path: ["cost"],
+          code: "invalid_type",
+          expected: "number",
+        },
+      ]);
+      const diagnosticText = JSON.stringify({
+        message: error.message,
+        cause: error.cause instanceof Error ? error.cause.message : error.cause,
+        issueCount: error.issueCount,
+        issues: error.issues,
+        omittedIssueCount: error.omittedIssueCount,
+      });
+      expect(diagnosticText).not.toContain(actualValueCanary);
+      expect(diagnosticText).not.toContain("input");
+      expect(diagnosticText).not.toContain("received");
+    }
+  });
+
   it("mutationをASTで拒否する", () => {
-    expect(() =>
-      instrumentReadOnlyGraphQL(`
+    expect(() => {
+      assertReadOnlyGraphQL(`
         # mutationという語を含むcomment
         mutation AddComment {
           addComment(input: {}) {
             clientMutationId
           }
         }
-      `),
-    ).toThrow(GitHubGraphQLReadOnlyViolationError);
+      `);
+    }).toThrow(GitHubGraphQLReadOnlyViolationError);
   });
 });

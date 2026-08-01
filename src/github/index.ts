@@ -14,11 +14,13 @@ export {
   GitHubCredentialsError,
   GitHubGraphQLDocumentError,
   GitHubGraphQLReadOnlyViolationError,
+  GitHubGraphQLResponseError,
   GitHubPublicBoundaryViolationError,
   GitHubReadOnlyViolationError,
   GitHubRepositoryInventoryError,
   GitHubRepositoryStaleFallbackUnavailableError,
   GitHubRequestError,
+  GitHubResponseSchemaValidationError,
   GitHubResponseValidationError,
   GitHubRetryExhaustedError,
   type GitHubRateLimitSnapshot,
@@ -96,11 +98,7 @@ export {
   type PlanIncrementalItemCollectionOptions,
   type PreviousItemCollection,
 } from "./incremental-item-collection.js";
-export {
-  assertReadOnlyGraphQL,
-  extractGraphQLRateLimit,
-  instrumentReadOnlyGraphQL,
-} from "./graphql.js";
+export { assertReadOnlyGraphQL, extractGraphQLRateLimit } from "./graphql.js";
 export {
   GitHubRateLimitController,
   graphQLRateLimitSchema,

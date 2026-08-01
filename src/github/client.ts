@@ -11,7 +11,7 @@ import {
   GitHubResponseValidationError,
   type GitHubRateLimitSnapshot,
 } from "./errors.js";
-import { extractGraphQLRateLimit, instrumentReadOnlyGraphQL } from "./graphql.js";
+import { executeReadOnlyGraphQL, extractGraphQLRateLimit } from "./graphql.js";
 import { GitHubRateLimitController } from "./rate-limit.js";
 import { assertReadOnlyGitHubRequest, isGitHubGraphQLRequest } from "./read-only.js";
 import { SecretRedactor } from "./redaction.js";
@@ -317,8 +317,13 @@ export async function createGitHubClient(
     variables: Readonly<Record<string, unknown>>,
   ): Promise<Readonly<Record<string, unknown>>> => {
     assertNoTransportOverrides(variables);
-    const instrumentedQuery = instrumentReadOnlyGraphQL(query);
-    const response = await octokit.graphql<unknown>(instrumentedQuery, variables);
+    const response = await executeReadOnlyGraphQL(
+      query,
+      variables,
+      (instrumentedQuery, instrumentedVariables) =>
+        octokit.graphql<unknown>(instrumentedQuery, instrumentedVariables),
+      redactor,
+    );
     const extracted = extractGraphQLRateLimit(response);
     rateLimitController.observeGraphQL(extracted.rateLimit, runtime.now());
     return extracted.data;

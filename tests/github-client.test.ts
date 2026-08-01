@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
@@ -7,6 +7,7 @@ import {
   GITHUB_APP_READ_PERMISSIONS,
   GitHubApiBudgetExceededError,
   GitHubGraphQLReadOnlyViolationError,
+  GitHubGraphQLResponseError,
   GitHubReadOnlyViolationError,
   GitHubRequestError,
   createGitHubClient,
@@ -320,6 +321,144 @@ describe("GitHub App認証とOctokitクライアント", () => {
       remaining: 4500,
       limit: 5000,
     });
+  });
+
+  it("GraphQL errorsから安全な診断情報と秘匿処理済みcauseを保持する", async () => {
+    const now = new Date("2026-08-01T00:00:00Z");
+    const variableCanary = "variable-value-canary";
+    const partialResponseCanary = "partial-response-canary";
+    const rawMessage = "Field 'id' doesn't exist on type 'AutoMergeRequest'";
+    const invalidRawMessage = "Field 'invalid-field' doesn't exist on type 'SecretType'";
+    const mock = createFetchMock([
+      () => createTokenResponse("ghs_graphql_error", "2026-08-01T01:00:00Z"),
+      () =>
+        createJsonResponse(
+          {
+            data: {
+              node: {
+                secret: partialResponseCanary,
+              },
+            },
+            errors: [
+              {
+                message: rawMessage,
+                locations: [
+                  {
+                    line: 4,
+                    column: 7,
+                  },
+                ],
+                path: ["node", "autoMergeRequest", "id"],
+                type: "INVALID",
+                extensions: {
+                  code: "undefinedField",
+                },
+              },
+              {
+                message: invalidRawMessage,
+                locations: [
+                  {
+                    line: "5",
+                    column: 9,
+                  },
+                ],
+                path: ["node", { secret: "path-value-canary" }],
+                type: 42,
+                extensions: {
+                  code: { secret: "code-value-canary" },
+                },
+              },
+            ],
+          },
+          200,
+          {
+            "x-github-request-id": "REQUEST_CANARY_123",
+          },
+        ),
+    ]);
+    const client = await createGitHubClient(
+      createClientOptions(
+        {
+          appId: 123,
+          privateKey,
+          installationId: 456,
+        },
+        mock.fetch,
+        createRuntime(() => now, []),
+      ),
+    );
+
+    try {
+      await client.graphql(
+        `
+          query DiagnoseAutoMerge($nodeId: ID!) {
+            node(id: $nodeId) {
+              id
+            }
+          }
+        `,
+        { nodeId: variableCanary },
+      );
+      throw new Error("GitHubGraphQLResponseErrorが発生しませんでした");
+    } catch (error: unknown) {
+      if (!(error instanceof GitHubGraphQLResponseError)) {
+        throw error;
+      }
+      const graphqlRequest = mock.requests[1];
+      if (graphqlRequest?.body == null) {
+        throw new Error("GraphQL request bodyがありません");
+      }
+      const payload = z
+        .object({
+          query: z.string(),
+        })
+        .parse(JSON.parse(graphqlRequest.body));
+      const expectedQueryHash = createHash("sha256")
+        .update(payload.query, "utf8")
+        .digest("hex")
+        .slice(0, 16);
+
+      expect(error.operationName).toBe("DiagnoseAutoMerge");
+      expect(error.queryHash).toBe(expectedQueryHash);
+      expect(error.errorCount).toBe(2);
+      expect(error.errors).toEqual([
+        {
+          locations: [{ line: 4, column: 7 }],
+          path: ["node", "autoMergeRequest", "id"],
+          type: "INVALID",
+          code: "undefinedField",
+          fieldName: "id",
+          typeName: "AutoMergeRequest",
+        },
+      ]);
+      expect(error.requestId).toBe("REQUEST_CANARY_123");
+      expect(error).not.toHaveProperty("status");
+      expect(error).not.toHaveProperty("request");
+      expect(error).not.toHaveProperty("response");
+      expect(error).not.toHaveProperty("data");
+      expect(error).not.toHaveProperty("variables");
+      if (!(error.cause instanceof Error)) {
+        throw new Error("GraphQL response errorのcauseがありません");
+      }
+      expect(error.cause.message).toContain(rawMessage);
+      expect(error.cause.message).toContain(invalidRawMessage);
+      const diagnosticText = JSON.stringify({
+        message: error.message,
+        stack: error.stack,
+        operationName: error.operationName,
+        queryHash: error.queryHash,
+        errorCount: error.errorCount,
+        errors: error.errors,
+        requestId: error.requestId,
+      });
+      expect(diagnosticText).not.toContain(rawMessage);
+      expect(diagnosticText).not.toContain(invalidRawMessage);
+      expect(diagnosticText).not.toContain(variableCanary);
+      expect(diagnosticText).not.toContain(partialResponseCanary);
+      expect(diagnosticText).not.toContain(payload.query);
+      expect(diagnosticText).not.toContain("path-value-canary");
+      expect(diagnosticText).not.toContain("code-value-canary");
+    }
   });
 
   it("期限まで5分未満になったinstallation tokenを再発行する", async () => {
