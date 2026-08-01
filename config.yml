@@ -1,4 +1,3 @@
-# 実運用時はこのファイルを編集し、YOUR_で始まる値を実際の値へ置き換える。
 schemaVersion: 1
 organization: VOICEVOX
 
@@ -21,10 +20,10 @@ teams:
   defaults:
     maintainers:
       - org: VOICEVOX
-        slug: YOUR_DEFAULT_MAINTAINER_TEAM_SLUG
+        slug: maintainer
     reviewers:
       - org: VOICEVOX
-        slug: YOUR_DEFAULT_REVIEWER_TEAM_SLUG
+        slug: reviewer
   repositories: {}
   # リポジトリ別に上書きする場合は空のmapを次の形式へ置き換える。
   # repositories:
@@ -79,8 +78,7 @@ staleness:
 ai:
   provider: codex
   enabled: true
-  # 実装時点で利用可能なCodex modelを明示的にpinし、更新はeval付きPRで行う。
-  model: YOUR_PINNED_CODEX_MODEL
+  model: gpt-5.6-luna
   promptVersion: v1
   schemaPath: schemas/codex-analysis.schema.json
   confidence:
