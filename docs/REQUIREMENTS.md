@@ -229,7 +229,7 @@ flowchart LR
 
 ## 13. 要求一覧
 
-要求は合計166件である。
+要求は合計167件である。
 
 ### 13.1 目的・成果
 
@@ -246,18 +246,19 @@ flowchart LR
 
 ### 13.2 スコープ
 
-| ID        | 規範   | 要求                                                                                                                                      | 受入要約                                                                                               |
-| --------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `SCP-001` | MUST   | 対象Organization — 対象OrganizationはVOICEVOXでなければならない。                                                                         | `AT-SCP-001`: 設定のorganizationがVOICEVOX以外なら起動前検証が失敗する。                               |
-| `SCP-002` | MUST   | 公開リポジトリ限定 — visibilityがpublicのリポジトリだけを追跡・保存・公開しなければならない。                                             | `AT-SCP-002`: private/internalを混ぜたfixtureで、その項目が収集後・state・Pagesの全段階に存在しない。  |
-| `SCP-003` | MUST   | archive除外 — archived=trueのリポジトリを追跡対象から除外しなければならない。                                                             | `AT-SCP-003`: archive状態変更後の次回実行でアクティブ対象から外れ、履歴には理由が残る。                |
-| `SCP-004` | MUST   | 動的発見 — 対象リポジトリ一覧を固定せず、毎回Organization APIからページネーションして発見しなければならない。                             | `AT-SCP-004`: 新しいpublic/non-archived repo fixtureが設定変更なしで次回実行に含まれる。               |
-| `SCP-005` | MUST   | Issue対象 — 対象リポジトリのIssueを追跡できなければならない。                                                                             | `AT-SCP-005`: open Issue fixtureが正規化ノードとして保存される。                                       |
-| `SCP-006` | MUST   | Pull Request対象 — 対象リポジトリのPull RequestをIssueと区別して追跡できなければならない。                                                | `AT-SCP-006`: REST issues応答に含まれるPRを二重計上せずPRノードに分類する。                            |
-| `SCP-007` | MUST   | Discussions除外 — GitHub Discussionsを収集・表示・通知対象にしてはならない。                                                              | `AT-SCP-007`: Discussion fixtureがstateに入らない。                                                    |
-| `SCP-008` | MUST   | Projects非依存 — GitHub Projectsを状態の正本または必須連携先にしてはならない。                                                            | `AT-SCP-008`: Project権限・Projectデータなしで全受入試験が成功する。                                   |
-| `SCP-009` | SHOULD | 外部依存のゴースト表示 — VOICEVOX外のpublic項目がブロッカーとして参照された場合、再帰追跡せず説明用ゴーストノードとして表示すべきである。 | `AT-SCP-009`: 外部public URL fixtureが最小メタデータのghost nodeとなり、通知責務の直接対象にならない。 |
-| `SCP-010` | MUST   | bot作成項目の同等扱い — botが作成したIssue/PRを作成者だけを理由に特別扱いしてはならない。                                                 | `AT-SCP-010`: 同一内容のhuman作成・bot作成fixtureで、作成者種別以外の判定結果が一致する。              |
+| ID        | 規範   | 要求                                                                                                                                                | 受入要約                                                                                                         |
+| --------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `SCP-001` | MUST   | 対象Organization — 対象OrganizationはVOICEVOXでなければならない。                                                                                   | `AT-SCP-001`: 設定のorganizationがVOICEVOX以外なら起動前検証が失敗する。                                         |
+| `SCP-002` | MUST   | 公開リポジトリ限定 — visibilityがpublicのリポジトリだけを追跡・保存・公開しなければならない。                                                       | `AT-SCP-002`: private/internalを混ぜたfixtureで、その項目が収集後・state・Pagesの全段階に存在しない。            |
+| `SCP-003` | MUST   | archive除外 — archived=trueのリポジトリを追跡対象から除外しなければならない。                                                                       | `AT-SCP-003`: archive状態変更後の次回実行でアクティブ対象から外れ、履歴には理由が残る。                          |
+| `SCP-004` | MUST   | 動的発見 — 対象リポジトリ一覧を固定せず、毎回Organization APIからページネーションして発見しなければならない。                                       | `AT-SCP-004`: 新しいpublic/non-archived repo fixtureが設定変更なしで次回実行に含まれる。                         |
+| `SCP-005` | MUST   | Issue対象 — 対象リポジトリのIssueを追跡できなければならない。                                                                                       | `AT-SCP-005`: open Issue fixtureが正規化ノードとして保存される。                                                 |
+| `SCP-006` | MUST   | Pull Request対象 — 対象リポジトリのPull RequestをIssueと区別して追跡できなければならない。                                                          | `AT-SCP-006`: REST issues応答に含まれるPRを二重計上せずPRノードに分類する。                                      |
+| `SCP-007` | MUST   | Discussions除外 — GitHub Discussionsを収集・表示・通知対象にしてはならない。                                                                        | `AT-SCP-007`: Discussion fixtureがstateに入らない。                                                              |
+| `SCP-008` | MUST   | Projects非依存 — GitHub Projectsを状態の正本または必須連携先にしてはならない。                                                                      | `AT-SCP-008`: Project権限・Projectデータなしで全受入試験が成功する。                                             |
+| `SCP-009` | SHOULD | 外部依存のゴースト表示 — VOICEVOX外のpublic項目がブロッカーとして参照された場合、再帰追跡せず説明用ゴーストノードとして表示すべきである。           | `AT-SCP-009`: 外部public URL fixtureが最小メタデータのghost nodeとなり、通知責務の直接対象にならない。           |
+| `SCP-010` | MUST   | bot作成項目の同等扱い — botが作成したIssue/PRを作成者だけを理由に特別扱いしてはならない。                                                           | `AT-SCP-010`: 同一内容のhuman作成・bot作成fixtureで、作成者種別以外の判定結果が一致する。                        |
+| `SCP-011` | MUST   | 外部参照の公開条件 — VOICEVOX外の参照先もpublic・non-archived・non-disabledの場合だけ関係候補として扱い、除外対象をstateとPagesへ残してはならない。 | `AT-SCP-011`: 通常、archive済み、disabledの外部repository参照fixtureで通常の参照だけが候補、state、Pagesに残る。 |
 
 ### 13.3 設定
 

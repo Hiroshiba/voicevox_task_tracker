@@ -106,6 +106,12 @@ function validatePublicItem(item: PublicGitHubRelationItem): void {
   if (item.repositoryOwner.length === 0 || item.repositoryName.length === 0) {
     throw new TypeError("公開参照項目のrepository情報は空にできません");
   }
+  if (
+    typeof item.repositoryArchived !== "boolean" ||
+    typeof item.repositoryDisabled !== "boolean"
+  ) {
+    throw new TypeError("公開参照項目のrepository状態はbooleanで指定してください");
+  }
   if (!Number.isSafeInteger(item.number) || item.number <= 0) {
     throw new TypeError("公開参照項目の番号は正の安全な整数で指定してください");
   }
@@ -200,8 +206,11 @@ function resolveCandidateNode(
   item: PublicGitHubRelationItem,
   organization: string,
 ): RelationCandidateNode | null {
+  if (item.repositoryArchived || item.repositoryDisabled) {
+    return null;
+  }
   if (item.repositoryOwner.toLowerCase() === organization.toLowerCase()) {
-    return item.repositoryArchived || item.repositoryDisabled ? null : createOrganizationNode(item);
+    return createOrganizationNode(item);
   }
   return createExternalNode(item);
 }

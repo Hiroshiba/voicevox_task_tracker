@@ -86,7 +86,7 @@ repository単位の収集は、再試行後も503で失敗し、同じrepository
 
 公開境界は一つのfilterへ依存せず、三つの段階で検証します。
 
-1. 収集guardはrepository metadataだけを先に取得し、`public`、非アーカイブ、非disabledを満たすrepository IDをallowlistへ固定します。
+1. 収集guardはrepository metadataだけを先に取得し、`public`、非アーカイブ、非disabledを満たすrepository IDをallowlistへ固定します。Organization外の参照先は詳細応答で`public`を検証し、関係候補の解決時にarchive済みとdisabledを除外します。
 2. 永続化guardはcommit直前にsnapshotと付随データを走査し、allowlist外ID、private repositoryの識別子、既知secret、credential field、不要な全文を拒否します。
 3. Pages guardはDTO生成直前に別実装でinventoryとsnapshotを照合し、repository identity、private sentinel、secret、安全でないURL、不要な全文を再検査します。
 

@@ -593,6 +593,96 @@ describe("候補の識別と対象解決", () => {
     });
   });
 
+  it.each([
+    {
+      description: "archive済み",
+      repositoryArchived: true,
+      repositoryDisabled: false,
+    },
+    {
+      description: "disabled",
+      repositoryArchived: false,
+      repositoryDisabled: true,
+    },
+  ])(
+    "Organization外の$description repository参照を候補へ含めない",
+    ({ repositoryArchived, repositoryDisabled }) => {
+      const current = createItem({
+        nodeId: "I_current",
+        owner: "VOICEVOX",
+        repository: "tracker",
+        type: "issue",
+        number: 1,
+        state: "open",
+      });
+      const external = {
+        ...createItem({
+          nodeId: "I_external",
+          owner: "external-org",
+          repository: "public-tool",
+          type: "issue",
+          number: 9,
+          state: "open",
+        }),
+        repositoryArchived,
+        repositoryDisabled,
+      } satisfies PublicGitHubRelationItem;
+      const candidates = extract(
+        createExtractionItem({
+          item: current,
+          body: createTextSource(
+            "github_item_body",
+            "I_current",
+            "See https://github.com/external-org/public-tool/issues/9",
+          ),
+          comments: [],
+          crossReferences: [],
+          nativeDependencies: [],
+          nativeHierarchy: [],
+        }),
+        [external],
+      );
+
+      expect(candidates).toEqual([]);
+    },
+  );
+
+  it("repository状態が不足した参照入力を拒否する", () => {
+    const current = createItem({
+      nodeId: "I_current",
+      owner: "VOICEVOX",
+      repository: "tracker",
+      type: "issue",
+      number: 1,
+      state: "open",
+    });
+    const external = createItem({
+      nodeId: "I_external",
+      owner: "external-org",
+      repository: "public-tool",
+      type: "issue",
+      number: 9,
+      state: "open",
+    });
+    Reflect.deleteProperty(external, "repositoryArchived");
+    const item = createExtractionItem({
+      item: current,
+      body: createTextSource(
+        "github_item_body",
+        "I_current",
+        "See https://github.com/external-org/public-tool/issues/9",
+      ),
+      comments: [],
+      crossReferences: [],
+      nativeDependencies: [],
+      nativeHierarchy: [],
+    });
+
+    expect(() => extract(item, [external])).toThrow(
+      "公開参照項目のrepository状態はbooleanで指定してください",
+    );
+  });
+
   it("未解決参照と想定外のGitHub URL形状を候補へ含めない", () => {
     const current = createItem({
       nodeId: "I_current",

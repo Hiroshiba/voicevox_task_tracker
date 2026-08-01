@@ -346,7 +346,11 @@ function createNativeBlocker(
 
 function createExternalNativeBlocker(
   blocked: EnumeratedGitHubItem,
-  state: "open" | "closed",
+  options: Readonly<{
+    state: "open" | "closed";
+    repositoryArchived: boolean;
+    repositoryDisabled: boolean;
+  }>,
 ): GitHubNativeDependency {
   const externalNodeId = createGitHubNodeId("I_external_blocker");
   return Object.freeze({
@@ -360,12 +364,12 @@ function createExternalNativeBlocker(
       repositoryId: createGitHubRepositoryId("R_external_public"),
       repositoryOwner: "external-owner",
       repositoryName: "external-repository",
-      repositoryArchived: false,
-      repositoryDisabled: false,
+      repositoryArchived: options.repositoryArchived,
+      repositoryDisabled: options.repositoryDisabled,
       type: "issue",
       number: 42,
       url: "https://github.com/external-owner/external-repository/issues/42",
-      state,
+      state: options.state,
     }),
   });
 }
@@ -1412,7 +1416,11 @@ describe("本番判定入力の接続", () => {
         nativeDependencies: Object.freeze([
           createNativeBlocker(blocked, firstBlocker),
           createNativeBlocker(blocked, secondBlocker),
-          createExternalNativeBlocker(blocked, "open"),
+          createExternalNativeBlocker(blocked, {
+            state: "open",
+            repositoryArchived: false,
+            repositoryDisabled: false,
+          }),
         ]),
         duplicateComments: false,
       }),
@@ -1458,6 +1466,82 @@ describe("本番判定入力の接続", () => {
       }),
     );
   });
+
+  it.each([
+    {
+      description: "archive済み",
+      fixtureName: "archived",
+      repositoryArchived: true,
+      repositoryDisabled: false,
+    },
+    {
+      description: "disabled",
+      fixtureName: "disabled",
+      repositoryArchived: false,
+      repositoryDisabled: true,
+    },
+  ])(
+    "Organization外の$description repositoryをstateと公開DTOへ残さない",
+    async ({ fixtureName, repositoryArchived, repositoryDisabled }) => {
+      const repository = createRepository(
+        `R_excluded_external_${fixtureName}`,
+        `excluded-external-${fixtureName}`,
+        FIRST_RUN_AT,
+      );
+      const publicRepository = requirePublicRepository(repository);
+      const fixture = createRepositoryFixture(repository);
+      const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+      const blocked = createIssueItem({
+        repository: publicRepository,
+        number: 1,
+        fingerprint: `excluded-external-${fixtureName}`,
+        updatedAt: observedAt,
+        observedAt,
+        state: Object.freeze({ state: "open" }),
+      });
+      fixture.openItems = [blocked];
+      fixture.details.set(
+        blocked.nodeId,
+        createIssueDetail({
+          item: blocked,
+          body: "除外対象の外部依存があります",
+          observedAt,
+          nativeDependencies: Object.freeze([
+            createExternalNativeBlocker(blocked, {
+              state: "open",
+              repositoryArchived,
+              repositoryDisabled,
+            }),
+          ]),
+          duplicateComments: false,
+        }),
+      );
+      const config = await createTestConfig({
+        explicitIncludes: [],
+        retentionDays: 180,
+        aiEnabled: false,
+      });
+      const harness = createCollectionHarness({ repositories: [fixture], config });
+
+      const result = await harness.runDaily(FIRST_RUN_AT);
+      const files = await harness.stateAdapter.readBranchFiles("tracker-state");
+      const snapshotSource = files.get("state/snapshot.json");
+      if (snapshotSource == null) {
+        throw new TypeError("外部repository除外後のsnapshotがありません");
+      }
+      const snapshot = parseStateSnapshot(new TextDecoder().decode(snapshotSource));
+
+      expect(result.exitCode).toBe(0);
+      expect(snapshot.externalReferences).toEqual([]);
+      expect(snapshot.relations).toEqual([]);
+      expect(harness.publicData[0]?.details.graph.nodes).not.toContainEqual(
+        expect.objectContaining({
+          nodeId: "external:github:I_external_blocker",
+        }),
+      );
+      expect(harness.publicData[0]?.details.graph.edges).toEqual([]);
+    },
+  );
 
   it("inferred edge解消時に本文未変更の隣接項目を再分類する", async () => {
     const repository = createRepository("R_reclassify", "reclassify", FIRST_RUN_AT);
@@ -1763,7 +1847,13 @@ describe("本番判定入力の接続", () => {
           observedAt: thirdObservedAt,
           nativeDependencies:
             item.nodeId === currentChangedTarget.nodeId
-              ? Object.freeze([createExternalNativeBlocker(currentChangedTarget, "closed")])
+              ? Object.freeze([
+                  createExternalNativeBlocker(currentChangedTarget, {
+                    state: "closed",
+                    repositoryArchived: false,
+                    repositoryDisabled: false,
+                  }),
+                ])
               : Object.freeze([]),
           duplicateComments: true,
         }),
