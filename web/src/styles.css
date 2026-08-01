@@ -1332,6 +1332,136 @@ tbody th {
   gap: 0.25rem;
 }
 
+.edge-history {
+  margin-top: 0.9rem;
+  padding: 0.8rem;
+  background: #f7f9fc;
+  border: 1px solid #d5deeb;
+  border-radius: 0.65rem;
+}
+
+.edge-history-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.edge-history-heading h3,
+.edge-history-heading p,
+.edge-history-selector h4,
+.selected-edge-history > h4,
+.selected-edge-history > p {
+  margin: 0;
+}
+
+.edge-history-heading p,
+.selected-edge-history > p {
+  color: #596985;
+  font-size: 0.83rem;
+}
+
+.edge-history-workspace {
+  display: grid;
+  grid-template-columns: minmax(14rem, 20rem) minmax(0, 1fr);
+  gap: 0.8rem;
+  margin-top: 0.75rem;
+}
+
+.edge-history-selector,
+.selected-edge-history {
+  min-width: 0;
+  padding: 0.7rem;
+  background: #ffffff;
+  border: 1px solid #dbe2ed;
+  border-radius: 0.55rem;
+}
+
+.edge-history-selector ul,
+.selected-edge-history ol {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.65rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.edge-history-selector ul {
+  max-height: 30rem;
+  overflow-y: auto;
+}
+
+.edge-history-button {
+  display: grid;
+  gap: 0.15rem;
+  width: 100%;
+  padding: 0.6rem;
+  color: #24334e;
+  text-align: left;
+  background: #ffffff;
+  border: 1px solid #bfc9d8;
+  border-radius: 0.45rem;
+  cursor: pointer;
+}
+
+.edge-history-button:hover {
+  border-color: #4975b2;
+}
+
+.edge-history-button-selected {
+  color: #173f72;
+  background: #e9f2ff;
+  border: 2px solid #326dad;
+}
+
+.edge-history-button strong,
+.edge-history-button span {
+  overflow-wrap: anywhere;
+}
+
+.edge-history-button span {
+  color: #596985;
+  font-size: 0.74rem;
+}
+
+.selected-edge-history > h4 {
+  overflow-wrap: anywhere;
+}
+
+.edge-history-event h5 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.edge-history-values {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+}
+
+.edge-history-values > div {
+  display: grid;
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+  gap: 0.5rem;
+}
+
+.edge-history-values dt {
+  color: #596985;
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.edge-history-values dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.edge-history-changes dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
 .node-kind-badge {
   display: inline-flex;
   padding: 0.15rem 0.45rem;
@@ -1458,7 +1588,8 @@ footer {
   }
 
   .graph-legend-groups,
-  .dependency-workspace {
+  .dependency-workspace,
+  .edge-history-workspace {
     grid-template-columns: 1fr;
   }
 
@@ -1491,6 +1622,7 @@ footer {
   }
 
   .graph-cycles li,
+  .edge-history-heading,
   .graph-selection-summary,
   .search-load-failure {
     align-items: flex-start;

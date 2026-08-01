@@ -1,3 +1,4 @@
+import { type VNode } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 
 import { type PublicDetailsDto, type PublicSummaryDto } from "../../src/pages/public-dto.js";
@@ -17,8 +18,10 @@ import {
   type GraphRepositoryListItem,
   type GraphViewEdge,
   type GraphViewNode,
+  relationTypeLabel,
 } from "./graph-model.js";
 import type { GraphLayout, LayoutedGraphNode } from "./graph-layout.js";
+import { formatConfidence, formatJstDateTime } from "./model.js";
 import { SafeGitHubLink } from "./safe-link.js";
 import type { GraphSelection } from "./url-state.js";
 
@@ -70,6 +73,18 @@ type LayoutState =
     }>
   | Readonly<{
       status: "failed";
+    }>;
+
+type EdgeHistoryEvent = PublicDetailsDto["graph"]["history"][number];
+type EdgeHistoryState = EdgeHistoryEvent["before"];
+type EdgeHistoryValue = Extract<EdgeHistoryState, Readonly<{ state: "present" }>>["value"];
+type EdgeHistorySelection =
+  | Readonly<{
+      status: "none";
+    }>
+  | Readonly<{
+      status: "selected";
+      relationId: string;
     }>;
 
 type GitHubGraphLinkProps = Readonly<{
@@ -569,6 +584,237 @@ function CycleControls({
   );
 }
 
+function presentEdgeHistoryValue(
+  state: EdgeHistoryState,
+  relationId: string,
+  position: "変更前" | "変更後",
+): EdgeHistoryValue {
+  if (state.state === "absent") {
+    throw new TypeError(`edge履歴 ${relationId}の${position}にedgeがありません`);
+  }
+  return state.value;
+}
+
+function edgeHistoryEventOperation(event: EdgeHistoryEvent): "added" | "changed" | "removed" {
+  if (event.before.state === "absent") {
+    if (event.after.state === "absent") {
+      throw new TypeError(`edge履歴 ${event.relationId}の変更前後にedgeがありません`);
+    }
+    return event.after.value.active ? "added" : "removed";
+  }
+  if (event.after.state === "absent") {
+    return "removed";
+  }
+  if (!event.before.value.active && event.after.value.active) {
+    return "added";
+  }
+  if (event.before.value.active && !event.after.value.active) {
+    return "removed";
+  }
+  return "changed";
+}
+
+function EdgeHistorySnapshot({
+  locale,
+  value,
+}: Readonly<{ locale: string; value: EdgeHistoryValue }>) {
+  return (
+    <dl class="edge-history-values">
+      <div>
+        <dt>向き</dt>
+        <dd>
+          {value.fromNodeId} → {value.toNodeId}
+        </dd>
+      </div>
+      <div>
+        <dt>関係型</dt>
+        <dd>{relationTypeLabel(value.type)}</dd>
+      </div>
+      <div>
+        <dt>confidence</dt>
+        <dd>{formatConfidence(value.confidence, locale)}</dd>
+      </div>
+    </dl>
+  );
+}
+
+function EdgeHistoryChange({
+  after,
+  before,
+  locale,
+}: Readonly<{ after: EdgeHistoryValue; before: EdgeHistoryValue; locale: string }>) {
+  return (
+    <dl class="edge-history-values edge-history-changes">
+      <div>
+        <dt>向き</dt>
+        <dd>
+          <span>
+            {before.fromNodeId} → {before.toNodeId}
+          </span>
+          <span aria-hidden="true">→</span>
+          <strong>
+            {after.fromNodeId} → {after.toNodeId}
+          </strong>
+        </dd>
+      </div>
+      <div>
+        <dt>関係型</dt>
+        <dd>
+          <span>{relationTypeLabel(before.type)}</span>
+          <span aria-hidden="true">→</span>
+          <strong>{relationTypeLabel(after.type)}</strong>
+        </dd>
+      </div>
+      <div>
+        <dt>confidence</dt>
+        <dd>
+          <span>{formatConfidence(before.confidence, locale)}</span>
+          <span aria-hidden="true">→</span>
+          <strong>{formatConfidence(after.confidence, locale)}</strong>
+        </dd>
+      </div>
+    </dl>
+  );
+}
+
+function EdgeHistoryEventCard({
+  event,
+  locale,
+}: Readonly<{ event: EdgeHistoryEvent; locale: string }>) {
+  const operation = edgeHistoryEventOperation(event);
+  let label: string;
+  let content: VNode;
+  switch (operation) {
+    case "added": {
+      label = "edgeを追加";
+      const value = presentEdgeHistoryValue(event.after, event.relationId, "変更後");
+      content = <EdgeHistorySnapshot value={value} locale={locale} />;
+      break;
+    }
+    case "changed": {
+      label = "edgeを変更";
+      const before = presentEdgeHistoryValue(event.before, event.relationId, "変更前");
+      const after = presentEdgeHistoryValue(event.after, event.relationId, "変更後");
+      content = <EdgeHistoryChange before={before} after={after} locale={locale} />;
+      break;
+    }
+    case "removed": {
+      label = "edgeを削除";
+      const value =
+        event.before.state === "present"
+          ? event.before.value
+          : presentEdgeHistoryValue(event.after, event.relationId, "変更後");
+      content = <EdgeHistorySnapshot value={value} locale={locale} />;
+      break;
+    }
+    default:
+      throw new UnreachableError(operation);
+  }
+  return (
+    <article class="history-event edge-history-event" data-edge-event-kind={operation}>
+      <div>
+        <h5>{label}</h5>
+        <time dateTime={event.recordedAt}>{formatJstDateTime(event.recordedAt, locale)}</time>
+      </div>
+      {content}
+      <p class="history-run-id">Run {event.runId}</p>
+    </article>
+  );
+}
+
+function EdgeHistoryPanel({ locale, view }: Readonly<{ locale: string; view: GraphClusterView }>) {
+  const [selection, setSelection] = useState<EdgeHistorySelection>({
+    status: "none",
+  });
+  if (view.edgeHistories.length === 0) {
+    return (
+      <section class="edge-history" aria-labelledby="edge-history-heading">
+        <h3 id="edge-history-heading">edge履歴</h3>
+        <p>このclusterに関係するedge履歴はありません。</p>
+      </section>
+    );
+  }
+
+  let selectedHistory: GraphClusterView["edgeHistories"][number] | undefined;
+  if (selection.status === "selected") {
+    selectedHistory = view.edgeHistories.find(
+      (history) => history.relationId === selection.relationId,
+    );
+    assertNonNullable(selectedHistory, `選択されたedge履歴 ${selection.relationId}がありません`);
+  }
+
+  return (
+    <section class="edge-history" aria-labelledby="edge-history-heading">
+      <div class="edge-history-heading">
+        <h3 id="edge-history-heading">edge履歴</h3>
+        <p>削除済みedgeを含む{view.edgeHistories.length.toLocaleString(locale)}件</p>
+      </div>
+      <div class="edge-history-workspace">
+        <div class="edge-history-selector">
+          <h4>edgeを選択</h4>
+          <ul>
+            {view.edgeHistories.map((history) => {
+              const selected =
+                selection.status === "selected" && selection.relationId === history.relationId;
+              const latestEvent = history.events.at(-1);
+              assertNonNullable(latestEvent, `edge履歴 ${history.relationId}にeventがありません`);
+              const active =
+                latestEvent.after.state === "present" && latestEvent.after.value.active;
+              return (
+                <li key={history.relationId}>
+                  <button
+                    type="button"
+                    class={
+                      selected
+                        ? "edge-history-button edge-history-button-selected"
+                        : "edge-history-button"
+                    }
+                    data-history-relation-id={history.relationId}
+                    aria-controls="selected-edge-history"
+                    aria-pressed={selected}
+                    onClick={() => {
+                      setSelection({
+                        status: "selected",
+                        relationId: history.relationId,
+                      });
+                    }}
+                  >
+                    <strong>
+                      {history.fromNodeId} → {history.toNodeId}
+                    </strong>
+                    <span>{history.relationId}</span>
+                    <span>
+                      {history.events.length.toLocaleString(locale)} event・
+                      {active ? "現在有効" : "削除済み"}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+        <div id="selected-edge-history" class="selected-edge-history" aria-live="polite">
+          {selectedHistory == null ? (
+            <p>edgeを選ぶと追加、変更、削除の履歴を表示します。</p>
+          ) : (
+            <>
+              <h4>{selectedHistory.relationId}</h4>
+              <p>{selectedHistory.events.length.toLocaleString(locale)}件のeventを古い順に表示</p>
+              <ol>
+                {selectedHistory.events.map((event) => (
+                  <li key={`${event.runId}:${event.recordedAt}`}>
+                    <EdgeHistoryEventCard event={event} locale={locale} />
+                  </li>
+                ))}
+              </ol>
+            </>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function SelectedComponentGraph({
   expandedCycleIds,
   locale,
@@ -596,6 +842,7 @@ function SelectedComponentGraph({
       <CycleControls view={view} expandedCycleIds={expandedCycleIds} onToggle={onToggleCycle} />
       <GraphCanvas view={view} />
       <GraphAlternativeTables view={view} locale={locale} />
+      <EdgeHistoryPanel key={`${view.clusterKind}:${view.clusterId}`} view={view} locale={locale} />
     </div>
   );
 }

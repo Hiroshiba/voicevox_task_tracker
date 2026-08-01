@@ -686,6 +686,104 @@
         "repositoryCount": 1
       }
     ],
-    "history": []
+    "history": [
+      {
+        "kind": "edge_changed",
+        "runId": "sample-run-edge-added",
+        "recordedAt": "2026-07-29T00:00:00.000Z",
+        "relationId": "sample-relation-history-removed",
+        "before": {
+          "state": "absent"
+        },
+        "after": {
+          "state": "present",
+          "value": {
+            "fromNodeId": "sample-item-editor-103",
+            "toNodeId": "sample-item-engine-204",
+            "type": "related_to",
+            "provenance": "ai_inference",
+            "confidence": 0.8,
+            "evidence": [],
+            "contradictions": [],
+            "firstSeenAt": "2026-07-29T00:00:00.000Z",
+            "lastConfirmedAt": "2026-07-29T00:00:00.000Z",
+            "active": true
+          }
+        }
+      },
+      {
+        "kind": "edge_changed",
+        "runId": "sample-run-edge-changed",
+        "recordedAt": "2026-07-30T00:00:00.000Z",
+        "relationId": "sample-relation-history-removed",
+        "before": {
+          "state": "present",
+          "value": {
+            "fromNodeId": "sample-item-editor-103",
+            "toNodeId": "sample-item-engine-204",
+            "type": "related_to",
+            "provenance": "ai_inference",
+            "confidence": 0.8,
+            "evidence": [],
+            "contradictions": [],
+            "firstSeenAt": "2026-07-29T00:00:00.000Z",
+            "lastConfirmedAt": "2026-07-29T00:00:00.000Z",
+            "active": true
+          }
+        },
+        "after": {
+          "state": "present",
+          "value": {
+            "fromNodeId": "sample-item-editor-103",
+            "toNodeId": "sample-item-engine-204",
+            "type": "implements",
+            "provenance": "ai_inference",
+            "confidence": 0.9,
+            "evidence": [],
+            "contradictions": [],
+            "firstSeenAt": "2026-07-29T00:00:00.000Z",
+            "lastConfirmedAt": "2026-07-30T00:00:00.000Z",
+            "active": true
+          }
+        }
+      },
+      {
+        "kind": "edge_changed",
+        "runId": "sample-run-edge-removed",
+        "recordedAt": "2026-07-31T00:00:00.000Z",
+        "relationId": "sample-relation-history-removed",
+        "before": {
+          "state": "present",
+          "value": {
+            "fromNodeId": "sample-item-editor-103",
+            "toNodeId": "sample-item-engine-204",
+            "type": "implements",
+            "provenance": "ai_inference",
+            "confidence": 0.9,
+            "evidence": [],
+            "contradictions": [],
+            "firstSeenAt": "2026-07-29T00:00:00.000Z",
+            "lastConfirmedAt": "2026-07-30T00:00:00.000Z",
+            "active": true
+          }
+        },
+        "after": {
+          "state": "present",
+          "value": {
+            "fromNodeId": "sample-item-editor-103",
+            "toNodeId": "sample-item-engine-204",
+            "type": "implements",
+            "provenance": "ai_inference",
+            "confidence": 0.9,
+            "evidence": [],
+            "contradictions": [],
+            "firstSeenAt": "2026-07-29T00:00:00.000Z",
+            "lastConfirmedAt": "2026-07-30T00:00:00.000Z",
+            "active": false,
+            "removedAt": "2026-07-31T00:00:00.000Z"
+          }
+        }
+      }
+    ]
   }
 }

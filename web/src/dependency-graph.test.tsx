@@ -10,6 +10,7 @@ import {
   createPublicSummaryDto,
   type PublicDetailsDto,
   type PublicGraphEdgeDto,
+  type PublicGraphHistoryEventDto,
   type PublicGraphNodeDto,
   type PublicItemSummaryDto,
   type PublicSummaryDto,
@@ -104,7 +105,7 @@ function createEdge(
   toNodeId: string,
   type: PublicGraphEdgeDto["type"],
   provenance: PublicGraphEdgeDto["provenance"],
-): PublicGraphEdgeDto {
+): Extract<PublicGraphEdgeDto, Readonly<{ active: true }>> {
   return {
     id,
     fromNodeId,
@@ -127,12 +128,47 @@ function createEdge(
   };
 }
 
+type EdgeHistoryValue = Extract<
+  PublicGraphHistoryEventDto["after"],
+  Readonly<{ state: "present" }>
+>["value"];
+
+function edgeHistoryValue(edge: PublicGraphEdgeDto): EdgeHistoryValue {
+  const fields = {
+    fromNodeId: edge.fromNodeId,
+    toNodeId: edge.toNodeId,
+    type: edge.type,
+    provenance: edge.provenance,
+    confidence: edge.confidence,
+    evidence: edge.evidence.map((entry) => ({
+      sourceId: entry.sourceId,
+      supports: entry.supports,
+      summary: entry.summary,
+    })),
+    contradictions: edge.contradictions,
+    firstSeenAt: edge.firstSeenAt,
+    lastConfirmedAt: edge.lastConfirmedAt,
+  };
+  if (edge.active) {
+    return {
+      ...fields,
+      active: true,
+    };
+  }
+  return {
+    ...fields,
+    active: false,
+    removedAt: edge.removedAt,
+  };
+}
+
 type GraphFixtureOptions = Readonly<{
   items: readonly PublicItemSummaryDto[];
   nodes: readonly PublicGraphNodeDto[];
   edges: readonly PublicGraphEdgeDto[];
   frontierNodeIds: readonly string[];
   cycles: PublicDetailsDto["graph"]["cycles"];
+  history: readonly PublicGraphHistoryEventDto[];
   maxNodes: number;
 }>;
 
@@ -140,7 +176,7 @@ function createGraphFixture(options: GraphFixtureOptions): Readonly<{
   summary: PublicSummaryDto;
   details: PublicDetailsDto;
 }> {
-  const edgeIds = options.edges.map((edge) => edge.id);
+  const edgeIds = options.edges.filter((edge) => edge.active).map((edge) => edge.id);
   const repositoryIds = [
     ...new Set(
       options.nodes.flatMap((node) =>
@@ -181,18 +217,21 @@ function createGraphFixture(options: GraphFixtureOptions): Readonly<{
     items: options.items,
     graph: {
       nodes: options.nodes.slice(0, options.maxNodes),
-      edges: options.edges.slice(0, options.maxNodes).map((edge) => ({
-        id: edge.id,
-        fromNodeId: edge.fromNodeId,
-        toNodeId: edge.toNodeId,
-        type: edge.type,
-      })),
+      edges: options.edges
+        .filter((edge) => edge.active)
+        .slice(0, options.maxNodes)
+        .map((edge) => ({
+          id: edge.id,
+          fromNodeId: edge.fromNodeId,
+          toNodeId: edge.toNodeId,
+          type: edge.type,
+        })),
       components: [
         {
           id: COMPONENT_ID,
           nodeCount: options.nodes.length,
           repositoryIds,
-          edgeCount: options.edges.length,
+          edgeCount: edgeIds.length,
           frontierCount: options.frontierNodeIds.length,
           cycleCount: options.cycles.length,
         },
@@ -231,7 +270,7 @@ function createGraphFixture(options: GraphFixtureOptions): Readonly<{
       downstreamImpacts: options.items.map((item) => ({
         ...item.downstreamImpact,
       })),
-      history: [],
+      history: options.history,
     },
   });
   return {
@@ -339,6 +378,7 @@ describe("依存グラフの表示モデル", () => {
       edges,
       frontierNodeIds: [issue.nodeId],
       cycles: [],
+      history: [],
       maxNodes: 10,
     });
 
@@ -393,6 +433,7 @@ describe("依存グラフUI", () => {
       ],
       frontierNodeIds: [issue.nodeId],
       cycles: [],
+      history: [],
       maxNodes: 10,
     });
     const loadDetails = vi.fn(() => Promise.resolve(fixture.details));
@@ -419,6 +460,113 @@ describe("依存グラフUI", () => {
     );
     expect(frontierRow.dataset["frontier"]).toBe("true");
     expect(frontierRow.textContent).toContain("▶ 着手可能");
+  });
+
+  it("削除済みedgeを選び追加、型とconfidenceの変更、削除を古い順に表示する", async () => {
+    const issue = createItem("node:history:issue", "issue", 31, "2026-07-20T00:00:00.000Z");
+    const pullRequest = createItem(
+      "node:history:pull-request",
+      "pull_request",
+      32,
+      "2026-07-21T00:00:00.000Z",
+    );
+    const relationId = "edge:history:removed";
+    const addedEdge = {
+      ...createEdge(relationId, issue.nodeId, pullRequest.nodeId, "related_to", "ai_inference"),
+      confidence: 0.8,
+      lastConfirmedAt: "2026-07-29T00:00:00.000Z",
+    } satisfies PublicGraphEdgeDto;
+    const changedEdge = {
+      ...addedEdge,
+      type: "implements",
+      confidence: 0.9,
+      lastConfirmedAt: "2026-07-30T00:00:00.000Z",
+    } satisfies PublicGraphEdgeDto;
+    const removedEdge = {
+      ...changedEdge,
+      active: false,
+      removedAt: "2026-07-31T00:00:00.000Z",
+    } satisfies PublicGraphEdgeDto;
+    const history = [
+      {
+        kind: "edge_changed",
+        runId: "run-edge-added",
+        recordedAt: "2026-07-29T00:00:00.000Z",
+        relationId,
+        before: {
+          state: "absent",
+        },
+        after: {
+          state: "present",
+          value: edgeHistoryValue(addedEdge),
+        },
+      },
+      {
+        kind: "edge_changed",
+        runId: "run-edge-changed",
+        recordedAt: "2026-07-30T00:00:00.000Z",
+        relationId,
+        before: {
+          state: "present",
+          value: edgeHistoryValue(addedEdge),
+        },
+        after: {
+          state: "present",
+          value: edgeHistoryValue(changedEdge),
+        },
+      },
+      {
+        kind: "edge_changed",
+        runId: "run-edge-removed",
+        recordedAt: "2026-07-31T00:00:00.000Z",
+        relationId,
+        before: {
+          state: "present",
+          value: edgeHistoryValue(changedEdge),
+        },
+        after: {
+          state: "present",
+          value: edgeHistoryValue(removedEdge),
+        },
+      },
+    ] satisfies readonly PublicGraphHistoryEventDto[];
+    const fixture = createGraphFixture({
+      items: [issue, pullRequest],
+      nodes: [trackedGraphNode(issue), trackedGraphNode(pullRequest)],
+      edges: [removedEdge],
+      frontierNodeIds: [issue.nodeId, pullRequest.nodeId],
+      cycles: [],
+      history,
+      maxNodes: 10,
+    });
+    renderDependencyGraph(fixture.summary, () => Promise.resolve(fixture.details));
+    await selectFirstComponent();
+
+    expect(currentContainer().querySelectorAll(".graph-edge")).toHaveLength(0);
+    expect(currentContainer().querySelectorAll("[data-edge-event-kind]")).toHaveLength(0);
+    const historyButton = requiredElement<HTMLButtonElement>(
+      `[data-history-relation-id="${relationId}"]`,
+    );
+    expect(historyButton.textContent).toContain("削除済み");
+
+    act(() => {
+      historyButton.click();
+    });
+
+    const historyEvents = [
+      ...currentContainer().querySelectorAll<HTMLElement>("[data-edge-event-kind]"),
+    ];
+    expect(historyEvents.map((event) => event.dataset["edgeEventKind"])).toEqual([
+      "added",
+      "changed",
+      "removed",
+    ]);
+    expect(currentContainer().textContent).toContain("3件のeventを古い順に表示");
+    expect(historyEvents.map((event) => event.textContent)).toEqual([
+      expect.stringContaining("related_to"),
+      expect.stringMatching(/related_to.*implements.*80%.*90%/su),
+      expect.stringContaining("implements"),
+    ]);
   });
 
   it("1000 node componentを選択し設定上限だけ自動配置する", async () => {
@@ -452,6 +600,7 @@ describe("依存グラフUI", () => {
       edges,
       frontierNodeIds: [firstItem.nodeId],
       cycles: [],
+      history: [],
       maxNodes,
     });
     const loadDetails = vi.fn(() => Promise.resolve(fixture.details));
@@ -500,6 +649,7 @@ describe("依存グラフUI", () => {
       edges: [internalEdge, crossRepositoryEdge],
       frontierNodeIds: [editorIssue.nodeId, engineIssue.nodeId],
       cycles: [],
+      history: [],
       maxNodes: 10,
     });
     const repositoryView = createRepositoryGraphView(
@@ -620,6 +770,7 @@ describe("依存グラフUI", () => {
           edgeIds: edges.map((edge) => edge.id),
         },
       ],
+      history: [],
       maxNodes: 10,
     });
     renderDependencyGraph(fixture.summary, () => Promise.resolve(fixture.details));

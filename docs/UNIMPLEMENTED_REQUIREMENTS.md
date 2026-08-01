@@ -2,13 +2,7 @@
 
 影響度は、追跡漏れと状態誤判定、障害検知と復旧、監査性、運用指標、Web 機能の順に評価した。
 
-1. edge 履歴を graph 画面で閲覧できない
-
-   - 対応する要件 ID: `GRF-011`
-   - 現状: 公開 graph DTO は edge history を持つ `src/pages/public-dto.ts:372`。graph 画面は component の選択と現在の edge 表示だけを実装する `web/src/dependency-graph.tsx:685`。
-   - 足りない点: edge の追加、変更、削除履歴を graph 画面で表示する処理がない。
-
-2. staleness.timezone が表示へ反映されない
+1. staleness.timezone が表示へ反映されない
 
    - 対応する要件 ID: `WEB-012`
    - 現状: timezone は config schema に存在する `src/config/schema.ts:340`。Web の日時 formatter は Asia/Tokyo を直接指定する `web/src/model.ts:153`。現行設定値も Asia/Tokyo のため表示結果は一致する。

@@ -1,6 +1,7 @@
 import {
   type PublicDetailsDto,
   type PublicGraphEdgeDto,
+  type PublicGraphHistoryEventDto,
   type PublicGraphNodeDto,
   type PublicItemSummaryDto,
   type PublicSummaryDto,
@@ -66,6 +67,13 @@ export type GraphViewEdge = Readonly<{
   evidence: PublicGraphEdgeDto["evidence"];
 }>;
 
+type GraphEdgeHistoryView = Readonly<{
+  relationId: string;
+  fromNodeId: string;
+  toNodeId: string;
+  events: readonly PublicGraphHistoryEventDto[];
+}>;
+
 /** cycleの折り畳み状態と構成node。 */
 export type GraphViewCycle = Readonly<{
   id: string;
@@ -83,6 +91,7 @@ export type GraphClusterView = Readonly<{
   displayEdges: readonly GraphViewEdge[];
   sourceNodes: readonly GraphViewNode[];
   sourceEdges: readonly GraphViewEdge[];
+  edgeHistories: readonly GraphEdgeHistoryView[];
   cycles: readonly GraphViewCycle[];
   renderedNodeCount: number;
   representedSourceNodeCount: number;
@@ -613,6 +622,68 @@ function validateMaxInitialNodes(value: number): void {
   }
 }
 
+function edgeHistoryEventValue(
+  event: PublicGraphHistoryEventDto,
+): Extract<PublicGraphHistoryEventDto["after"], Readonly<{ state: "present" }>>["value"] {
+  if (event.after.state === "present") {
+    return event.after.value;
+  }
+  if (event.before.state === "present") {
+    return event.before.value;
+  }
+  throw new TypeError(`edge履歴 ${event.relationId}の変更前後にedgeがありません`);
+}
+
+function createClusterEdgeHistories(
+  history: readonly PublicGraphHistoryEventDto[],
+  clusterNodeIds: ReadonlySet<string>,
+): readonly GraphEdgeHistoryView[] {
+  const eventsByRelationId = new Map<string, PublicGraphHistoryEventDto[]>();
+  for (const event of history) {
+    edgeHistoryEventValue(event);
+    const events = eventsByRelationId.get(event.relationId);
+    if (events == null) {
+      eventsByRelationId.set(event.relationId, [event]);
+      continue;
+    }
+    events.push(event);
+  }
+
+  return [...eventsByRelationId.entries()]
+    .sort(([leftRelationId], [rightRelationId]) => compareStrings(leftRelationId, rightRelationId))
+    .flatMap(([relationId, events]) => {
+      let previousRecordedAt = Number.NEGATIVE_INFINITY;
+      let relatedToCluster = false;
+      for (const event of events) {
+        const recordedAt = Date.parse(event.recordedAt);
+        if (!Number.isFinite(recordedAt)) {
+          throw new TypeError(`edge履歴 ${relationId}の日時を解釈できません`);
+        }
+        if (recordedAt < previousRecordedAt) {
+          throw new TypeError(`edge履歴 ${relationId}は記録時刻順に指定してください`);
+        }
+        previousRecordedAt = recordedAt;
+        const value = edgeHistoryEventValue(event);
+        relatedToCluster ||=
+          clusterNodeIds.has(value.fromNodeId) || clusterNodeIds.has(value.toNodeId);
+      }
+      if (!relatedToCluster) {
+        return [];
+      }
+      const latestEvent = events.at(-1);
+      assertNonNullable(latestEvent, `edge履歴 ${relationId}にeventがありません`);
+      const latestValue = edgeHistoryEventValue(latestEvent);
+      return [
+        {
+          relationId,
+          fromNodeId: latestValue.fromNodeId,
+          toNodeId: latestValue.toNodeId,
+          events,
+        },
+      ];
+    });
+}
+
 type GraphClusterDefinition = Readonly<{
   kind: GraphClusterView["clusterKind"];
   id: string;
@@ -695,6 +766,7 @@ function createGraphClusterView(
       .filter((node) => representedSourceNodeIds.has(node.id))
       .sort((left, right) => compareStrings(left.id, right.id)),
     sourceEdges,
+    edgeHistories: createClusterEdgeHistories(details.graph.history, clusterNodeIds),
     cycles: graphCycles,
     renderedNodeCount: displayNodes.length,
     representedSourceNodeCount: representedSourceNodeIds.size,
