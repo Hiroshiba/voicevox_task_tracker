@@ -92,12 +92,24 @@ jobs:
         run: pnpm build
       - name: 後続job用CLIをビルド
         run: pnpm build:workflow-cli
+      - name: Codex認証ファイルを配置
+        env:
+          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+        run: |
+          if [[ -z "$CODEX_AUTH_JSON" ]]; then
+            echo "CODEX_AUTH_JSONが空です" >&2
+            exit 1
+          fi
+          mkdir -p "${{ runner.temp }}/codex-home"
+          chmod 700 "${{ runner.temp }}/codex-home"
+          printf '%s' "$CODEX_AUTH_JSON" > "${{ runner.temp }}/codex-home/auth.json"
+          chmod 600 "${{ runner.temp }}/codex-home/auth.json"
       - name: 収集と解析を実行
         env:
           BACKFILL_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.backfill || 'none' }}
+          CODEX_HOME: ${{ runner.temp }}/codex-home
           GH_APP_ID: ${{ vars.GH_APP_ID }}
           GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           REPOSITORY_FILTER: ${{ inputs.repository_filter || '' }}
         run: |
           current_time="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
@@ -135,6 +147,9 @@ jobs:
           path: artifacts/run-reports/collect-analyze.json
           if-no-files-found: error
           retention-days: 30
+      - name: Codex認証ファイルを削除
+        if: always()
+        run: rm -rf "${{ runner.temp }}/codex-home"
 
   persist-state:
     needs: collect-analyze

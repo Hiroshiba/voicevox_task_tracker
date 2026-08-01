@@ -78,7 +78,7 @@ staleness:
 ai:
   provider: codex
   enabled: true
-  authentication: api-key
+  authentication: auth-json
   model: gpt-5.6-luna
   promptVersion: v2
   confidence:

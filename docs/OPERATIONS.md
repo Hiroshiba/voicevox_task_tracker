@@ -71,7 +71,8 @@ CI上では`性能profile` workflowを手動実行し、同じJSONをActions art
 前stageのartifactが存在しない場合や検証に失敗した場合は明示的なエラーで停止します。
 
 収集と判定はGitHub Appの認証情報を使います。
-`ai.enabled: true`ではlockfileで固定した`codex`に加え、`ai.authentication: api-key`なら`OPENAI_API_KEY`、`ai.authentication: auth-json`なら`CODEX_HOME`直下の`auth.json`が必要です。
+現行の`config.yml`は`ai.authentication: auth-json`を指定し、Actionsの`collect-analyze` jobは`CODEX_AUTH_JSON`から一時的な`auth.json`を配置して`CODEX_HOME`を渡します。
+`ai.enabled: true`のローカル実行ではlockfileで固定した`codex`に加え、`auth-json`なら`CODEX_HOME`直下の`auth.json`、`api-key`なら`OPENAI_API_KEY`が必要です。
 検証後のsnapshot、通知候補、notification ledger、run report生成用の収集指標、AI cacheを公開可能なartifactへ保存します。
 
 ```console
@@ -82,7 +83,7 @@ pnpm tracker:run collect-analyze --mode none
 backfillでは`--mode linked`か`--mode all-open`を指定し、対象を絞る場合は`--repository VOICEVOX/voicevox`を繰り返します。
 
 state永続化は収集artifactを受け取り、`tracker-state`へ一つのcommitとして保存します。
-GitHub App、OpenAI、Discordのsecretは読みません。
+GitHub App、Codex、Discordのsecretは読みません。
 
 ```console
 pnpm tracker:run persist-state
@@ -213,18 +214,20 @@ mentionは通知量の調整に使わず、運用上必要なuserだけをallowl
 
 失敗したActions jobをworkflow全体のreportにある`jobs`と照合し、収集失敗ではCLI reportの`failedStage`も確認します。
 
-| stageまたはjob                  | 確認内容                                                                                                                                                                                      |
-| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test-eval`                     | `pnpm typecheck`、`pnpm test`、`pnpm lint`、`pnpm format:check`、`pnpm eval:golden`をローカルで再現する                                                                                       |
-| `configuration`                 | placeholder、team slug、未知field、日時、正規表現、secret名を確認する                                                                                                                         |
-| `authentication`                | `GH_APP_ID`、PEM形式、Organizationへのinstallation、必要なread権限だけがあることを確認する                                                                                                    |
-| `repository_inventory`          | Appのrepository access、team access、public、archive、disabledの状態を確認する                                                                                                                |
-| `incremental_collection`        | GitHub API残量、429と503、対象repositoryの一時障害を確認する                                                                                                                                  |
-| `codex_analysis`                | `codex` executable、model ID、reasoning effort、`ai.authentication`を確認する。`api-key`なら`OPENAI_API_KEY`、`auth-json`なら`CODEX_HOME`直下の`auth.json`も確認する。予算とtimeoutを確認する |
-| `state_persistence`             | Actionsの`contents: write`、`tracker-state`のruleset、同時runがないことを確認する                                                                                                             |
-| `build-pages`                   | Pages DTO、`web.basePath`、Web build、公開guardの診断を確認する                                                                                                                               |
-| `deploy-pages`                  | Pages Source、`github-pages` environment、`pages: write`と`id-token: write`を確認する                                                                                                         |
-| `discord`または`notify-discord` | enabled設定、Webhook secret、channel、Webhook失効、429と503を確認する                                                                                                                         |
+| stageまたはjob                  | 確認内容                                                                                                                                                                          |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test-eval`                     | `pnpm typecheck`、`pnpm test`、`pnpm lint`、`pnpm format:check`、`pnpm eval:golden`をローカルで再現する                                                                           |
+| `configuration`                 | placeholder、team slug、未知field、日時、正規表現、secret名を確認する                                                                                                             |
+| `authentication`                | `GH_APP_ID`、PEM形式、Organizationへのinstallation、必要なread権限だけがあることを確認する                                                                                        |
+| `repository_inventory`          | Appのrepository access、team access、public、archive、disabledの状態を確認する                                                                                                    |
+| `incremental_collection`        | GitHub API残量、429と503、対象repositoryの一時障害を確認する                                                                                                                      |
+| `codex_analysis`                | `codex` executable、model ID、reasoning effort、予算、timeout、`ai.authentication`を確認し、`auth-json`では`CODEX_HOME`直下の`auth.json`、`api-key`では`OPENAI_API_KEY`を確認する |
+| `state_persistence`             | Actionsの`contents: write`、`tracker-state`のruleset、同時runがないことを確認する                                                                                                 |
+| `build-pages`                   | Pages DTO、`web.basePath`、Web build、公開guardの診断を確認する                                                                                                                   |
+| `deploy-pages`                  | Pages Source、`github-pages` environment、`pages: write`と`id-token: write`を確認する                                                                                             |
+| `discord`または`notify-discord` | enabled設定、Webhook secret、channel、Webhook失効、429と503を確認する                                                                                                             |
+
+Actions上でCodexの認証エラーが起きた場合は、ローカルのCodexへログインし直し、[デプロイ手順](DEPLOYMENT.md)のコマンドで`CODEX_AUTH_JSON`を登録し直します。
 
 `fallback`はCodexを利用できなかった項目を決定論的判定へ縮退した完全runです。
 PagesでAI unavailableと不確実性を確認し、原因を直して再実行します。

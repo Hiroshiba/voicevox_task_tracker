@@ -51,13 +51,25 @@ repositoryのSettingsからActions variableとActions secretを登録します�
 | -------------------------------- | -------- | ------------------------------------- |
 | `GH_APP_ID`                      | Variable | GitHub Appの数値ID                    |
 | `GH_APP_PRIVATE_KEY`             | Secret   | GitHub Appから発行したPEM private key |
-| `OPENAI_API_KEY`                 | Secret   | Codexの非対話実行に使うAPI key        |
+| `CODEX_AUTH_JSON`                | Secret   | Codexの`auth.json`の中身              |
 | `DISCORD_WEBHOOK_URL`            | Secret   | 通常digest用のIncoming Webhook URL    |
 | `DISCORD_OPERATIONS_WEBHOOK_URL` | Secret   | 運用障害通知用のIncoming Webhook URL  |
 
 PEM private keyは改行を保持したままsecretへ登録します。
-現行の`config.yml`は`ai.authentication: api-key`を指定し、`collect-analyze` jobは`OPENAI_API_KEY`だけをCodexへ渡します。
-`ai.authentication: auth-json`はCodexの`auth.json`で認証する方式で、含まれるtokenが更新されるためActionsでは使いません。
+
+`CODEX_AUTH_JSON`はローカルでCodexへログインすると生成される`auth.json`をそのまま登録します。
+
+```console
+gh secret set CODEX_AUTH_JSON --repo VOICEVOX/voicevox_task_tracker < "${CODEX_HOME:-$HOME/.codex}/auth.json"
+```
+
+現行の`config.yml`は`ai.authentication: auth-json`を指定します。
+`collect-analyze` jobは`CODEX_AUTH_JSON`を`${{ runner.temp }}/codex-home/auth.json`へ権限600で書き出し、このdirectoryを`CODEX_HOME`として収集stepへ渡します。
+Codexへ渡す認証用の環境変数は`CODEX_HOME`だけです。
+配置した`auth.json`はjobの成否を問わず終了時に削除します。
+
+Codex CLIは実行のたびに`auth.json`のtokenを更新しますが、Actions上の更新はrunnerの破棄とともに失われます。
+Codex呼び出しが認証エラーで失敗するようになったら、ローカルのCodexへログインし直してから同じコマンドでsecretを登録し直します。
 認証情報を`config.yml`、branch、artifact、run logへ書きません。
 
 repositoryのWorkflow permissionsは既定の読み取り専用にします。
@@ -72,7 +84,7 @@ workflowはCLIの実行前にremoteの`tracker-state`をlocal refへfetchし、C
 `tracker-state`へrulesetを設定する場合はGitHub Actionsによるstate更新を許可し、人間の通常作業branchとして使わないでください。
 
 `collect-analyze`は`artifacts/workflow/validated-run.json`へ検証済みsnapshot、通知候補、notification ledger、run report生成用の収集指標、AI cache、Pages URL、Discord送信設定だけを書きます。
-GitHub App key、installation token、OpenAI認証情報、Discord webhookはartifactへ含めません。
+GitHub App key、installation token、Codex認証情報、Discord webhookはartifactへ含めません。
 artifactを利用する後続jobは同じartifactを再検証してから利用します。
 依存関係を再インストールせず`notify-discord`でCLIを動かすため、公開sourceから作った自己完結bundleも同じActions artifactへ保存します。
 収集時のCLI reportは収集jobの成否にかかわらず、run IDと試行番号を含む別のActions artifactへ保存します。
@@ -109,7 +121,7 @@ Zodのstrict schemaで未知のfieldも拒否するため、設定名は`config.
 | `labels.rules`                                      | repository glob、label名の正規表現、判定と通知への効果        |
 | `staleness`                                         | 進捗猶予時間とwait class別のwatch、urgent、critical閾値       |
 | `ai.enabled`                                        | Codexを呼び出すかどうか                                       |
-| `ai.authentication`                                 | workflowでは`api-key`、ローカル実行では`api-key`か`auth-json` |
+| `ai.authentication`                                 | 既定は`auth-json`で、ローカル実行では`api-key`も選べる        |
 | `ai.model`                                          | 固定したCodex CLIと認証情報で利用できる設定済みmodel ID       |
 | `ai.confidence`                                     | highとmediumの境界                                            |
 | `ai.budget`                                         | call数、入力文字数、推定費用のrun上限                         |
@@ -126,7 +138,7 @@ Zodのstrict schemaで未知のfieldも拒否するため、設定名は`config.
 | `operations.retry`                                  | GitHubとDiscordの一時失敗に対するretry設定                    |
 
 現行設定ではCodexとDiscord通知が有効です。
-`ai.model`の利用可否は、lockfileで固定したCodex CLIと`OPENAI_API_KEY`を使うdry-runで確認します。
+`ai.model`の利用可否は、lockfileで固定したCodex CLIと`CODEX_HOME`直下の`auth.json`を使うdry-runで確認します。
 `webhookSecretName`には`DISCORD_WEBHOOK_URL`、`operationsWebhookSecretName`には`DISCORD_OPERATIONS_WEBHOOK_URL`を指定します。
 通常digestと運用障害通知を同じchannelへ送る場合は、2つのsecretへ同じIncoming Webhook URLを登録します。
 
@@ -144,7 +156,16 @@ pnpm --version
 ```
 
 設定済みのteam slugがOrganizationに存在することを確認します。
-GitHub Appの`GH_APP_ID`と`GH_APP_PRIVATE_KEY`、Codexの`OPENAI_API_KEY`を安全な方法でshellへ渡します。
+GitHub Appの`GH_APP_ID`と`GH_APP_PRIVATE_KEY`を安全な方法でshellへ渡します。
+Codexは`auth.json`を直下に持つdirectoryを`CODEX_HOME`へ指定します。
+
+```console
+export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+ls "$CODEX_HOME/auth.json"
+```
+
+`auth.json`が無ければ`codex login`でログインしてから再度確認します。
+
 `dry-run`はDiscord webhookを読み取らず、state、Pages、Discordを変更しません。
 
 依存関係を検証してCLIをビルドします。
@@ -187,11 +208,11 @@ lockfileで固定したCodex CLI `0.145.0`を確認します。
 pnpm exec codex --version
 ```
 
-現行の`config.yml`は`ai.enabled: true`と`ai.authentication: api-key`を設定済みです。
-ローカルでAPI keyを使わずCodexの`auth.json`で認証する場合は、`ai.authentication`を`auth-json`にし、`auth.json`を直下に置いたdirectoryを`CODEX_HOME`へ指定します。
+現行の`config.yml`は`ai.enabled: true`と`ai.authentication: auth-json`を設定済みです。
+`CODEX_HOME`直下の`auth.json`を使って同じ`dry-run`を実行し、`ai.model`に設定されたmodel IDでCodex呼び出しが成功することを確認します。
+ローカルで`api-key`を使う場合は、`ai.authentication`を`api-key`にして`OPENAI_API_KEY`を渡します。
 どちらの方式でも、選択しなかった方式の環境変数はCodexへ渡りません。
 
-`OPENAI_API_KEY`を渡して同じ`dry-run`を実行し、`ai.model`に設定されたmodel IDでCodex呼び出しが成功することを確認します。
 `aiCallCount`が1以上で`status`が`success`となり、`diagnostics`にmodelの利用不可を示す内容がなければ、設定済みmodel IDを利用できています。
 `aiCallCount`が0ならmodelを呼び出していないため、利用可否を確認できていません。
 その場合は設定済みmodel IDを`--model`へ指定した最小の`pnpm exec codex exec`を同じ認証情報で実行します。

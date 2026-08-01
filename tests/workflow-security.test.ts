@@ -344,8 +344,59 @@ describe("日次workflow", () => {
     expect(collectCommands).toContain("pnpm exec codex --version");
   });
 
+  it("Codex認証ファイルを一時ディレクトリへ配置し同じパスをCODEX_HOMEとして渡してjob終了時に必ず削除する", async () => {
+    const workflow = await readDailyWorkflow();
+    const collectJob = workflow.jobs["collect-analyze"];
+    if (collectJob == null) {
+      throw new TypeError("収集jobがありません");
+    }
+
+    const authenticationDirectory = "${{ runner.temp }}/codex-home";
+    const placementStep = requiredStep(collectJob, "Codex認証ファイルを配置");
+    const collectionStep = requiredStep(collectJob, "収集と解析を実行");
+    const cleanupStep = requiredStep(collectJob, "Codex認証ファイルを削除");
+    if (placementStep.env == null || placementStep.run == null) {
+      throw new TypeError("Codex認証ファイル配置stepの設定がありません");
+    }
+    if (collectionStep.env == null) {
+      throw new TypeError("収集stepの環境変数がありません");
+    }
+    if (cleanupStep.run == null) {
+      throw new TypeError("Codex認証ファイル削除stepのコマンドがありません");
+    }
+
+    expect(placementStep.env).toEqual({
+      CODEX_AUTH_JSON: "${{ secrets.CODEX_AUTH_JSON }}",
+    });
+    expect(placementStep.run).toContain('[[ -z "$CODEX_AUTH_JSON" ]]');
+    expect(placementStep.run).toContain("exit 1");
+    expect(placementStep.run).toContain(`mkdir -p "${authenticationDirectory}"`);
+    expect(placementStep.run).toContain(`chmod 700 "${authenticationDirectory}"`);
+    expect(placementStep.run).toContain(
+      `printf '%s' "$CODEX_AUTH_JSON" > "${authenticationDirectory}/auth.json"`,
+    );
+    expect(placementStep.run).toContain(`chmod 600 "${authenticationDirectory}/auth.json"`);
+    expect(placementStep.run).not.toContain("${{ secrets.CODEX_AUTH_JSON }}");
+    expect(collectJob.steps.indexOf(placementStep)).toBeLessThan(
+      collectJob.steps.indexOf(collectionStep),
+    );
+    expect(Object.keys(collectionStep.env)).toEqual([
+      "BACKFILL_MODE",
+      "CODEX_HOME",
+      "GH_APP_ID",
+      "GH_APP_PRIVATE_KEY",
+      "REPOSITORY_FILTER",
+    ]);
+    expect(collectionStep.env["CODEX_HOME"]).toBe(authenticationDirectory);
+    expect(collectionStep.env).not.toHaveProperty("OPENAI_API_KEY");
+    expect(cleanupStep.if).toBe("always()");
+    expect(cleanupStep.run).toBe(`rm -rf "${authenticationDirectory}"`);
+    expect(collectJob.steps.at(-1)).toEqual(cleanupStep);
+  });
+
   it("外部secretを収集とDiscordのjobだけへ分離する", async () => {
     const workflow = await readDailyWorkflow();
+    const workflowSource = await readFile(DAILY_WORKFLOW_PATH, "utf8");
     const collectSource = JSON.stringify(workflow.jobs["collect-analyze"]);
     const persistSource = JSON.stringify(workflow.jobs["persist-state"]);
     const buildSource = JSON.stringify(workflow.jobs["build-pages"]);
@@ -353,7 +404,8 @@ describe("日次workflow", () => {
     const operationsSource = JSON.stringify(workflow.jobs["notify-operations"]);
 
     expect(collectSource).toContain("GH_APP_PRIVATE_KEY");
-    expect(collectSource).toContain("OPENAI_API_KEY");
+    expect(collectSource).toContain("CODEX_AUTH_JSON");
+    expect(collectSource.match(/\$\{\{ secrets\./gu)).toHaveLength(2);
     expect(collectSource).not.toContain("DISCORD_OPERATIONS_WEBHOOK_URL");
     expect(collectSource).not.toContain("DISCORD_WEBHOOK_URL");
     expect(persistSource).not.toContain("secrets.");
@@ -361,11 +413,12 @@ describe("日次workflow", () => {
     expect(notifySource).toContain("DISCORD_OPERATIONS_WEBHOOK_URL");
     expect(notifySource).toContain("DISCORD_WEBHOOK_URL");
     expect(notifySource).not.toContain("GH_APP_PRIVATE_KEY");
-    expect(notifySource).not.toContain("OPENAI_API_KEY");
+    expect(notifySource).not.toContain("CODEX_AUTH_JSON");
     expect(operationsSource).toContain("DISCORD_OPERATIONS_WEBHOOK_URL");
     expect(operationsSource).not.toContain("DISCORD_WEBHOOK_URL");
     expect(operationsSource).not.toContain("GH_APP_PRIVATE_KEY");
-    expect(operationsSource).not.toContain("OPENAI_API_KEY");
+    expect(operationsSource).not.toContain("CODEX_AUTH_JSON");
+    expect(workflowSource).not.toContain("OPENAI_API_KEY");
   });
 
   it("Discord secretの設定名を必要な通知jobの環境変数へ公開する", async () => {

@@ -231,7 +231,7 @@ flowchart LR
 
 ## 13. 要求一覧
 
-要求は合計169件である。
+要求は合計170件である。
 
 ### 13.1 目的・成果
 
@@ -449,14 +449,15 @@ flowchart LR
 
 ### 13.12 セキュリティ・プライバシー
 
-| ID        | 規範 | 要求                                                                                                                                                                                                            | 受入要約                                                                                                  |
-| --------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `SEC-001` | MUST | job最小権限 — 収集、state push、Pages deploy、Discord notifyを権限分離し、各jobのGITHUB_TOKEN permissionsを最小化しなければならない。                                                                           | `AT-SEC-001`: workflow permissions静的検査がallowlistと一致する。                                         |
-| `SEC-002` | MUST | secret trigger境界 — secretを使うjobはdefault branchのscheduleまたは権限管理されたworkflow_dispatchだけで実行し、pull_request_targetでuntrusted codeを実行してはならない。                                      | `AT-SEC-002`: PR eventからsecret jobへ到達する経路がない。                                                |
-| `SEC-003` | MUST | Action pinning — 第三者/公式を含むGitHub Actionをfull commit SHAでpinし、更新をreview付きPRで行わなければならない。                                                                                             | `AT-SEC-003`: workflow内uses参照が全て40桁SHAである。                                                     |
-| `SEC-004` | MUST | public-only fail closed — serialization直前は収集inventory、publish直前はworkflow artifactへ保持した収集時のpublic repo allowlistで独立検証し、違反1件でも新state、Pages、Discord公開を中止しなければならない。 | `AT-SEC-004`: private repositoryのID、owner/name、URLと未知repositoryの注入fixtureで3出力すべて停止する。 |
-| `SEC-005` | MUST | Web content安全化 — GitHub由来文字列をescape/sanitizeし、allowlist URL、CSP、noopener等を適用しなければならない。                                                                                               | `AT-SEC-005`: XSS/危険URL fixtureが実行・遷移できない。                                                   |
-| `SEC-006` | MUST | ログredaction — Actions log・job summary・artifactにsecret、authorization header、raw App key、webhook URL、未加工API responseを出してはならない。                                                              | `AT-SEC-006`: canary secretを用いた統合テストで全log/artifact検索が0件になる。                            |
+| ID        | 規範 | 要求                                                                                                                                                                                                                                         | 受入要約                                                                                                                                                |
+| --------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SEC-001` | MUST | job最小権限 — 収集、state push、Pages deploy、Discord notifyを権限分離し、各jobのGITHUB_TOKEN permissionsを最小化しなければならない。                                                                                                        | `AT-SEC-001`: workflow permissions静的検査がallowlistと一致する。                                                                                       |
+| `SEC-002` | MUST | secret trigger境界 — secretを使うjobはdefault branchのscheduleまたは権限管理されたworkflow_dispatchだけで実行し、pull_request_targetでuntrusted codeを実行してはならない。                                                                   | `AT-SEC-002`: PR eventからsecret jobへ到達する経路がない。                                                                                              |
+| `SEC-003` | MUST | Action pinning — 第三者/公式を含むGitHub Actionをfull commit SHAでpinし、更新をreview付きPRで行わなければならない。                                                                                                                          | `AT-SEC-003`: workflow内uses参照が全て40桁SHAである。                                                                                                   |
+| `SEC-004` | MUST | public-only fail closed — serialization直前は収集inventory、publish直前はworkflow artifactへ保持した収集時のpublic repo allowlistで独立検証し、違反1件でも新state、Pages、Discord公開を中止しなければならない。                              | `AT-SEC-004`: private repositoryのID、owner/name、URLと未知repositoryの注入fixtureで3出力すべて停止する。                                               |
+| `SEC-005` | MUST | Web content安全化 — GitHub由来文字列をescape/sanitizeし、allowlist URL、CSP、noopener等を適用しなければならない。                                                                                                                            | `AT-SEC-005`: XSS/危険URL fixtureが実行・遷移できない。                                                                                                 |
+| `SEC-006` | MUST | ログredaction — Actions log・job summary・artifactにsecret、authorization header、raw App key、webhook URL、未加工API responseを出してはならない。                                                                                           | `AT-SEC-006`: canary secretを用いた統合テストで全log/artifact検索が0件になる。                                                                          |
+| `SEC-007` | MUST | Codex認証ファイルの一時配置 — `collect-analyze` jobは`CODEX_AUTH_JSON` secretをrunnerの一時directoryにある`auth.json`へ権限600で配置し、Codex認証情報として`CODEX_HOME`だけを収集stepへ渡し、job終了時に成否を問わず削除しなければならない。 | `AT-SEC-007`: workflow静的検査でsecretの空値拒否、directory権限700、file権限600、`CODEX_HOME`の受け渡し、`if: always()`による最終stepの削除を確認する。 |
 
 ### 13.13 運用・性能
 
@@ -525,7 +526,7 @@ GitHub収集、deterministic判定、state branch、Pagesを実装。DiscordとC
 
 ## 17. 受入と変更管理
 
-- 全169要求は一意な受入試験IDを持つ。
+- 全170要求は一意な受入試験IDを持つ。
 - MUST要求の未達はrelease blocker。
 - SHOULD要求の未達は理由・代替・期限をdecision logへ記録する。
 - model/reasoning effort/prompt/schema/状態判定変更はgolden evalとDiscord snapshot差分をPRでreviewする。
