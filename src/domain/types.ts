@@ -432,6 +432,7 @@ export type NotificationLedgerEntry =
   | (NotificationLedgerEntryBase &
       Readonly<{
         status: "reserved";
+        expiresAt: UtcIsoDateTime;
       }>)
   | (NotificationLedgerEntryBase &
       Readonly<{

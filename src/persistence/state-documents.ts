@@ -76,6 +76,7 @@ const ledgerEntryBaseSchema = z.strictObject({
 const ledgerEntrySchema = z.discriminatedUnion("status", [
   ledgerEntryBaseSchema.extend({
     status: z.literal("reserved"),
+    expiresAt: dateTimeSchema,
   }),
   ledgerEntryBaseSchema.extend({
     status: z.literal("sent"),
@@ -120,6 +121,29 @@ const notificationLedgerSchema = z
           code: "custom",
           path: ["operationsAlerts", index, "sentAt"],
           message: "送信時刻は障害発生時刻以後にしてください",
+        });
+      }
+    }
+    for (const [index, entry] of ledger.entries.entries()) {
+      if (entry.cooldownUntil < entry.reservedAt) {
+        context.addIssue({
+          code: "custom",
+          path: ["entries", index, "cooldownUntil"],
+          message: "cooldown終了時刻は予約時刻以後にしてください",
+        });
+      }
+      if (entry.status === "reserved" && entry.expiresAt < entry.reservedAt) {
+        context.addIssue({
+          code: "custom",
+          path: ["entries", index, "expiresAt"],
+          message: "予約期限は予約時刻以後にしてください",
+        });
+      }
+      if (entry.status === "sent" && entry.sentAt < entry.reservedAt) {
+        context.addIssue({
+          code: "custom",
+          path: ["entries", index, "sentAt"],
+          message: "送信時刻は予約時刻以後にしてください",
         });
       }
     }

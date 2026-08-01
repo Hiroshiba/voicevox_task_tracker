@@ -83,6 +83,7 @@ const ledgerReservationSchema = z.strictObject({
   reasonCode: notificationReasonCodeSchema,
   severity: severitySchema,
   reservedAt: dateTimeSchema,
+  expiresAt: dateTimeSchema,
   cooldownUntil: dateTimeSchema,
   status: z.literal("reserved"),
 });
@@ -307,12 +308,15 @@ function assertNotificationSelectionConsistency(
       if (ledgerEntry == null) {
         throw new TypeError("workflow artifactの通知予約がledgerにありません");
       }
+      if (ledgerEntry.status !== "reserved") {
+        throw new TypeError("workflow artifactの通知予約がledgerへ反映されていません");
+      }
       if (
-        ledgerEntry.status !== "reserved" ||
         ledgerEntry.itemNodeId !== reservation.itemNodeId ||
         ledgerEntry.reasonCode !== reservation.reasonCode ||
         ledgerEntry.severity !== reservation.severity ||
         ledgerEntry.reservedAt !== reservation.reservedAt ||
+        ledgerEntry.expiresAt !== reservation.expiresAt ||
         ledgerEntry.cooldownUntil !== reservation.cooldownUntil
       ) {
         throw new TypeError("workflow artifactの通知予約がledgerへ反映されていません");

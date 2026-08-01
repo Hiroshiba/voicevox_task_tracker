@@ -380,13 +380,30 @@ const publicConfidenceThresholdsSchema = z
     message: "high confidence閾値はmedium confidence閾値以上にしてください",
     path: ["high"],
   });
+const publicAiStateSchema = z.union([
+  z.strictObject({
+    enabled: z.literal(false),
+    available: z.literal(false),
+    degraded: z.literal(false),
+  }),
+  z.strictObject({
+    enabled: z.literal(true),
+    available: z.literal(true),
+    degraded: z.boolean(),
+  }),
+  z.strictObject({
+    enabled: z.literal(true),
+    available: z.literal(false),
+    degraded: z.literal(true),
+  }),
+]);
 const publicSummaryDtoSchema = z.strictObject({
   schemaVersion: z.literal("1"),
   runId: identifierSchema,
   generatedAt: dateTimeSchema,
   observedAt: dateTimeSchema,
   trackingStartAt: dateTimeSchema,
-  aiAvailable: z.boolean(),
+  ai: publicAiStateSchema,
   confidenceThresholds: publicConfidenceThresholdsSchema,
   aggregates: publicAggregateSchema,
   repositories: z.array(publicRepositorySchema),

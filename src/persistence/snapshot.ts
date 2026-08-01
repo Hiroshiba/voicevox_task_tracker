@@ -90,6 +90,24 @@ export type SnapshotCollectionState = Readonly<{
   repositories: readonly SnapshotCollectionRepository[];
 }>;
 
+/** snapshotへ保存するAIの有効状態、利用可否、縮退状態。 */
+export type SnapshotAiState =
+  | Readonly<{
+      enabled: false;
+      available: false;
+      degraded: false;
+    }>
+  | Readonly<{
+      enabled: true;
+      available: true;
+      degraded: boolean;
+    }>
+  | Readonly<{
+      enabled: true;
+      available: false;
+      degraded: true;
+    }>;
+
 /** 完全runだけを表すsnapshot内のrun情報。 */
 export type SnapshotRun = Readonly<{
   id: string;
@@ -102,6 +120,7 @@ export type StateSnapshot = Readonly<{
   schemaVersion: "1";
   generatedAt: UtcIsoDateTime;
   trackingStartAt: UtcIsoDateTime;
+  ai: SnapshotAiState;
   collection: SnapshotCollectionState;
   repositories: readonly SnapshotRepository[];
   items: readonly SnapshotTrackedItem[];
@@ -286,6 +305,9 @@ function assertSnapshotSemantics(snapshot: StateSnapshot): void {
 function normalizeSnapshot(snapshot: StateSnapshot): StateSnapshot {
   return Object.freeze({
     ...snapshot,
+    ai: Object.freeze({
+      ...snapshot.ai,
+    }),
     collection: Object.freeze({
       repositories: Object.freeze(
         [...snapshot.collection.repositories]

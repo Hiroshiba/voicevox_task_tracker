@@ -131,6 +131,7 @@ import {
   createStateSnapshot,
   type StatePersistenceSession,
   type PersistStateTransactionResult,
+  type SnapshotAiState,
   type SnapshotCollectionItem,
   type SnapshotCollectionRepository,
   type SnapshotRepository,
@@ -1668,10 +1669,18 @@ async function analyzeCodex(
             authentication: configuration.config.ai.authentication,
             model: configuration.config.ai.model,
             execution: configuration.config.ai.execution,
+            retry: {
+              initialDelaySeconds: configuration.config.operations.retry.initialDelaySeconds,
+              maxDelaySeconds: configuration.config.operations.retry.maxDelaySeconds,
+            },
           },
           {
             environment: codexCredentials.environment,
             processRunner: adapters.codexProcessRunner,
+            runtime: {
+              sleep: adapters.sleep,
+              random: adapters.random,
+            },
           },
         ),
       executedAt: () => invocation.startedAt,
@@ -2672,6 +2681,7 @@ function notificationLedgerEntries(
         Object.freeze({
           ...fields,
           status: "reserved",
+          expiresAt: createUtcIsoDateTime(entry.expiresAt),
         }),
       );
     } else {
@@ -2808,6 +2818,34 @@ function mergeNotificationLedger(
   });
 }
 
+function snapshotAiState(config: Config, codexAnalysis: CodexAnalysis): SnapshotAiState {
+  if (!config.ai.enabled) {
+    if (codexAnalysis.run != null) {
+      throw new TypeError("AIが無効ですがCodex分析結果があります");
+    }
+    return Object.freeze({
+      enabled: false,
+      available: false,
+      degraded: false,
+    });
+  }
+  const run = codexAnalysis.run;
+  assertNonNullable(run, "AIが有効ですがCodex分析結果がありません");
+  const degraded = run.failures.length > 0 || run.deferred.length > 0;
+  if (run.failures.length === 0) {
+    return Object.freeze({
+      enabled: true,
+      available: true,
+      degraded,
+    });
+  }
+  return Object.freeze({
+    enabled: true,
+    available: false,
+    degraded: true,
+  });
+}
+
 function validateRunCompleteness(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
@@ -2839,6 +2877,7 @@ function validateRunCompleteness(
     schemaVersion: "1",
     generatedAt: invocation.startedAt,
     trackingStartAt: trackingStartAt(configuration, state, invocation),
+    ai: snapshotAiState(configuration.config, codexAnalysis),
     collection: {
       repositories: collection.collectionRepositories.map((repository) => ({
         ...repository,

@@ -3,7 +3,7 @@ import { TaskTrackerError } from "../util/task-tracker-error.js";
 /** Codex adapterで発生するエラーの基底クラス。 */
 export abstract class CodexAdapterError extends TaskTrackerError {}
 
-/** Codex CLIの実行試行で発生し、再試行できるエラーの基底クラス。 */
+/** Codex CLIの実行試行で発生するエラーの基底クラス。 */
 export abstract class CodexAttemptError extends CodexAdapterError {
   public readonly attempts: number;
 

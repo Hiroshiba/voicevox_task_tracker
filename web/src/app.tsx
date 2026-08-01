@@ -237,11 +237,7 @@ function Dashboard({ locale, now, summary }: Omit<AppProps, "loadDetails" | "tit
         </div>
       </div>
 
-      {!summary.aiAvailable && (
-        <p class="notice notice-warning" role="status">
-          AIを利用できなかったため、確定ルールと利用可能な前回結果で表示しています。
-        </p>
-      )}
+      <AiStateNotice ai={summary.ai} />
 
       <dl class="metric-grid">
         {primaryMetrics.map((metric) => (
@@ -282,6 +278,31 @@ function Dashboard({ locale, now, summary }: Omit<AppProps, "loadDetails" | "tit
       </div>
     </section>
   );
+}
+
+function AiStateNotice({ ai }: Readonly<{ ai: PublicSummaryDto["ai"] }>) {
+  if (!ai.enabled) {
+    return (
+      <p class="notice" role="status">
+        AI分析は設定で無効です。確定ルールで表示しています。
+      </p>
+    );
+  }
+  if (!ai.available) {
+    return (
+      <p class="notice notice-warning" role="status">
+        AIを利用できなかったため、確定ルールと利用可能な前回結果で表示しています。
+      </p>
+    );
+  }
+  if (ai.degraded) {
+    return (
+      <p class="notice notice-warning" role="status">
+        AI分析の一部が縮退したため、確定ルールと利用可能な前回結果を併用しています。
+      </p>
+    );
+  }
+  return null;
 }
 
 function RepositoryFreshness({ locale, now, summary }: Omit<AppProps, "loadDetails" | "title">) {

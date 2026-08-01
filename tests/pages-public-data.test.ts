@@ -16,6 +16,7 @@ import {
 import {
   createStateHistoryRecord,
   createStateSnapshot,
+  type SnapshotAiState,
   type StateHistoryRecord,
   type StateSnapshot,
 } from "../src/persistence/index.js";
@@ -96,6 +97,7 @@ type ItemFixtureOptions = Readonly<{
 type SnapshotFixtureOptions = Readonly<{
   runId: string;
   runStatus: "success" | "fallback";
+  ai: SnapshotAiState;
   generatedAt: string;
   repositories: readonly RepositoryFixture[];
   items: readonly unknown[];
@@ -211,6 +213,7 @@ function createSnapshot(options: SnapshotFixtureOptions): StateSnapshot {
     schemaVersion: "1",
     generatedAt: options.generatedAt,
     trackingStartAt: TRACKING_START_AT,
+    ai: options.ai,
     collection: {
       repositories: [],
     },
@@ -244,6 +247,11 @@ function createSingleItemSnapshot(title: string): StateSnapshot {
   return createSnapshot({
     runId: "run-single",
     runStatus: "success",
+    ai: {
+      enabled: true,
+      available: true,
+      degraded: false,
+    },
     generatedAt: GENERATED_AT,
     repositories: [
       {
@@ -303,6 +311,11 @@ describe("Pages公開安全性", () => {
     const snapshot = createSnapshot({
       runId: "run-unknown-repository",
       runStatus: "success",
+      ai: {
+        enabled: true,
+        available: true,
+        degraded: false,
+      },
       generatedAt: GENERATED_AT,
       repositories: [
         {
@@ -350,6 +363,11 @@ describe("Pages公開安全性", () => {
     const snapshot = createSnapshot({
       runId: "run-private",
       runStatus: "success",
+      ai: {
+        enabled: true,
+        available: true,
+        degraded: false,
+      },
       generatedAt: GENERATED_AT,
       repositories: [
         {
@@ -447,6 +465,33 @@ describe("Pages公開安全性", () => {
 });
 
 describe("公開DTO生成", () => {
+  it("run成功時もsnapshotのAI無効状態をそのまま公開する", () => {
+    const source = createSingleItemSnapshot("AI無効状態の項目");
+    const snapshot = createStateSnapshot({
+      ...source,
+      ai: {
+        enabled: false,
+        available: false,
+        degraded: false,
+      },
+    });
+
+    const generated = generateFixture(
+      snapshot,
+      [],
+      publicInventory(),
+      [],
+      defaultGenerationOptions,
+    );
+
+    expect(snapshot.run.status).toBe("success");
+    expect(generated.summary.ai).toEqual({
+      enabled: false,
+      available: false,
+      degraded: false,
+    });
+  });
+
   it("fixtureの集計、graph、根拠、前回差分を公開DTOへ反映する", () => {
     const repository = {
       id: PUBLIC_REPOSITORY_ID,
@@ -457,6 +502,11 @@ describe("公開DTO生成", () => {
     const previous = createSnapshot({
       runId: "run-previous",
       runStatus: "success",
+      ai: {
+        enabled: true,
+        available: true,
+        degraded: false,
+      },
       generatedAt: "2026-07-31T00:00:00.000Z",
       repositories: [
         {
@@ -507,6 +557,11 @@ describe("公開DTO生成", () => {
     const current = createSnapshot({
       runId: "run-current",
       runStatus: "success",
+      ai: {
+        enabled: true,
+        available: true,
+        degraded: false,
+      },
       generatedAt: GENERATED_AT,
       repositories: [repository],
       items: [
@@ -666,6 +721,11 @@ describe("公開DTO生成", () => {
     const snapshot = createSnapshot({
       runId: "run-stale",
       runStatus: "fallback",
+      ai: {
+        enabled: true,
+        available: false,
+        degraded: true,
+      },
       generatedAt: GENERATED_AT,
       repositories: [
         {
@@ -729,7 +789,11 @@ describe("公開DTO生成", () => {
     );
     const staleItem = generated.summary.items.find((item) => item.nodeId === "I_STALE");
 
-    expect(generated.summary.aiAvailable).toBe(false);
+    expect(generated.summary.ai).toEqual({
+      enabled: true,
+      available: false,
+      degraded: true,
+    });
     expect(generated.summary.observedAt).toBe(FRESH_OBSERVED_AT);
     expect(generated.summary.aggregates).toMatchObject({
       staleRepositoryCount: 1,
@@ -756,6 +820,11 @@ describe("公開summaryサイズと書き出し", () => {
     const snapshot = createSnapshot({
       runId: "run-large",
       runStatus: "success",
+      ai: {
+        enabled: true,
+        available: true,
+        degraded: false,
+      },
       generatedAt: GENERATED_AT,
       repositories: [
         {

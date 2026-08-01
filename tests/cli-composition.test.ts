@@ -211,6 +211,11 @@ function createEmptyWorkflowArtifact(runId: string): WorkflowArtifact {
       schemaVersion: "1",
       generatedAt: NOW,
       trackingStartAt: NOW,
+      ai: {
+        enabled: false,
+        available: false,
+        degraded: false,
+      },
       collection: {
         repositories: [],
       },

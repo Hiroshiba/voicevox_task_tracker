@@ -73,6 +73,30 @@ function addHours(value: UtcIsoDateTime, hours: number): UtcIsoDateTime {
   return createUtcIsoDateTime(new Date(Date.parse(value) + hours * 60 * 60 * 1000).toISOString());
 }
 
+function markReservationsSent(
+  entries: readonly NotificationLedgerEntry[],
+  sentAt: UtcIsoDateTime,
+): readonly NotificationLedgerEntry[] {
+  return Object.freeze(
+    entries.map((entry) => {
+      if (entry.status !== "reserved") {
+        throw new TypeError("送信済みへ変換するledger entryが予約ではありません");
+      }
+      return Object.freeze({
+        notificationKey: entry.notificationKey,
+        itemNodeId: entry.itemNodeId,
+        reasonCode: entry.reasonCode,
+        severity: entry.severity,
+        reservedAt: entry.reservedAt,
+        cooldownUntil: entry.cooldownUntil,
+        status: "sent",
+        sentAt,
+        discordMessageId: `discord-message:${entry.notificationKey}`,
+      } satisfies NotificationLedgerEntry);
+    }),
+  );
+}
+
 function createWaitingOn(kind: WaitingOnKind, candidateId: string, role: WaitingOnRole): WaitingOn {
   return Object.freeze({
     kind,
@@ -617,14 +641,15 @@ describe("ledgerとcooldown", () => {
       createInput(NOW, [overdueItem("watch")], [], settings),
     );
     expect(first.action).toBe("create_digest");
+    const sentLedger = markReservationsSent(first.ledgerReservations, NOW);
     const sameDay = selectDiscordNotifications(
-      createInput(addHours(NOW, 1), [overdueItem("urgent")], first.ledgerReservations, settings),
+      createInput(addHours(NOW, 1), [overdueItem("urgent")], sentLedger, settings),
     );
     const nextDay = selectDiscordNotifications(
-      createInput(addHours(NOW, 24), [overdueItem("urgent")], first.ledgerReservations, settings),
+      createInput(addHours(NOW, 24), [overdueItem("urgent")], sentLedger, settings),
     );
     const cooldownBoundary = selectDiscordNotifications(
-      createInput(addHours(NOW, 72), [overdueItem("urgent")], first.ledgerReservations, settings),
+      createInput(addHours(NOW, 72), [overdueItem("urgent")], sentLedger, settings),
     );
 
     expect(sameDay.action).toBe("skip_digest");
@@ -661,11 +686,12 @@ describe("ledgerとcooldown", () => {
       ),
     });
     const first = selectDiscordNotifications(createInput(NOW, [criticalItem], [], settings));
+    const sentLedger = markReservationsSent(first.ledgerReservations, NOW);
     const beforeBoundary = selectDiscordNotifications(
-      createInput(addHours(NOW, 47), [unchangedCritical], first.ledgerReservations, settings),
+      createInput(addHours(NOW, 47), [unchangedCritical], sentLedger, settings),
     );
     const boundary = selectDiscordNotifications(
-      createInput(addHours(NOW, 48), [unchangedCritical], first.ledgerReservations, settings),
+      createInput(addHours(NOW, 48), [unchangedCritical], sentLedger, settings),
     );
 
     expect(first.ledgerReservations[0]?.cooldownUntil).toBe(addHours(NOW, 48));
@@ -683,7 +709,7 @@ describe("ledgerとcooldown", () => {
       );
       if (daily.action === "create_digest") {
         notifiedDays.push(day);
-        ledger = daily.ledgerReservations;
+        ledger = markReservationsSent(daily.ledgerReservations, evaluatedAt);
       }
       const rerun = selectDiscordNotifications(
         createInput(evaluatedAt, [overdueItem("urgent")], ledger, settings),
@@ -705,17 +731,34 @@ describe("ledgerとcooldown", () => {
     const first = selectDiscordNotifications(
       createInput(NOW, [overdueItem("watch")], [], noCooldownSettings),
     );
+    const sentLedger = markReservationsSent(first.ledgerReservations, NOW);
     const rerun = selectDiscordNotifications(
-      createInput(
-        addHours(NOW, 12),
-        [overdueItem("urgent")],
-        first.ledgerReservations,
-        noCooldownSettings,
-      ),
+      createInput(addHours(NOW, 12), [overdueItem("urgent")], sentLedger, noCooldownSettings),
     );
 
     expect(first.action).toBe("create_digest");
     expect(rerun.action).toBe("skip_digest");
+  });
+
+  it("reservedは24時間だけ抑制し、期限切れ後は再送しない理由も候補へ戻す", () => {
+    const item = createItem("I_expired_reservation", {
+      newlyUnblocked: true,
+      priorityWeight: 25,
+    });
+    const first = selectDiscordNotifications(createInput(NOW, [item], [], settings));
+    const beforeExpiry = selectDiscordNotifications(
+      createInput(addHours(NOW, 23), [item], first.ledgerReservations, settings),
+    );
+    const atExpiry = selectDiscordNotifications(
+      createInput(addHours(NOW, 24), [item], first.ledgerReservations, settings),
+    );
+
+    expect(first.ledgerReservations[0]).toMatchObject({
+      status: "reserved",
+      expiresAt: addHours(NOW, 24),
+    });
+    expect(beforeExpiry.action).toBe("skip_digest");
+    expect(atExpiry.action).toBe("create_digest");
   });
 });
 

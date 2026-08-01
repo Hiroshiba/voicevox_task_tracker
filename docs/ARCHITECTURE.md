@@ -75,6 +75,8 @@ option形式の引数は`--backfill`に従って`daily`または`backfill`へ変
 
 `dry-run`は手順10まで実行し、state、Pages、Discordを変更せずに検証済みartifactとrun reportだけを書き出します。
 Codexの失敗は決定論的判定へ縮退できるため、完全性を満たす場合は`fallback`として後続処理を続けます。
+snapshotはAIの有効状態、利用可否、縮退状態をrun statusと別に保存します。
+PagesはこのAI状態を公開DTOへ変換し、run statusからAIの状態を推定しません。
 repository単位の収集は、再試行後も503で失敗し、同じrepositoryの前回値がある場合だけ前回値を`stale`として使います。
 この縮退はdiagnosticとstale件数を記録して後続処理を続け、run statusを変更しません。
 前回値がない503、503以外の例外、不完全な結果は`failure`となり、通常の後続stageを実行しません。
@@ -129,6 +131,11 @@ call数、入力文字数、推定費用の上限を超えた候補を優先順�
 GitHub App private key、installation token、Discord Webhook URLは渡しません。
 Issue本文、コメント、ラベル、loginはID付きの信頼できない入力データとして渡し、命令として扱いません。
 
+Codexのtimeout、rate limit、不正JSON、一時的なprocess起動失敗、signal終了は`ai.execution.maxAttempts`まで再試行します。
+待機時間は`operations.retry`の初期待機時間と最大待機時間を使い、指数backoffとjitterを適用します。
+非ゼロ終了、固定資材や設定の不備、恒久的なprocess起動失敗は再試行しません。
+Discordはtransport例外とHTTP 429、503だけを同じ設定で再試行し、他のHTTP status、secret不備、成功応答のschema不正は直ちに失敗します。
+
 Codex出力はJSON Schema検証の後にsemantic validationを通します。
 入力にないsource ID、user、team、relation targetは拒否し、native relationは変更させません。
 検証済み出力も候補データであり、reducerを通さずstateや外部サービスへ反映しません。
@@ -140,13 +147,17 @@ Codex出力はJSON Schema検証の後にsemantic validationを通します。
 
 | 既定パス                            | 内容                                                            |
 | ----------------------------------- | --------------------------------------------------------------- |
-| `state/snapshot.json`               | schema version付きの最新snapshot                                |
+| `state/snapshot.json`               | AI状態を含むschema version付きの最新snapshot                    |
 | `state/history/YYYY-MM-DD.jsonl`    | 前回snapshotとの差分を持つ日次履歴                              |
 | `state/ai-cache/<sha256>.json`      | Codexのcontent-addressed cache                                  |
-| `state/notification-ledger.json`    | 通知の重複抑制とcooldownに使うledger                            |
+| `state/notification-ledger.json`    | 予約期限、送信結果、cooldownを持つ通知ledger                    |
 | `state/run-reports/YYYY-MM-DD.json` | PagesとDiscordより前に保存するsuccessまたはfallbackの指標と診断 |
 
 永続化sessionはbranch headを開始時に固定し、snapshot、履歴、追加cache、通知候補選別後のledger、run reportを通常stateの最初のGit commitへまとめます。
+通知予約はrun開始時刻から24時間だけ有効です。
+予約期限は日次workflow内の排他用leaseであり通知方針ではないため、設定項目にせず日次周期と同じ24時間へ固定します。
+期限内の予約は重複送信を抑え、期限切れの予約は次回の候補選別で抑制しません。
+cooldownと同日抑制は送信済みentryだけへ適用します。
 run reportはPages生成とDiscord送信より前に保存します。
 Discord通知を送信した場合は、送信結果を反映したledgerだけを2回目のGit commitで保存します。
 各commitの前にheadが変わった場合は競合として失敗し、不完全なcommitへ切り替えません。

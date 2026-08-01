@@ -202,19 +202,19 @@ function calculateBackoffMilliseconds(
 
 async function waitBeforeRetry(
   attempt: number,
-  response: DiscordWebhookHttpResponse,
+  response: DiscordWebhookHttpResponse | undefined,
   settings: DiscordWebhookRetrySettings,
   runtime: DiscordWebhookRuntime,
   webhookSecret: string,
 ): Promise<void> {
   const backoffMilliseconds = calculateBackoffMilliseconds(attempt, settings, runtime.random);
-  const requestedDelay = retryAfterMilliseconds(response);
+  const requestedDelay = response == null ? undefined : retryAfterMilliseconds(response);
   const delayMilliseconds =
     requestedDelay == null ? backoffMilliseconds : Math.max(backoffMilliseconds, requestedDelay);
   try {
     await runtime.sleep(delayMilliseconds);
   } catch (error: unknown) {
-    throw new DiscordWebhookRequestError(response.status, attempt, {
+    throw new DiscordWebhookRequestError(response?.status, attempt, {
       cause: createSafeCause(error, webhookSecret),
     });
   }
@@ -257,9 +257,13 @@ export async function executeDiscordWebhook(
         payload: input.payload,
       });
     } catch (error: unknown) {
-      throw new DiscordWebhookRequestError(undefined, attempt, {
-        cause: createSafeCause(error, webhookSecret),
-      });
+      if (attempt === input.retry.maxAttempts) {
+        throw new DiscordWebhookRetryExhaustedError(undefined, attempt, {
+          cause: createSafeCause(error, webhookSecret),
+        });
+      }
+      await waitBeforeRetry(attempt, undefined, input.retry, input.runtime, webhookSecret);
+      continue;
     }
     validateHttpResponse(response);
     if (response.status >= 200 && response.status < 300) {

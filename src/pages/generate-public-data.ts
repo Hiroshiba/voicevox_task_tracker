@@ -815,7 +815,9 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
     generatedAt: snapshot.generatedAt,
     observedAt: latestRepositoryObservedAt(snapshot.repositories),
     trackingStartAt: snapshot.trackingStartAt,
-    aiAvailable: snapshot.run.status === "success",
+    ai: {
+      ...snapshot.ai,
+    },
     confidenceThresholds: {
       ...input.options.confidenceThresholds,
     },

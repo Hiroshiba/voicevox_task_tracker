@@ -779,6 +779,39 @@ function setIssueDetails(
 }
 
 describe("本番収集の接続", () => {
+  it("AI無効時の有効状態と利用可否をrun成功状態から分離して保存する", async () => {
+    const repository = createRepository("R_ai_disabled", "ai-disabled", FIRST_RUN_AT);
+    const fixture = createRepositoryFixture(repository);
+    const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const item = createIssueItem({
+      repository: requirePublicRepository(repository),
+      number: 1,
+      fingerprint: "ai-disabled-v1",
+      updatedAt: observedAt,
+      observedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    fixture.openItems = [item];
+    setIssueDetails(fixture, [item], observedAt);
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: false,
+    });
+    const harness = createCollectionHarness({ repositories: [fixture], config });
+
+    const result = await harness.runDry(FIRST_RUN_AT);
+    const snapshot = requireDryRunSnapshot(harness.artifacts);
+
+    expect(result.exitCode).toBe(0);
+    expect(snapshot.run.status).toBe("success");
+    expect(snapshot.ai).toEqual({
+      enabled: false,
+      available: false,
+      degraded: false,
+    });
+  });
+
   it("fingerprint変更項目とgraph隣接nodeだけをoverlap起点で詳細取得する", async () => {
     const repository = createRepository("R_incremental", "incremental", FIRST_RUN_AT);
     const publicRepository = requirePublicRepository(repository);

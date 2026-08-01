@@ -199,6 +199,34 @@ describe("Web UI", () => {
     expect(currentContainer().textContent).toContain("1 日前");
   });
 
+  it("AI無効をAI利用失敗と区別して表示する", () => {
+    renderApp({
+      ...sampleSummary,
+      ai: {
+        enabled: false,
+        available: false,
+        degraded: false,
+      },
+    });
+
+    expect(currentContainer().textContent).toContain("AI分析は設定で無効です");
+    expect(currentContainer().textContent).not.toContain("AIを利用できなかったため");
+  });
+
+  it("AIを利用できる縮退runを完全成功と区別して表示する", () => {
+    renderApp({
+      ...sampleSummary,
+      ai: {
+        enabled: true,
+        available: true,
+        degraded: true,
+      },
+    });
+
+    expect(currentContainer().textContent).toContain("AI分析の一部が縮退したため");
+    expect(currentContainer().textContent).not.toContain("AIを利用できなかったため");
+  });
+
   it("attention queueをseverity、対応優先度、影響範囲、停滞時間で並べる", () => {
     expect(selectAttentionItems(sampleSummary.items).map((item) => item.nodeId)).toEqual([
       "sample-item-editor-101",

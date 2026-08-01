@@ -20,6 +20,7 @@ import { assertNonNullable } from "../util/index.js";
 const MILLISECONDS_PER_HOUR = 60 * 60 * 1000;
 const MILLISECONDS_PER_DAY = 24 * MILLISECONDS_PER_HOUR;
 const RESPONSIBILITY_CHANGE_STALL_HOURS = 48;
+const RESERVATION_DURATION_MILLISECONDS = MILLISECONDS_PER_DAY;
 
 /** 通知理由として利用できるnone以外のreason code。 */
 export type DiscordNotificationReasonCode = Exclude<NotificationReasonCode, "none">;
@@ -136,6 +137,8 @@ export type DiscordNotificationCandidate = Readonly<{
   priorityWeight: number;
 }>;
 
+type NotificationLedgerReservation = Extract<NotificationLedgerEntry, { status: "reserved" }>;
+
 /** 空digest抑制を明示する通知選別結果。 */
 export type DiscordNotificationSelection =
   | Readonly<{
@@ -147,7 +150,10 @@ export type DiscordNotificationSelection =
   | Readonly<{
       action: "create_digest";
       candidates: readonly [DiscordNotificationCandidate, ...DiscordNotificationCandidate[]];
-      ledgerReservations: readonly [NotificationLedgerEntry, ...NotificationLedgerEntry[]];
+      ledgerReservations: readonly [
+        NotificationLedgerReservation,
+        ...NotificationLedgerReservation[],
+      ];
     }>;
 
 type ReasonSignal = Readonly<{
@@ -302,7 +308,12 @@ function validateLedger(
     if (reservedTimestamp > evaluatedTimestamp || cooldownTimestamp < reservedTimestamp) {
       throw new RangeError("ledgerの時刻は予約時刻、cooldown終了時刻の順にしてください");
     }
-    if (entry.status === "sent") {
+    if (entry.status === "reserved") {
+      const expiresTimestamp = parseTimestamp(entry.expiresAt, "ledgerの予約期限");
+      if (expiresTimestamp < reservedTimestamp) {
+        throw new RangeError("ledgerの予約期限は予約時刻以後にしてください");
+      }
+    } else {
       const sentTimestamp = parseTimestamp(entry.sentAt, "ledgerの送信時刻");
       if (sentTimestamp < reservedTimestamp || sentTimestamp > evaluatedTimestamp) {
         throw new RangeError("ledgerの送信時刻は予約時刻以後かつ判定時刻以前にしてください");
@@ -695,7 +706,10 @@ function isEligibleAgainstLedger(
   if (existing == null) {
     return true;
   }
-  if (isSameUtcDate(existing.reservedAt, evaluatedAt)) {
+  if (existing.status === "reserved") {
+    return evaluatedTimestamp >= parseTimestamp(existing.expiresAt, "ledgerの予約期限");
+  }
+  if (isSameUtcDate(existing.sentAt, evaluatedAt)) {
     return false;
   }
   if (
@@ -729,6 +743,15 @@ function cooldownUntil(
     throw new RangeError("cooldown終了時刻を計算できません");
   }
   return createUtcIsoDateTime(new Date(cooldownTimestamp).toISOString());
+}
+
+function reservationExpiresAt(reservedAt: UtcIsoDateTime): UtcIsoDateTime {
+  const expiresTimestamp =
+    parseTimestamp(reservedAt, "ledgerの予約時刻") + RESERVATION_DURATION_MILLISECONDS;
+  if (!Number.isFinite(expiresTimestamp)) {
+    throw new RangeError("ledgerの予約期限を計算できません");
+  }
+  return createUtcIsoDateTime(new Date(expiresTimestamp).toISOString());
 }
 
 function reasonPriority(reasonCode: DiscordNotificationReasonCode): number {
@@ -903,13 +926,14 @@ function createLedgerReservation(
   candidate: DiscordNotificationCandidate,
   reason: SelectedDiscordNotificationReason,
   evaluatedAt: UtcIsoDateTime,
-): NotificationLedgerEntry {
+): NotificationLedgerReservation {
   return Object.freeze({
     notificationKey: reason.notificationKey,
     itemNodeId: candidate.itemNodeId,
     reasonCode: reason.reasonCode,
     severity: candidate.severity,
     reservedAt: evaluatedAt,
+    expiresAt: reservationExpiresAt(evaluatedAt),
     cooldownUntil: reason.cooldownUntil,
     status: "reserved",
   } satisfies NotificationLedgerEntry);
@@ -924,8 +948,8 @@ function nonEmptyCandidates(
 }
 
 function nonEmptyLedgerEntries(
-  entries: readonly NotificationLedgerEntry[],
-): readonly [NotificationLedgerEntry, ...NotificationLedgerEntry[]] {
+  entries: readonly NotificationLedgerReservation[],
+): readonly [NotificationLedgerReservation, ...NotificationLedgerReservation[]] {
   const [first, ...rest] = entries;
   assertNonNullable(first, "通知候補に対応するledger予約がありません");
   return Object.freeze([first, ...rest]);

@@ -40,6 +40,7 @@ import {
 } from "../src/discord/index.js";
 
 const GENERATED_AT = createUtcIsoDateTime("2026-08-10T00:00:00.000Z");
+const RESERVATION_EXPIRES_AT = createUtcIsoDateTime("2026-08-11T00:00:00.000Z");
 const STALL_SINCE = createUtcIsoDateTime("2026-08-01T00:00:00.000Z");
 const NORMAL_SECRET_NAME = "DISCORD_WEBHOOK_URL";
 const OPERATIONS_SECRET_NAME = "DISCORD_OPERATIONS_WEBHOOK_URL";
@@ -171,6 +172,7 @@ function createReservation(candidate: DiscordNotificationCandidate): Notificatio
     reasonCode: reason.reasonCode,
     severity: candidate.severity,
     reservedAt: GENERATED_AT,
+    expiresAt: RESERVATION_EXPIRES_AT,
     cooldownUntil: reason.cooldownUntil,
     status: "reserved",
   });
@@ -196,12 +198,16 @@ function createDigestFixture(
 }
 
 function createRuntime(delays: number[]): DiscordWebhookRuntime {
+  return createRuntimeWithRandom(delays, 0);
+}
+
+function createRuntimeWithRandom(delays: number[], randomValue: number): DiscordWebhookRuntime {
   return Object.freeze({
     sleep: (delayMilliseconds) => {
       delays.push(delayMilliseconds);
       return Promise.resolve();
     },
-    random: () => 0,
+    random: () => randomValue,
     now: () => new Date(GENERATED_AT),
   });
 }
@@ -527,6 +533,7 @@ describe("Discord digest delivery", () => {
       discordMessageId: NORMAL_MESSAGE_ID,
       sentAt: GENERATED_AT,
     });
+    expect(ledgerFixture.notifications[0]).not.toHaveProperty("expiresAt");
   });
 
   it("通常webhookのsecretが無ければ値を露出せず明示エラーにする", async () => {
@@ -580,9 +587,90 @@ describe("Discord digest delivery", () => {
       }),
     );
 
-    expect(error).toBeInstanceOf(DiscordWebhookRequestError);
+    expect(error).toBeInstanceOf(DiscordDigestDeliveryError);
     expect(errorMessages(error)).not.toContain(NORMAL_WEBHOOK_URL);
     expect(errorMessages(error)).not.toContain("normal-canary-secret");
+  });
+
+  it("transport例外を上限付き指数backoffとjitterで再試行する", async () => {
+    const fixture = createDigestFixture(["review_overdue"], defaultItemOptions);
+    const delays: number[] = [];
+    const ledgerFixture = createLedgerFixture([]);
+    let attempts = 0;
+    const httpClient = Object.freeze({
+      execute: () => {
+        attempts += 1;
+        if (attempts < 4) {
+          return Promise.reject(new TypeError("一時的なtransport失敗"));
+        }
+        return Promise.resolve(successfulResponse(NORMAL_MESSAGE_ID));
+      },
+    } satisfies DiscordWebhookHttpClient);
+    const baseSettings = createSettings(OPERATIONS_SECRET_NAME, false, {});
+    const settings = Object.freeze({
+      ...baseSettings,
+      retry: Object.freeze({
+        maxAttempts: 4,
+        initialDelaySeconds: 2,
+        maxDelaySeconds: 5,
+      }),
+    });
+
+    const result = await sendDiscordDigest({
+      candidates: fixture.candidates,
+      ledgerReservations: fixture.reservations,
+      items: fixture.items,
+      generatedAt: GENERATED_AT,
+      pagesDeployment: successfulPagesDeployment(),
+      settings,
+      dependencies: createDependencies(
+        httpClient,
+        ledgerFixture.ledger,
+        createRuntimeWithRandom(delays, 0.5),
+        defaultSecrets(),
+      ),
+    });
+
+    expect(result.status).toBe("sent");
+    expect(attempts).toBe(4);
+    expect(delays).toEqual([1500, 3000, 3750]);
+  });
+
+  it("恒久的なHTTPエラーは再試行しない", async () => {
+    const fixture = createDigestFixture(["review_overdue"], defaultItemOptions);
+    const requests: DiscordWebhookHttpRequest[] = [];
+    const delays: number[] = [];
+    const ledgerFixture = createLedgerFixture([]);
+    const httpClient = createHttpClient(
+      requests,
+      () => ({
+        status: 400,
+        retryAfter: undefined,
+        body: {},
+      }),
+      [],
+    );
+
+    const error = await captureError(
+      sendDiscordDigest({
+        candidates: fixture.candidates,
+        ledgerReservations: fixture.reservations,
+        items: fixture.items,
+        generatedAt: GENERATED_AT,
+        pagesDeployment: successfulPagesDeployment(),
+        settings: createSettings(OPERATIONS_SECRET_NAME, false, {}),
+        dependencies: createDependencies(
+          httpClient,
+          ledgerFixture.ledger,
+          createRuntime(delays),
+          defaultSecrets(),
+        ),
+      }),
+    );
+
+    expect(error).toBeInstanceOf(DiscordWebhookRequestError);
+    expect(requests).toHaveLength(1);
+    expect(delays).toEqual([]);
   });
 
   it("Pages失敗時は通常digestを送らず別の運用障害を1件送る", async () => {

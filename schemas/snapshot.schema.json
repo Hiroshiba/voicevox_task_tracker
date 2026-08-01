@@ -8,6 +8,7 @@
     "schemaVersion",
     "generatedAt",
     "trackingStartAt",
+    "ai",
     "collection",
     "repositories",
     "items",
@@ -24,6 +25,9 @@
     },
     "trackingStartAt": {
       "$ref": "#/$defs/dateTime"
+    },
+    "ai": {
+      "$ref": "#/$defs/ai"
     },
     "collection": {
       "$ref": "#/$defs/collection"
@@ -74,6 +78,58 @@
     "fingerprint": {
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "ai": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "available", "degraded"],
+          "properties": {
+            "enabled": {
+              "const": false
+            },
+            "available": {
+              "const": false
+            },
+            "degraded": {
+              "const": false
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "available", "degraded"],
+          "properties": {
+            "enabled": {
+              "const": true
+            },
+            "available": {
+              "const": true
+            },
+            "degraded": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "available", "degraded"],
+          "properties": {
+            "enabled": {
+              "const": true
+            },
+            "available": {
+              "const": false
+            },
+            "degraded": {
+              "const": true
+            }
+          }
+        }
+      ]
     },
     "collection": {
       "type": "object",

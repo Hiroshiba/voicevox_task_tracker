@@ -147,6 +147,11 @@ function createSnapshot(options: SnapshotFixtureOptions): StateSnapshot {
     schemaVersion: "1",
     generatedAt: options.generatedAt,
     trackingStartAt: fixedTrackingStartAt,
+    ai: {
+      enabled: false,
+      available: false,
+      degraded: false,
+    },
     collection: {
       repositories: [],
     },

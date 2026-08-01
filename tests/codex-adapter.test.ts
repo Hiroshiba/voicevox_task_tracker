@@ -6,11 +6,13 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CodexInvalidJsonError,
   CodexNonZeroExitError,
+  CodexProcessStartError,
   CodexTimeoutError,
   createCodexAnalysisInput,
   executeCodexAnalysis,
   getCodexEnvironmentVariableAllowlist,
   type CodexAdapterConfiguration,
+  type CodexAdapterDependencies,
   type CodexAuthentication,
   type CodexAnalysisInput,
   type CodexProcessRequest,
@@ -41,7 +43,21 @@ function createConfiguration(
       approvalPolicy: "never",
       reasoningEffort: "medium",
     },
+    retry: {
+      initialDelaySeconds: 2,
+      maxDelaySeconds: 5,
+    },
   };
+}
+
+function createRuntime(delays: number[], randomValue: number): CodexAdapterDependencies["runtime"] {
+  return Object.freeze({
+    sleep: (delayMilliseconds) => {
+      delays.push(delayMilliseconds);
+      return Promise.resolve();
+    },
+    random: () => randomValue,
+  });
 }
 
 function createApiKeyEnvironment(): NodeJS.ProcessEnv {
@@ -223,6 +239,7 @@ describe("Codex CLI隔離実行", () => {
     const result = await executeCodexAnalysis(input, createConfiguration("api-key", 1, 5), {
       environment,
       processRunner,
+      runtime: createRuntime([], 0),
     });
 
     expect(result).toEqual(expectedOutput);
@@ -299,6 +316,7 @@ describe("Codex CLI隔離実行", () => {
     await executeCodexAnalysis(createInput("通常の本文"), createConfiguration("auth-json", 1, 5), {
       environment,
       processRunner,
+      runtime: createRuntime([], 0),
     });
 
     const request = requests.at(0);
@@ -318,6 +336,7 @@ describe("Codex CLI隔離実行", () => {
   it("JSONとして読めない最終メッセージを区別して再試行する", async () => {
     const invalidOutputCanary = "INVALID_JSON_OUTPUT_CANARY";
     const workingDirectories: string[] = [];
+    const delays: number[] = [];
     const processRunner: CodexProcessRunner = async (request) => {
       workingDirectories.push(request.workingDirectory);
       expect(await readdir(request.workingDirectory)).toEqual([]);
@@ -335,6 +354,7 @@ describe("Codex CLI隔離実行", () => {
       {
         environment: createApiKeyEnvironment(),
         processRunner,
+        runtime: createRuntime(delays, 0),
       },
     );
 
@@ -354,6 +374,7 @@ describe("Codex CLI隔離実行", () => {
       expect(error.cause.message).not.toContain(invalidOutputCanary);
     }
     expect(workingDirectories).toHaveLength(2);
+    expect(delays).toEqual([1000]);
     for (const workingDirectory of workingDirectories) {
       await expectWorkspaceRemoved(workingDirectory);
     }
@@ -361,6 +382,7 @@ describe("Codex CLI隔離実行", () => {
 
   it("timeoutを区別して設定回数まで再試行する", async () => {
     const workingDirectories: string[] = [];
+    const delays: number[] = [];
     const processRunner: CodexProcessRunner = (request) => {
       workingDirectories.push(request.workingDirectory);
       return Promise.resolve({
@@ -372,26 +394,29 @@ describe("Codex CLI隔離実行", () => {
 
     const execution = executeCodexAnalysis(
       createInput("通常の本文"),
-      createConfiguration("api-key", 2, 3),
+      createConfiguration("api-key", 4, 3),
       {
         environment: createApiKeyEnvironment(),
         processRunner,
+        runtime: createRuntime(delays, 0.5),
       },
     );
 
     await expect(execution).rejects.toMatchObject({
       name: CodexTimeoutError.name,
-      attempts: 2,
+      attempts: 4,
       timeoutMilliseconds: 3000,
     });
-    expect(workingDirectories).toHaveLength(2);
+    expect(workingDirectories).toHaveLength(4);
+    expect(delays).toEqual([1500, 3000, 3750]);
     for (const workingDirectory of workingDirectories) {
       await expectWorkspaceRemoved(workingDirectory);
     }
   });
 
-  it("非ゼロ終了を区別して設定回数まで再試行する", async () => {
+  it("非ゼロ終了を恒久的な失敗として再試行しない", async () => {
     let executionCount = 0;
+    const delays: number[] = [];
     const processRunner: CodexProcessRunner = () => {
       executionCount += 1;
       return Promise.resolve({
@@ -407,16 +432,75 @@ describe("Codex CLI隔離実行", () => {
       {
         environment: createApiKeyEnvironment(),
         processRunner,
+        runtime: createRuntime(delays, 0),
       },
     );
 
     await expect(execution).rejects.toMatchObject({
       name: CodexNonZeroExitError.name,
-      attempts: 2,
+      attempts: 1,
       exitCode: 17,
       signal: null,
     });
+    expect(executionCount).toBe(1);
+    expect(delays).toEqual([]);
+  });
+
+  it("一時的なprocess起動失敗だけを待機して再試行する", async () => {
+    let executionCount = 0;
+    const delays: number[] = [];
+    const processRunner: CodexProcessRunner = async (request) => {
+      executionCount += 1;
+      if (executionCount === 1) {
+        throw Object.assign(new Error("process resource busy"), {
+          code: "EAGAIN",
+        });
+      }
+      await writeFile(
+        getRequiredArgumentValue(request, "--output-last-message"),
+        JSON.stringify({ status: "success" }),
+        "utf8",
+      );
+      return successfulProcessResult;
+    };
+
+    const result = await executeCodexAnalysis(
+      createInput("通常の本文"),
+      createConfiguration("api-key", 3, 5),
+      {
+        environment: createApiKeyEnvironment(),
+        processRunner,
+        runtime: createRuntime(delays, 0),
+      },
+    );
+
+    expect(result).toEqual({ status: "success" });
     expect(executionCount).toBe(2);
+    expect(delays).toEqual([1000]);
+  });
+
+  it("恒久的なprocess起動失敗は再試行しない", async () => {
+    let executionCount = 0;
+    const delays: number[] = [];
+    const processRunner: CodexProcessRunner = () => {
+      executionCount += 1;
+      throw Object.assign(new Error("codex executable not found"), {
+        code: "ENOENT",
+      });
+    };
+
+    await expect(
+      executeCodexAnalysis(createInput("通常の本文"), createConfiguration("api-key", 3, 5), {
+        environment: createApiKeyEnvironment(),
+        processRunner,
+        runtime: createRuntime(delays, 0),
+      }),
+    ).rejects.toMatchObject({
+      name: CodexProcessStartError.name,
+      attempts: 1,
+    });
+    expect(executionCount).toBe(1);
+    expect(delays).toEqual([]);
   });
 
   it("Codex出力内の書き込み指示を実行せずJSONデータとして返す", async () => {
@@ -449,6 +533,7 @@ describe("Codex CLI隔離実行", () => {
       {
         environment: createApiKeyEnvironment(),
         processRunner,
+        runtime: createRuntime([], 0),
       },
     );
 

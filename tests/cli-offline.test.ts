@@ -34,6 +34,11 @@ function emptySnapshot(): StateSnapshot {
     schemaVersion: "1",
     generatedAt: NOW,
     trackingStartAt: SCHEDULED_FOR,
+    ai: {
+      enabled: false,
+      available: false,
+      degraded: false,
+    },
     collection: {
       repositories: [],
     },

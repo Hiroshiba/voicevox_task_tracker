@@ -199,9 +199,11 @@ Relation
 AnalysisMetadata
   deterministicRulesVersion, model, reasoningEffort, backendVersion
   promptVersion, schemaVersion, inputHash, outputHash
+SnapshotAiState
+  enabled, available, degraded
 NotificationLedger
   notificationKey, itemNodeId, reasonCode, severity
-  reservedAt, sentAt, discordMessageId, cooldownUntil
+  reservedAt, expiresAt, sentAt, discordMessageId, cooldownUntil
 ```
 
 canonical graph edgeは `blocker --blocks--> blocked item` とする。
@@ -389,7 +391,7 @@ flowchart LR
 | `AIC-010` | MUST | 簡潔な説明 — 出力は短いreasonSummaryと根拠だけを含み、内部思考過程の出力を要求・保存してはならない。                                                                                                                                                                                          | `AT-AIC-010`: schemaにchainOfThought相当フィールドがなく、summary長制限が効く。                                                                |
 | `AIC-011` | MUST | confidence閾値 — high>=0.85、medium>=0.65、low<0.65を既定とし、mediumは推定表示、lowはfallbackとしなければならない。                                                                                                                                                                          | `AT-AIC-011`: 境界値fixtureで表示・通知扱いが仕様通り変わる。                                                                                  |
 | `AIC-012` | MUST | 二重validation — JSON Schema validation後にcandidate参照、時刻、URL、矛盾、native relation保護のsemantic validationを行わなければならない。                                                                                                                                                   | `AT-AIC-012`: schema-validだが候補外のfixtureがsemantic stageで失敗する。                                                                      |
-| `AIC-013` | MUST | AI失敗時縮退 — timeout、rate limit、schema error時も定式判定でPages生成を継続し、AI unavailableを明示しなければならない。                                                                                                                                                                     | `AT-AIC-013`: Codex 500 fixtureでrun全体が壊れず対象がfallback表示される。                                                                     |
+| `AIC-013` | MUST | AI失敗時縮退 — timeout、rate limit、schema error時も定式判定でPages生成を継続し、AIの有効状態、利用可否、縮退状態をrun statusと独立してsnapshotへ保存し明示しなければならない。                                                                                                               | `AT-AIC-013`: AI無効のsuccess runとCodex 500のfallback runで異なるAI状態が表示される。                                                         |
 | `AIC-014` | MUST | 旧結果の安全再利用 — source/input hashが完全一致する場合だけ前回AI結果を再利用し、変更後はstale結果を断定表示してはならない。                                                                                                                                                                 | `AT-AIC-014`: 本文1文字変更fixtureで旧cacheが使われない。                                                                                      |
 | `AIC-015` | MUST | 再現情報 — 各AI結果にmodel identifier、reasoningEffort、backend version、promptVersion、schemaVersion、input/output hash、実行時刻を記録しなければならない。                                                                                                                                  | `AT-AIC-015`: 任意結果から全再現metadataが取得できる。                                                                                         |
 | `AIC-016` | MUST | run予算 — 1 runあたりcall数、入力文字/token見積、費用上限を設定できなければならない。                                                                                                                                                                                                         | `AT-AIC-016`: 上限到達fixtureで追加callを停止する。                                                                                            |
@@ -401,38 +403,38 @@ flowchart LR
 
 ### 13.9 Webページ
 
-| ID        | 規範 | 要求                                                                                                                                 | 受入要約                                                                     |
-| --------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| `WEB-001` | MUST | GitHub Pages公開 — Web UIをVOICEVOX/voicevox_task_trackerのGitHub PagesへActions artifact経由で公開しなければならない。              | `AT-WEB-001`: mainの成功run後にPages URLが200を返す。                        |
-| `WEB-002` | MUST | 概要dashboard — 生成時刻、repo/item数、status/severity別件数、unknown/stale件数を概要表示しなければならない。                        | `AT-WEB-002`: fixture集計値と画面値が一致する。                              |
-| `WEB-003` | MUST | attention queue — 要対応項目をseverity、priority、downstream impact、stall時間で並べたqueueを表示しなければならない。                | `AT-WEB-003`: 既知fixtureで期待順序になる。                                  |
-| `WEB-004` | MUST | 依存graph — connected component/repo cluster単位で依存graphを閲覧できなければならない。                                              | `AT-WEB-004`: 1000 node fixtureでcomponent選択から対象graphを開ける。        |
-| `WEB-005` | MUST | 時間の視覚強調 — 長いstall時間とdownstream impactをnode size等で強調し、凡例を表示しなければならない。                               | `AT-WEB-005`: 1d/10d/30d fixtureの表示サイズが単調増加し上限で暴走しない。   |
-| `WEB-006` | MUST | frontier表示 — actionable frontierをgraphと一覧の両方で識別できなければならない。                                                    | `AT-WEB-006`: DAG fixtureのfrontier nodeにtext/icon表示がある。              |
-| `WEB-007` | MUST | cycle表示 — dependency cycleをcollapse/強調し、構成nodeを展開できなければならない。                                                  | `AT-WEB-007`: 3 node cycle fixtureでブラウザが固まらず展開できる。           |
-| `WEB-008` | MUST | 表形式代替 — graphを使わずrepo、type、status、waitingOn、stall、blockers、updatedでsort/filterできる表を提供しなければならない。     | `AT-WEB-008`: keyboardのみで全列filterとitem遷移ができる。                   |
-| `WEB-009` | MUST | item詳細 — 各item詳細にGitHub URL、状態、waitingOn、next action、時間、blocker、evidence、confidence、履歴を表示しなければならない。 | `AT-WEB-009`: 任意itemで必須欄が確認できる。                                 |
-| `WEB-010` | MUST | 検索とdeep link — repo、number、title、actor、team、labelで検索でき、filter/itemをURLで共有できなければならない。                    | `AT-WEB-010`: 再読込・別browserで同じdeep link状態が再現する。               |
-| `WEB-011` | MUST | アクセシビリティ — 日本語UIはWCAG 2.2 AAを目標に、keyboard、focus、contrast、非色依存、screen-reader labelを備えなければならない。   | `AT-WEB-011`: 自動a11y検査に重大違反がなく、主要flowをkeyboardで完了できる。 |
-| `WEB-012` | MUST | 鮮度表示 — 全体とrepo/itemごとにobservedAt、JST絶対時刻、相対時間、stale/AI unavailableを表示しなければならない。                    | `AT-WEB-012`: stale repo fixtureが最新と誤認できない表示になる。             |
+| ID        | 規範 | 要求                                                                                                                                         | 受入要約                                                                                   |
+| --------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `WEB-001` | MUST | GitHub Pages公開 — Web UIをVOICEVOX/voicevox_task_trackerのGitHub PagesへActions artifact経由で公開しなければならない。                      | `AT-WEB-001`: mainの成功run後にPages URLが200を返す。                                      |
+| `WEB-002` | MUST | 概要dashboard — 生成時刻、repo/item数、status/severity別件数、unknown/stale件数を概要表示しなければならない。                                | `AT-WEB-002`: fixture集計値と画面値が一致する。                                            |
+| `WEB-003` | MUST | attention queue — 要対応項目をseverity、priority、downstream impact、stall時間で並べたqueueを表示しなければならない。                        | `AT-WEB-003`: 既知fixtureで期待順序になる。                                                |
+| `WEB-004` | MUST | 依存graph — connected component/repo cluster単位で依存graphを閲覧できなければならない。                                                      | `AT-WEB-004`: 1000 node fixtureでcomponent選択から対象graphを開ける。                      |
+| `WEB-005` | MUST | 時間の視覚強調 — 長いstall時間とdownstream impactをnode size等で強調し、凡例を表示しなければならない。                                       | `AT-WEB-005`: 1d/10d/30d fixtureの表示サイズが単調増加し上限で暴走しない。                 |
+| `WEB-006` | MUST | frontier表示 — actionable frontierをgraphと一覧の両方で識別できなければならない。                                                            | `AT-WEB-006`: DAG fixtureのfrontier nodeにtext/icon表示がある。                            |
+| `WEB-007` | MUST | cycle表示 — dependency cycleをcollapse/強調し、構成nodeを展開できなければならない。                                                          | `AT-WEB-007`: 3 node cycle fixtureでブラウザが固まらず展開できる。                         |
+| `WEB-008` | MUST | 表形式代替 — graphを使わずrepo、type、status、waitingOn、stall、blockers、updatedでsort/filterできる表を提供しなければならない。             | `AT-WEB-008`: keyboardのみで全列filterとitem遷移ができる。                                 |
+| `WEB-009` | MUST | item詳細 — 各item詳細にGitHub URL、状態、waitingOn、next action、時間、blocker、evidence、confidence、履歴を表示しなければならない。         | `AT-WEB-009`: 任意itemで必須欄が確認できる。                                               |
+| `WEB-010` | MUST | 検索とdeep link — repo、number、title、actor、team、labelで検索でき、filter/itemをURLで共有できなければならない。                            | `AT-WEB-010`: 再読込・別browserで同じdeep link状態が再現する。                             |
+| `WEB-011` | MUST | アクセシビリティ — 日本語UIはWCAG 2.2 AAを目標に、keyboard、focus、contrast、非色依存、screen-reader labelを備えなければならない。           | `AT-WEB-011`: 自動a11y検査に重大違反がなく、主要flowをkeyboardで完了できる。               |
+| `WEB-012` | MUST | 鮮度表示 — 全体とrepo/itemごとにobservedAt、JST絶対時刻、相対時間、staleを表示し、AIの無効、利用不可、縮退を区別して表示しなければならない。 | `AT-WEB-012`: stale repoと3種類のAI状態のfixtureが最新や完全成功と誤認できない表示になる。 |
 
 ### 13.10 Discord通知
 
-| ID        | 規範 | 要求                                                                                                                                                                                    | 受入要約                                                                                    |
-| --------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `NTF-001` | MUST | 08:00 JST日次起動 — scheduleを毎日23:00 UTC（08:00 JST）に設定し、workflow_dispatchも提供しなければならない。                                                                           | `AT-NTF-001`: workflow YAMLのcronと手動triggerを静的検査する。                              |
-| `NTF-002` | MUST | Pages後通知 — 通常digestは最新Pagesのdeployment成功後にだけ送信しなければならない。                                                                                                     | `AT-NTF-002`: Pages失敗fixtureで通常digestが送られない。                                    |
-| `NTF-003` | MUST | Discord Incoming Webhook — v1通知はDiscord Incoming Webhookを使用し、URLをActions secretから取得しなければならない。                                                                    | `AT-NTF-003`: secretなしで明示エラー、secret値はlogに出ない。                               |
-| `NTF-004` | MUST | mention既定無効 — 既定payloadはallowed_mentionsで全mentionを無効化しなければならない。                                                                                                  | `AT-NTF-004`: @everyone/@user文字列fixtureでも実mentionが許可されない。                     |
-| `NTF-005` | MUST | mention allowlist — 有効化時も設定済みDiscord IDだけをallowed_mentions.usersへ含めなければならない。                                                                                    | `AT-NTF-005`: 未登録GitHub loginはplain text表示になる。                                    |
-| `NTF-006` | MUST | 通知選別 — threshold crossing、urgent/critical停滞、owner不明48h超、責務遷移、newly unblocked高impact、cycleを主要通知候補としなければならない。                                        | `AT-NTF-006`: 各reason fixtureがcandidateになる。                                           |
-| `NTF-007` | MUST | digest構成 — digestを「停止要因」「責務/triage不明」「新規解消・重要変化」に分け、各itemにrepo#number、title、waitingOn、duration、reason、URLを含めなければならない。                  | `AT-NTF-007`: payload snapshotが必須項目を満たす。                                          |
-| `NTF-008` | MUST | Discord制限内分割 — embed/文字数/件数のDiscord制限を事前計算し、安全上限を超える場合は複数messageへ分割しなければならない。                                                             | `AT-NTF-008`: 長文20件fixtureがAPI rejectなしの複数payloadになる。                          |
-| `NTF-009` | MUST | noise抑制 — freshな作業中、bot-only更新、unchanged watch、recent draft、低信頼AI-only、automation dashboardを既定digestから除外しなければならない。                                     | `AT-NTF-009`: noise fixture群が候補0件になる。                                              |
-| `NTF-010` | MUST | 重複/cooldown — notification ledgerで同一reason/stateの再送を抑え、urgentは既定3日、criticalは既定2日のcooldownを適用しなければならない。                                               | `AT-NTF-010`: 同日再実行と連日fixtureで期待回数になる。                                     |
-| `NTF-011` | MUST | 空digest抑制 — 通知対象が0件なら通常digestを送信してはならない。                                                                                                                        | `AT-NTF-011`: 0 candidate fixtureでwebhook callが0件になる。                                |
-| `NTF-012` | MUST | 運用障害通知 — 収集・Pages・Discord自身の重大障害を通常item digestと区別し、設定により同一または別webhookへ1件だけ通知できなければならない。                                            | `AT-NTF-012`: 連続retry失敗fixtureで重複しないops alertが生成される。                       |
-| `NTF-013` | MUST | 永続化済みrun照合 — 通常digestの送信前にworkflow artifactのsnapshotとtracker-state branchの永続化済みsnapshotでrun IDが一致することを検証し、不一致なら送信せず失敗しなければならない。 | `AT-NTF-013`: 同じrunなら送信adapterが呼ばれ、異なるrunなら呼ばれず日本語エラーで失敗する。 |
+| ID        | 規範 | 要求                                                                                                                                                                                                    | 受入要約                                                                                    |
+| --------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `NTF-001` | MUST | 08:00 JST日次起動 — scheduleを毎日23:00 UTC（08:00 JST）に設定し、workflow_dispatchも提供しなければならない。                                                                                           | `AT-NTF-001`: workflow YAMLのcronと手動triggerを静的検査する。                              |
+| `NTF-002` | MUST | Pages後通知 — 通常digestは最新Pagesのdeployment成功後にだけ送信しなければならない。                                                                                                                     | `AT-NTF-002`: Pages失敗fixtureで通常digestが送られない。                                    |
+| `NTF-003` | MUST | Discord Incoming Webhook — v1通知はDiscord Incoming Webhookを使用し、URLをActions secretから取得しなければならない。                                                                                    | `AT-NTF-003`: secretなしで明示エラー、secret値はlogに出ない。                               |
+| `NTF-004` | MUST | mention既定無効 — 既定payloadはallowed_mentionsで全mentionを無効化しなければならない。                                                                                                                  | `AT-NTF-004`: @everyone/@user文字列fixtureでも実mentionが許可されない。                     |
+| `NTF-005` | MUST | mention allowlist — 有効化時も設定済みDiscord IDだけをallowed_mentions.usersへ含めなければならない。                                                                                                    | `AT-NTF-005`: 未登録GitHub loginはplain text表示になる。                                    |
+| `NTF-006` | MUST | 通知選別 — threshold crossing、urgent/critical停滞、owner不明48h超、責務遷移、newly unblocked高impact、cycleを主要通知候補としなければならない。                                                        | `AT-NTF-006`: 各reason fixtureがcandidateになる。                                           |
+| `NTF-007` | MUST | digest構成 — digestを「停止要因」「責務/triage不明」「新規解消・重要変化」に分け、各itemにrepo#number、title、waitingOn、duration、reason、URLを含めなければならない。                                  | `AT-NTF-007`: payload snapshotが必須項目を満たす。                                          |
+| `NTF-008` | MUST | Discord制限内分割 — embed/文字数/件数のDiscord制限を事前計算し、安全上限を超える場合は複数messageへ分割しなければならない。                                                                             | `AT-NTF-008`: 長文20件fixtureがAPI rejectなしの複数payloadになる。                          |
+| `NTF-009` | MUST | noise抑制 — freshな作業中、bot-only更新、unchanged watch、recent draft、低信頼AI-only、automation dashboardを既定digestから除外しなければならない。                                                     | `AT-NTF-009`: noise fixture群が候補0件になる。                                              |
+| `NTF-010` | MUST | 重複/cooldown — notification ledgerの予約は24時間だけ再送を抑え、期限切れ後は再送可能にしなければならない。cooldownは送信済み記録だけへ適用し、urgentは既定3日、criticalは既定2日としなければならない。 | `AT-NTF-010`: 期限内と期限切れの予約、同日再実行、連日fixtureで期待回数になる。             |
+| `NTF-011` | MUST | 空digest抑制 — 通知対象が0件なら通常digestを送信してはならない。                                                                                                                                        | `AT-NTF-011`: 0 candidate fixtureでwebhook callが0件になる。                                |
+| `NTF-012` | MUST | 運用障害通知 — 収集・Pages・Discord自身の重大障害を通常item digestと区別し、設定により同一または別webhookへ1件だけ通知できなければならない。                                                            | `AT-NTF-012`: 連続retry失敗fixtureで重複しないops alertが生成される。                       |
+| `NTF-013` | MUST | 永続化済みrun照合 — 通常digestの送信前にworkflow artifactのsnapshotとtracker-state branchの永続化済みsnapshotでrun IDが一致することを検証し、不一致なら送信せず失敗しなければならない。                 | `AT-NTF-013`: 同じrunなら送信adapterが呼ばれ、異なるrunなら呼ばれず日本語エラーで失敗する。 |
 
 ### 13.11 永続化
 
@@ -442,7 +444,7 @@ flowchart LR
 | `DAT-002` | MUST | state branch — 永続状態を専用orphan branch tracker-stateへGit管理しなければならない。                                                                                                                  | `AT-DAT-002`: 初回bootstrapでbranchが作成され、以後同branchへbot commitされる。                   |
 | `DAT-003` | MUST | current snapshot — tracker-stateにschema-versioned current snapshotをcanonical JSONで保存しなければならない。                                                                                          | `AT-DAT-003`: 同一入力2回でvolatile fieldを除くbyte列が一致する。                                 |
 | `DAT-004` | MUST | 日次履歴 — 日次差分またはevent historyを日付単位で保持し、previous→currentを再構成できなければならない。                                                                                               | `AT-DAT-004`: 任意2日間のowner/edge/severity差分を再生できる。                                    |
-| `DAT-005` | MUST | AI cacheと通知ledger — AI cache、analysis metadata、notification ledgerをstate branchで保持しなければならない。                                                                                        | `AT-DAT-005`: runnerを破棄して再実行してもcache hit/cooldownが維持される。                        |
+| `DAT-005` | MUST | AI cacheと通知ledger — AI cache、analysis metadata、予約期限と送信結果を持つnotification ledgerをstate branchで保持しなければならない。                                                                | `AT-DAT-005`: runnerを破棄して再実行してもcache hit、予約期限、cooldownが維持される。             |
 | `DAT-006` | MUST | atomic/canonical/public-safe commit — validation完了後だけsorted/canonical stateをatomic commitし、secret、raw token、private repoのID、owner/name、repository URL、不要な全文本文を含めてはならない。 | `AT-DAT-006`: 失敗途中でlast good commitが変わらず、secret scan/private sentinel testが成功する。 |
 
 ### 13.12 セキュリティ・プライバシー
@@ -458,12 +460,12 @@ flowchart LR
 
 ### 13.13 運用・性能
 
-| ID        | 規範 | 要求                                                                                                                                                                               | 受入要約                                                                 |
-| --------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `OPS-001` | MUST | 排他と再実行 — workflow concurrencyで日次runを直列化し、manual rerunを安全かつ冪等にしなければならない。                                                                           | `AT-OPS-001`: 同時2 run fixtureでstate race・通常digest重複が起きない。  |
-| `OPS-002` | MUST | retryとlast-good保護 — GitHub/OpenAI/Discordの一時失敗を指数backoff+jitterでretryし、完全性を満たさないrunでlast-good Pages/stateを上書きしてはならない。                          | `AT-OPS-002`: 429/503 fixtureで上限retry後もlast good hashが維持される。 |
-| `OPS-003` | MUST | observability — run summaryにrepo/item/change/edge/AI call/cache/token見積/API残量/stale/notification/所要時間を記録しなければならない。                                           | `AT-OPS-003`: 成功・fallback・失敗runのsummaryに必須metricが存在する。   |
-| `OPS-004` | MUST | 性能と予算 — 基準fixture（5,000 items、10,000 edges、変更100件）を30分以内、GitHub API予算70%以内、Codex設定上限以内で処理し、Web初期summaryをgzip 1 MiB以内にしなければならない。 | `AT-OPS-004`: CI performance profileが全閾値を満たす。                   |
+| ID        | 規範 | 要求                                                                                                                                                                                              | 受入要約                                                                                                                                    |
+| --------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OPS-001` | MUST | 排他と再実行 — workflow concurrencyで日次runを直列化し、manual rerunを安全かつ冪等にしなければならない。                                                                                          | `AT-OPS-001`: 同時2 run fixtureでstate race・通常digest重複が起きない。                                                                     |
+| `OPS-002` | MUST | retryとlast-good保護 — GitHub、Codex、Discordの一時失敗を設定上限付きの指数backoffとjitterでretryし、恒久エラーはretryせず、完全性を満たさないrunでlast-good Pagesとstateを上書きしてはならない。 | `AT-OPS-002`: 429、503、transport例外、timeout、恒久エラーのfixtureで試行回数と待機時間が期待値になり、失敗後もlast good hashが維持される。 |
+| `OPS-003` | MUST | observability — run summaryにrepo/item/change/edge/AI call/cache/token見積/API残量/stale/notification/所要時間を記録しなければならない。                                                          | `AT-OPS-003`: 成功・fallback・失敗runのsummaryに必須metricが存在する。                                                                      |
+| `OPS-004` | MUST | 性能と予算 — 基準fixture（5,000 items、10,000 edges、変更100件）を30分以内、GitHub API予算70%以内、Codex設定上限以内で処理し、Web初期summaryをgzip 1 MiB以内にしなければならない。                | `AT-OPS-004`: CI performance profileが全閾値を満たす。                                                                                      |
 
 ## 14. 非機能方針補足
 

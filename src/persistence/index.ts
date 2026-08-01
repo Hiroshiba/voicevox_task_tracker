@@ -60,6 +60,7 @@ export {
   parseStateSnapshot,
   serializeStateSnapshot,
   type SnapshotAiAnalysisFingerprint,
+  type SnapshotAiState,
   type SnapshotCollectionItem,
   type SnapshotCollectionRepository,
   type SnapshotCollectionState,

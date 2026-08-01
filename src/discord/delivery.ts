@@ -143,8 +143,18 @@ function createSentNotificationEntries(
         cause: new RangeError("ledgerの送信時刻が予約時刻より前です"),
       });
     }
+    if (sentAt > reservation.expiresAt) {
+      throw new DiscordLedgerError("write", {
+        cause: new RangeError("ledgerの送信時刻が予約期限より後です"),
+      });
+    }
     return Object.freeze({
-      ...reservation,
+      notificationKey: reservation.notificationKey,
+      itemNodeId: reservation.itemNodeId,
+      reasonCode: reservation.reasonCode,
+      severity: reservation.severity,
+      reservedAt: reservation.reservedAt,
+      cooldownUntil: reservation.cooldownUntil,
       status: "sent",
       sentAt,
       discordMessageId,

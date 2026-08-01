@@ -58,7 +58,7 @@ export class DiscordWebhookRequestError extends DiscordError {
 
 /** Discord webhookのretry上限へ到達したことを表す。 */
 export class DiscordWebhookRetryExhaustedError extends DiscordWebhookRequestError {
-  public constructor(status: 429 | 503, attempts: number, options: ErrorOptions) {
+  public constructor(status: 429 | 503 | undefined, attempts: number, options: ErrorOptions) {
     super(status, attempts, options);
   }
 }

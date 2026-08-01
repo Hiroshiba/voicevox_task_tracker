@@ -11,6 +11,7 @@ import {
   CodexInvalidJsonError,
   CodexNonZeroExitError,
   CodexProcessStartError,
+  CodexRateLimitError,
   CodexResourceError,
   CodexTemporaryWorkspaceError,
   CodexTimeoutError,
@@ -34,6 +35,16 @@ const SYSTEM_PROMPT_URL = new URL("../../prompts/codex-system.md", import.meta.u
 const OUTPUT_SCHEMA_URL = new URL("../../schemas/codex-analysis.schema.json", import.meta.url);
 const OUTPUT_LAST_MESSAGE_FILE_NAME = "last-message.json";
 const MAX_TIMEOUT_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1000);
+const TEMPORARY_PROCESS_ERROR_CODES = new Set([
+  "EAGAIN",
+  "EBUSY",
+  "ECONNRESET",
+  "EMFILE",
+  "ENFILE",
+  "ENOMEM",
+  "EPIPE",
+  "ETIMEDOUT",
+]);
 
 /** Codex adapterが利用できる認証方式の一覧。 */
 export const CODEX_AUTHENTICATIONS = ["api-key", "auth-json"] as const;
@@ -67,6 +78,14 @@ const codexAdapterConfigurationSchema = z.strictObject({
     approvalPolicy: z.literal("never"),
     reasoningEffort: z.enum(REASONING_EFFORTS),
   }),
+  retry: z
+    .strictObject({
+      initialDelaySeconds: z.number().nonnegative(),
+      maxDelaySeconds: z.number().nonnegative(),
+    })
+    .refine((retry) => retry.initialDelaySeconds <= retry.maxDelaySeconds, {
+      message: "Codex retryの初期待機時間は最大待機時間以下にしてください",
+    }),
 });
 
 /** Codex adapterのモデルと隔離実行設定。 */
@@ -76,6 +95,10 @@ export type CodexAdapterConfiguration = z.output<typeof codexAdapterConfiguratio
 export type CodexAdapterDependencies = Readonly<{
   environment: NodeJS.ProcessEnv;
   processRunner: CodexProcessRunner;
+  runtime: Readonly<{
+    sleep: (delayMilliseconds: number) => Promise<void>;
+    random: () => number;
+  }>;
 }>;
 
 type AttemptOutcome =
@@ -275,6 +298,73 @@ async function executeAttempt(
   return outcome.value;
 }
 
+function processErrorCode(error: unknown): string | undefined {
+  if (
+    typeof error === "object" &&
+    error != null &&
+    "code" in error &&
+    typeof error.code === "string"
+  ) {
+    return error.code;
+  }
+  return undefined;
+}
+
+function isTemporaryAttemptError(error: CodexAttemptError): boolean {
+  if (
+    error instanceof CodexTimeoutError ||
+    error instanceof CodexRateLimitError ||
+    error instanceof CodexInvalidJsonError
+  ) {
+    return true;
+  }
+  if (error instanceof CodexProcessStartError) {
+    const code = processErrorCode(error.cause);
+    return code != null && TEMPORARY_PROCESS_ERROR_CODES.has(code);
+  }
+  if (error instanceof CodexNonZeroExitError) {
+    return error.signal != null;
+  }
+  return false;
+}
+
+function calculateBackoffMilliseconds(
+  retryNumber: number,
+  configuration: CodexAdapterConfiguration,
+  random: () => number,
+): number {
+  const randomValue = random();
+  if (!Number.isFinite(randomValue) || randomValue < 0 || randomValue >= 1) {
+    throw new TypeError("Codex retryのrandomは0以上1未満を返してください");
+  }
+  const initialMilliseconds = configuration.retry.initialDelaySeconds * 1000;
+  const maximumMilliseconds = configuration.retry.maxDelaySeconds * 1000;
+  const exponentialMilliseconds = Math.min(
+    maximumMilliseconds,
+    initialMilliseconds * 2 ** (retryNumber - 1),
+  );
+  return Math.ceil(exponentialMilliseconds * (0.5 + randomValue * 0.5));
+}
+
+async function waitBeforeRetry(
+  retryNumber: number,
+  configuration: CodexAdapterConfiguration,
+  dependencies: CodexAdapterDependencies,
+): Promise<void> {
+  const delayMilliseconds = calculateBackoffMilliseconds(
+    retryNumber,
+    configuration,
+    dependencies.runtime.random,
+  );
+  try {
+    await dependencies.runtime.sleep(delayMilliseconds);
+  } catch (error: unknown) {
+    throw new TypeError("Codex retryの待機に失敗しました", {
+      cause: error,
+    });
+  }
+}
+
 /** Codexを隔離実行し、最終メッセージをJSON値として返す。 */
 export async function executeCodexAnalysis(
   input: CodexAnalysisInput,
@@ -285,6 +375,7 @@ export async function executeCodexAnalysis(
     authentication: configurationValue.authentication,
     model: configurationValue.model,
     execution: configurationValue.execution,
+    retry: configurationValue.retry,
   });
   const validatedInput = createCodexAnalysisInput(input);
   const inputJson = serializeCodexAnalysisInput(validatedInput);
@@ -298,9 +389,10 @@ export async function executeCodexAnalysis(
       if (!(error instanceof CodexAttemptError)) {
         throw error;
       }
-      if (attempts === configuration.execution.maxAttempts) {
+      if (!isTemporaryAttemptError(error) || attempts === configuration.execution.maxAttempts) {
         throw error;
       }
+      await waitBeforeRetry(attempts, configuration, dependencies);
     }
   }
 }

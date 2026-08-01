@@ -256,7 +256,10 @@ describe("通知ledger", () => {
     severity: "urgent",
     reservedAt: createUtcIsoDateTime("2026-07-31T00:00:00Z"),
     cooldownUntil: createUtcIsoDateTime("2026-08-03T00:00:00Z"),
-  } satisfies Omit<Extract<NotificationLedgerEntry, { status: "reserved" }>, "status">;
+  } satisfies Omit<
+    Extract<NotificationLedgerEntry, { status: "sent" }>,
+    "status" | "sentAt" | "discordMessageId"
+  >;
 
   function describeLedgerEntry(entry: NotificationLedgerEntry): string {
     switch (entry.status) {
@@ -271,6 +274,7 @@ describe("通知ledger", () => {
     const reservedEntry = {
       ...entryBase,
       status: "reserved",
+      expiresAt: createUtcIsoDateTime("2026-08-01T00:00:00Z"),
     } satisfies NotificationLedgerEntry;
     const sentEntry = {
       ...entryBase,
@@ -282,6 +286,7 @@ describe("通知ledger", () => {
     expect(describeLedgerEntry(reservedEntry)).toBe("reserved:2026-07-31T00:00:00.000Z");
     expect(reservedEntry).not.toHaveProperty("sentAt");
     expect(reservedEntry).not.toHaveProperty("discordMessageId");
+    expect(sentEntry).not.toHaveProperty("expiresAt");
     expect(describeLedgerEntry(sentEntry)).toBe("sent:2026-07-31T00:01:00.000Z:discord-message-1");
   });
 });
