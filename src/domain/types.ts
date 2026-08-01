@@ -385,10 +385,13 @@ export type TrackedItemLatestEventActor =
 export function createTrackedItemLatestEventActor(
   events: readonly NormalizedEvent[],
 ): TrackedItemLatestEventActor {
-  let latestEvent = events[0];
-  for (const event of events.slice(1)) {
+  let latestEvent: NormalizedEvent | undefined;
+  for (const event of events) {
+    if (latestEvent == null) {
+      latestEvent = event;
+      continue;
+    }
     if (
-      latestEvent == null ||
       event.occurredAt > latestEvent.occurredAt ||
       (event.occurredAt === latestEvent.occurredAt && event.sourceId > latestEvent.sourceId)
     ) {

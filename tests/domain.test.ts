@@ -4,6 +4,7 @@ import {
   buildSourceId,
   compareSeverity,
   createGitHubNodeId,
+  createTrackedItemLatestEventActor,
   createUtcIsoDateTime,
   isTerminalStatus,
   parseSourceId,
@@ -245,6 +246,64 @@ describe("正規化イベント", () => {
       "merged",
       "reopened",
     ]);
+  });
+});
+
+describe("追跡項目の最新イベントアクター", () => {
+  const itemNodeId = createGitHubNodeId("I_kwDOLatestEventActor");
+
+  function createCommentEvent(
+    sourceOriginalId: string,
+    occurredAt: string,
+    actorLogin: string,
+  ): Extract<NormalizedEvent, { kind: "comment" }> {
+    return {
+      kind: "comment",
+      sourceId: buildSourceId("comment", sourceOriginalId),
+      itemNodeId,
+      occurredAt: createUtcIsoDateTime(occurredAt),
+      actor: {
+        type: "human",
+        nodeId: createGitHubNodeId(`U_${actorLogin}`),
+        login: actorLogin,
+      },
+      bodyFingerprint: `sha256:${sourceOriginalId}`,
+      bodyEmpty: false,
+    };
+  }
+
+  it("イベントがない場合はアクターなしを返す", () => {
+    expect(createTrackedItemLatestEventActor([])).toEqual({
+      status: "absent",
+    });
+  });
+
+  it("入力順にかかわらず発生時刻が最も新しいアクターを返す", () => {
+    const newestEvent = createCommentEvent("newest", "2026-08-02T02:00:00Z", "newest");
+    const events = [
+      newestEvent,
+      createCommentEvent("oldest", "2026-08-02T00:00:00Z", "oldest"),
+      createCommentEvent("middle", "2026-08-02T01:00:00Z", "middle"),
+    ];
+
+    expect(createTrackedItemLatestEventActor(events)).toEqual({
+      status: "present",
+      actor: newestEvent.actor,
+    });
+  });
+
+  it("発生時刻が同じ場合はsource IDが最も大きいアクターを返す", () => {
+    const smallerSourceEvent = createCommentEvent("a", "2026-08-02T00:00:00Z", "smaller");
+    const largerSourceEvent = createCommentEvent("z", "2026-08-02T00:00:00Z", "larger");
+
+    expect(createTrackedItemLatestEventActor([smallerSourceEvent, largerSourceEvent])).toEqual({
+      status: "present",
+      actor: largerSourceEvent.actor,
+    });
+    expect(createTrackedItemLatestEventActor([largerSourceEvent, smallerSourceEvent])).toEqual({
+      status: "present",
+      actor: largerSourceEvent.actor,
+    });
   });
 });
 
