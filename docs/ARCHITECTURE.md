@@ -94,6 +94,7 @@ guard違反は例外として日次トランザクションへ伝播します。
 新しいPages公開と通常digestは実行されず、最後に成功した公開結果が残ります。
 Pages guardを含むPages stageのエラーでは、通常digestの代わりにDiscordへ運用障害通知を試みます。
 通常digestにはPages guardを通過したsnapshot由来の通知候補だけを使います。
+通常digestの送信前には、artifactのsnapshotとtracker-state branchへ永続化済みのsnapshotでrun IDが一致することを検証し、不一致なら送信せず失敗します。
 
 ## Codexの隔離
 

@@ -3748,13 +3748,18 @@ async function notifyWorkflowDiscord(
     adapters.createStateBranchAdapter(),
     config.state,
   );
-  const snapshot = await session.loadSnapshot();
-  if (snapshot.status === "missing_branch") {
+  const persistedSnapshot = await session.loadSnapshot();
+  if (persistedSnapshot.status === "missing_branch") {
     throw new TypeError("Discord通知対象のstate branchがありません");
+  }
+  if (persistedSnapshot.snapshot.run.id !== artifact.snapshot.run.id) {
+    throw new TypeError(
+      "Discord通知対象のworkflow artifactとtracker-state branchでrunが一致しません",
+    );
   }
   const state = Object.freeze({
     session,
-    snapshot,
+    snapshot: persistedSnapshot,
     notificationLedger: await session.loadNotificationLedger(),
   });
   const result = await deliverDiscord(

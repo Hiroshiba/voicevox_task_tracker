@@ -183,8 +183,7 @@ function createMutableStateAdapter(onCommit: () => void): StateBranchAdapter {
   });
 }
 
-function createEmptyWorkflowArtifact(): WorkflowArtifact {
-  const runId = "tracker-run:composition-workflow-stage";
+function createEmptyWorkflowArtifact(runId: string): WorkflowArtifact {
   const metrics = {
     repositoryCount: 1,
     itemCount: 0,
@@ -564,11 +563,11 @@ describe("CLI合成root", () => {
     expect(codexProcessCount).toBe(0);
   });
 
-  it("後続の各stageが同じ公開artifactを単独process相当で消費する", async () => {
+  it("後続の各stageが同じrunの公開artifactを消費し、異なるrunのDiscord通知を拒否する", async () => {
     let stateCommitCount = 0;
     let pagesWriteCount = 0;
     let discordSendCount = 0;
-    const artifact = createEmptyWorkflowArtifact();
+    let artifact = createEmptyWorkflowArtifact("tracker-run:composition-workflow-stage");
     const harness = createHarness({});
     const stateAdapter = createMutableStateAdapter(() => {
       stateCommitCount += 1;
@@ -638,13 +637,27 @@ describe("CLI合成root", () => {
     expect(stateCommitCount).toBe(1);
     expect(pagesWriteCount).toBe(1);
     expect(discordSendCount).toBe(1);
+
+    artifact = createEmptyWorkflowArtifact("tracker-run:different-workflow-stage");
+    await expect(
+      application.run([
+        "notify-discord",
+        "--config",
+        "tests/fixtures/config.valid.yml",
+        "--pages-url",
+        "https://voicevox.github.io/voicevox_task_tracker/",
+      ]),
+    ).rejects.toThrow(
+      "Discord通知対象のworkflow artifactとtracker-state branchでrunが一致しません",
+    );
+    expect(discordSendCount).toBe(1);
     expect(harness.externalAdapterCalls.count).toBe(0);
   });
 
   it("運用障害stageが通常digestと別の1件を送りledgerで重複を抑止する", async () => {
     let stateCommitCount = 0;
     const payloads: DiscordWebhookPayload[] = [];
-    const artifact = createEmptyWorkflowArtifact();
+    const artifact = createEmptyWorkflowArtifact("tracker-run:composition-workflow-stage");
     const operationsWebhookUrl =
       "https://discord.com/api/webhooks/123456789012345678/operations-fixture-token";
     const harness = createHarness({

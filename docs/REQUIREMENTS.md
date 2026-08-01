@@ -229,7 +229,7 @@ flowchart LR
 
 ## 13. 要求一覧
 
-要求は合計167件である。
+要求は合計169件である。
 
 ### 13.1 目的・成果
 
@@ -418,20 +418,21 @@ flowchart LR
 
 ### 13.10 Discord通知
 
-| ID        | 規範 | 要求                                                                                                                                                                   | 受入要約                                                                |
-| --------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `NTF-001` | MUST | 08:00 JST日次起動 — scheduleを毎日23:00 UTC（08:00 JST）に設定し、workflow_dispatchも提供しなければならない。                                                          | `AT-NTF-001`: workflow YAMLのcronと手動triggerを静的検査する。          |
-| `NTF-002` | MUST | Pages後通知 — 通常digestは最新Pagesのdeployment成功後にだけ送信しなければならない。                                                                                    | `AT-NTF-002`: Pages失敗fixtureで通常digestが送られない。                |
-| `NTF-003` | MUST | Discord Incoming Webhook — v1通知はDiscord Incoming Webhookを使用し、URLをActions secretから取得しなければならない。                                                   | `AT-NTF-003`: secretなしで明示エラー、secret値はlogに出ない。           |
-| `NTF-004` | MUST | mention既定無効 — 既定payloadはallowed_mentionsで全mentionを無効化しなければならない。                                                                                 | `AT-NTF-004`: @everyone/@user文字列fixtureでも実mentionが許可されない。 |
-| `NTF-005` | MUST | mention allowlist — 有効化時も設定済みDiscord IDだけをallowed_mentions.usersへ含めなければならない。                                                                   | `AT-NTF-005`: 未登録GitHub loginはplain text表示になる。                |
-| `NTF-006` | MUST | 通知選別 — threshold crossing、urgent/critical停滞、owner不明48h超、責務遷移、newly unblocked高impact、cycleを主要通知候補としなければならない。                       | `AT-NTF-006`: 各reason fixtureがcandidateになる。                       |
-| `NTF-007` | MUST | digest構成 — digestを「停止要因」「責務/triage不明」「新規解消・重要変化」に分け、各itemにrepo#number、title、waitingOn、duration、reason、URLを含めなければならない。 | `AT-NTF-007`: payload snapshotが必須項目を満たす。                      |
-| `NTF-008` | MUST | Discord制限内分割 — embed/文字数/件数のDiscord制限を事前計算し、安全上限を超える場合は複数messageへ分割しなければならない。                                            | `AT-NTF-008`: 長文20件fixtureがAPI rejectなしの複数payloadになる。      |
-| `NTF-009` | MUST | noise抑制 — freshな作業中、bot-only更新、unchanged watch、recent draft、低信頼AI-only、automation dashboardを既定digestから除外しなければならない。                    | `AT-NTF-009`: noise fixture群が候補0件になる。                          |
-| `NTF-010` | MUST | 重複/cooldown — notification ledgerで同一reason/stateの再送を抑え、urgentは既定3日、criticalは既定2日のcooldownを適用しなければならない。                              | `AT-NTF-010`: 同日再実行と連日fixtureで期待回数になる。                 |
-| `NTF-011` | MUST | 空digest抑制 — 通知対象が0件なら通常digestを送信してはならない。                                                                                                       | `AT-NTF-011`: 0 candidate fixtureでwebhook callが0件になる。            |
-| `NTF-012` | MUST | 運用障害通知 — 収集・Pages・Discord自身の重大障害を通常item digestと区別し、設定により同一または別webhookへ1件だけ通知できなければならない。                           | `AT-NTF-012`: 連続retry失敗fixtureで重複しないops alertが生成される。   |
+| ID        | 規範 | 要求                                                                                                                                                                                    | 受入要約                                                                                    |
+| --------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `NTF-001` | MUST | 08:00 JST日次起動 — scheduleを毎日23:00 UTC（08:00 JST）に設定し、workflow_dispatchも提供しなければならない。                                                                           | `AT-NTF-001`: workflow YAMLのcronと手動triggerを静的検査する。                              |
+| `NTF-002` | MUST | Pages後通知 — 通常digestは最新Pagesのdeployment成功後にだけ送信しなければならない。                                                                                                     | `AT-NTF-002`: Pages失敗fixtureで通常digestが送られない。                                    |
+| `NTF-003` | MUST | Discord Incoming Webhook — v1通知はDiscord Incoming Webhookを使用し、URLをActions secretから取得しなければならない。                                                                    | `AT-NTF-003`: secretなしで明示エラー、secret値はlogに出ない。                               |
+| `NTF-004` | MUST | mention既定無効 — 既定payloadはallowed_mentionsで全mentionを無効化しなければならない。                                                                                                  | `AT-NTF-004`: @everyone/@user文字列fixtureでも実mentionが許可されない。                     |
+| `NTF-005` | MUST | mention allowlist — 有効化時も設定済みDiscord IDだけをallowed_mentions.usersへ含めなければならない。                                                                                    | `AT-NTF-005`: 未登録GitHub loginはplain text表示になる。                                    |
+| `NTF-006` | MUST | 通知選別 — threshold crossing、urgent/critical停滞、owner不明48h超、責務遷移、newly unblocked高impact、cycleを主要通知候補としなければならない。                                        | `AT-NTF-006`: 各reason fixtureがcandidateになる。                                           |
+| `NTF-007` | MUST | digest構成 — digestを「停止要因」「責務/triage不明」「新規解消・重要変化」に分け、各itemにrepo#number、title、waitingOn、duration、reason、URLを含めなければならない。                  | `AT-NTF-007`: payload snapshotが必須項目を満たす。                                          |
+| `NTF-008` | MUST | Discord制限内分割 — embed/文字数/件数のDiscord制限を事前計算し、安全上限を超える場合は複数messageへ分割しなければならない。                                                             | `AT-NTF-008`: 長文20件fixtureがAPI rejectなしの複数payloadになる。                          |
+| `NTF-009` | MUST | noise抑制 — freshな作業中、bot-only更新、unchanged watch、recent draft、低信頼AI-only、automation dashboardを既定digestから除外しなければならない。                                     | `AT-NTF-009`: noise fixture群が候補0件になる。                                              |
+| `NTF-010` | MUST | 重複/cooldown — notification ledgerで同一reason/stateの再送を抑え、urgentは既定3日、criticalは既定2日のcooldownを適用しなければならない。                                               | `AT-NTF-010`: 同日再実行と連日fixtureで期待回数になる。                                     |
+| `NTF-011` | MUST | 空digest抑制 — 通知対象が0件なら通常digestを送信してはならない。                                                                                                                        | `AT-NTF-011`: 0 candidate fixtureでwebhook callが0件になる。                                |
+| `NTF-012` | MUST | 運用障害通知 — 収集・Pages・Discord自身の重大障害を通常item digestと区別し、設定により同一または別webhookへ1件だけ通知できなければならない。                                            | `AT-NTF-012`: 連続retry失敗fixtureで重複しないops alertが生成される。                       |
+| `NTF-013` | MUST | 永続化済みrun照合 — 通常digestの送信前にworkflow artifactのsnapshotとtracker-state branchの永続化済みsnapshotでrun IDが一致することを検証し、不一致なら送信せず失敗しなければならない。 | `AT-NTF-013`: 同じrunなら送信adapterが呼ばれ、異なるrunなら呼ばれず日本語エラーで失敗する。 |
 
 ### 13.11 永続化
 
@@ -522,7 +523,7 @@ GitHub収集、deterministic判定、state branch、Pagesを実装。DiscordとC
 
 ## 17. 受入と変更管理
 
-- 全166要求は一意な受入試験IDを持つ。
+- 全169要求は一意な受入試験IDを持つ。
 - MUST要求の未達はrelease blocker。
 - SHOULD要求の未達は理由・代替・期限をdecision logへ記録する。
 - model/reasoning effort/prompt/schema/状態判定変更はgolden evalとDiscord snapshot差分をPRでreviewする。
