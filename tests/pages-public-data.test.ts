@@ -19,6 +19,7 @@ import {
   type StateHistoryRecord,
   type StateSnapshot,
 } from "../src/persistence/index.js";
+import { createPublicRepositoryAllowlist } from "../src/github/index.js";
 import {
   DEFAULT_INITIAL_GRAPH_NODE_LIMIT,
   PUBLIC_DETAILS_FILE_NAME,
@@ -280,6 +281,7 @@ function generateFixture(
   return generatePublicData({
     snapshot,
     historyRecords,
+    repositoryAllowlist: createPublicRepositoryAllowlist(repositoryInventory).repositories,
     repositoryInventory,
     knownSecrets,
     options,
@@ -297,6 +299,53 @@ function publicInventory(): readonly Repository[] {
 }
 
 describe("Pages公開安全性", () => {
+  it("収集時の公開allowlistにない未知repositoryを拒否する", () => {
+    const snapshot = createSnapshot({
+      runId: "run-unknown-repository",
+      runStatus: "success",
+      generatedAt: GENERATED_AT,
+      repositories: [
+        {
+          id: PUBLIC_REPOSITORY_ID,
+          name: "public",
+          observedAt: FRESH_OBSERVED_AT,
+          freshness: "fresh",
+        },
+        {
+          id: "R_UNKNOWN",
+          name: "unknown",
+          observedAt: FRESH_OBSERVED_AT,
+          freshness: "fresh",
+        },
+      ],
+      items: [],
+      relations: [],
+    });
+    const snapshotDerivedInventory = createInventory([
+      {
+        id: PUBLIC_REPOSITORY_ID,
+        name: "public",
+        visibility: "public",
+      },
+      {
+        id: "R_UNKNOWN",
+        name: "unknown",
+        visibility: "public",
+      },
+    ]);
+
+    expect(() =>
+      generatePublicData({
+        snapshot,
+        historyRecords: [],
+        repositoryAllowlist: createPublicRepositoryAllowlist(publicInventory()).repositories,
+        repositoryInventory: snapshotDerivedInventory,
+        knownSecrets: [],
+        options: defaultGenerationOptions,
+      }),
+    ).toThrow(PagesPublicSafetyError);
+  });
+
   it("private sentinelを含むsnapshotではDTO生成を中止する", () => {
     const snapshot = createSnapshot({
       runId: "run-private",

@@ -5,20 +5,20 @@ VOICEVOX Task Trackerは、GitHubから得た確定情報を決定論的に評�
 
 ## モジュール境界
 
-| モジュール        | 責務                                                                                     | 主な依存先                                                 |
-| ----------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `src/config`      | YAMLの読み込み、Zod schemaとsemantic validation                                          | `src/codex`、`src/domain`、`src/util`                      |
-| `src/github`      | GitHub App認証、RESTとGraphQLの読み取り、公開allowlist、収集、正規化、rate limit管理     | `src/config`、`src/domain`                                 |
-| `src/domain`      | 状態機械、teamとlabel解決、追跡選定、停滞時間、severity                                  | `src/util`                                                 |
-| `src/graph`       | 関係候補抽出、edge reconcile、cycle、frontier、downstream impact                         | `src/domain`                                               |
-| `src/codex`       | 分析候補選定、予算、cache、隔離実行、schemaとsemantic validation、reducer                | `src/domain`、`src/graph`、`src/persistence`               |
-| `src/persistence` | canonical JSON、snapshot、履歴、AI cache、通知ledger、run report、Git branch transaction | `src/codex`、`src/domain`、`src/github`                    |
-| `src/pages`       | 独立した公開guard、公開DTO生成、gzip上限検査、JSON出力                                   | `src/domain`、`src/graph`、`src/github`、`src/persistence` |
-| `src/discord`     | 通知候補選別、cooldown、payload分割、mention制限、Webhook送信                            | `src/domain`、`src/graph`                                  |
-| `src/eval`        | golden fixtureの解析と期待値比較                                                         | 判定、graph、公開DTO、通知の各pure処理                     |
-| `src/performance` | 外部接続をモックした日次run全体の性能と予算の検証                                        | `src/cli`と全実処理モジュール                              |
-| `src/cli`         | コマンド解析、日次トランザクション、実アダプターの合成、run report                       | 上記の全モジュール                                         |
-| `web`             | 公開DTOの検証、一覧、詳細、依存グラフ、検索、deep link                                   | `src/pages`のDTO契約                                       |
+| モジュール        | 責務                                                                                     | 主な依存先                                               |
+| ----------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `src/config`      | YAMLの読み込み、Zod schemaとsemantic validation                                          | `src/codex`、`src/domain`、`src/util`                    |
+| `src/github`      | GitHub App認証、RESTとGraphQLの読み取り、公開allowlist、収集、正規化、rate limit管理     | `src/config`、`src/domain`                               |
+| `src/domain`      | 状態機械、teamとlabel解決、追跡選定、停滞時間、severity                                  | `src/util`                                               |
+| `src/graph`       | 関係候補抽出、edge reconcile、cycle、frontier、downstream impact                         | `src/domain`                                             |
+| `src/codex`       | 分析候補選定、予算、cache、隔離実行、schemaとsemantic validation、reducer                | `src/domain`、`src/graph`、`src/persistence`             |
+| `src/persistence` | canonical JSON、snapshot、履歴、AI cache、通知ledger、run report、Git branch transaction | `src/codex`、`src/domain`、`src/github`                  |
+| `src/pages`       | 独立した公開guard、公開DTO生成、gzip上限検査、JSON出力                                   | `src/domain`、`src/graph`、`src/persistence`、`src/util` |
+| `src/discord`     | 通知候補選別、cooldown、payload分割、mention制限、Webhook送信                            | `src/domain`、`src/graph`                                |
+| `src/eval`        | golden fixtureの解析と期待値比較                                                         | 判定、graph、公開DTO、通知の各pure処理                   |
+| `src/performance` | 外部接続をモックした日次run全体の性能と予算の検証                                        | `src/cli`と全実処理モジュール                            |
+| `src/cli`         | コマンド解析、日次トランザクション、実アダプターの合成、run report                       | 上記の全モジュール                                       |
+| `web`             | 公開DTOの検証、一覧、詳細、依存グラフ、検索、deep link                                   | `src/pages`のDTO契約                                     |
 
 `src/domain`と`src/graph`はネットワークとファイルシステムへ依存しません。
 副作用を持つモジュールがpureな判定を呼び出し、pureな判定からGitHub、Codex、Git、Pages、Discordを呼び出す逆向きの依存は作りません。
@@ -34,6 +34,7 @@ flowchart LR
   CLI --> State[src/persistence]
   CLI --> Pages[src/pages]
   CLI --> Discord[src/discord]
+  Util[src/util]
   Config --> Codex
   Config --> Domain
   GitHub --> Domain
@@ -46,8 +47,8 @@ flowchart LR
   State --> GitHub
   Pages --> Domain
   Pages --> Graph
-  Pages --> GitHub
   Pages --> State
+  Pages --> Util
   Discord --> Domain
   Discord --> Graph
   Web[web] --> Pages
@@ -87,8 +88,11 @@ repository単位の収集は、再試行後も503で失敗し、同じrepository
 公開境界は一つのfilterへ依存せず、三つの段階で検証します。
 
 1. 収集guardはrepository metadataだけを先に取得し、`public`、非アーカイブ、非disabledを満たすrepository IDをallowlistへ固定します。Organization外の参照先は詳細応答で`public`を検証し、関係候補の解決時にarchive済みとdisabledを除外します。
-2. 永続化guardはcommit直前にsnapshotと付随データを走査し、allowlist外ID、private repositoryの識別子、既知secret、credential field、不要な全文を拒否します。
-3. Pages guardはDTO生成直前に別実装でinventoryとsnapshotを照合し、repository identity、private sentinel、secret、安全でないURL、不要な全文を再検査します。
+2. 永続化guardはcommit直前にsnapshotと付随データを走査し、allowlist外ID、private repositoryのID、owner/name、repository URL、既知secret、credential field、不要な全文を拒否します。
+3. Pages guardはDTO生成直前に別実装で収集時の公開allowlistとsnapshotを照合し、repository identity、private sentinel、secret、安全でないURL、不要な全文を再検査します。
+
+収集時の公開allowlistはworkflow artifactへ保存し、Pages guardではsnapshotから再構築しません。
+artifactには照合に必要なrepository ID、owner、nameだけを保存します。
 
 guard違反は例外として日次トランザクションへ伝播します。
 新しいPages公開と通常digestは実行されず、最後に成功した公開結果が残ります。

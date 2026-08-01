@@ -123,6 +123,7 @@ import {
   PUBLIC_SUMMARY_GZIP_LIMIT_BYTES,
   type GeneratedPublicData,
   type PublicDataWriteResult,
+  type PagesPublicSafetyInput,
 } from "../pages/index.js";
 import {
   createStateNotificationLedger,
@@ -2961,6 +2962,11 @@ function createCollectAnalyzeArtifact(
   const artifact = createWorkflowArtifact({
     schemaVersion: "1",
     kind: "validated_public_run",
+    repositoryAllowlist: inventory.allowlist.repositories.map((repository) => ({
+      id: repository.id,
+      owner: repository.owner,
+      name: repository.name,
+    })),
     snapshot: validated.snapshot,
     notificationLedger: validated.notificationLedger,
     notificationSelection: validated.notificationSelection,
@@ -3009,6 +3015,7 @@ async function buildPublicPages(
   adapters: ProductionRuntimeAdapters,
   config: Config,
   inventory: readonly Repository[],
+  repositoryAllowlist: PagesPublicSafetyInput["repositoryAllowlist"],
   validated: ValidatedRun,
   historyRecords: readonly StateHistoryRecord[],
   outputDirectory: string,
@@ -3017,6 +3024,7 @@ async function buildPublicPages(
   const data = generatePublicData({
     snapshot: validated.snapshot,
     historyRecords,
+    repositoryAllowlist,
     repositoryInventory: inventory,
     knownSecrets,
     options: {
@@ -3661,6 +3669,7 @@ function createDailyDependencies(
         adapters,
         configuration.config,
         repositoryInventory.inventory,
+        repositoryInventory.allowlist.repositories,
         validated,
         persisted.historyRecords,
         adapters.pagesOutputDirectory,
@@ -3778,6 +3787,7 @@ async function buildWorkflowPages(
     adapters,
     config,
     workflowArtifactRepositoryInventory(artifact),
+    artifact.repositoryAllowlist,
     validatedRunFromArtifact(artifact),
     historyRecords,
     resolve(adapters.repositoryPath, command.outputDirectory),

@@ -1,5 +1,4 @@
 import { type Repository } from "../domain/index.js";
-import { createPublicRepositoryAllowlist } from "../github/index.js";
 import { type StateHistoryRecord, type StateSnapshot } from "../persistence/index.js";
 import { PagesPublicSafetyError } from "./errors.js";
 
@@ -51,10 +50,18 @@ const FULL_CONTENT_FIELD_NAMES = new Set([
 ]);
 const URL_FIELD_NAMES = new Set(["sourceurl", "url"]);
 
+/** Pages公開allowlistに含めるリポジトリの識別情報。 */
+export type PagesRepositoryAllowlistEntry = Readonly<{
+  id: Repository["id"];
+  owner: Repository["owner"];
+  name: Repository["name"];
+}>;
+
 /** Pages公開allowlist検証へ渡す永続化済み入力とrun内情報。 */
 export type PagesPublicSafetyInput = Readonly<{
   snapshot: StateSnapshot;
   historyRecords: readonly StateHistoryRecord[];
+  repositoryAllowlist: readonly PagesRepositoryAllowlistEntry[];
   repositoryInventory: readonly Repository[];
   knownSecrets: readonly string[];
 }>;
@@ -99,6 +106,16 @@ function privateRepositorySentinels(inventory: readonly Repository[]): readonly 
         `https://github.com/${repository.owner}/${repository.name}`,
       ]),
   );
+}
+
+function createRepositoryAllowlist(
+  entries: readonly PagesRepositoryAllowlistEntry[],
+): ReadonlyMap<Repository["id"], PagesRepositoryAllowlistEntry> {
+  const allowlist = new Map(entries.map((repository) => [repository.id, repository]));
+  if (allowlist.size !== entries.length) {
+    throw new PagesPublicSafetyError(["invalid_repository_allowlist"]);
+  }
+  return allowlist;
 }
 
 function scanValues(
@@ -164,14 +181,14 @@ export function assertPagesPublicSafety(input: PagesPublicSafetyInput): void {
     throw new PagesPublicSafetyError(["invalid_known_secret_configuration"]);
   }
 
-  const allowlist = createPublicRepositoryAllowlist(input.repositoryInventory);
+  const allowlist = createRepositoryAllowlist(input.repositoryAllowlist);
   const violationCodes: string[] = [];
   for (const repository of input.snapshot.repositories) {
-    if (!allowlist.has(repository.id)) {
+    const allowlistedRepository = allowlist.get(repository.id);
+    if (allowlistedRepository == null) {
       violationCodes.push("repository_not_allowlisted");
       continue;
     }
-    const allowlistedRepository = allowlist.require(repository.id);
     if (
       allowlistedRepository.owner !== repository.owner ||
       allowlistedRepository.name !== repository.name

@@ -25,7 +25,11 @@ export {
   type PublicItemSummaryDto,
   type PublicSummaryDto,
 } from "./public-dto.js";
-export { assertPagesPublicSafety, type PagesPublicSafetyInput } from "./public-safety.js";
+export {
+  assertPagesPublicSafety,
+  type PagesPublicSafetyInput,
+  type PagesRepositoryAllowlistEntry,
+} from "./public-safety.js";
 export {
   assertPublicSummarySize,
   measurePublicSummarySize,

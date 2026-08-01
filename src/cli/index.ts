@@ -87,6 +87,7 @@ export {
   readWorkflowArtifactFile,
   workflowArtifactRepositoryInventory,
   type WorkflowArtifact,
+  type WorkflowArtifactRepositoryAllowlistEntry,
 } from "./workflow-artifact.js";
 export {
   WorkflowStageRunner,

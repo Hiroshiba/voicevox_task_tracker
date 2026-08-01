@@ -200,6 +200,13 @@ function createEmptyWorkflowArtifact(runId: string): WorkflowArtifact {
   return createWorkflowArtifact({
     schemaVersion: "1",
     kind: "validated_public_run",
+    repositoryAllowlist: [
+      {
+        id: "R_composition_fixture",
+        owner: "VOICEVOX",
+        name: "voicevox_task_tracker",
+      },
+    ],
     snapshot: {
       schemaVersion: "1",
       generatedAt: NOW,

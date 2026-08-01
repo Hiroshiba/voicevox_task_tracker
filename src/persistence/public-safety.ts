@@ -77,9 +77,21 @@ function isUnknownArray(value: unknown): value is unknown[] {
   return Array.isArray(value);
 }
 
+function privateRepositorySentinels(inventory: readonly Repository[]): readonly string[] {
+  return Object.freeze(
+    inventory
+      .filter((repository) => repository.visibility !== "public")
+      .flatMap((repository) => [
+        repository.id,
+        `${repository.owner}/${repository.name}`,
+        `https://github.com/${repository.owner}/${repository.name}`,
+      ]),
+  );
+}
+
 function scanValues(
   values: readonly unknown[],
-  privateRepositoryIds: readonly string[],
+  privateSentinels: readonly string[],
   knownSecrets: readonly string[],
 ): readonly string[] {
   const violationCodes = new Set<string>();
@@ -89,7 +101,7 @@ function scanValues(
   while (pending.length > 0) {
     const value = pending.pop();
     if (typeof value === "string") {
-      if (includesKnownValue(value, privateRepositoryIds)) {
+      if (includesKnownValue(value, privateSentinels)) {
         violationCodes.add("private_repository_data");
       }
       if (includesKnownValue(value, knownSecrets) || includesSecretPattern(value)) {
@@ -144,13 +156,10 @@ export function assertStatePublicSafety(input: StatePublicSafetyInput): void {
     }
   }
 
-  const privateRepositoryIds = input.repositoryInventory
-    .filter((repository) => repository.visibility !== "public")
-    .map((repository) => repository.id);
   violationCodes.push(
     ...scanValues(
       [input.snapshot, ...input.additionalValues],
-      privateRepositoryIds,
+      privateRepositorySentinels(input.repositoryInventory),
       input.knownSecrets,
     ),
   );

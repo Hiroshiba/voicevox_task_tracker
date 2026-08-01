@@ -717,6 +717,48 @@ describe("メモリstate branch transaction", () => {
     expect(await adapter.resolveHead("tracker-state")).toEqual(lastGoodHead);
   });
 
+  it.each([
+    {
+      kind: "owner/name",
+      value: "VOICEVOX/r_private_sentinel",
+    },
+    {
+      kind: "repository URL",
+      value: "https://github.com/VOICEVOX/r_private_sentinel",
+    },
+  ])("private repositoryの$kindだけが付随データへ混入しても拒否する", async ({ value }) => {
+    const adapter = new MemoryStateBranchAdapter();
+    const snapshot = createSnapshot({
+      runId: "run-private-metadata",
+      generatedAt: "2026-07-31T00:00:00.000Z",
+      repositoryIds: [publicRepositoryId],
+      responsibility: {
+        status: "new_untriaged",
+        kind: "role",
+        candidateId: "role:maintainer",
+        role: "maintainer",
+      },
+      severity: "watch",
+      edge: {
+        status: "absent",
+      },
+    });
+    const session = await StatePersistenceSession.open(adapter, stateConfiguration);
+
+    await expect(
+      session.persist({
+        snapshot,
+        notificationLedger: createEmptyStateNotificationLedger(),
+        runReport: createRunReport(snapshot, "2026-07-31", [value]),
+        repositoryInventory: createRepositoryInventory(true),
+        knownSecrets: [],
+      }),
+    ).rejects.toThrow(StatePublicSafetyError);
+    expect(await adapter.resolveHead("tracker-state")).toEqual({
+      status: "missing",
+    });
+  });
+
   it("secret patternを拒否し、エラーにもsecret値を含めない", async () => {
     const adapter = new MemoryStateBranchAdapter();
     const snapshot = createSnapshot({

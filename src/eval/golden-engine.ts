@@ -55,6 +55,7 @@ import {
   type RelationCandidateAssessment,
   type RelationCandidateId,
 } from "../graph/index.js";
+import { createPublicRepositoryAllowlist } from "../github/index.js";
 import {
   DEFAULT_INITIAL_GRAPH_NODE_LIMIT,
   generatePublicData,
@@ -1038,6 +1039,7 @@ function publicationStatus(
     generatePublicData({
       snapshot,
       historyRecords: Object.freeze([]),
+      repositoryAllowlist: createPublicRepositoryAllowlist(inventory).repositories,
       repositoryInventory: inventory,
       knownSecrets: Object.freeze([]),
       options: Object.freeze({
@@ -1460,6 +1462,7 @@ function analyzeLargeFixture(
   const generated = generatePublicData({
     snapshot,
     historyRecords: Object.freeze([]),
+    repositoryAllowlist: createPublicRepositoryAllowlist(repositories).repositories,
     repositoryInventory: repositories,
     knownSecrets: Object.freeze([]),
     options: Object.freeze({

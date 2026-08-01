@@ -3,16 +3,23 @@ import { readFile } from "node:fs/promises";
 import { z } from "zod";
 
 import { createAiCacheEntry, type AiCacheEntry } from "../codex/index.js";
-import { createGitHubNodeId, createUtcIsoDateTime, type Repository } from "../domain/index.js";
+import {
+  createGitHubNodeId,
+  createGitHubRepositoryId,
+  createUtcIsoDateTime,
+  type Repository,
+} from "../domain/index.js";
 import {
   type DiscordDeliverySettings,
   type DiscordNotificationSelection,
 } from "../discord/index.js";
+import { createPublicRepositoryAllowlist } from "../github/index.js";
 import {
   assertStatePublicSafety,
   createStateNotificationLedger,
   createStateRunReport,
   createStateSnapshot,
+  StatePublicSafetyError,
   type StateNotificationLedger,
   type StateRunReport,
   type StateSnapshot,
@@ -31,6 +38,15 @@ const nodeIdSchema = z
   .string()
   .min(1)
   .transform((value) => createGitHubNodeId(value));
+const repositoryIdSchema = z
+  .string()
+  .min(1)
+  .transform((value) => createGitHubRepositoryId(value));
+const repositoryAllowlistEntrySchema = z.strictObject({
+  id: repositoryIdSchema,
+  owner: z.string().min(1),
+  name: z.string().min(1),
+});
 const severitySchema = z.enum(["none", "watch", "urgent", "critical"]);
 const notificationReasonCodeSchema = z.enum([
   "triage_overdue",
@@ -104,6 +120,7 @@ const discordSettingsSchema = z.strictObject({
 const workflowArtifactSchema = z.strictObject({
   schemaVersion: z.literal("1"),
   kind: z.literal("validated_public_run"),
+  repositoryAllowlist: z.array(repositoryAllowlistEntrySchema),
   snapshot: z.unknown(),
   notificationLedger: z.unknown(),
   notificationSelection: z.unknown(),
@@ -113,10 +130,17 @@ const workflowArtifactSchema = z.strictObject({
   discordSettings: discordSettingsSchema,
 });
 
+export type WorkflowArtifactRepositoryAllowlistEntry = Readonly<{
+  id: Repository["id"];
+  owner: Repository["owner"];
+  name: Repository["name"];
+}>;
+
 /** collect-analyzeが後続jobへ渡す公開可能な検証済み成果物。 */
 export type WorkflowArtifact = Readonly<{
   schemaVersion: "1";
   kind: "validated_public_run";
+  repositoryAllowlist: readonly WorkflowArtifactRepositoryAllowlistEntry[];
   snapshot: StateSnapshot;
   notificationLedger: StateNotificationLedger;
   notificationSelection: DiscordNotificationSelection;
@@ -189,6 +213,22 @@ function createAiCacheEntries(values: readonly unknown[]): readonly AiCacheEntry
   return Object.freeze(
     [...entries].sort((left, right) => compareStrings(left.cacheKey, right.cacheKey)),
   );
+}
+
+function createRepositoryAllowlist(
+  values: readonly z.output<typeof repositoryAllowlistEntrySchema>[],
+): readonly WorkflowArtifactRepositoryAllowlistEntry[] {
+  const entries: readonly WorkflowArtifactRepositoryAllowlistEntry[] = values.map((value) =>
+    Object.freeze({ ...value }),
+  );
+  const repositoryIds = new Set(entries.map((repository) => repository.id));
+  const repositoryNames = new Set(
+    entries.map((repository) => `${repository.owner}/${repository.name}`.toLowerCase()),
+  );
+  if (repositoryIds.size !== entries.length || repositoryNames.size !== entries.length) {
+    throw new TypeError("workflow artifactのrepository allowlistが重複しています");
+  }
+  return Object.freeze(entries);
 }
 
 function repositoryInventory(snapshot: StateSnapshot): readonly Repository[] {
@@ -314,6 +354,7 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
   const artifact = Object.freeze({
     schemaVersion: "1",
     kind: "validated_public_run",
+    repositoryAllowlist: createRepositoryAllowlist(result.data.repositoryAllowlist),
     snapshot,
     notificationLedger,
     notificationSelection,
@@ -339,16 +380,41 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
   return artifact;
 }
 
+function assertRepositoryAllowlistConsistency(
+  artifact: WorkflowArtifact,
+  inventory: readonly Repository[],
+): void {
+  const collectedAllowlist = createPublicRepositoryAllowlist(inventory).repositories;
+  const artifactRepositories = new Map(
+    artifact.repositoryAllowlist.map((repository) => [repository.id, repository]),
+  );
+  let mismatch = collectedAllowlist.length !== artifact.repositoryAllowlist.length;
+  for (const repository of collectedAllowlist) {
+    const artifactRepository = artifactRepositories.get(repository.id);
+    if (
+      artifactRepository?.owner !== repository.owner ||
+      artifactRepository.name !== repository.name
+    ) {
+      mismatch = true;
+    }
+  }
+  if (mismatch) {
+    throw new StatePublicSafetyError(["repository_allowlist_mismatch"]);
+  }
+}
+
 /** artifact全体へraw inventoryと既知secretを使った公開安全性検査を適用する。 */
 export function assertWorkflowArtifactPublicSafety(
   artifact: WorkflowArtifact,
   inventory: readonly Repository[],
   knownSecrets: readonly string[],
 ): void {
+  assertRepositoryAllowlistConsistency(artifact, inventory);
   assertStatePublicSafety({
     snapshot: artifact.snapshot,
     repositoryInventory: inventory,
     additionalValues: [
+      artifact.repositoryAllowlist,
       artifact.notificationLedger,
       artifact.notificationSelection,
       artifact.stateRunReport,
