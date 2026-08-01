@@ -5,7 +5,7 @@ GitHub Actionsのscheduleには遅延があるため、厳密な投稿時刻は�
 
 ## 日々の確認
 
-`.github/workflows/daily.yml`の最新runで、各jobが順に成功したことを確認します。
+`.github/workflows/daily.yml`の最新runで、実行対象のjobが依存順に成功したことを確認します。
 
 1. `test-eval`
 2. `collect-analyze`
@@ -13,6 +13,10 @@ GitHub Actionsのscheduleには遅延があるため、厳密な投稿時刻は�
 4. `build-pages`
 5. `deploy-pages`
 6. `notify-discord`
+7. `notify-operations` 失敗時のみ
+
+通常経路は`notify-discord`までの6 jobです。
+`notify-operations`は収集またはPages関連jobが失敗したときだけ実行されます。
 
 Pagesでは生成時刻、repository数、item数、unknown数、状態別件数、severity別件数を確認します。
 `tracker-state`では`state/run-reports/YYYY-MM-DD.json`を確認します。
@@ -88,7 +92,7 @@ pnpm build:web
 ```
 
 GitHub Pagesへのdeployが成功した後だけ、deploy結果のURLを渡してDiscord stageを実行します。
-このstageが読む外部secretはDiscord webhookだけです。
+このstageが読む外部secretは、通常通知用の`DISCORD_WEBHOOK_URL`と障害通知用の`DISCORD_OPERATIONS_WEBHOOK_URL`の2つだけです。
 
 ```console
 pnpm tracker:run notify-discord --pages-url https://voicevox.github.io/voicevox_task_tracker/

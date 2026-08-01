@@ -285,18 +285,21 @@ describe("日次workflow", () => {
 
     expect(collectSource).toContain("GH_APP_PRIVATE_KEY");
     expect(collectSource).toContain("OPENAI_API_KEY");
+    expect(collectSource).not.toContain("DISCORD_OPERATIONS_WEBHOOK_URL");
     expect(collectSource).not.toContain("DISCORD_WEBHOOK_URL");
     expect(persistSource).not.toContain("secrets.");
     expect(buildSource).not.toContain("secrets.");
+    expect(notifySource).toContain("DISCORD_OPERATIONS_WEBHOOK_URL");
     expect(notifySource).toContain("DISCORD_WEBHOOK_URL");
     expect(notifySource).not.toContain("GH_APP_PRIVATE_KEY");
     expect(notifySource).not.toContain("OPENAI_API_KEY");
     expect(operationsSource).toContain("DISCORD_OPERATIONS_WEBHOOK_URL");
+    expect(operationsSource).not.toContain("DISCORD_WEBHOOK_URL");
     expect(operationsSource).not.toContain("GH_APP_PRIVATE_KEY");
     expect(operationsSource).not.toContain("OPENAI_API_KEY");
   });
 
-  it("Discord secretの設定名を対応する通知jobの環境変数へ公開する", async () => {
+  it("Discord secretの設定名を必要な通知jobの環境変数へ公開する", async () => {
     const workflow = await readDailyWorkflow();
     const config = configSchema.parse(parse(await readFile(CONFIG_PATH, "utf8")));
     const discordConfig = config.notifications.discord;
@@ -304,6 +307,9 @@ describe("日次workflow", () => {
     expect(
       environmentVariableNames(workflow.jobs["notify-discord"] ?? { permissions: {}, steps: [] }),
     ).toContain(discordConfig.webhookSecretName);
+    expect(
+      environmentVariableNames(workflow.jobs["notify-discord"] ?? { permissions: {}, steps: [] }),
+    ).toContain(discordConfig.operationsWebhookSecretName);
     expect(
       environmentVariableNames(
         workflow.jobs["notify-operations"] ?? { permissions: {}, steps: [] },

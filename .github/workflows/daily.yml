@@ -241,6 +241,7 @@ jobs:
           path: artifacts/workflow
       - name: Discordへ通知
         env:
+          DISCORD_OPERATIONS_WEBHOOK_URL: ${{ secrets.DISCORD_OPERATIONS_WEBHOOK_URL }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           PAGES_URL: ${{ needs.deploy-pages.outputs.page_url }}
         run: >-

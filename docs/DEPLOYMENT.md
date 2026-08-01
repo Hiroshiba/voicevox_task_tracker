@@ -39,7 +39,9 @@ repositoryへのアクセス範囲は次のどちらかを選びます。
 | Members    | Read-only | 設定したteam slugの存在確認とmember解決 |
 
 `Contents`、`Actions`、`Administration`、`Projects`など、表にない権限は`No access`のままにします。
-installation IDは実行時にOrganizationから自動発見するため、現行workflowでは設定しません。
+installation IDは実行時にOrganizationから自動発見します。
+ローカル実行では任意の環境変数`GH_APP_INSTALLATION_ID`でinstallation IDを上書きでき、指定した場合は自動発見を省略します。
+workflowでは`GH_APP_INSTALLATION_ID`を設定しません。
 
 ## Actionsの設定
 
