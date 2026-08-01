@@ -16,12 +16,14 @@ import {
 import { createPublicRepositoryAllowlist } from "../github/index.js";
 import {
   assertStatePublicSafety,
+  createStateHistoryInputEvents,
   createStateNotificationLedger,
   createStateRunReport,
   createStateSnapshot,
   StatePublicSafetyError,
   type StateNotificationLedger,
   type StateRunReport,
+  type StateHistoryInputEvent,
   type StateSnapshot,
 } from "../persistence/index.js";
 import { assertNonNullable } from "../util/index.js";
@@ -123,6 +125,7 @@ const workflowArtifactSchema = z.strictObject({
   kind: z.literal("validated_public_run"),
   repositoryAllowlist: z.array(repositoryAllowlistEntrySchema),
   snapshot: z.unknown(),
+  historyInputEvents: z.array(z.unknown()),
   notificationLedger: z.unknown(),
   notificationSelection: z.unknown(),
   stateRunReport: z.unknown(),
@@ -143,6 +146,7 @@ export type WorkflowArtifact = Readonly<{
   kind: "validated_public_run";
   repositoryAllowlist: readonly WorkflowArtifactRepositoryAllowlistEntry[];
   snapshot: StateSnapshot;
+  historyInputEvents: readonly StateHistoryInputEvent[];
   notificationLedger: StateNotificationLedger;
   notificationSelection: DiscordNotificationSelection;
   stateRunReport: StateRunReport;
@@ -351,6 +355,7 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
     });
   }
   const snapshot = createStateSnapshot(result.data.snapshot);
+  const historyInputEvents = createStateHistoryInputEvents(result.data.historyInputEvents);
   const notificationLedger = createStateNotificationLedger(result.data.notificationLedger);
   const notificationSelection = createNotificationSelection(result.data.notificationSelection);
   const stateRunReport = createStateRunReport(result.data.stateRunReport);
@@ -360,6 +365,7 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
     kind: "validated_public_run",
     repositoryAllowlist: createRepositoryAllowlist(result.data.repositoryAllowlist),
     snapshot,
+    historyInputEvents,
     notificationLedger,
     notificationSelection,
     stateRunReport,
@@ -419,6 +425,7 @@ export function assertWorkflowArtifactPublicSafety(
     repositoryInventory: inventory,
     additionalValues: [
       artifact.repositoryAllowlist,
+      artifact.historyInputEvents,
       artifact.notificationLedger,
       artifact.notificationSelection,
       artifact.stateRunReport,

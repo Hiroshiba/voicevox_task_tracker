@@ -207,6 +207,7 @@ function createEmptyWorkflowArtifact(runId: string): WorkflowArtifact {
         name: "voicevox_task_tracker",
       },
     ],
+    historyInputEvents: [],
     snapshot: {
       schemaVersion: "1",
       generatedAt: NOW,

@@ -594,6 +594,7 @@ describe("メモリstate branch transaction", () => {
     const firstSession = await StatePersistenceSession.open(adapter, stateConfiguration);
     const first = await firstSession.persist({
       snapshot: firstSnapshot,
+      historyInputEvents: [],
       notificationLedger: createEmptyStateNotificationLedger(),
       runReport: createRunReport(firstSnapshot, "2026-07-31", []),
       repositoryInventory: createRepositoryInventory(false),
@@ -623,6 +624,7 @@ describe("メモリstate branch transaction", () => {
     const secondSession = await StatePersistenceSession.open(adapter, stateConfiguration);
     const second = await secondSession.persist({
       snapshot: secondSnapshot,
+      historyInputEvents: [],
       notificationLedger: createEmptyStateNotificationLedger(),
       runReport: createRunReport(secondSnapshot, "2026-08-01", []),
       repositoryInventory: createRepositoryInventory(false),
@@ -707,6 +709,7 @@ describe("メモリstate branch transaction", () => {
     const firstSession = await StatePersistenceSession.open(adapter, stateConfiguration);
     await firstSession.persist({
       snapshot: firstSnapshot,
+      historyInputEvents: [],
       notificationLedger: createEmptyStateNotificationLedger(),
       runReport: createRunReport(firstSnapshot, "2026-07-31", []),
       repositoryInventory: createRepositoryInventory(false),
@@ -737,6 +740,7 @@ describe("メモリstate branch transaction", () => {
     await expect(
       failedSession.persist({
         snapshot: failedSnapshot,
+        historyInputEvents: [],
         notificationLedger: createEmptyStateNotificationLedger(),
         runReport: createRunReport(failedSnapshot, "2026-08-01", []),
         repositoryInventory: createRepositoryInventory(false),
@@ -772,6 +776,7 @@ describe("メモリstate branch transaction", () => {
     const goodSession = await StatePersistenceSession.open(adapter, stateConfiguration);
     await goodSession.persist({
       snapshot: goodSnapshot,
+      historyInputEvents: [],
       notificationLedger: createEmptyStateNotificationLedger(),
       runReport: createRunReport(goodSnapshot, "2026-07-31", []),
       repositoryInventory: createRepositoryInventory(true),
@@ -798,6 +803,7 @@ describe("メモリstate branch transaction", () => {
     await expect(
       privateSession.persist({
         snapshot: privateSnapshot,
+        historyInputEvents: [],
         notificationLedger: createEmptyStateNotificationLedger(),
         runReport: createRunReport(privateSnapshot, "2026-08-01", []),
         repositoryInventory: createRepositoryInventory(true),
@@ -839,6 +845,7 @@ describe("メモリstate branch transaction", () => {
     await expect(
       session.persist({
         snapshot,
+        historyInputEvents: [],
         notificationLedger: createEmptyStateNotificationLedger(),
         runReport: createRunReport(snapshot, "2026-07-31", [value]),
         repositoryInventory: createRepositoryInventory(true),
@@ -872,6 +879,7 @@ describe("メモリstate branch transaction", () => {
     const error = await captureError(
       session.persist({
         snapshot,
+        historyInputEvents: [],
         notificationLedger: createEmptyStateNotificationLedger(),
         runReport: createRunReport(snapshot, "2026-07-31", [`token=${token}`]),
         repositoryInventory: createRepositoryInventory(false),
@@ -942,6 +950,7 @@ describe("メモリstate branch transaction", () => {
     await expect(
       session.persist({
         snapshot,
+        historyInputEvents: [],
         notificationLedger: createEmptyStateNotificationLedger(),
         runReport: createRunReport(snapshot, "2026-07-31", []),
         repositoryInventory: createRepositoryInventory(false),
@@ -976,6 +985,7 @@ describe("メモリstate branch transaction", () => {
     await firstSession.aiCache.write(cacheEntry);
     await firstSession.persist({
       snapshot,
+      historyInputEvents: [],
       notificationLedger: createSentLedger(cooldownUntil),
       runReport: createRunReport(snapshot, "2026-07-31", []),
       repositoryInventory: createRepositoryInventory(false),
@@ -1067,6 +1077,7 @@ describe("メモリstate branch transaction", () => {
       const session = await StatePersistenceSession.open(adapter, stateConfiguration);
       await session.persist({
         snapshot: fixture.snapshot,
+        historyInputEvents: [],
         notificationLedger: createEmptyStateNotificationLedger(),
         runReport: createRunReport(fixture.snapshot, fixture.date, []),
         repositoryInventory: createRepositoryInventory(false),
@@ -1188,6 +1199,7 @@ describe("Git state branch adapter", () => {
       const firstSession = await StatePersistenceSession.open(adapter, stateConfiguration);
       const first = await firstSession.persist({
         snapshot: firstSnapshot,
+        historyInputEvents: [],
         notificationLedger: createEmptyStateNotificationLedger(),
         runReport: createRunReport(firstSnapshot, "2026-07-31", []),
         repositoryInventory: createRepositoryInventory(false),
@@ -1219,6 +1231,7 @@ describe("Git state branch adapter", () => {
       const secondSession = await StatePersistenceSession.open(adapter, stateConfiguration);
       const second = await secondSession.persist({
         snapshot: secondSnapshot,
+        historyInputEvents: [],
         notificationLedger: createEmptyStateNotificationLedger(),
         runReport: createRunReport(secondSnapshot, "2026-08-01", []),
         repositoryInventory: createRepositoryInventory(false),

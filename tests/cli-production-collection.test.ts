@@ -815,6 +815,50 @@ function setIssueDetails(
   );
 }
 
+function createHistoryInputDetail(
+  item: EnumeratedGitHubItem,
+  occurredAt: UtcIsoDateTime,
+  observedAt: UtcIsoDateTime,
+): GitHubItemDetail {
+  const comment = createDuplicateComments(item, occurredAt)[0];
+  if (comment == null) {
+    throw new TypeError("履歴入力イベント用のコメントがありません");
+  }
+  const labelerNodeId = createGitHubNodeId("U_history_labeler");
+  const labelEvent = Object.freeze({
+    sourceId: buildSourceId("github_timeline_event", "L_history_label"),
+    nodeId: createGitHubNodeId("L_history_label"),
+    sequence: 1,
+    occurredAt,
+    actor: Object.freeze({
+      status: "identified",
+      account: Object.freeze({
+        sourceId: buildSourceId("github_actor", labelerNodeId),
+        nodeId: labelerNodeId,
+        login: "history-labeler",
+        apiType: "User",
+      }),
+    }),
+    kind: "labeled",
+    label: Object.freeze({
+      sourceId: buildSourceId("github_label", "LA_history"),
+      nodeId: createGitHubNodeId("LA_history"),
+      name: "履歴対象",
+    }),
+  } satisfies GitHubTimelineEvent);
+  return Object.freeze({
+    ...createIssueDetail({
+      item,
+      body: "本文",
+      observedAt,
+      nativeDependencies: Object.freeze([]),
+      duplicateComments: false,
+    }),
+    comments: Object.freeze([comment]),
+    timeline: Object.freeze([labelEvent]),
+  });
+}
+
 describe("本番収集の接続", () => {
   it("AI無効時の有効状態と利用可否をrun成功状態から分離して保存する", async () => {
     const repository = createRepository("R_ai_disabled", "ai-disabled", FIRST_RUN_AT);
@@ -847,6 +891,92 @@ describe("本番収集の接続", () => {
       available: false,
       degraded: false,
     });
+  });
+
+  it("同じupdated_atの正規化イベントをkind別に履歴へ一度だけ保存する", async () => {
+    const repository = createRepository("R_history_events", "history-events", FIRST_RUN_AT);
+    const fixture = createRepositoryFixture(repository);
+    const firstObservedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const firstItem = createIssueItem({
+      repository: requirePublicRepository(repository),
+      number: 1,
+      fingerprint: "history-events-v1",
+      updatedAt: firstObservedAt,
+      observedAt: firstObservedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    fixture.openItems = [firstItem];
+    fixture.details.set(
+      firstItem.nodeId,
+      createHistoryInputDetail(firstItem, firstObservedAt, firstObservedAt),
+    );
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: false,
+    });
+    const harness = createCollectionHarness({
+      repositories: [fixture],
+      config,
+    });
+
+    expect((await harness.runDaily(FIRST_RUN_AT)).exitCode).toBe(0);
+    const firstFiles = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const firstHistoryBytes = firstFiles.get("state/history/2026-08-01.jsonl");
+    if (firstHistoryBytes == null) {
+      throw new TypeError("正規化イベントの初回履歴がありません");
+    }
+    const firstRecords = parseStateHistoryRecords(new TextDecoder().decode(firstHistoryBytes));
+
+    expect(firstRecords[0]?.inputEvents).toEqual([
+      {
+        sourceId: `github_issue_comment:IC_${firstItem.nodeId}`,
+        itemNodeId: firstItem.nodeId,
+        kind: "comment",
+        actor: {
+          type: "human",
+          nodeId: "U_commenter",
+          login: "commenter",
+        },
+        occurredAt: firstObservedAt,
+      },
+      {
+        sourceId: "github_timeline_event:L_history_label",
+        itemNodeId: firstItem.nodeId,
+        kind: "label",
+        actor: {
+          type: "human",
+          nodeId: "U_history_labeler",
+          login: "history-labeler",
+        },
+        occurredAt: firstObservedAt,
+      },
+    ]);
+
+    const secondObservedAt = createUtcIsoDateTime(SECOND_RUN_AT);
+    const secondItem = createIssueItem({
+      repository: requirePublicRepository(repository),
+      number: 1,
+      fingerprint: "history-events-v2",
+      updatedAt: secondObservedAt,
+      observedAt: secondObservedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    fixture.openItems = [secondItem];
+    fixture.details.set(
+      secondItem.nodeId,
+      createHistoryInputDetail(secondItem, firstObservedAt, secondObservedAt),
+    );
+
+    expect((await harness.runDaily(SECOND_RUN_AT)).exitCode).toBe(0);
+    const secondFiles = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const secondHistoryBytes = secondFiles.get("state/history/2026-08-02.jsonl");
+    if (secondHistoryBytes == null) {
+      throw new TypeError("正規化イベントの二回目の履歴がありません");
+    }
+    const secondRecords = parseStateHistoryRecords(new TextDecoder().decode(secondHistoryBytes));
+
+    expect(secondRecords[0]?.inputEvents).toEqual([]);
   });
 
   it("automation dashboardをgraphに残しつつ既定digestから除外する", async () => {

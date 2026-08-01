@@ -35,6 +35,7 @@ export {
 } from "./git-state-branch-adapter.js";
 export {
   appendStateHistoryRecord,
+  createStateHistoryInputEvents,
   createStateHistoryRecord,
   diffStateHistory,
   parseStateHistoryRecords,
@@ -45,6 +46,7 @@ export {
   type StateHistoryDifference,
   type StateHistoryEdge,
   type StateHistoryEvent,
+  type StateHistoryInputEvent,
   type StateHistoryRecord,
   type StateHistoryResponsibility,
   type StateHistoryValue,

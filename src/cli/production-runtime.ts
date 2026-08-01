@@ -139,6 +139,7 @@ import {
   type PagesPublicSafetyInput,
 } from "../pages/index.js";
 import {
+  createStateHistoryInputEvents,
   createStateNotificationLedger,
   createStateRunReport,
   createStateSnapshot,
@@ -153,6 +154,7 @@ import {
   type StateNotificationLedger,
   type StateRunReport,
   type StateHistoryRecord,
+  type StateHistoryInputEvent,
   type StateSnapshot,
   type StateSnapshotReadResult,
 } from "../persistence/index.js";
@@ -328,6 +330,7 @@ type GraphResult = Readonly<{
 
 type ValidatedRun = Readonly<{
   snapshot: StateSnapshot;
+  historyInputEvents: readonly StateHistoryInputEvent[];
   notificationLedger: StateNotificationLedger;
   notificationSelection: DiscordNotificationSelection;
 }>;
@@ -3262,6 +3265,23 @@ function snapshotAiState(config: Config, codexAnalysis: CodexAnalysis): Snapshot
   });
 }
 
+function stateHistoryInputEvents(reduction: ReducedAnalysis): readonly StateHistoryInputEvent[] {
+  return createStateHistoryInputEvents(
+    reduction.currentItems.flatMap((analysis) =>
+      analysis.item.events.map(
+        (event) =>
+          ({
+            sourceId: event.sourceId,
+            itemNodeId: event.itemNodeId,
+            kind: event.kind,
+            actor: event.actor,
+            occurredAt: event.occurredAt,
+          }) satisfies StateHistoryInputEvent,
+      ),
+    ),
+  );
+}
+
 function validateRunCompleteness(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
@@ -3347,6 +3367,7 @@ function validateRunCompleteness(
   });
   return Object.freeze({
     snapshot,
+    historyInputEvents: stateHistoryInputEvents(reduction),
     notificationLedger: mergeNotificationLedger(state, notificationSelection),
     notificationSelection,
   });
@@ -3415,6 +3436,7 @@ function createCollectAnalyzeArtifact(
       name: repository.name,
     })),
     snapshot: validated.snapshot,
+    historyInputEvents: validated.historyInputEvents,
     notificationLedger: validated.notificationLedger,
     notificationSelection: validated.notificationSelection,
     stateRunReport: createPersistedRunReport(invocation, validated, metrics, status, diagnostics),
@@ -3442,6 +3464,7 @@ async function persistValidatedRun(
 ): Promise<PersistedRun> {
   const result = await state.session.persist({
     snapshot: validated.snapshot,
+    historyInputEvents: validated.historyInputEvents,
     notificationLedger: validated.notificationLedger,
     runReport: createPersistedRunReport(invocation, validated, metrics, status, diagnostics),
     repositoryInventory: inventory.inventory,
@@ -4222,6 +4245,7 @@ function createDailyDependencies(
 function validatedRunFromArtifact(artifact: WorkflowArtifact): ValidatedRun {
   return Object.freeze({
     snapshot: artifact.snapshot,
+    historyInputEvents: artifact.historyInputEvents,
     notificationLedger: artifact.notificationLedger,
     notificationSelection: artifact.notificationSelection,
   });
@@ -4244,6 +4268,7 @@ async function persistWorkflowState(
   }
   await session.persist({
     snapshot: artifact.snapshot,
+    historyInputEvents: artifact.historyInputEvents,
     notificationLedger: artifact.notificationLedger,
     runReport: artifact.stateRunReport,
     repositoryInventory: workflowArtifactRepositoryInventory(artifact),
@@ -4320,6 +4345,7 @@ async function notifyWorkflowDiscord(
     artifact.discordSettings,
     Object.freeze({
       snapshot: artifact.snapshot,
+      historyInputEvents: artifact.historyInputEvents,
       notificationLedger: state.notificationLedger,
       notificationSelection: artifact.notificationSelection,
     }),

@@ -39,6 +39,7 @@ function createEmptyWorkflowArtifact(): WorkflowArtifact {
     schemaVersion: "1",
     kind: "validated_public_run",
     repositoryAllowlist: [],
+    historyInputEvents: [],
     snapshot: {
       schemaVersion: "1",
       generatedAt: NOW,

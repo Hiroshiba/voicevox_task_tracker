@@ -23,6 +23,7 @@ import {
   diffStateHistory,
   parseStateHistoryRecords,
   type StateHistoryDiff,
+  type StateHistoryInputEvent,
   type StateHistoryRecord,
 } from "./history.js";
 import { assertStatePublicSafety, assertStateValuesPublicSafety } from "./public-safety.js";
@@ -64,6 +65,7 @@ export type StateSnapshotReadResult =
 /** 一つのatomic state commitへ渡す検証済みrun成果物。 */
 export type PersistStateTransactionInput = Readonly<{
   snapshot: StateSnapshot;
+  historyInputEvents: readonly StateHistoryInputEvent[];
   notificationLedger: StateNotificationLedger;
   runReport: StateRunReport;
   repositoryInventory: readonly Repository[];
@@ -513,6 +515,7 @@ export class StatePersistenceSession {
       snapshot,
       runReport.date,
       input.repositoryInventory,
+      input.historyInputEvents,
     );
     const historyPath = joinStatePath(
       this.#configuration.historyDirectory,

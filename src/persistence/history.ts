@@ -12,6 +12,42 @@ const dateTimeSchema = z.iso
     error: "タイムゾーンを含むISO 8601日時を指定してください",
   })
   .transform((value) => new Date(value).toISOString());
+const actorSchema = z.discriminatedUnion("type", [
+  z.strictObject({
+    type: z.enum(["human", "bot"]),
+    nodeId: identifierSchema,
+    login: identifierSchema,
+  }),
+  z.strictObject({
+    type: z.literal("system"),
+    name: z.string().min(1).max(512),
+  }),
+]);
+const inputEventSchema = z.strictObject({
+  sourceId: identifierSchema,
+  itemNodeId: identifierSchema,
+  kind: z.enum([
+    "comment",
+    "push",
+    "review",
+    "review_request",
+    "label",
+    "assignee",
+    "state",
+    "relation",
+  ]),
+  actor: actorSchema,
+  occurredAt: dateTimeSchema,
+});
+const inputEventsSchema = z.array(inputEventSchema).superRefine((events, context) => {
+  const sourceIds = events.map((event) => event.sourceId);
+  if (new Set(sourceIds).size !== sourceIds.length) {
+    context.addIssue({
+      code: "custom",
+      message: "正規化イベントのsource IDが重複しています",
+    });
+  }
+});
 
 function isCalendarDate(value: string): boolean {
   const timestamp = Date.parse(`${value}T00:00:00.000Z`);
@@ -130,6 +166,7 @@ const historyRecordSchema = z
     date: dateSchema,
     runId: identifierSchema,
     recordedAt: dateTimeSchema,
+    inputEvents: inputEventsSchema,
     events: z.array(historyEventSchema),
   })
   .superRefine((record, context) => {
@@ -151,6 +188,9 @@ export type StateHistoryEdge = z.output<typeof edgeSchema>;
 
 /** 日次履歴の一つの変更event。 */
 export type StateHistoryEvent = z.output<typeof historyEventSchema>;
+
+/** 日次履歴へ保存する一つの正規化入力イベント。 */
+export type StateHistoryInputEvent = z.output<typeof inputEventSchema>;
 
 /** 一つの完全runが生成した日次履歴record。 */
 export type StateHistoryRecord = z.output<typeof historyRecordSchema>;
@@ -204,6 +244,26 @@ function compareStrings(left: string, right: string): number {
   return 0;
 }
 
+/** 未検証の値を検証済みかつ決定論的順序の正規化入力イベントへ変換する。 */
+export function createStateHistoryInputEvents(value: unknown): readonly StateHistoryInputEvent[] {
+  const result = inputEventsSchema.safeParse(value);
+  if (!result.success) {
+    throw new StateFormatError("state履歴の入力イベント", {
+      cause: result.error,
+    });
+  }
+  return Object.freeze(
+    [...result.data]
+      .sort((left, right) => compareStrings(left.sourceId, right.sourceId))
+      .map((event) =>
+        Object.freeze({
+          ...event,
+          actor: Object.freeze({ ...event.actor }),
+        }),
+      ),
+  );
+}
+
 function historyEventKey(event: StateHistoryEvent): string {
   switch (event.kind) {
     case "responsibility_set":
@@ -249,6 +309,46 @@ function createRepositoryExclusionEvents(
         repositoryFullName: `${currentInventoryRepository.owner}/${currentInventoryRepository.name}`,
         reason: "archived",
       });
+    }
+  }
+  return Object.freeze(events);
+}
+
+function snapshotInputEventItems(snapshot: StateSnapshot): ReadonlyMap<string, string> {
+  const itemNodeIdsBySourceId = new Map<string, string>();
+  for (const item of snapshot.items) {
+    for (const event of item.inputEvents) {
+      if (itemNodeIdsBySourceId.has(event.sourceId)) {
+        throw new StateHistoryError("snapshot内で入力イベントのsource IDが重複しています");
+      }
+      itemNodeIdsBySourceId.set(event.sourceId, item.nodeId);
+    }
+  }
+  return itemNodeIdsBySourceId;
+}
+
+function createNewInputEvents(
+  previousSnapshot: StateSnapshot | undefined,
+  currentSnapshot: StateSnapshot,
+  value: unknown,
+): readonly StateHistoryInputEvent[] {
+  const inputEvents = createStateHistoryInputEvents(value);
+  const previousItemNodeIds =
+    previousSnapshot == null ? new Map<string, string>() : snapshotInputEventItems(previousSnapshot);
+  const currentItemNodeIds = snapshotInputEventItems(currentSnapshot);
+  const events: StateHistoryInputEvent[] = [];
+  for (const event of inputEvents) {
+    if (currentItemNodeIds.get(event.sourceId) !== event.itemNodeId) {
+      throw new StateHistoryError(
+        "正規化イベントがcurrent snapshotの対象項目に存在しません",
+      );
+    }
+    const previousItemNodeId = previousItemNodeIds.get(event.sourceId);
+    if (previousItemNodeId != null && previousItemNodeId !== event.itemNodeId) {
+      throw new StateHistoryError("正規化イベントの対象項目が前回snapshotから変化しています");
+    }
+    if (previousItemNodeId == null) {
+      events.push(event);
     }
   }
   return Object.freeze(events);
@@ -399,6 +499,7 @@ export function createStateHistoryRecord(
   currentSnapshot: StateSnapshot,
   date: string,
   repositoryInventory: readonly Repository[],
+  inputEvents: readonly StateHistoryInputEvent[],
 ): StateHistoryRecord {
   if (!isCalendarDate(date)) {
     throw new StateHistoryError("履歴の日付が不正です");
@@ -422,6 +523,7 @@ export function createStateHistoryRecord(
     date,
     runId: currentSnapshot.run.id,
     recordedAt: currentSnapshot.generatedAt,
+    inputEvents: createNewInputEvents(previousSnapshot, currentSnapshot, inputEvents),
     events,
   });
 }

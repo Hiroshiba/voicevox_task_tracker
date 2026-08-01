@@ -781,8 +781,8 @@ describe("公開DTO生成", () => {
       ],
     });
     const historyRecords = [
-      createStateHistoryRecord(undefined, previous, "2026-07-31", previous.repositories),
-      createStateHistoryRecord(previous, current, "2026-08-01", current.repositories),
+      createStateHistoryRecord(undefined, previous, "2026-07-31", previous.repositories, []),
+      createStateHistoryRecord(previous, current, "2026-08-01", current.repositories, []),
     ];
 
     const generated = generateFixture(
