@@ -21,6 +21,7 @@ const REQUIRED_METRICS = [
   "githubApiRemaining",
   "staleRepositoryCount",
   "notificationCount",
+  "scheduleDelayMilliseconds",
   "durationMilliseconds",
 ];
 
@@ -36,6 +37,7 @@ function metrics(): RunMetrics {
     githubApiRemaining: 8,
     staleRepositoryCount: 9,
     notificationCount: 10,
+    scheduleDelayMilliseconds: 0,
     durationMilliseconds: 1000,
   });
 }

@@ -71,7 +71,7 @@ CLIはremote repositoryへpushしません。
 workflowはCLIの実行前にremoteの`tracker-state`をlocal refへfetchし、CLIの実行後に明示的な`git push`でremoteへ反映します。
 `tracker-state`へrulesetを設定する場合はGitHub Actionsによるstate更新を許可し、人間の通常作業branchとして使わないでください。
 
-`collect-analyze`は`artifacts/workflow/validated-run.json`へ検証済みsnapshot、通知候補、notification ledger、run report、AI cache、Pages URL、Discord送信設定だけを書きます。
+`collect-analyze`は`artifacts/workflow/validated-run.json`へ検証済みsnapshot、通知候補、notification ledger、run report生成用の収集指標、AI cache、Pages URL、Discord送信設定だけを書きます。
 GitHub App key、installation token、OpenAI認証情報、Discord webhookはartifactへ含めません。
 artifactを利用する後続jobは同じartifactを再検証してから利用します。
 依存関係を再インストールせず`notify-discord`でCLIを動かすため、公開sourceから作った自己完結bundleも同じActions artifactへ保存します。
@@ -209,9 +209,9 @@ workflowはdefault branchからのscheduleまたは手動実行だけを許可�
 成功後に次を確認します。
 
 - `tracker-state`がdefault branchと別の履歴を持つこと
-- `persist-state`のcommitにsnapshot、当日履歴、新しいAI cache、通知ledger、run reportがまとまっていること
-- 通知を送った場合は後続の通知jobが通知ledgerだけのcommitを追加していること
-- Pagesの生成時刻、repository数、item数、stale表示がrun reportと一致すること
+- `persist-state`のcommitにsnapshot、当日履歴、新しいAI cache、通知ledgerがまとまっていること
+- 後続の通知jobが実測時刻と実送信数を含むrun reportと通知ledgerのcommitを追加していること
+- Pagesの生成時刻がrun reportの`startedAt`と一致し、repository数、item数、stale表示も一致すること
 - private repositoryのID、名前、URL、secret、不要な本文がstateとPagesにないこと
 
 `tracking.startAt: null`なら、最初の完全成功runの時刻がsnapshotへ固定されます。

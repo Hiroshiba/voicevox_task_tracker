@@ -13,6 +13,7 @@ import { SecretRedactor, executeWithGitHubRetry } from "../src/github/index.js";
 import { createUtcIsoDateTime } from "../src/domain/index.js";
 
 const NOW = "2026-07-31T00:00:00.000Z";
+const FINISHED_AT = "2026-07-31T00:00:01.000Z";
 const NOW_UTC = createUtcIsoDateTime(NOW);
 const SCHEDULED_FOR = "2026-07-30T23:00:00.000Z";
 const REQUIRED_METRICS = [
@@ -26,6 +27,7 @@ const REQUIRED_METRICS = [
   "itemCount",
   "notificationCount",
   "repositoryCount",
+  "scheduleDelayMilliseconds",
   "staleRepositoryCount",
 ] as const;
 
@@ -84,6 +86,7 @@ type HarnessBehavior = Readonly<{
   completeness: "complete" | "incomplete";
   deterministicResolution: "clear" | "ambiguous";
   failConfiguration: boolean;
+  failRunCompletion: boolean;
   pagesFailureCount: number;
 }>;
 
@@ -126,17 +129,32 @@ function defaultBehavior(): HarnessBehavior {
     completeness: "complete",
     deterministicResolution: "clear",
     failConfiguration: false,
+    failRunCompletion: false,
     pagesFailureCount: 0,
   });
 }
 
-function createRuntime(): DailyRunRuntime {
+function createRuntimeClock(): Readonly<{
+  runtime: DailyRunRuntime;
+  currentTime: () => typeof NOW_UTC;
+}> {
+  let nextTimestamp = Date.parse(NOW);
+  let currentTime = NOW_UTC;
   return Object.freeze({
-    now: () => new Date(NOW),
+    runtime: Object.freeze({
+      now: () => {
+        const value = new Date(nextTimestamp);
+        currentTime = createUtcIsoDateTime(value.toISOString());
+        nextTimestamp += 1000;
+        return value;
+      },
+    }),
+    currentTime: () => currentTime,
   });
 }
 
 function createHarness(behavior: HarnessBehavior): Harness {
+  const clock = createRuntimeClock();
   const events: string[] = [];
   const reports: RunReport[] = [];
   const artifactPaths: string[] = [];
@@ -303,8 +321,15 @@ function createHarness(behavior: HarnessBehavior): Harness {
           messageIds: Object.freeze(["discord-message-1"]),
         },
         notificationCount: 1,
-        discordSentAt: NOW_UTC,
+        discordSentAt: clock.currentTime(),
       });
+    },
+    completeRun: () => {
+      events.push("run_completion");
+      if (behavior.failRunCompletion) {
+        throw new TypeError("run完了reportの保存fixtureが失敗しました");
+      }
+      return Promise.resolve();
     },
     sendOperationsAlert: ({ retryAttempts }) => {
       events.push("operations_alert");
@@ -315,7 +340,7 @@ function createHarness(behavior: HarnessBehavior): Harness {
           messageIds: Object.freeze(["discord-operations-message-1"]),
         },
         notificationCount: 1,
-        discordSentAt: NOW_UTC,
+        discordSentAt: clock.currentTime(),
       });
     },
     writeDryRunArtifact: (artifactPath, artifact) => {
@@ -338,7 +363,7 @@ function createHarness(behavior: HarnessBehavior): Harness {
   } satisfies DailyTransactionDependencies<FixtureTypes>;
 
   return Object.freeze({
-    runner: new DailyTransactionRunner<FixtureTypes>(dependencies, createRuntime()),
+    runner: new DailyTransactionRunner<FixtureTypes>(dependencies, clock.runtime),
     events,
     reports,
     artifactPaths,
@@ -400,6 +425,7 @@ describe("Daily transaction", () => {
       "state_persistence",
       "pages",
       "discord",
+      "run_completion",
       "report",
     ]);
     expect(harness.counters.aiExternalCalls).toBe(0);
@@ -611,6 +637,29 @@ describe("Daily transaction", () => {
 });
 
 describe("run report", () => {
+  it("通知後の永続化失敗でも実送信数と実時間をfailure reportへ残す", async () => {
+    const harness = createHarness({
+      ...defaultBehavior(),
+      failRunCompletion: true,
+    });
+    const report = (await harness.runner.run(parseOnlineCommand(scheduledArgs("daily")))).value
+      .report;
+
+    expect(report).toMatchObject({
+      status: "failure",
+      complete: false,
+      failedStage: "state_persistence",
+      startedAt: NOW,
+      finishedAt: FINISHED_AT,
+      discordSentAt: NOW,
+      metrics: {
+        notificationCount: 1,
+        scheduleDelayMilliseconds: 3_600_000,
+        durationMilliseconds: 1000,
+      },
+    });
+  });
+
   it("成功、fallback、失敗のすべてで必須指標と遅延時刻を保持する", async () => {
     const successHarness = createHarness(defaultBehavior());
     const fallbackHarness = createHarness({
@@ -634,7 +683,9 @@ describe("run report", () => {
       expectRequiredMetrics(report);
       expect(report.scheduledFor).toBe(SCHEDULED_FOR);
       expect(report.startedAt).toBe(NOW);
-      expect(report.finishedAt).toBe(NOW);
+      expect(report.finishedAt).toBe(FINISHED_AT);
+      expect(report.metrics.scheduleDelayMilliseconds).toBe(3_600_000);
+      expect(report.metrics.durationMilliseconds).toBe(1000);
       expect(Object.hasOwn(report, "discordSentAt")).toBe(true);
     }
     expect(reports[0]?.discordSentAt).toBe(NOW);

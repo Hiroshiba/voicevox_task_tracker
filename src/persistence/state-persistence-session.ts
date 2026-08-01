@@ -67,7 +67,6 @@ export type PersistStateTransactionInput = Readonly<{
   snapshot: StateSnapshot;
   historyInputEvents: readonly StateHistoryInputEvent[];
   notificationLedger: StateNotificationLedger;
-  runReport: StateRunReport;
   repositoryInventory: readonly Repository[];
   knownSecrets: readonly string[];
 }>;
@@ -85,11 +84,12 @@ export type PersistNotificationLedgerInput = Readonly<{
   knownSecrets: readonly string[];
 }>;
 
-/** 完全成功したrunの追跡開始時刻と通知ledgerを保存する入力。 */
+/** 完全成功したrunの追跡開始時刻、通知ledger、run reportを保存する入力。 */
 export type PersistRunCompletionInput = Readonly<{
   snapshot: StateSnapshot;
   notificationLedger: StateNotificationLedger;
-  completedAt: UtcIsoDateTime;
+  runReport: StateRunReport;
+  repositoryInventory: readonly Repository[];
   knownSecrets: readonly string[];
 }>;
 
@@ -136,7 +136,7 @@ function assertRunConsistency(snapshot: StateSnapshot, report: StateRunReport): 
   if (
     snapshot.run.id !== report.runId ||
     snapshot.run.status !== report.status ||
-    snapshot.generatedAt !== report.finishedAt
+    snapshot.generatedAt !== report.startedAt
   ) {
     throw new StateSnapshotSemanticError("snapshotとrun reportのrun情報が一致しません");
   }
@@ -435,7 +435,7 @@ export class StatePersistenceSession {
     });
   }
 
-  /** 完全成功したrunの追跡開始時刻と通知ledgerをatomic commitする。 */
+  /** 完全成功したrunの追跡開始時刻、通知ledger、run reportをatomic commitする。 */
   public async persistRunCompletion(
     input: PersistRunCompletionInput,
   ): Promise<PersistStateTransactionResult> {
@@ -445,48 +445,67 @@ export class StatePersistenceSession {
       });
     }
     const snapshot = createStateSnapshot(input.snapshot);
-    if (snapshot.trackingStartAt.status !== "fixed") {
-      throw new StateSnapshotSemanticError("完全成功したrunのtracking.startAtが確定していません");
-    }
+    const runReport = createStateRunReport(input.runReport);
+    assertRunConsistency(snapshot, runReport);
     const currentResult = await this.loadSnapshot();
     if (currentResult.status !== "available") {
       throw new StateFormatError("run completion", {
         cause: new TypeError("state branchのsnapshotを読み取れません"),
       });
     }
-    if (currentResult.snapshot.trackingStartAt.status !== "not_fixed") {
-      throw new StateSnapshotSemanticError("tracking.startAtがすでに確定しています");
-    }
-    const expectedCurrentSnapshot = createStateSnapshot({
-      ...snapshot,
-      trackingStartAt: currentResult.snapshot.trackingStartAt,
-    });
-    if (
-      serializeStateSnapshot(expectedCurrentSnapshot) !==
-      serializeStateSnapshot(currentResult.snapshot)
+    const snapshotUpdates: StateFileUpdate[] = [];
+    if (currentResult.snapshot.trackingStartAt.status === "not_fixed") {
+      if (snapshot.trackingStartAt.status !== "fixed") {
+        throw new StateSnapshotSemanticError("完全成功したrunのtracking.startAtが確定していません");
+      }
+      const expectedCurrentSnapshot = createStateSnapshot({
+        ...snapshot,
+        trackingStartAt: currentResult.snapshot.trackingStartAt,
+      });
+      if (
+        serializeStateSnapshot(expectedCurrentSnapshot) !==
+        serializeStateSnapshot(currentResult.snapshot)
+      ) {
+        throw new StateSnapshotSemanticError(
+          "run完了時にtracking.startAt以外のsnapshot内容が変化しています",
+        );
+      }
+      snapshotUpdates.push({
+        path: this.#configuration.snapshotPath,
+        bytes: encodeStateFile(serializeStateSnapshot(snapshot)),
+      });
+    } else if (
+      serializeStateSnapshot(snapshot) !== serializeStateSnapshot(currentResult.snapshot)
     ) {
       throw new StateSnapshotSemanticError(
         "run完了時にtracking.startAt以外のsnapshot内容が変化しています",
       );
     }
     const notificationLedger = createStateNotificationLedger(input.notificationLedger);
-    assertStateValuesPublicSafety([snapshot, notificationLedger], input.knownSecrets);
-    const updates = Object.freeze([
-      Object.freeze({
-        path: this.#configuration.snapshotPath,
-        bytes: encodeStateFile(serializeStateSnapshot(snapshot)),
-      } satisfies StateFileUpdate),
-      Object.freeze({
+    assertStatePublicSafety({
+      snapshot,
+      repositoryInventory: input.repositoryInventory,
+      additionalValues: [notificationLedger, runReport],
+      knownSecrets: input.knownSecrets,
+    });
+    const updates: StateFileUpdate[] = [
+      ...snapshotUpdates,
+      {
         path: this.#configuration.notificationLedgerPath,
         bytes: encodeStateFile(serializeStateNotificationLedger(notificationLedger)),
-      } satisfies StateFileUpdate),
-    ]);
+      },
+      {
+        path: joinStatePath(this.#configuration.runReportsDirectory, `${runReport.date}.json`),
+        bytes: encodeStateFile(serializeStateRunReport(runReport)),
+      },
+    ];
+    updates.sort((left, right) => compareStrings(left.path, right.path));
     const result = await this.#adapter.commit({
       branch: this.#configuration.branch,
       expectedHead: this.#head,
       updates,
       message: `tracker run completion ${snapshot.run.id}`,
-      committedAt: input.completedAt,
+      committedAt: runReport.finishedAt,
     });
     this.#head = Object.freeze({
       status: "present",
@@ -498,14 +517,13 @@ export class StatePersistenceSession {
     });
   }
 
-  /** 全検証後にsnapshot・履歴・cache・ledger・reportをatomic commitする。 */
+  /** 全検証後にsnapshot・履歴・cache・ledgerをatomic commitする。 */
   public async persist(
     input: PersistStateTransactionInput,
   ): Promise<PersistStateTransactionResult> {
     const snapshot = createStateSnapshot(input.snapshot);
     const notificationLedger = createStateNotificationLedger(input.notificationLedger);
-    const runReport = createStateRunReport(input.runReport);
-    assertRunConsistency(snapshot, runReport);
+    const runDate = snapshot.generatedAt.slice(0, 10);
 
     const previousResult = await this.loadSnapshot();
     const previousSnapshot =
@@ -513,14 +531,11 @@ export class StatePersistenceSession {
     const historyRecord = createStateHistoryRecord(
       previousSnapshot,
       snapshot,
-      runReport.date,
+      runDate,
       input.repositoryInventory,
       input.historyInputEvents,
     );
-    const historyPath = joinStatePath(
-      this.#configuration.historyDirectory,
-      `${runReport.date}.jsonl`,
-    );
+    const historyPath = joinStatePath(this.#configuration.historyDirectory, `${runDate}.jsonl`);
     const existingHistorySource = await this.#readHistorySource(historyPath);
     const existingHistoryRecords =
       existingHistorySource == null ? [] : parseStateHistoryRecords(existingHistorySource);
@@ -534,7 +549,6 @@ export class StatePersistenceSession {
         historyRecord,
         ...pendingAiCacheEntries,
         notificationLedger,
-        runReport,
       ],
       knownSecrets: input.knownSecrets,
     });
@@ -553,10 +567,6 @@ export class StatePersistenceSession {
         path: this.#configuration.notificationLedgerPath,
         bytes: encodeStateFile(serializeStateNotificationLedger(notificationLedger)),
       },
-      {
-        path: joinStatePath(this.#configuration.runReportsDirectory, `${runReport.date}.json`),
-        bytes: encodeStateFile(serializeStateRunReport(runReport)),
-      },
       ...pendingAiCacheEntries.map((entry) => ({
         path: cachePath(this.#configuration, entry.cacheKey),
         bytes: encodeStateFile(serializeCanonicalJsonLine(entry)),
@@ -568,8 +578,8 @@ export class StatePersistenceSession {
       branch: this.#configuration.branch,
       expectedHead: this.#head,
       updates,
-      message: `tracker state ${runReport.date} ${snapshot.run.id}`,
-      committedAt: runReport.finishedAt,
+      message: `tracker state ${runDate} ${snapshot.run.id}`,
+      committedAt: snapshot.generatedAt,
     });
     this.#head = Object.freeze({
       status: "present",

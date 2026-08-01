@@ -85,10 +85,12 @@ export { createTrackerRunCliArguments, runTrackerCommand } from "./tracker-run.j
 export {
   assertWorkflowArtifactPublicSafety,
   createWorkflowArtifact,
+  createWorkflowRunMetadata,
   readWorkflowArtifactFile,
   workflowArtifactRepositoryInventory,
   type WorkflowArtifact,
   type WorkflowArtifactRepositoryAllowlistEntry,
+  type WorkflowRunMetadata,
 } from "./workflow-artifact.js";
 export {
   WorkflowStageRunner,

@@ -629,7 +629,7 @@ export function formatCliUsage(): string {
     "  voicevox-task-tracker daily [--config PATH] [--scheduled-for ISO] [--report PATH]",
     "  voicevox-task-tracker dry-run [--config PATH] [--artifact PATH] [--report PATH]",
     "  voicevox-task-tracker backfill [--mode none|linked|all-open] [--repository VOICEVOX/REPO]",
-    "  voicevox-task-tracker collect-analyze [--mode none|linked|all-open] [--artifact PATH]",
+    "  voicevox-task-tracker collect-analyze [--mode none|linked|all-open] [--scheduled-for ISO] [--artifact PATH]",
     "  voicevox-task-tracker persist-state [--config PATH] [--artifact PATH]",
     "  voicevox-task-tracker build-pages [--config PATH] [--artifact PATH] [--output PATH]",
     "  voicevox-task-tracker notify-discord --pages-url URL [--artifact PATH]",

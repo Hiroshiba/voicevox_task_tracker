@@ -316,6 +316,7 @@ function validateOfflineMetrics(metrics: OfflineAnalysisMetrics): void {
 
 function metricsFromAnalysis(
   analysis: OfflineAnalysisResult,
+  scheduledFor: UtcIsoDateTime,
   startedAt: UtcIsoDateTime,
   finishedAt: UtcIsoDateTime,
 ): RunMetrics {
@@ -323,6 +324,7 @@ function metricsFromAnalysis(
   return Object.freeze({
     ...createEmptyRunMetrics(),
     ...analysis.metrics,
+    scheduleDelayMilliseconds: Date.parse(startedAt) - Date.parse(scheduledFor),
     durationMilliseconds: Date.parse(finishedAt) - Date.parse(startedAt),
   });
 }
@@ -377,7 +379,7 @@ function createCompletedReport(
     startedAt,
     finishedAt,
     discordSentAt: null,
-    metrics: metricsFromAnalysis(analysis, startedAt, finishedAt),
+    metrics: metricsFromAnalysis(analysis, scheduledFor, startedAt, finishedAt),
     diagnostics: analysis.diagnostics,
   });
 }
@@ -409,6 +411,7 @@ function createFailureReport(
         metrics,
         diagnostics: [],
       },
+      scheduledFor,
       startedAt,
       finishedAt,
     ),

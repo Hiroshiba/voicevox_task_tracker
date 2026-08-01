@@ -10,6 +10,7 @@ import {
   parseCliArguments,
   readWorkflowArtifactFile,
   type WorkflowArtifact,
+  type WorkflowRunMetadata,
   type WorkflowStageCliCommand,
 } from "../src/cli/index.js";
 import { StatePublicSafetyError } from "../src/persistence/index.js";
@@ -17,7 +18,7 @@ import { StatePublicSafetyError } from "../src/persistence/index.js";
 const NOW = "2026-07-31T00:00:00.000Z";
 const PAGES_URL = "https://voicevox.github.io/voicevox_task_tracker/";
 
-function emptyMetrics(): Readonly<Record<string, number>> {
+function emptyRunMetadataMetrics(): WorkflowRunMetadata["metrics"] {
   return Object.freeze({
     repositoryCount: 0,
     itemCount: 0,
@@ -28,8 +29,7 @@ function emptyMetrics(): Readonly<Record<string, number>> {
     estimatedInputTokens: 0,
     githubApiRemaining: 0,
     staleRepositoryCount: 0,
-    notificationCount: 0,
-    durationMilliseconds: 0,
+    scheduleDelayMilliseconds: 0,
   });
 }
 
@@ -77,16 +77,10 @@ function createEmptyWorkflowArtifact(): WorkflowArtifact {
       candidates: [],
       ledgerReservations: [],
     },
-    stateRunReport: {
-      schemaVersion: "1",
-      runId,
-      date: "2026-07-31",
-      status: "success",
-      complete: true,
+    runMetadata: {
       scheduledFor: NOW,
       startedAt: NOW,
-      finishedAt: NOW,
-      metrics: emptyMetrics(),
+      metrics: emptyRunMetadataMetrics(),
       diagnostics: [],
     },
     aiCacheEntries: [],
@@ -123,7 +117,7 @@ function parseWorkflowStageCommand(args: readonly string[]): WorkflowStageCliCom
 }
 
 describe("workflow artifact", () => {
-  it("公開snapshot、通知候補、state reportを再検証する", () => {
+  it("公開snapshot、通知候補、run metadataを再検証する", () => {
     const artifact = createEmptyWorkflowArtifact();
 
     expect(artifact).toMatchObject({
@@ -141,8 +135,8 @@ describe("workflow artifact", () => {
     const source = createEmptyWorkflowArtifact();
     const artifact = createWorkflowArtifact({
       ...source,
-      stateRunReport: {
-        ...source.stateRunReport,
+      runMetadata: {
+        ...source.runMetadata,
         diagnostics: [secret],
       },
     });

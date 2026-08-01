@@ -216,6 +216,19 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       pages: Types["pages"];
     }>,
   ) => Promise<DiscordStageResult<Types["discord"]>>;
+  completeRun: (
+    input: Readonly<{
+      invocation: DailyRunInvocation;
+      configuration: Types["configuration"];
+      state: Types["state"];
+      repositoryInventory: Types["repositoryInventory"];
+      validated: Types["validated"];
+      discord: Types["discord"];
+      metrics: RunMetrics;
+      status: "success" | "fallback";
+      diagnostics: readonly string[];
+    }>,
+  ) => Promise<void>;
   sendOperationsAlert: (
     input: Readonly<{
       invocation: DailyRunInvocation;
@@ -507,7 +520,10 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
 
   async #execute(invocation: DailyRunInvocation): Promise<DailyRunExecutionResult> {
     let stage: RunStage = "configuration";
-    let metrics = createEmptyRunMetrics();
+    let metrics = updateMetrics(createEmptyRunMetrics(), {
+      scheduleDelayMilliseconds:
+        Date.parse(invocation.startedAt) - Date.parse(invocation.scheduledFor),
+    });
     const diagnostics: string[] = [];
     const effects = initialEffects();
     let discordSentAt: UtcIsoDateTime | null = null;
@@ -697,6 +713,19 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         discordSentAt = discord.discordSentAt;
         metrics = updateMetrics(metrics, {
           notificationCount: discord.notificationCount,
+        });
+
+        stage = "state_persistence";
+        await this.#dependencies.completeRun({
+          invocation,
+          configuration,
+          state,
+          repositoryInventory: repositoryInventory.value,
+          validated: validation.value,
+          discord: discord.value,
+          metrics,
+          status: runStatus,
+          diagnostics,
         });
       }
 

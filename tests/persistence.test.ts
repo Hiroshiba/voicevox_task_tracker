@@ -297,8 +297,8 @@ function createRunReport(
     status: snapshot.run.status,
     complete: true,
     scheduledFor: subtractMinutes(snapshot.generatedAt, 10),
-    startedAt: subtractMinutes(snapshot.generatedAt, 5),
-    finishedAt: snapshot.generatedAt,
+    startedAt: snapshot.generatedAt,
+    finishedAt: subtractMinutes(snapshot.generatedAt, -5),
     metrics: {
       repositoryCount: snapshot.repositories.length,
       itemCount: snapshot.items.length,
@@ -310,6 +310,7 @@ function createRunReport(
       githubApiRemaining: 5000,
       staleRepositoryCount: 0,
       notificationCount: 0,
+      scheduleDelayMilliseconds: 600_000,
       durationMilliseconds: 300_000,
     },
     diagnostics,
@@ -714,7 +715,6 @@ describe("メモリstate branch transaction", () => {
       snapshot: firstSnapshot,
       historyInputEvents: [],
       notificationLedger: createEmptyStateNotificationLedger(),
-      runReport: createRunReport(firstSnapshot, "2026-07-31", []),
       repositoryInventory: createRepositoryInventory(false),
       knownSecrets: [],
     });
@@ -744,7 +744,6 @@ describe("メモリstate branch transaction", () => {
       snapshot: secondSnapshot,
       historyInputEvents: [],
       notificationLedger: createEmptyStateNotificationLedger(),
-      runReport: createRunReport(secondSnapshot, "2026-08-01", []),
       repositoryInventory: createRepositoryInventory(false),
       knownSecrets: [],
     });
@@ -759,9 +758,70 @@ describe("メモリstate branch transaction", () => {
         "state/snapshot.json",
         "state/history/2026-08-01.jsonl",
         "state/notification-ledger.json",
-        "state/run-reports/2026-08-01.json",
       ]),
     );
+  });
+
+  it("run完了時に実測時刻と通知件数を含むreportを保存する", async () => {
+    const adapter = new MemoryStateBranchAdapter();
+    const snapshot = createSnapshot({
+      runId: "run-completion-report",
+      generatedAt: "2026-07-31T00:00:00.000Z",
+      repositoryIds: [publicRepositoryId],
+      responsibility: {
+        status: "new_untriaged",
+        kind: "role",
+        candidateId: "role:maintainer",
+        role: "maintainer",
+      },
+      severity: "watch",
+      edge: {
+        status: "absent",
+      },
+    });
+    const session = await StatePersistenceSession.open(adapter, stateConfiguration);
+    await session.persist({
+      snapshot,
+      historyInputEvents: [],
+      notificationLedger: createEmptyStateNotificationLedger(),
+      repositoryInventory: createRepositoryInventory(false),
+      knownSecrets: [],
+    });
+    expect(
+      (await adapter.readBranchFiles("tracker-state")).has("state/run-reports/2026-07-31.json"),
+    ).toBe(false);
+
+    const baseReport = createRunReport(snapshot, "2026-07-31", []);
+    const report = createStateRunReport({
+      ...baseReport,
+      metrics: {
+        ...baseReport.metrics,
+        notificationCount: 2,
+      },
+    });
+    const result = await session.persistRunCompletion({
+      snapshot,
+      notificationLedger: createEmptyStateNotificationLedger(),
+      runReport: report,
+      repositoryInventory: createRepositoryInventory(false),
+      knownSecrets: [],
+    });
+    const source = (await adapter.readBranchFiles("tracker-state")).get(
+      "state/run-reports/2026-07-31.json",
+    );
+    assertNonNullable(source, "run完了reportがありません");
+    const persisted: unknown = JSON.parse(new TextDecoder().decode(source));
+
+    expect(result.updatedPaths).toContain("state/run-reports/2026-07-31.json");
+    expect(createStateRunReport(persisted)).toMatchObject({
+      startedAt: "2026-07-31T00:00:00.000Z",
+      finishedAt: "2026-07-31T00:05:00.000Z",
+      metrics: {
+        notificationCount: 2,
+        scheduleDelayMilliseconds: 600_000,
+        durationMilliseconds: 300_000,
+      },
+    });
   });
 
   it("snapshotを欠く既存stateを初回運用障害stateと誤認しない", async () => {
@@ -829,7 +889,6 @@ describe("メモリstate branch transaction", () => {
       snapshot: firstSnapshot,
       historyInputEvents: [],
       notificationLedger: createEmptyStateNotificationLedger(),
-      runReport: createRunReport(firstSnapshot, "2026-07-31", []),
       repositoryInventory: createRepositoryInventory(false),
       knownSecrets: [],
     });
@@ -860,7 +919,6 @@ describe("メモリstate branch transaction", () => {
         snapshot: failedSnapshot,
         historyInputEvents: [],
         notificationLedger: createEmptyStateNotificationLedger(),
-        runReport: createRunReport(failedSnapshot, "2026-08-01", []),
         repositoryInventory: createRepositoryInventory(false),
         knownSecrets: [],
       }),
@@ -896,7 +954,6 @@ describe("メモリstate branch transaction", () => {
       snapshot: goodSnapshot,
       historyInputEvents: [],
       notificationLedger: createEmptyStateNotificationLedger(),
-      runReport: createRunReport(goodSnapshot, "2026-07-31", []),
       repositoryInventory: createRepositoryInventory(true),
       knownSecrets: [],
     });
@@ -923,7 +980,6 @@ describe("メモリstate branch transaction", () => {
         snapshot: privateSnapshot,
         historyInputEvents: [],
         notificationLedger: createEmptyStateNotificationLedger(),
-        runReport: createRunReport(privateSnapshot, "2026-08-01", []),
         repositoryInventory: createRepositoryInventory(true),
         knownSecrets: [],
       }),
@@ -959,20 +1015,25 @@ describe("メモリstate branch transaction", () => {
       },
     });
     const session = await StatePersistenceSession.open(adapter, stateConfiguration);
+    await session.persist({
+      snapshot,
+      historyInputEvents: [],
+      notificationLedger: createEmptyStateNotificationLedger(),
+      repositoryInventory: createRepositoryInventory(true),
+      knownSecrets: [],
+    });
+    const headBefore = await adapter.resolveHead("tracker-state");
 
     await expect(
-      session.persist({
+      session.persistRunCompletion({
         snapshot,
-        historyInputEvents: [],
         notificationLedger: createEmptyStateNotificationLedger(),
         runReport: createRunReport(snapshot, "2026-07-31", [value]),
         repositoryInventory: createRepositoryInventory(true),
         knownSecrets: [],
       }),
     ).rejects.toThrow(StatePublicSafetyError);
-    expect(await adapter.resolveHead("tracker-state")).toEqual({
-      status: "missing",
-    });
+    expect(await adapter.resolveHead("tracker-state")).toEqual(headBefore);
   });
 
   it("secret patternを拒否し、エラーにもsecret値を含めない", async () => {
@@ -994,10 +1055,17 @@ describe("メモリstate branch transaction", () => {
     });
     const token = "github_pat_abcdefghijklmnopqrstuvwxyz0123456789";
     const session = await StatePersistenceSession.open(adapter, stateConfiguration);
+    await session.persist({
+      snapshot,
+      historyInputEvents: [],
+      notificationLedger: createEmptyStateNotificationLedger(),
+      repositoryInventory: createRepositoryInventory(false),
+      knownSecrets: [token],
+    });
+    const headBefore = await adapter.resolveHead("tracker-state");
     const error = await captureError(
-      session.persist({
+      session.persistRunCompletion({
         snapshot,
-        historyInputEvents: [],
         notificationLedger: createEmptyStateNotificationLedger(),
         runReport: createRunReport(snapshot, "2026-07-31", [`token=${token}`]),
         repositoryInventory: createRepositoryInventory(false),
@@ -1007,9 +1075,7 @@ describe("メモリstate branch transaction", () => {
 
     expect(error).toBeInstanceOf(StatePublicSafetyError);
     expect(error.message).not.toContain(token);
-    expect(await adapter.resolveHead("tracker-state")).toEqual({
-      status: "missing",
-    });
+    expect(await adapter.resolveHead("tracker-state")).toEqual(headBefore);
   });
 
   it("AI cache内の不要な本文全文フィールドを拒否する", async () => {
@@ -1070,7 +1136,6 @@ describe("メモリstate branch transaction", () => {
         snapshot,
         historyInputEvents: [],
         notificationLedger: createEmptyStateNotificationLedger(),
-        runReport: createRunReport(snapshot, "2026-07-31", []),
         repositoryInventory: createRepositoryInventory(false),
         knownSecrets: [],
       }),
@@ -1105,7 +1170,6 @@ describe("メモリstate branch transaction", () => {
       snapshot,
       historyInputEvents: [],
       notificationLedger: createSentLedger(cooldownUntil),
-      runReport: createRunReport(snapshot, "2026-07-31", []),
       repositoryInventory: createRepositoryInventory(false),
       knownSecrets: [],
     });
@@ -1197,7 +1261,6 @@ describe("メモリstate branch transaction", () => {
         snapshot: fixture.snapshot,
         historyInputEvents: [],
         notificationLedger: createEmptyStateNotificationLedger(),
-        runReport: createRunReport(fixture.snapshot, fixture.date, []),
         repositoryInventory: createRepositoryInventory(false),
         knownSecrets: [],
       });
@@ -1319,7 +1382,6 @@ describe("Git state branch adapter", () => {
         snapshot: firstSnapshot,
         historyInputEvents: [],
         notificationLedger: createEmptyStateNotificationLedger(),
-        runReport: createRunReport(firstSnapshot, "2026-07-31", []),
         repositoryInventory: createRepositoryInventory(false),
         knownSecrets: [],
       });
@@ -1351,7 +1413,6 @@ describe("Git state branch adapter", () => {
         snapshot: secondSnapshot,
         historyInputEvents: [],
         notificationLedger: createEmptyStateNotificationLedger(),
-        runReport: createRunReport(secondSnapshot, "2026-08-01", []),
         repositoryInventory: createRepositoryInventory(false),
         knownSecrets: [],
       });

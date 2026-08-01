@@ -18,11 +18,9 @@ import {
   assertStatePublicSafety,
   createStateHistoryInputEvents,
   createStateNotificationLedger,
-  createStateRunReport,
   createStateSnapshot,
   StatePublicSafetyError,
   type StateNotificationLedger,
-  type StateRunReport,
   type StateHistoryInputEvent,
   type StateSnapshot,
 } from "../persistence/index.js";
@@ -30,6 +28,7 @@ import { assertNonNullable } from "../util/index.js";
 import { CliWorkflowArtifactError } from "./errors.js";
 
 const actionsSecretNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
+const nonNegativeIntegerSchema = z.number().int().nonnegative();
 const dateTimeSchema = z.iso
   .datetime({
     offset: true,
@@ -120,6 +119,43 @@ const discordSettingsSchema = z.strictObject({
       message: "Discord retryの初期待機時間は最大待機時間以下にしてください",
     }),
 });
+const runMetadataMetricsSchema = z.strictObject({
+  repositoryCount: nonNegativeIntegerSchema,
+  itemCount: nonNegativeIntegerSchema,
+  changedItemCount: nonNegativeIntegerSchema,
+  activeEdgeCount: nonNegativeIntegerSchema,
+  aiCallCount: nonNegativeIntegerSchema,
+  aiCacheHitCount: nonNegativeIntegerSchema,
+  estimatedInputTokens: nonNegativeIntegerSchema,
+  githubApiRemaining: nonNegativeIntegerSchema,
+  staleRepositoryCount: nonNegativeIntegerSchema,
+  scheduleDelayMilliseconds: nonNegativeIntegerSchema,
+});
+const runMetadataSchema = z
+  .strictObject({
+    scheduledFor: dateTimeSchema,
+    startedAt: dateTimeSchema,
+    metrics: runMetadataMetricsSchema,
+    diagnostics: z.array(z.string().min(1).max(1000)),
+  })
+  .superRefine((metadata, context) => {
+    const scheduledFor = Date.parse(metadata.scheduledFor);
+    const startedAt = Date.parse(metadata.startedAt);
+    if (scheduledFor > startedAt) {
+      context.addIssue({
+        code: "custom",
+        path: ["scheduledFor"],
+        message: "予定時刻は開始時刻以前にしてください",
+      });
+    }
+    if (metadata.metrics.scheduleDelayMilliseconds !== startedAt - scheduledFor) {
+      context.addIssue({
+        code: "custom",
+        path: ["metrics", "scheduleDelayMilliseconds"],
+        message: "schedule遅延が予定時刻と開始時刻に一致しません",
+      });
+    }
+  });
 const workflowArtifactSchema = z.strictObject({
   schemaVersion: z.literal("1"),
   kind: z.literal("validated_public_run"),
@@ -128,7 +164,7 @@ const workflowArtifactSchema = z.strictObject({
   historyInputEvents: z.array(z.unknown()),
   notificationLedger: z.unknown(),
   notificationSelection: z.unknown(),
-  stateRunReport: z.unknown(),
+  runMetadata: runMetadataSchema,
   aiCacheEntries: z.array(z.unknown()),
   pagesUrl: z.url(),
   discordSettings: discordSettingsSchema,
@@ -140,6 +176,14 @@ export type WorkflowArtifactRepositoryAllowlistEntry = Readonly<{
   name: Repository["name"];
 }>;
 
+/** workflow完了時のrun report生成に使う確定済み収集指標。 */
+export type WorkflowRunMetadata = Readonly<{
+  scheduledFor: z.output<typeof dateTimeSchema>;
+  startedAt: z.output<typeof dateTimeSchema>;
+  metrics: Readonly<z.output<typeof runMetadataMetricsSchema>>;
+  diagnostics: readonly string[];
+}>;
+
 /** collect-analyzeが後続jobへ渡す公開可能な検証済み成果物。 */
 export type WorkflowArtifact = Readonly<{
   schemaVersion: "1";
@@ -149,7 +193,7 @@ export type WorkflowArtifact = Readonly<{
   historyInputEvents: readonly StateHistoryInputEvent[];
   notificationLedger: StateNotificationLedger;
   notificationSelection: DiscordNotificationSelection;
-  stateRunReport: StateRunReport;
+  runMetadata: WorkflowRunMetadata;
   aiCacheEntries: readonly AiCacheEntry[];
   pagesUrl: string;
   discordSettings: DiscordDeliverySettings;
@@ -252,23 +296,36 @@ function repositoryInventory(snapshot: StateSnapshot): readonly Repository[] {
   );
 }
 
-function assertRunConsistency(snapshot: StateSnapshot, report: StateRunReport): void {
-  if (
-    snapshot.run.id !== report.runId ||
-    snapshot.run.status !== report.status ||
-    snapshot.generatedAt !== report.finishedAt
-  ) {
-    throw new TypeError("workflow artifactのsnapshotとrun reportが一致しません");
+/** workflow run metadataを時系列も含めて検証する。 */
+export function createWorkflowRunMetadata(value: unknown): WorkflowRunMetadata {
+  const result = runMetadataSchema.safeParse(value);
+  if (!result.success) {
+    throw new TypeError("workflow run metadataの検証に失敗しました", {
+      cause: result.error,
+    });
+  }
+  return Object.freeze({
+    ...result.data,
+    metrics: Object.freeze({
+      ...result.data.metrics,
+    }),
+    diagnostics: Object.freeze([...result.data.diagnostics]),
+  });
+}
+
+function assertRunConsistency(snapshot: StateSnapshot, metadata: WorkflowRunMetadata): void {
+  if (snapshot.generatedAt !== metadata.startedAt) {
+    throw new TypeError("workflow artifactのsnapshotとrun metadataが一致しません");
   }
   if (
-    snapshot.repositories.length !== report.metrics.repositoryCount ||
-    snapshot.items.length !== report.metrics.itemCount ||
+    snapshot.repositories.length !== metadata.metrics.repositoryCount ||
+    snapshot.items.length !== metadata.metrics.itemCount ||
     snapshot.relations.filter((relation) => relation.active).length !==
-      report.metrics.activeEdgeCount ||
+      metadata.metrics.activeEdgeCount ||
     snapshot.repositories.filter((repository) => repository.freshness === "stale").length !==
-      report.metrics.staleRepositoryCount
+      metadata.metrics.staleRepositoryCount
   ) {
-    throw new TypeError("workflow artifactのsnapshotとrun reportの件数が一致しません");
+    throw new TypeError("workflow artifactのsnapshotとrun metadataの件数が一致しません");
   }
 }
 
@@ -358,7 +415,7 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
   const historyInputEvents = createStateHistoryInputEvents(result.data.historyInputEvents);
   const notificationLedger = createStateNotificationLedger(result.data.notificationLedger);
   const notificationSelection = createNotificationSelection(result.data.notificationSelection);
-  const stateRunReport = createStateRunReport(result.data.stateRunReport);
+  const runMetadata = createWorkflowRunMetadata(result.data.runMetadata);
   const aiCacheEntries = createAiCacheEntries(result.data.aiCacheEntries);
   const artifact = Object.freeze({
     schemaVersion: "1",
@@ -368,7 +425,7 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
     historyInputEvents,
     notificationLedger,
     notificationSelection,
-    stateRunReport,
+    runMetadata,
     aiCacheEntries,
     pagesUrl: normalizePagesUrl(result.data.pagesUrl),
     discordSettings: Object.freeze({
@@ -384,7 +441,7 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
       }),
     }),
   } satisfies WorkflowArtifact);
-  assertRunConsistency(snapshot, stateRunReport);
+  assertRunConsistency(snapshot, runMetadata);
   assertNotificationSelectionConsistency(snapshot, notificationLedger, notificationSelection);
   assertWorkflowArtifactPublicSafety(artifact, repositoryInventory(snapshot), []);
   return artifact;
@@ -428,7 +485,7 @@ export function assertWorkflowArtifactPublicSafety(
       artifact.historyInputEvents,
       artifact.notificationLedger,
       artifact.notificationSelection,
-      artifact.stateRunReport,
+      artifact.runMetadata,
       ...artifact.aiCacheEntries,
       artifact.pagesUrl,
       artifact.discordSettings,

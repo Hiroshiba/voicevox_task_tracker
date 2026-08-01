@@ -189,9 +189,11 @@ import { writeRunReport, type RunMetrics } from "./run-report.js";
 import {
   assertWorkflowArtifactPublicSafety,
   createWorkflowArtifact,
+  createWorkflowRunMetadata,
   type readWorkflowArtifactFile,
   workflowArtifactRepositoryInventory,
   type WorkflowArtifact,
+  type WorkflowRunMetadata,
 } from "./workflow-artifact.js";
 import { createWorkflowRunReport, readOptionalRunReportFile } from "./workflow-run-report.js";
 import { WorkflowStageRunner } from "./workflow-stage.js";
@@ -346,9 +348,14 @@ type PagesResult = Readonly<{
   pagesUrl: string;
 }>;
 
-type DiscordResult = Readonly<{
+type DiscordDeliveryResult = Readonly<{
   delivery: DiscordDigestDelivery;
 }>;
+
+type DiscordResult = DiscordDeliveryResult &
+  Readonly<{
+    notificationLedger: StateNotificationLedger;
+  }>;
 
 export type ProductionTypes = DailyTransactionTypeMap &
   Readonly<{
@@ -3373,37 +3380,61 @@ function validateRunCompleteness(
   });
 }
 
-function persistedMetrics(metrics: RunMetrics, validated: ValidatedRun): RunMetrics {
+function persistedMetrics(
+  metrics: RunMetrics,
+  validated: ValidatedRun,
+): WorkflowRunMetadata["metrics"] {
   return Object.freeze({
-    ...metrics,
     repositoryCount: validated.snapshot.repositories.length,
     itemCount: validated.snapshot.items.length,
+    changedItemCount: metrics.changedItemCount,
     activeEdgeCount: validated.snapshot.relations.filter((relation) => relation.active).length,
+    aiCallCount: metrics.aiCallCount,
+    aiCacheHitCount: metrics.aiCacheHitCount,
+    estimatedInputTokens: metrics.estimatedInputTokens,
+    githubApiRemaining: metrics.githubApiRemaining,
     staleRepositoryCount: validated.snapshot.repositories.filter(
       (repository) => repository.freshness === "stale",
     ).length,
-    durationMilliseconds: 0,
+    scheduleDelayMilliseconds: metrics.scheduleDelayMilliseconds,
+  });
+}
+
+function createRunMetadata(
+  invocation: DailyRunInvocation,
+  validated: ValidatedRun,
+  metrics: RunMetrics,
+  diagnostics: readonly string[],
+): WorkflowRunMetadata {
+  return createWorkflowRunMetadata({
+    scheduledFor: invocation.scheduledFor,
+    startedAt: invocation.startedAt,
+    metrics: persistedMetrics(metrics, validated),
+    diagnostics,
   });
 }
 
 function createPersistedRunReport(
-  invocation: DailyRunInvocation,
-  validated: ValidatedRun,
-  metrics: RunMetrics,
-  status: "success" | "fallback",
-  diagnostics: readonly string[],
+  snapshot: StateSnapshot,
+  metadata: WorkflowRunMetadata,
+  notificationCount: number,
+  finishedAt: UtcIsoDateTime,
 ): StateRunReport {
   return createStateRunReport({
     schemaVersion: "1",
-    runId: invocation.runId,
-    date: invocation.startedAt.slice(0, 10),
-    status,
+    runId: snapshot.run.id,
+    date: metadata.startedAt.slice(0, 10),
+    status: snapshot.run.status,
     complete: true,
-    scheduledFor: invocation.scheduledFor,
-    startedAt: invocation.startedAt,
-    finishedAt: invocation.startedAt,
-    metrics: persistedMetrics(metrics, validated),
-    diagnostics,
+    scheduledFor: metadata.scheduledFor,
+    startedAt: metadata.startedAt,
+    finishedAt,
+    metrics: {
+      ...metadata.metrics,
+      notificationCount,
+      durationMilliseconds: Date.parse(finishedAt) - Date.parse(metadata.startedAt),
+    },
+    diagnostics: metadata.diagnostics,
   });
 }
 
@@ -3424,7 +3455,6 @@ function createCollectAnalyzeArtifact(
   inventory: RepositoryInventory,
   validated: ValidatedRun,
   metrics: RunMetrics,
-  status: "success" | "fallback",
   diagnostics: readonly string[],
 ): WorkflowArtifact {
   const artifact = createWorkflowArtifact({
@@ -3439,7 +3469,7 @@ function createCollectAnalyzeArtifact(
     historyInputEvents: validated.historyInputEvents,
     notificationLedger: validated.notificationLedger,
     notificationSelection: validated.notificationSelection,
-    stateRunReport: createPersistedRunReport(invocation, validated, metrics, status, diagnostics),
+    runMetadata: createRunMetadata(invocation, validated, metrics, diagnostics),
     aiCacheEntries: state.session.pendingAiCacheEntries(),
     pagesUrl: pagesUrl(configuration.config),
     discordSettings: discordDeliverySettings(configuration.config),
@@ -3453,20 +3483,15 @@ function createCollectAnalyzeArtifact(
 }
 
 async function persistValidatedRun(
-  invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
   state: RuntimeState,
   inventory: RepositoryInventory,
   validated: ValidatedRun,
-  metrics: RunMetrics,
-  status: "success" | "fallback",
-  diagnostics: readonly string[],
 ): Promise<PersistedRun> {
   const result = await state.session.persist({
     snapshot: validated.snapshot,
     historyInputEvents: validated.historyInputEvents,
     notificationLedger: validated.notificationLedger,
-    runReport: createPersistedRunReport(invocation, validated, metrics, status, diagnostics),
     repositoryInventory: inventory.inventory,
     knownSecrets: configuration.credentials.knownSecrets,
   });
@@ -3537,7 +3562,7 @@ async function deliverDiscord(
   deployedPagesUrl: string,
 ): Promise<
   Readonly<{
-    value: DiscordResult;
+    value: DiscordDeliveryResult;
     notificationLedger: StateNotificationLedger;
     notificationCount: number;
     discordSentAt: UtcIsoDateTime | null;
@@ -3615,32 +3640,32 @@ async function persistSuccessfulRunCompletion(
   adapters: ProductionRuntimeAdapters,
   config: Config,
   state: RuntimeState,
+  repositoryInventory: readonly Repository[],
   validated: ValidatedRun,
-  delivery: Awaited<ReturnType<typeof deliverDiscord>>,
+  runMetadata: WorkflowRunMetadata,
+  delivery: Readonly<{
+    notificationLedger: StateNotificationLedger;
+    notificationCount: number;
+  }>,
   knownSecrets: readonly string[],
 ): Promise<void> {
   const completedAt = createUtcIsoDateTime(adapters.now().toISOString());
   const trackingStartAt = completedSnapshotTrackingStartAt(config, validated.snapshot, completedAt);
-  if (validated.snapshot.trackingStartAt.status === "not_fixed") {
-    await state.session.persistRunCompletion({
-      snapshot: createStateSnapshot({
-        ...validated.snapshot,
-        trackingStartAt,
-      }),
-      notificationLedger: delivery.notificationLedger,
+  await state.session.persistRunCompletion({
+    snapshot: createStateSnapshot({
+      ...validated.snapshot,
+      trackingStartAt,
+    }),
+    notificationLedger: delivery.notificationLedger,
+    runReport: createPersistedRunReport(
+      validated.snapshot,
+      runMetadata,
+      delivery.notificationCount,
       completedAt,
-      knownSecrets,
-    });
-    return;
-  }
-  if (delivery.notificationCount > 0) {
-    assertNonNullable(delivery.discordSentAt, "Discord通知の送信時刻がありません");
-    await state.session.persistNotificationLedger({
-      notificationLedger: delivery.notificationLedger,
-      committedAt: delivery.discordSentAt,
-      knownSecrets,
-    });
-  }
+    ),
+    repositoryInventory,
+    knownSecrets,
+  });
 }
 
 async function deliverOperationsAlert(
@@ -3703,7 +3728,10 @@ async function deliverOperationsAlert(
   });
   if (delivery.status !== "skipped" || delivery.reason !== "pages_deployment_failed") {
     return Object.freeze({
-      value: Object.freeze({ delivery }),
+      value: Object.freeze({
+        delivery,
+        notificationLedger: state.notificationLedger,
+      }),
       notificationCount: 0,
       discordSentAt: null,
     });
@@ -3711,7 +3739,10 @@ async function deliverOperationsAlert(
   const operationsDelivery = delivery.operationsAlert;
   if (operationsDelivery.status !== "sent") {
     return Object.freeze({
-      value: Object.freeze({ delivery }),
+      value: Object.freeze({
+        delivery,
+        notificationLedger: state.notificationLedger,
+      }),
       notificationCount: 0,
       discordSentAt: null,
     });
@@ -3732,7 +3763,10 @@ async function deliverOperationsAlert(
     await state.session.persistNotificationLedger(persistenceInput);
   }
   return Object.freeze({
-    value: Object.freeze({ delivery }),
+    value: Object.freeze({
+      delivery,
+      notificationLedger,
+    }),
     notificationCount: 1,
     discordSentAt: operationsDelivery.ledgerEntry.sentAt,
   });
@@ -4158,26 +4192,8 @@ function createDailyDependencies(
           diagnostics: Object.freeze([]),
         }),
       ),
-    persistState: ({
-      invocation,
-      configuration,
-      state,
-      repositoryInventory,
-      validated,
-      metrics,
-      status,
-      diagnostics,
-    }) =>
-      persistValidatedRun(
-        invocation,
-        configuration,
-        state,
-        repositoryInventory,
-        validated,
-        metrics,
-        status,
-        diagnostics,
-      ),
+    persistState: ({ configuration, state, repositoryInventory, validated }) =>
+      persistValidatedRun(configuration, state, repositoryInventory, validated),
     buildPages: ({ configuration, repositoryInventory, validated, persisted }) =>
       buildPublicPages(
         adapters,
@@ -4189,27 +4205,45 @@ function createDailyDependencies(
         adapters.pagesOutputDirectory,
         configuration.credentials.knownSecrets,
       ),
-    sendDiscord: async ({ configuration, state, validated, pages }) => {
+    sendDiscord: async ({ configuration, validated, pages }) => {
       const result = await deliverDiscord(
         adapters,
         discordDeliverySettings(configuration.config),
         validated,
         pages.pagesUrl,
       );
-      await persistSuccessfulRunCompletion(
-        adapters,
-        configuration.config,
-        state,
-        validated,
-        result,
-        configuration.credentials.knownSecrets,
-      );
       return Object.freeze({
-        value: result.value,
+        value: Object.freeze({
+          ...result.value,
+          notificationLedger: result.notificationLedger,
+        }),
         notificationCount: result.notificationCount,
         discordSentAt: result.discordSentAt,
       });
     },
+    completeRun: ({
+      invocation,
+      configuration,
+      state,
+      repositoryInventory,
+      validated,
+      discord,
+      metrics,
+      diagnostics,
+    }) =>
+      persistSuccessfulRunCompletion(
+        adapters,
+        configuration.config,
+        state,
+        repositoryInventory.inventory,
+        validated,
+        createRunMetadata(invocation, validated, metrics, diagnostics),
+        {
+          notificationLedger: discord.notificationLedger,
+          notificationCount: metrics.notificationCount,
+        },
+        configuration.credentials.knownSecrets,
+      ),
     sendOperationsAlert: ({ invocation, configuration, state, kind, retryAttempts }) =>
       deliverOperationsAlert(
         adapters,
@@ -4234,7 +4268,6 @@ function createDailyDependencies(
           input.repositoryInventory,
           input.validated,
           input.metrics,
-          input.status,
           input.diagnostics,
         ),
       ),
@@ -4270,7 +4303,6 @@ async function persistWorkflowState(
     snapshot: artifact.snapshot,
     historyInputEvents: artifact.historyInputEvents,
     notificationLedger: artifact.notificationLedger,
-    runReport: artifact.stateRunReport,
     repositoryInventory: workflowArtifactRepositoryInventory(artifact),
     knownSecrets: [],
   });
@@ -4355,7 +4387,9 @@ async function notifyWorkflowDiscord(
     adapters,
     config,
     state,
+    workflowArtifactRepositoryInventory(artifact),
     validatedRunFromArtifact(artifact),
+    artifact.runMetadata,
     result,
     [],
   );

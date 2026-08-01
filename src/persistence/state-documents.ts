@@ -50,20 +50,62 @@ const runMetricsSchema = z.strictObject({
   githubApiRemaining: nonNegativeIntegerSchema,
   staleRepositoryCount: nonNegativeIntegerSchema,
   notificationCount: nonNegativeIntegerSchema,
+  scheduleDelayMilliseconds: nonNegativeIntegerSchema,
   durationMilliseconds: nonNegativeIntegerSchema,
 });
-const runReportSchema = z.strictObject({
-  schemaVersion: z.literal("1"),
-  runId: nonEmptyStringSchema,
-  date: dateSchema,
-  status: z.enum(["success", "fallback"]),
-  complete: z.literal(true),
-  scheduledFor: dateTimeSchema,
-  startedAt: dateTimeSchema,
-  finishedAt: dateTimeSchema,
-  metrics: runMetricsSchema,
-  diagnostics: z.array(z.string().max(1000)),
-});
+const runReportSchema = z
+  .strictObject({
+    schemaVersion: z.literal("1"),
+    runId: nonEmptyStringSchema,
+    date: dateSchema,
+    status: z.enum(["success", "fallback"]),
+    complete: z.literal(true),
+    scheduledFor: dateTimeSchema,
+    startedAt: dateTimeSchema,
+    finishedAt: dateTimeSchema,
+    metrics: runMetricsSchema,
+    diagnostics: z.array(z.string().max(1000)),
+  })
+  .superRefine((report, context) => {
+    const scheduledFor = Date.parse(report.scheduledFor);
+    const startedAt = Date.parse(report.startedAt);
+    const finishedAt = Date.parse(report.finishedAt);
+    if (scheduledFor > startedAt) {
+      context.addIssue({
+        code: "custom",
+        path: ["scheduledFor"],
+        message: "予定時刻は開始時刻以前にしてください",
+      });
+    }
+    if (startedAt > finishedAt) {
+      context.addIssue({
+        code: "custom",
+        path: ["finishedAt"],
+        message: "終了時刻は開始時刻以後にしてください",
+      });
+    }
+    if (report.date !== report.startedAt.slice(0, 10)) {
+      context.addIssue({
+        code: "custom",
+        path: ["date"],
+        message: "日付は開始時刻のUTC日付に一致させてください",
+      });
+    }
+    if (report.metrics.scheduleDelayMilliseconds !== startedAt - scheduledFor) {
+      context.addIssue({
+        code: "custom",
+        path: ["metrics", "scheduleDelayMilliseconds"],
+        message: "schedule遅延が予定時刻と開始時刻に一致しません",
+      });
+    }
+    if (report.metrics.durationMilliseconds !== finishedAt - startedAt) {
+      context.addIssue({
+        code: "custom",
+        path: ["metrics", "durationMilliseconds"],
+        message: "所要時間が開始時刻と終了時刻に一致しません",
+      });
+    }
+  });
 
 const ledgerEntryBaseSchema = z.strictObject({
   notificationKey: nonEmptyStringSchema,

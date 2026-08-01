@@ -12,6 +12,11 @@ import {
   type DiscordWebhookPayload,
 } from "../src/discord/index.js";
 import {
+  createGitHubNodeId,
+  createUtcIsoDateTime,
+  type NotificationLedgerEntry,
+} from "../src/domain/index.js";
+import {
   createCliApplication,
   createWorkflowArtifact,
   type CliCompositionAdapters,
@@ -21,9 +26,14 @@ import {
   createProductionCliApplication,
   type ProductionRuntimeAdapters,
 } from "../src/cli/production-runtime.js";
-import { StatePersistenceSession, type StateBranchAdapter } from "../src/persistence/index.js";
+import {
+  StatePersistenceSession,
+  createStateRunReport,
+  type StateBranchAdapter,
+} from "../src/persistence/index.js";
 
 const NOW = "2026-07-31T00:00:00.000Z";
+const COMPLETED_AT = "2026-07-31T00:05:00.000Z";
 const PRIVATE_KEY = [
   "-----BEGIN PRIVATE KEY-----",
   "canary-private-key-material",
@@ -135,7 +145,9 @@ function createMissingStateAdapter(onCommit: () => void): StateBranchAdapter {
   });
 }
 
-function createMutableStateAdapter(onCommit: () => void): StateBranchAdapter {
+function createMutableStateAdapter(
+  onCommit: () => void,
+): StateBranchAdapter & Readonly<{ readCurrentFile: (path: string) => Uint8Array | undefined }> {
   const files = new Map<string, Uint8Array>();
   let revision: string | undefined;
   return Object.freeze({
@@ -167,6 +179,7 @@ function createMutableStateAdapter(onCommit: () => void): StateBranchAdapter {
       Promise.resolve(
         Object.freeze([...files.keys()].filter((path) => path.startsWith(`${directory}/`))),
       ),
+    readCurrentFile: (path) => files.get(path),
     commit: (request) => {
       for (const update of request.updates) {
         files.set(update.path, update.bytes);
@@ -194,8 +207,7 @@ function createEmptyWorkflowArtifact(runId: string): WorkflowArtifact {
     estimatedInputTokens: 0,
     githubApiRemaining: 0,
     staleRepositoryCount: 0,
-    notificationCount: 0,
-    durationMilliseconds: 0,
+    scheduleDelayMilliseconds: 0,
   };
   return createWorkflowArtifact({
     schemaVersion: "1",
@@ -254,15 +266,9 @@ function createEmptyWorkflowArtifact(runId: string): WorkflowArtifact {
       candidates: [],
       ledgerReservations: [],
     },
-    stateRunReport: {
-      schemaVersion: "1",
-      runId,
-      date: "2026-07-31",
-      status: "success",
-      complete: true,
+    runMetadata: {
       scheduledFor: NOW,
       startedAt: NOW,
-      finishedAt: NOW,
       metrics,
       diagnostics: [],
     },
@@ -606,6 +612,7 @@ describe("CLI合成root", () => {
       readGoldenFixtures: () => Promise.reject(new TypeError("golden fixtureは読みません")),
       readWorkflowArtifact: () => Promise.resolve(artifact),
       createStateBranchAdapter: () => stateAdapter,
+      now: () => new Date(COMPLETED_AT),
       writePublicData: () => {
         pagesWriteCount += 1;
         return Promise.resolve({
@@ -615,17 +622,29 @@ describe("CLI合成root", () => {
           detailsBytes: 1,
         });
       },
-      sendDiscord: () => {
+      sendDiscord: async (input) => {
         discordSendCount += 1;
         if (discordFails) {
-          return Promise.reject(new TypeError("Discord送信fixtureが失敗しました"));
+          throw new TypeError("Discord送信fixtureが失敗しました");
         }
-        return Promise.resolve(
-          Object.freeze({
-            status: "skipped",
-            reason: "no_candidates",
-          } satisfies DiscordDigestDelivery),
-        );
+        const ledgerEntry = Object.freeze({
+          notificationKey: "notification:composition:sent",
+          itemNodeId: createGitHubNodeId("I_COMPOSITION_SENT"),
+          reasonCode: "triage_overdue",
+          severity: "urgent",
+          reservedAt: createUtcIsoDateTime(NOW),
+          cooldownUntil: createUtcIsoDateTime("2026-08-03T00:00:00.000Z"),
+          status: "sent",
+          sentAt: createUtcIsoDateTime(COMPLETED_AT),
+          discordMessageId: "discord-message-composition",
+        } satisfies NotificationLedgerEntry);
+        await input.dependencies.ledger.recordNotifications([ledgerEntry]);
+        return Object.freeze({
+          status: "sent",
+          digestId: "digest-composition",
+          discordMessageIds: Object.freeze([ledgerEntry.discordMessageId]),
+          ledgerEntries: Object.freeze([ledgerEntry]),
+        } satisfies DiscordDigestDelivery);
       },
     });
     const application = createProductionCliApplication(runtimeAdapters);
@@ -679,14 +698,28 @@ describe("CLI合成root", () => {
     if (successfulRunSnapshot.status !== "available") {
       throw new TypeError("成功runのsnapshotがありません");
     }
+    const reportSource = stateAdapter.readCurrentFile("state/run-reports/2026-07-31.json");
+    if (reportSource == null) {
+      throw new TypeError("成功runの永続reportがありません");
+    }
+    const parseJson: (source: string) => unknown = JSON.parse;
+    const persistedReport = createStateRunReport(parseJson(new TextDecoder().decode(reportSource)));
 
     expect([persistResult.exitCode, pagesResult.exitCode, notifyResult.exitCode]).toEqual([
       0, 0, 0,
     ]);
     expect(successfulRunSnapshot.snapshot.trackingStartAt).toEqual({
       status: "fixed",
-      value: NOW,
+      value: COMPLETED_AT,
       source: "first_complete_run",
+    });
+    expect(persistedReport).toMatchObject({
+      startedAt: NOW,
+      finishedAt: COMPLETED_AT,
+      metrics: {
+        notificationCount: 1,
+        durationMilliseconds: 300_000,
+      },
     });
     expect(stateCommitCount).toBe(2);
     expect(pagesWriteCount).toBe(1);

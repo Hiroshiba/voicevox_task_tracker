@@ -288,6 +288,10 @@ describe("日次workflow", () => {
     ).join("\n");
 
     expect(collectCommands).toContain("collect-analyze");
+    expect(collectCommands).toContain('--scheduled-for "$scheduled_for"');
+    expect(collectCommands).toContain('"$GITHUB_EVENT_NAME" == "schedule"');
+    expect(collectCommands).toContain('"$GITHUB_EVENT_NAME" == "workflow_dispatch"');
+    expect(collectCommands).toContain("today 23:00");
     expect(collectCommands).toContain("pnpm build:workflow-cli");
     expect(collectCommands).toContain(
       "git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state",

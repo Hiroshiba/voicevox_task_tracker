@@ -27,21 +27,23 @@ Actionsでは収集reportとworkflow全体のreportを、run IDと試行番号�
 
 run reportの主な確認項目は次のとおりです。
 
-| field                  | 意味                                                                          |
-| ---------------------- | ----------------------------------------------------------------------------- |
-| `status`               | `success`は完全成功、`fallback`はCodex縮退を含む完全run、`failure`は不完全run |
-| `complete`             | stateと公開処理へ進める完全性を満たしたか                                     |
-| `failedStage`          | failureが起きた処理段階                                                       |
-| `diagnostics`          | secretや信頼できない本文を含まない診断                                        |
-| `repositoryCount`      | 公開allowlistに入ったrepository数                                             |
-| `itemCount`            | 追跡項目数                                                                    |
-| `changedItemCount`     | 前回から更新された追跡項目数                                                  |
-| `activeEdgeCount`      | 有効な関係edge数                                                              |
-| `aiCallCount`          | Codexを実行した件数                                                           |
-| `aiCacheHitCount`      | AI cacheを再利用した件数                                                      |
-| `estimatedInputTokens` | Codex入力tokenの見積り                                                        |
-| `githubApiRemaining`   | 最後に観測したGitHub API残量                                                  |
-| `notificationCount`    | 送信結果をledgerへ記録した通知数                                              |
+| field                       | 意味                                                                          |
+| --------------------------- | ----------------------------------------------------------------------------- |
+| `status`                    | `success`は完全成功、`fallback`はCodex縮退を含む完全run、`failure`は不完全run |
+| `complete`                  | stateと公開処理へ進める完全性を満たしたか                                     |
+| `failedStage`               | failureが起きた処理段階                                                       |
+| `diagnostics`               | secretや信頼できない本文を含まない診断                                        |
+| `repositoryCount`           | 公開allowlistに入ったrepository数                                             |
+| `itemCount`                 | 追跡項目数                                                                    |
+| `changedItemCount`          | 前回から更新された追跡項目数                                                  |
+| `activeEdgeCount`           | 有効な関係edge数                                                              |
+| `aiCallCount`               | Codexを実行した件数                                                           |
+| `aiCacheHitCount`           | AI cacheを再利用した件数                                                      |
+| `estimatedInputTokens`      | Codex入力tokenの見積り                                                        |
+| `githubApiRemaining`        | 最後に観測したGitHub API残量                                                  |
+| `notificationCount`         | 送信結果をledgerへ記録した通知数                                              |
+| `scheduleDelayMilliseconds` | 予定起動時刻からCLI開始までの遅延                                             |
+| `durationMilliseconds`      | CLI開始からrun完了までの所要時間                                              |
 
 `tracker-state`は自動更新専用です。
 人間がsnapshot、履歴、AI cache、通知ledgerを直接編集すると履歴とcooldownの整合を壊すため、修正はGitHub上の正本か`config.yml`で行います。
@@ -70,7 +72,7 @@ CI上では`性能profile` workflowを手動実行し、同じJSONをActions art
 
 収集と判定はGitHub Appの認証情報を使います。
 `ai.enabled: true`ではlockfileで固定した`codex`に加え、`ai.authentication: api-key`なら`OPENAI_API_KEY`、`ai.authentication: auth-json`なら`CODEX_HOME`直下の`auth.json`が必要です。
-検証後のsnapshot、通知候補、notification ledger、run report、AI cacheを公開可能なartifactへ保存します。
+検証後のsnapshot、通知候補、notification ledger、run report生成用の収集指標、AI cacheを公開可能なartifactへ保存します。
 
 ```console
 pnpm build

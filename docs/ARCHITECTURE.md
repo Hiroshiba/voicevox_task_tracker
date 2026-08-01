@@ -70,7 +70,7 @@ option形式の引数は`--backfill`に従って`daily`または`backfill`へ変
 8. 高信頼で確定しない項目をCodexで分析し、出力を検証します。
 9. reducerの第1 pass、暫定graphのreconcileと解析、graphを反映したreducerの第2 pass、最終graphのreconcileと解析の順に実行し、停滞時間、cycle、frontier、downstream impactを確定します。
 10. snapshotと通知候補を作り、完全性と公開安全性を検証します。
-11. `daily`と`backfill`ではstate branch用run reportを含むstateをatomic commitし、Pages用DTOを書き出してDiscord送信を実行します。`tracking.startAt`が未確定なら完全成功時刻と送信結果を反映したledgerを追加commitし、確定済みで通知した場合はledgerだけを追加commitします。
+11. `daily`と`backfill`では検証済みstateをatomic commitし、Pages用DTOを書き出してDiscord送信を実行します。完了時に実測時刻と送信結果を反映したrun reportとledgerを追加commitし、`tracking.startAt`が未確定なら同じcommitで確定します。
 12. 成功、Codex縮退、失敗のいずれでもCLIのreport pathへrun reportを書き出します。
 
 `dry-run`は手順10まで実行し、state、Pages、Discordを変更せずに検証済みartifactとrun reportだけを書き出します。
@@ -146,23 +146,23 @@ Codex出力はJSON Schema検証の後にsemantic validationを通します。
 `main`にはsource、設定、schema、prompt、Web UI、テスト、文書を置きます。
 日次stateはorphan branchの`tracker-state`へcanonical JSONとして保存し、外部databaseは使いません。
 
-| 既定パス                            | 内容                                                            |
-| ----------------------------------- | --------------------------------------------------------------- |
-| `state/snapshot.json`               | AI状態とtracking.startAtの確定状態を含む最新snapshot            |
-| `state/history/YYYY-MM-DD.jsonl`    | 前回snapshotとの差分を持つ日次履歴                              |
-| `state/ai-cache/<sha256>.json`      | Codexのcontent-addressed cache                                  |
-| `state/notification-ledger.json`    | 予約期限、送信結果、cooldownを持つ通知ledger                    |
-| `state/run-reports/YYYY-MM-DD.json` | PagesとDiscordより前に保存するsuccessまたはfallbackの指標と診断 |
+| 既定パス                            | 内容                                                                  |
+| ----------------------------------- | --------------------------------------------------------------------- |
+| `state/snapshot.json`               | AI状態とtracking.startAtの確定状態を含む最新snapshot                  |
+| `state/history/YYYY-MM-DD.jsonl`    | 前回snapshotとの差分を持つ日次履歴                                    |
+| `state/ai-cache/<sha256>.json`      | Codexのcontent-addressed cache                                        |
+| `state/notification-ledger.json`    | 予約期限、送信結果、cooldownを持つ通知ledger                          |
+| `state/run-reports/YYYY-MM-DD.json` | PagesとDiscordの完了後に保存するsuccessまたはfallbackの実績指標と診断 |
 
-永続化sessionはbranch headを開始時に固定し、snapshot、履歴、追加cache、通知候補選別後のledger、run reportを通常stateの最初のGit commitへまとめます。
+永続化sessionはbranch headを開始時に固定し、snapshot、履歴、追加cache、通知候補選別後のledgerを通常stateの最初のGit commitへまとめます。
 通知予約はrun開始時刻から24時間だけ有効です。
 予約期限は日次workflow内の排他用leaseであり通知方針ではないため、設定項目にせず日次周期と同じ24時間へ固定します。
 期限内の予約は重複送信を抑え、期限切れの予約は次回の候補選別で抑制しません。
 cooldownと同日抑制は送信済みentryだけへ適用します。
-run reportはPages生成とDiscord送信より前に保存します。
+run reportはDiscord送信結果が確定してから、実送信数と完了時刻を含めて保存します。
 初回の通常state commitでは、未指定の`tracking.startAt`を`not_fixed`のまま保存します。
 PagesとDiscordが完了した場合だけ、`resolveTrackingStartAt`で完全成功時刻を確定します。
-この確定値と送信結果を反映したledgerは2回目のGit commitで一緒に保存します。
-`tracking.startAt`が確定済みのrunでDiscord通知を送信した場合は、送信結果を反映したledgerだけを2回目のGit commitで保存します。
+この確定値、送信結果を反映したledger、run reportは2回目のGit commitで一緒に保存します。
+`tracking.startAt`が確定済みのrunでも、送信結果を反映したledgerとrun reportを2回目のGit commitで保存します。
 各commitの前にheadが変わった場合は競合として失敗し、不完全なcommitへ切り替えません。
 GitHub Pagesはbranchを公開元にせず、ActionsのPages artifactからdeployします。

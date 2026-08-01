@@ -23,6 +23,7 @@ const runMetricsSchema = z.strictObject({
   githubApiRemaining: nonNegativeIntegerSchema,
   staleRepositoryCount: nonNegativeIntegerSchema,
   notificationCount: nonNegativeIntegerSchema,
+  scheduleDelayMilliseconds: nonNegativeIntegerSchema,
   durationMilliseconds: nonNegativeIntegerSchema,
 });
 
@@ -108,6 +109,13 @@ const runReportSchema = z
         message: "所要時間が開始時刻と終了時刻に一致しません",
       });
     }
+    if (report.metrics.scheduleDelayMilliseconds !== startedAt - scheduledFor) {
+      context.addIssue({
+        code: "custom",
+        path: ["metrics", "scheduleDelayMilliseconds"],
+        message: "schedule遅延が予定時刻と開始時刻に一致しません",
+      });
+    }
   });
 
 /** run reportへ必ず記録する運用指標。 */
@@ -132,6 +140,7 @@ export function createEmptyRunMetrics(): RunMetrics {
     githubApiRemaining: 0,
     staleRepositoryCount: 0,
     notificationCount: 0,
+    scheduleDelayMilliseconds: 0,
     durationMilliseconds: 0,
   });
 }
