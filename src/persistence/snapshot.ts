@@ -14,6 +14,7 @@ import {
   type Relation,
   type Repository,
   type Severity,
+  type StalenessSeverityContext,
   type TrackingStartAtState,
   type TrackedItem,
   type UtcIsoDateTime,
@@ -43,6 +44,7 @@ export type SnapshotRepository =
 export type SnapshotTrackedItem = TrackedItem &
   Readonly<{
     severity: Severity;
+    severityContext: StalenessSeverityContext;
   }>;
 
 /** snapshotへ保存する前回Codex分析fingerprint。 */
@@ -266,6 +268,26 @@ function assertSnapshotSemantics(snapshot: StateSnapshot): void {
     if (isTerminalStatus(item.status) && item.waitingOn.length !== 0) {
       throw new StateSnapshotSemanticError("terminal itemにwaitingOnを保存できません");
     }
+    if (isTerminalStatus(item.status) && item.severityContext.waitClass !== "notApplicable") {
+      throw new StateSnapshotSemanticError(
+        "terminal itemのseverity contextはnotApplicableにしてください",
+      );
+    }
+    if (!isTerminalStatus(item.status) && item.severityContext.waitClass === "notApplicable") {
+      throw new StateSnapshotSemanticError(
+        "継続中itemのseverity contextをnotApplicableにはできません",
+      );
+    }
+    if (item.status === "blocked" && item.severityContext.waitClass !== "blockedParent") {
+      throw new StateSnapshotSemanticError(
+        "blocked itemのseverity contextはblockedParentにしてください",
+      );
+    }
+    if (item.status !== "blocked" && item.severityContext.waitClass === "blockedParent") {
+      throw new StateSnapshotSemanticError(
+        "blocked以外のitemのseverity contextをblockedParentにはできません",
+      );
+    }
     if (item.waitingOn.length === 0 && item.primaryWaitingOn.index !== "not_applicable") {
       throw new StateSnapshotSemanticError("waitingOnがないitemにprimaryを保存できません");
     }
@@ -349,7 +371,16 @@ function normalizeSnapshot(snapshot: StateSnapshot): StateSnapshot {
       [...snapshot.repositories].sort((left, right) => compareStrings(left.id, right.id)),
     ),
     items: Object.freeze(
-      [...snapshot.items].sort((left, right) => compareStrings(left.nodeId, right.nodeId)),
+      [...snapshot.items]
+        .sort((left, right) => compareStrings(left.nodeId, right.nodeId))
+        .map((item) =>
+          Object.freeze({
+            ...item,
+            severityContext: Object.freeze({
+              ...item.severityContext,
+            }),
+          }),
+        ),
     ),
     externalReferences: Object.freeze(
       [...snapshot.externalReferences].sort((left, right) =>

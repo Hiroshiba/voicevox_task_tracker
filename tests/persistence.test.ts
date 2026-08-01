@@ -16,6 +16,7 @@ import {
   createGitHubRepositoryId,
   createUtcIsoDateTime,
   type Repository,
+  type StalenessWaitClass,
   type Status,
   type WaitingOnKind,
   type WaitingOnRole,
@@ -83,6 +84,33 @@ type SnapshotFixtureOptions = Readonly<{
   severity: "none" | "watch" | "urgent" | "critical";
   edge: EdgeFixture;
 }>;
+
+function severityWaitClass(status: Status): StalenessWaitClass {
+  switch (status) {
+    case "new_untriaged":
+    case "needs_maintainer_decision":
+      return "maintainerTriage";
+    case "waiting_for_review":
+      return "reviewer";
+    case "waiting_for_author":
+      return "authorAfterChangesRequested";
+    case "waiting_for_assignee":
+    case "in_progress":
+      return "assigneeOrInProgress";
+    case "blocked":
+      return "blockedParent";
+    case "waiting_for_automation":
+      return "automation";
+    case "ready_to_merge":
+      return "readyToMerge";
+    case "unknown":
+      return "ownerUnknown";
+    case "terminal_merged":
+    case "terminal_completed":
+    case "terminal_not_planned":
+      return "notApplicable";
+  }
+}
 
 function createRepository(id: string, visibility: "public" | "private" | "internal"): Repository {
   return Object.freeze({
@@ -217,6 +245,10 @@ function createSnapshot(options: SnapshotFixtureOptions): StateSnapshot {
         ],
         uncertainties: [],
         severity: options.severity,
+        severityContext: {
+          waitClass: severityWaitClass(options.responsibility.status),
+          decisionBasis: "deterministic",
+        },
       },
     ],
     externalReferences: [

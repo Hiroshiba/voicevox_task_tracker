@@ -73,13 +73,17 @@ export {
 export { buildSourceId, parseSourceId, type SourceId, type SourceIdParts } from "./source-id.js";
 export {
   calculateStaleness,
+  recalculateStalenessSeverity,
   type BlockedParentContext,
   type BlockedParentSeverityReason,
   type BlockerRanking,
   type CalculateStalenessInput,
   type PreviousStalenessState,
+  type RecalculatedStalenessSeverity,
+  type RecalculateStalenessSeverityInput,
   type StalenessElapsedHours,
   type StalenessResult,
+  type StalenessSeverityContext,
   type StalenessSeverityReason,
   type StalenessState,
   type StalenessTransitionBasis,

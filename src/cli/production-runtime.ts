@@ -26,6 +26,7 @@ import {
   createGitHubBotPredicate,
   createLabelEffectsResolver,
   calculateStaleness,
+  recalculateStalenessSeverity,
   determineIssueState,
   determineMeaningfulProgress,
   determinePullRequestState,
@@ -56,6 +57,8 @@ import {
   type Repository,
   type SourceId,
   type Severity,
+  type StalenessSeverityContext,
+  type StalenessWaitClass,
   type StalenessResult,
   type NaturalLanguageProgressAssessment,
   type DependencyResolutionProgress,
@@ -138,6 +141,7 @@ import {
   type SnapshotCollectionItem,
   type SnapshotCollectionRepository,
   type SnapshotRepository,
+  type SnapshotTrackedItem,
   type StateBranchAdapter,
   type StateNotificationLedger,
   type StateRunReport,
@@ -283,9 +287,16 @@ type ReducedItemAnalysis = Readonly<{
   staleness: StalenessResult;
 }>;
 
+type TrackedItemStaleness = Readonly<{
+  severity: Severity;
+  waitClass: StalenessWaitClass;
+  severityContext: StalenessSeverityContext;
+}>;
+
 type ReducedAnalysis = Readonly<{
   items: readonly TrackedItem[];
   currentItems: readonly ReducedItemAnalysis[];
+  stalenessByNodeId: ReadonlyMap<GitHubNodeId, TrackedItemStaleness>;
   relationAssessments: readonly RelationCandidateAssessment[];
   runStatus: "success" | "fallback";
 }>;
@@ -771,7 +782,7 @@ function repositoryFullName(repository: PublicRepository): string {
 
 function findRepository(
   inventory: RepositoryInventory,
-  repositoryId: FreshObservedGitHubItem["repositoryId"],
+  repositoryId: GitHubRepositoryId,
 ): PublicRepository {
   return inventory.allowlist.require(repositoryId);
 }
@@ -2411,6 +2422,40 @@ function blockedParentContext(
   });
 }
 
+function trackedItemStaleness(staleness: StalenessResult): TrackedItemStaleness {
+  return Object.freeze({
+    severity: staleness.severity,
+    waitClass: staleness.waitClass,
+    severityContext: staleness.severityContext,
+  });
+}
+
+function recalculateTrackedItemStaleness(
+  invocation: DailyRunInvocation,
+  configuration: RuntimeConfiguration,
+  inventory: RepositoryInventory,
+  item: SnapshotTrackedItem,
+  resolveLabelEffects: ReturnType<typeof createLabelEffectsResolver>,
+): TrackedItemStaleness {
+  const repository = findRepository(inventory, item.repositoryId);
+  const recalculated = recalculateStalenessSeverity({
+    evaluatedAt: invocation.startedAt,
+    stallSince: item.stallSince,
+    confidence: item.confidence,
+    minimumAiConfidence: configuration.config.ai.confidence.medium,
+    repositoryFullName: repositoryFullName(repository),
+    currentLabels: item.labels,
+    resolveLabelEffects,
+    thresholdsHours: configuration.config.staleness.thresholdsHours,
+    severityContext: item.severityContext,
+  });
+  return Object.freeze({
+    severity: recalculated.severity,
+    waitClass: recalculated.waitClass,
+    severityContext: recalculated.severityContext,
+  });
+}
+
 function reduceAnalysisPass(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
@@ -2424,6 +2469,7 @@ function reduceAnalysisPass(
   const resolveLabelEffects = createLabelEffectsResolver(normalizeLabelRules(configuration.config));
   const currentItems: ReducedItemAnalysis[] = [];
   const items: TrackedItem[] = [];
+  const stalenessByNodeId = new Map<GitHubNodeId, TrackedItemStaleness>();
   const relationAssessments: RelationCandidateAssessment[] = [];
   let runStatus: ReducedAnalysis["runStatus"] = "success";
   for (const originalAnalysis of deterministicAnalysis.items) {
@@ -2477,6 +2523,7 @@ function reduceAnalysisPass(
         staleness,
       }),
     );
+    stalenessByNodeId.set(analysis.item.nodeId, trackedItemStaleness(staleness));
     items.push(createTrackedItem(invocation, analysis, decision, primaryWaitingOn, staleness));
   }
   const currentNodeIds = new Set(items.map((item) => item.nodeId));
@@ -2490,11 +2537,25 @@ function reduceAnalysisPass(
       currentRepositoryIds.has(previousItem.repositoryId)
     ) {
       items.push(previousItem);
+      stalenessByNodeId.set(
+        previousItem.nodeId,
+        recalculateTrackedItemStaleness(
+          invocation,
+          configuration,
+          inventory,
+          previousItem,
+          resolveLabelEffects,
+        ),
+      );
     }
+  }
+  if (stalenessByNodeId.size !== items.length) {
+    throw new TypeError("全追跡項目のseverityを再計算できませんでした");
   }
   return Object.freeze({
     items: Object.freeze(items),
     currentItems: Object.freeze(currentItems),
+    stalenessByNodeId,
     relationAssessments: Object.freeze(relationAssessments),
     runStatus,
   });
@@ -2828,14 +2889,66 @@ function notificationLatestChange(
     : "bot_only";
 }
 
+type NotificationAnalysisState =
+  | Readonly<{
+      availability: "not_available";
+    }>
+  | Readonly<{
+      availability: "available";
+      value: ReducedItemAnalysis;
+    }>;
+
+function notificationDecisionBasis(
+  item: TrackedItem,
+  staleness: TrackedItemStaleness,
+  analysisState: NotificationAnalysisState,
+): DiscordNotificationItem["decisionBasis"] {
+  if (analysisState.availability === "available") {
+    return analysisState.value.decision.origin === "deterministic"
+      ? Object.freeze({
+          source: "deterministic",
+        })
+      : Object.freeze({
+          source: "ai_only",
+          confidence: analysisState.value.decision.confidence,
+        });
+  }
+  return staleness.severityContext.decisionBasis === "deterministic"
+    ? Object.freeze({
+        source: "deterministic",
+      })
+    : Object.freeze({
+        source: "ai_only",
+        confidence: item.confidence,
+      });
+}
+
+function notificationDraftState(
+  item: TrackedItem,
+  enumeratedItemsByNodeId: ReadonlyMap<GitHubNodeId, EnumeratedGitHubItem>,
+): DiscordNotificationItem["draftState"] {
+  const observed = enumeratedItemsByNodeId.get(item.nodeId);
+  assertNonNullable(observed, `通知対象 ${item.nodeId}の列挙値がありません`);
+  if (observed.type !== item.type) {
+    throw new TypeError(`通知対象 ${item.nodeId}の項目種別が前回値と一致しません`);
+  }
+  return observed.type === "issue"
+    ? "not_applicable"
+    : observed.draft
+      ? "draft"
+      : "ready_for_review";
+}
+
 function notificationItem(
   configuration: RuntimeConfiguration,
   state: RuntimeState,
   inventory: RepositoryInventory,
+  enumeratedItemsByNodeId: ReadonlyMap<GitHubNodeId, EnumeratedGitHubItem>,
   graph: GraphResult,
-  current: ReducedItemAnalysis,
+  item: TrackedItem,
+  staleness: TrackedItemStaleness,
+  analysisState: NotificationAnalysisState,
 ): DiscordNotificationItem {
-  const item = current.item;
   const repository = findRepository(inventory, item.repositoryId);
   const previous = previousSnapshot(state)?.items.find(
     (candidate) => candidate.nodeId === item.nodeId,
@@ -2867,31 +2980,25 @@ function notificationItem(
   return Object.freeze({
     nodeId: item.nodeId,
     createdAt: item.createdAt,
-    draftState:
-      item.type === "issue" ? "not_applicable" : item.draft ? "draft" : "ready_for_review",
+    draftState: notificationDraftState(item, enumeratedItemsByNodeId),
     repositoryFreshness: "fresh",
     notificationClass: "standard",
     notificationsSuppressedByLabel: labelEffects.suppressNotifications,
-    latestChange: notificationLatestChange(current, previous),
-    decisionBasis:
-      current.decision.origin === "deterministic"
-        ? Object.freeze({
-            source: "deterministic",
-          })
-        : Object.freeze({
-            source: "ai_only",
-            confidence: current.decision.confidence,
-          }),
+    latestChange:
+      analysisState.availability === "available"
+        ? notificationLatestChange(analysisState.value, previous)
+        : "none",
+    decisionBasis: notificationDecisionBasis(item, staleness, analysisState),
     priorityWeight: labelEffects.priorityWeight,
     current: {
-      status: current.decision.status,
-      waitingOn: current.decision.waitingOn,
-      severity: current.staleness.severity,
-      waitClass: current.staleness.waitClass,
-      statusSince: current.staleness.statusSince,
-      ownerSince: current.staleness.ownerSince,
-      stallSince: current.staleness.stallSince,
-      lastProgressAt: current.staleness.lastProgressAt,
+      status: item.status,
+      waitingOn: item.waitingOn,
+      severity: staleness.severity,
+      waitClass: staleness.waitClass,
+      statusSince: item.statusSince,
+      ownerSince: item.ownerSince,
+      stallSince: item.stallSince,
+      lastProgressAt: item.lastProgressAt,
     },
     previous:
       previous == null
@@ -2915,6 +3022,56 @@ function notificationItem(
       previousDependencyCycles,
     }),
   });
+}
+
+function notificationItems(
+  configuration: RuntimeConfiguration,
+  state: RuntimeState,
+  inventory: RepositoryInventory,
+  collection: CollectedItems,
+  reduction: ReducedAnalysis,
+  graph: GraphResult,
+): readonly DiscordNotificationItem[] {
+  const staleRepositoryIds = new Set<GitHubRepositoryId>(
+    collection.repositoryResults
+      .filter((result) => result.freshness === "stale")
+      .map((result) => result.repository.id),
+  );
+  const currentItemsByNodeId = new Map(
+    reduction.currentItems.map((current) => [current.item.nodeId, current]),
+  );
+  const enumeratedItemsByNodeId = new Map(
+    collection.enumeratedItems.map((item) => [item.nodeId, item]),
+  );
+  return Object.freeze(
+    reduction.items.flatMap((item) => {
+      if (staleRepositoryIds.has(item.repositoryId)) {
+        return [];
+      }
+      const staleness = reduction.stalenessByNodeId.get(item.nodeId);
+      assertNonNullable(staleness, `通知対象 ${item.nodeId}のseverity再計算結果がありません`);
+      const current = currentItemsByNodeId.get(item.nodeId);
+      return [
+        notificationItem(
+          configuration,
+          state,
+          inventory,
+          enumeratedItemsByNodeId,
+          graph,
+          item,
+          staleness,
+          current == null
+            ? Object.freeze({
+                availability: "not_available",
+              })
+            : Object.freeze({
+                availability: "available",
+                value: current,
+              }),
+        ),
+      ];
+    }),
+  );
 }
 
 function mergeNotificationLedger(
@@ -2972,12 +3129,6 @@ function validateRunCompleteness(
   reduction: ReducedAnalysis,
   graph: GraphResult,
 ): ValidatedRun {
-  const severityByNodeId = new Map(
-    reduction.currentItems.map((item) => [item.item.nodeId, item.staleness.severity]),
-  );
-  const previousSeverityByNodeId = new Map(
-    (previousSnapshot(state)?.items ?? []).map((item) => [item.nodeId, item.severity]),
-  );
   const previousCollectionItems = previousCollectionItemsByNodeId(state);
   const aiFingerprintByNodeId = new Map(
     (codexAnalysis.run?.results ?? []).map((result) => [
@@ -3019,12 +3170,12 @@ function validateRunCompleteness(
     },
     repositories: snapshotRepositories(collection),
     items: reduction.items.map((item) => {
-      const severity =
-        severityByNodeId.get(item.nodeId) ?? previousSeverityByNodeId.get(item.nodeId);
-      assertNonNullable(severity, `追跡項目 ${item.nodeId}のseverityがありません`);
+      const staleness = reduction.stalenessByNodeId.get(item.nodeId);
+      assertNonNullable(staleness, `追跡項目 ${item.nodeId}のseverity再計算結果がありません`);
       return {
         ...item,
-        severity,
+        severity: staleness.severity,
+        severityContext: staleness.severityContext,
       };
     }),
     externalReferences: graph.externalReferences,
@@ -3042,9 +3193,7 @@ function validateRunCompleteness(
   }
   const notificationSelection = selectDiscordNotifications({
     evaluatedAt: invocation.startedAt,
-    items: reduction.currentItems.map((item) =>
-      notificationItem(configuration, state, inventory, graph, item),
-    ),
+    items: notificationItems(configuration, state, inventory, collection, reduction, graph),
     ledger: notificationLedgerEntries(state, reduction.items),
     settings: {
       maxItemsPerDigest: configuration.config.notifications.discord.maxItemsPerDigest,

@@ -1012,6 +1012,7 @@ function createSnapshot(
       return {
         ...createTrackedItem(repository.name, analysis),
         severity: analysis.staleness.severity,
+        severityContext: analysis.staleness.severityContext,
       };
     }),
     externalReferences: [],
@@ -1468,6 +1469,10 @@ function analyzeLargeFixture(
     items: items.map((item) => ({
       ...item,
       severity: "none",
+      severityContext: {
+        waitClass: "assigneeOrInProgress",
+        decisionBasis: "deterministic",
+      },
     })),
     externalReferences: [],
     relations: edges.map(toStateRelation),

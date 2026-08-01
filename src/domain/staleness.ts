@@ -84,6 +84,12 @@ export type BlockedParentContext =
 /** 停滞判定で表示する待機分類。 */
 export type StalenessWaitClass = WaitClass | "blockedParent" | "notApplicable";
 
+/** severity再計算時に引き継ぐwait classと状態判定の根拠。 */
+export type StalenessSeverityContext = Readonly<{
+  waitClass: StalenessWaitClass;
+  decisionBasis: "deterministic" | "ai_only";
+}>;
+
 /** blocked親自身をseverity計時しない根拠。 */
 export type BlockedParentSeverityReason = Readonly<{
   kind: "blocked_parent";
@@ -125,6 +131,27 @@ export type CalculateStalenessInput = Readonly<{
   blockedParentContext: BlockedParentContext;
 }>;
 
+/** 保存済みの停滞起点からseverityだけを再計算する入力。 */
+export type RecalculateStalenessSeverityInput = Readonly<{
+  evaluatedAt: UtcIsoDateTime;
+  stallSince: UtcIsoDateTime;
+  confidence: number;
+  minimumAiConfidence: number;
+  repositoryFullName: string;
+  currentLabels: readonly string[];
+  resolveLabelEffects: LabelEffectsResolver;
+  thresholdsHours: SeverityThresholds;
+  severityContext: StalenessSeverityContext;
+}>;
+
+/** run時刻まで進めた停滞時間とseverity。 */
+export type RecalculatedStalenessSeverity = Readonly<{
+  elapsedHours: number;
+  waitClass: StalenessWaitClass;
+  severity: Severity;
+  severityContext: StalenessSeverityContext;
+}>;
+
 /** 各時刻、連続経過時間、wait class、severityと根拠。 */
 export type StalenessResult = StalenessState &
   Readonly<{
@@ -132,6 +159,7 @@ export type StalenessResult = StalenessState &
     waitClass: StalenessWaitClass;
     severity: Severity;
     severityReason: StalenessSeverityReason;
+    severityContext: StalenessSeverityContext;
     meaningfulProgress: readonly MeaningfulProgress[];
     naturalLanguageProgressCandidates: readonly NaturalLanguageProgressCandidate[];
   }>;
@@ -459,12 +487,13 @@ function compareBlockerRanking(left: BlockerRanking, right: BlockerRanking): -1 
 
 function determineSeverity(
   input: CalculateStalenessInput,
-  waitClass: StalenessWaitClass,
+  severityContext: StalenessSeverityContext,
   stallElapsedHours: number,
 ): Readonly<{
   severity: Severity;
   severityReason: StalenessSeverityReason;
 }> {
+  const waitClass = severityContext.waitClass;
   if (waitClass === "notApplicable") {
     return Object.freeze({
       severity: "none",
@@ -493,11 +522,9 @@ function determineSeverity(
   }
 
   const labelEffects = input.resolveLabelEffects(input.repositoryFullName, input.currentLabels);
-  const aiOnlyBasis =
-    input.currentDecision.statusBasis.precision === "inferred" &&
-    input.currentDecision.responsibilityBasis.precision === "inferred";
   const criticalAllowed =
-    !aiOnlyBasis || input.currentDecision.confidence >= input.minimumAiConfidence;
+    severityContext.decisionBasis === "deterministic" ||
+    input.currentDecision.confidence >= input.minimumAiConfidence;
   const decision = determineDirectSeverity({
     waitClass,
     elapsedHours: stallElapsedHours,
@@ -508,6 +535,54 @@ function determineSeverity(
   return Object.freeze({
     severity: decision.severity,
     severityReason: decision.reason,
+  });
+}
+
+function createSeverityContext(
+  input: CalculateStalenessInput,
+  waitClass: StalenessWaitClass,
+): StalenessSeverityContext {
+  const aiOnlyBasis =
+    input.currentDecision.statusBasis.precision === "inferred" &&
+    input.currentDecision.responsibilityBasis.precision === "inferred";
+  return Object.freeze({
+    waitClass,
+    decisionBasis: aiOnlyBasis ? "ai_only" : "deterministic",
+  });
+}
+
+/** 保存済みのseverity算出条件を使い、run時刻基準でseverityを再計算する。 */
+export function recalculateStalenessSeverity(
+  input: RecalculateStalenessSeverityInput,
+): RecalculatedStalenessSeverity {
+  validateConfidence(input.confidence, "状態判定のconfidence");
+  validateConfidence(input.minimumAiConfidence, "AI判定の最低confidence");
+  const elapsed = elapsedHours(input.stallSince, input.evaluatedAt);
+  const waitClass = input.severityContext.waitClass;
+  if (waitClass === "notApplicable" || waitClass === "blockedParent") {
+    return Object.freeze({
+      elapsedHours: elapsed,
+      waitClass,
+      severity: "none",
+      severityContext: input.severityContext,
+    });
+  }
+
+  const labelEffects = input.resolveLabelEffects(input.repositoryFullName, input.currentLabels);
+  const decision = determineDirectSeverity({
+    waitClass,
+    elapsedHours: elapsed,
+    thresholdsHours: input.thresholdsHours,
+    severityLift: labelEffects.severityLift,
+    criticalAllowed:
+      input.severityContext.decisionBasis === "deterministic" ||
+      input.confidence >= input.minimumAiConfidence,
+  });
+  return Object.freeze({
+    elapsedHours: elapsed,
+    waitClass,
+    severity: decision.severity,
+    severityContext: input.severityContext,
   });
 }
 
@@ -545,7 +620,8 @@ export function calculateStaleness(input: CalculateStalenessInput): StalenessRes
     stall: elapsedHours(transitionTimes.stallSince, input.evaluatedAt),
   });
   const waitClass = determineWaitClass(input.currentDecision, input.events);
-  const severity = determineSeverity(input, waitClass, elapsed.stall);
+  const severityContext = createSeverityContext(input, waitClass);
+  const severity = determineSeverity(input, severityContext, elapsed.stall);
 
   return Object.freeze({
     status: input.currentDecision.status,
@@ -559,6 +635,7 @@ export function calculateStaleness(input: CalculateStalenessInput): StalenessRes
     waitClass,
     severity: severity.severity,
     severityReason: severity.severityReason,
+    severityContext,
     meaningfulProgress: progress.progress,
     naturalLanguageProgressCandidates: progress.naturalLanguageCandidates,
   });

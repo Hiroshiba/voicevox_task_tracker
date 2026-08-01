@@ -6,6 +6,7 @@ import {
   createGitHubNodeId,
   createLabelEffectsResolver,
   createUtcIsoDateTime,
+  recalculateStalenessSeverity,
   type CalculateStalenessInput,
   type GitHubAccountActor,
   type NaturalLanguageProgressAssessment,
@@ -585,6 +586,31 @@ function createWaitClassInput(
 }
 
 describe("wait classとseverity", () => {
+  it("保存済みの算出条件からrun時刻までseverityを進める", () => {
+    const fixture = getWaitClassFixture("maintainerTriage");
+    const threshold = thresholdsHours.maintainerTriage.watch;
+    const input = createWaitClassInput(fixture, threshold - 1);
+    const initial = calculateStaleness(input);
+    const recalculated = recalculateStalenessSeverity({
+      evaluatedAt: addHours(CREATED_AT, threshold),
+      stallSince: initial.stallSince,
+      confidence: input.currentDecision.confidence,
+      minimumAiConfidence: input.minimumAiConfidence,
+      repositoryFullName: input.repositoryFullName,
+      currentLabels: input.currentLabels,
+      resolveLabelEffects: input.resolveLabelEffects,
+      thresholdsHours: input.thresholdsHours,
+      severityContext: initial.severityContext,
+    });
+
+    expect(initial.severity).toBe("none");
+    expect(recalculated).toMatchObject({
+      elapsedHours: threshold,
+      waitClass: "maintainerTriage",
+      severity: "watch",
+    });
+  });
+
   it("各wait classへ設定した閾値を境界時刻から適用する", () => {
     for (const fixture of waitClassFixtures) {
       const threshold = thresholdsHours[fixture.waitClass];

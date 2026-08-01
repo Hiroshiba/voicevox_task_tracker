@@ -579,7 +579,8 @@
         "confidence",
         "evidence",
         "uncertainties",
-        "severity"
+        "severity",
+        "severityContext"
       ],
       "properties": {
         "nodeId": {
@@ -721,6 +722,29 @@
         },
         "severity": {
           "enum": ["none", "watch", "urgent", "critical"]
+        },
+        "severityContext": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["waitClass", "decisionBasis"],
+          "properties": {
+            "waitClass": {
+              "enum": [
+                "maintainerTriage",
+                "ownerUnknown",
+                "reviewer",
+                "authorAfterChangesRequested",
+                "assigneeOrInProgress",
+                "readyToMerge",
+                "automation",
+                "blockedParent",
+                "notApplicable"
+              ]
+            },
+            "decisionBasis": {
+              "enum": ["deterministic", "ai_only"]
+            }
+          }
         }
       },
       "allOf": [

@@ -1294,6 +1294,75 @@ describe("本番収集の接続", () => {
     expect(requireDryRunSnapshot(harness.artifacts).items).toHaveLength(0);
   });
 
+  it("未更新項目をrun時刻でwatchへ進めて通知候補にする", async () => {
+    const repository = createRepository("R_elapsed_severity", "elapsed-severity", FIRST_RUN_AT);
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const firstObservedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const item = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "unchanged",
+      updatedAt: firstObservedAt,
+      observedAt: firstObservedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    fixture.openItems = [item];
+    setIssueDetails(fixture, [item], firstObservedAt);
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: false,
+    });
+    const harness = createCollectionHarness({ repositories: [fixture], config });
+
+    expect((await harness.runDaily(FIRST_RUN_AT)).exitCode).toBe(0);
+    const firstFiles = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const firstSnapshotSource = firstFiles.get("state/snapshot.json");
+    if (firstSnapshotSource == null) {
+      throw new TypeError("初回のseverity snapshotがありません");
+    }
+    const firstSnapshot = parseStateSnapshot(new TextDecoder().decode(firstSnapshotSource));
+    expect(firstSnapshot.items[0]?.severity).toBe("none");
+
+    fixture.openItems = [
+      createIssueItem({
+        repository: publicRepository,
+        number: 1,
+        fingerprint: "unchanged",
+        updatedAt: firstObservedAt,
+        observedAt: createUtcIsoDateTime(THIRD_RUN_AT),
+        state: Object.freeze({ state: "open" }),
+      }),
+    ];
+    harness.detailCalls.length = 0;
+    harness.artifacts.length = 0;
+
+    const result = await harness.runDry(THIRD_RUN_AT);
+    const snapshot = requireDryRunSnapshot(harness.artifacts);
+
+    expect(result.exitCode).toBe(0);
+    expect(harness.detailCalls).toHaveLength(0);
+    expect(snapshot.items[0]).toMatchObject({
+      nodeId: item.nodeId,
+      observedAt: FIRST_RUN_AT,
+      severity: "watch",
+    });
+    expect(harness.artifacts.at(-1)).toMatchObject({
+      result: {
+        notificationSelection: {
+          candidates: [
+            {
+              itemNodeId: item.nodeId,
+              reasonCode: "triage_overdue",
+              severity: "watch",
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it("未変更terminal項目の詳細取得とCodex再分析と停滞通知を抑止する", async () => {
     const repository = createRepository("R_suppression", "suppression", FIRST_RUN_AT);
     const publicRepository = requirePublicRepository(repository);
