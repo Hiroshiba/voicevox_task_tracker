@@ -8,6 +8,7 @@
 - OPENAI_API_KEYではなくcodex auth jsonも設定可能にしてください
 - `docs/DEPLOYMENT.md`が現状と合っているか確認してください、特に「read and writeを許可します」は本当に必要かでしょうか
 - `docs/UNIMPLEMENTED_REQUIREMENTS.md`を解決していってください
+- auth.jsonを使用するように設定を変更してください
 
 ---
 
