@@ -899,6 +899,14 @@ function toStateRelation(edge: ReconciledGraphEdge): Relation {
     provenance: edge.provenance,
     confidence: edge.confidence,
     evidence: edge.evidence,
+    contradictions: Object.freeze(
+      edge.contradictions.map((contradiction) =>
+        Object.freeze({
+          verdict: contradiction.verdict,
+          confidence: contradiction.confidence,
+        }),
+      ),
+    ),
     firstSeenAt: edge.firstSeenAt,
     lastConfirmedAt: edge.lastConfirmedAt,
   };

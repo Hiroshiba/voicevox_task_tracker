@@ -267,6 +267,7 @@ function createRelation(
         summary: "公開用の短い関係根拠です",
       },
     ],
+    contradictions: [],
     active: true,
     firstSeenAt: FRESH_OBSERVED_AT,
     lastConfirmedAt: FRESH_OBSERVED_AT,

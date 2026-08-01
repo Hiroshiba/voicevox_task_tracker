@@ -2,21 +2,15 @@ import {
   type Evidence,
   type GraphNodeId,
   type Relation,
+  type RelationContradictionSummary,
+  type RelationContradictionVerdict,
   type SourceId,
   type UtcIsoDateTime,
 } from "../domain/index.js";
 import { type RelationCandidate, type RelationCandidateId } from "./relation-candidate-types.js";
 
 /** Codexが現在項目と候補先の関係を表す判定値。 */
-export type RelationAssessmentVerdict =
-  | "current_is_blocked_by_target"
-  | "current_blocks_target"
-  | "current_implements_target"
-  | "target_is_subtask_of_current"
-  | "current_is_subtask_of_target"
-  | "duplicates"
-  | "related"
-  | "none";
+export type RelationAssessmentVerdict = RelationContradictionVerdict;
 
 /** 関係候補に対する検証済みのCodex判定。 */
 export type RelationCandidateAssessment = Readonly<{
@@ -29,14 +23,15 @@ export type RelationCandidateAssessment = Readonly<{
 }>;
 
 /** authoritativeな関係とCodex判定の矛盾。 */
-export type RelationContradiction = Readonly<{
-  verdict: RelationAssessmentVerdict;
-  confidence: number;
-  evidence: readonly Evidence[];
-}>;
+export type RelationContradiction = RelationContradictionSummary &
+  Readonly<{
+    evidence: readonly Evidence[];
+  }>;
+
+type RelationWithoutContradictions<T> = T extends Relation ? Omit<T, "contradictions"> : never;
 
 /** 候補IDを維持しauthoritative情報と矛盾を加えたgraph edge。 */
-export type ReconciledGraphEdge = Relation &
+export type ReconciledGraphEdge = RelationWithoutContradictions<Relation> &
   Readonly<{
     id: RelationCandidateId;
     authoritative: boolean;

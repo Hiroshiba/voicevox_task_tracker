@@ -105,6 +105,19 @@ const evidenceSchema = z.strictObject({
   supports: z.enum(["status", "waiting_on", "relation", "progress", "notification", "uncertainty"]),
   summary: z.string().max(1000),
 });
+const relationContradictionSchema = z.strictObject({
+  verdict: z.enum([
+    "current_is_blocked_by_target",
+    "current_blocks_target",
+    "current_implements_target",
+    "target_is_subtask_of_current",
+    "current_is_subtask_of_target",
+    "duplicates",
+    "related",
+    "none",
+  ]),
+  confidence: z.number().min(0).max(1),
+});
 const edgeFieldsSchema = z.strictObject({
   fromNodeId: identifierSchema,
   toNodeId: identifierSchema,
@@ -119,6 +132,7 @@ const edgeFieldsSchema = z.strictObject({
   ]),
   confidence: z.number().min(0).max(1),
   evidence: z.array(evidenceSchema),
+  contradictions: z.array(relationContradictionSchema),
   firstSeenAt: dateTimeSchema,
   lastConfirmedAt: dateTimeSchema,
 });
@@ -392,6 +406,9 @@ function createProjection(snapshot: StateSnapshot): StateHistoryProjection {
               provenance: relation.provenance,
               confidence: relation.confidence,
               evidence: relation.evidence.map((entry) => ({ ...entry })),
+              contradictions: relation.contradictions.map((contradiction) => ({
+                ...contradiction,
+              })),
               firstSeenAt: relation.firstSeenAt,
               lastConfirmedAt: relation.lastConfirmedAt,
               active: true,
@@ -403,6 +420,9 @@ function createProjection(snapshot: StateSnapshot): StateHistoryProjection {
               provenance: relation.provenance,
               confidence: relation.confidence,
               evidence: relation.evidence.map((entry) => ({ ...entry })),
+              contradictions: relation.contradictions.map((contradiction) => ({
+                ...contradiction,
+              })),
               firstSeenAt: relation.firstSeenAt,
               lastConfirmedAt: relation.lastConfirmedAt,
               active: false,

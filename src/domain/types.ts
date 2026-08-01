@@ -114,6 +114,23 @@ export type RelationType = "blocks" | "parent_of" | "implements" | "related_to" 
 export type RelationProvenance =
   "native" | "explicit_text" | "closing_keyword" | "checklist" | "cross_reference" | "ai_inference";
 
+/** authoritativeなRelationに反するCodex判定値。 */
+export type RelationContradictionVerdict =
+  | "current_is_blocked_by_target"
+  | "current_blocks_target"
+  | "current_implements_target"
+  | "target_is_subtask_of_current"
+  | "current_is_subtask_of_target"
+  | "duplicates"
+  | "related"
+  | "none";
+
+/** authoritativeなRelationに反するCodex判定の永続化用要約。 */
+export type RelationContradictionSummary = Readonly<{
+  verdict: RelationContradictionVerdict;
+  confidence: number;
+}>;
+
 /** Codex出力schemaと一致する通知理由コード。 */
 export type NotificationReasonCode =
   | "none"
@@ -443,6 +460,7 @@ type RelationFields = Readonly<{
   provenance: RelationProvenance;
   confidence: number;
   evidence: readonly Evidence[];
+  contradictions: readonly RelationContradictionSummary[];
   firstSeenAt: UtcIsoDateTime;
   lastConfirmedAt: UtcIsoDateTime;
 }>;

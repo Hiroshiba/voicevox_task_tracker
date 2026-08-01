@@ -327,7 +327,11 @@ function createAnalysisEdge(relation: Relation, index: number): ReconciledGraphE
     confidence: relation.confidence,
     evidence: relation.evidence,
     authoritative: relation.provenance === "native",
-    contradictions: [],
+    contradictions: relation.contradictions.map((contradiction) => ({
+      verdict: contradiction.verdict,
+      confidence: contradiction.confidence,
+      evidence: [],
+    })),
     firstSeenAt: relation.firstSeenAt,
     lastConfirmedAt: relation.lastConfirmedAt,
   };
@@ -377,6 +381,10 @@ function createPublicGraphEdge(
     provenance: relation.provenance,
     confidence: relation.confidence,
     evidence: createPublicEvidence(relation.evidence, sourceItem.url, sourceUrlsById),
+    contradictions: relation.contradictions.map((contradiction) => ({
+      verdict: contradiction.verdict,
+      confidence: contradiction.confidence,
+    })),
     firstSeenAt: relation.firstSeenAt,
     lastConfirmedAt: relation.lastConfirmedAt,
   };

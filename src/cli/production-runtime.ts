@@ -2792,6 +2792,18 @@ function persistedRelationCandidateId(value: string): RelationCandidateId {
   return `rel:${value.slice("rel:".length)}`;
 }
 
+function restoredRelationContradictions(relation: Relation): ReconciledGraphEdge["contradictions"] {
+  return Object.freeze(
+    relation.contradictions.map((contradiction) =>
+      Object.freeze({
+        verdict: contradiction.verdict,
+        confidence: contradiction.confidence,
+        evidence: Object.freeze([]),
+      }),
+    ),
+  );
+}
+
 function previousGraphEdge(relation: Relation): ReconciledGraphEdge {
   const fields = {
     id: persistedRelationCandidateId(relation.id),
@@ -2802,7 +2814,7 @@ function previousGraphEdge(relation: Relation): ReconciledGraphEdge {
     confidence: relation.confidence,
     evidence: relation.evidence,
     authoritative: relation.provenance === "native",
-    contradictions: Object.freeze([]),
+    contradictions: restoredRelationContradictions(relation),
     firstSeenAt: relation.firstSeenAt,
     lastConfirmedAt: relation.lastConfirmedAt,
   };
@@ -2964,6 +2976,14 @@ function toStateRelation(edge: ReconciledGraphEdge): Relation {
     provenance: edge.provenance,
     confidence: edge.confidence,
     evidence: edge.evidence,
+    contradictions: Object.freeze(
+      edge.contradictions.map((contradiction) =>
+        Object.freeze({
+          verdict: contradiction.verdict,
+          confidence: contradiction.confidence,
+        }),
+      ),
+    ),
     firstSeenAt: edge.firstSeenAt,
     lastConfirmedAt: edge.lastConfirmedAt,
   };

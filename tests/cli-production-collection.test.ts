@@ -895,6 +895,165 @@ describe("本番収集の接続", () => {
     });
   });
 
+  it("native edgeに反するAI判定を維持したedgeの矛盾として永続化する", async () => {
+    const repository = createRepository(
+      "R_native_contradiction",
+      "native-contradiction",
+      FIRST_RUN_AT,
+    );
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const blocked = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "native-contradiction-blocked",
+      updatedAt: observedAt,
+      observedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const blocker = createIssueItem({
+      repository: publicRepository,
+      number: 2,
+      fingerprint: "native-contradiction-blocker",
+      updatedAt: observedAt,
+      observedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    fixture.openItems = [blocked, blocker];
+    setIssueDetails(fixture, [blocked, blocker], observedAt);
+    fixture.details.set(
+      blocked.nodeId,
+      createIssueDetail({
+        item: blocked,
+        body: "native dependencyに反する判定を検証します",
+        observedAt,
+        nativeDependencies: Object.freeze([createNativeBlocker(blocked, blocker)]),
+        duplicateComments: true,
+      }),
+    );
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: true,
+    });
+    const harness = createCollectionHarness({
+      repositories: [fixture],
+      config,
+      executeCodexAnalysis: (input) => {
+        if (input.item.nodeId !== blocked.nodeId) {
+          throw new TypeError("矛盾fixtureでblocked項目以外がCodex対象になりました");
+        }
+        const source = input.sources[0];
+        if (source == null) {
+          throw new TypeError("矛盾fixtureのsourceがありません");
+        }
+        return Promise.resolve(
+          createCodexOutput(input, {
+            status: "in_progress",
+            waitingOn: {
+              candidateId: input.item.authorCandidateId,
+              kind: "user",
+              role: "assignee",
+              sourceId: source.id,
+            },
+            latestMeaningfulSourceId: null,
+            confidence: 0.95,
+            relationVerdict: "current_blocks_target",
+            notification: {
+              recommended: false,
+              reasonCode: "none",
+              reasonSummary: "通知しません",
+            },
+          }),
+        );
+      },
+    });
+
+    const result = await harness.runDaily(FIRST_RUN_AT);
+    const files = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const snapshotBytes = files.get("state/snapshot.json");
+    const historyBytes = files.get("state/history/2026-08-01.jsonl");
+    if (snapshotBytes == null || historyBytes == null) {
+      throw new TypeError("矛盾fixtureの永続化stateがありません");
+    }
+    const snapshot = parseStateSnapshot(new TextDecoder().decode(snapshotBytes));
+    const historyRecords = parseStateHistoryRecords(new TextDecoder().decode(historyBytes));
+    const relation = snapshot.relations.find(
+      (entry) => entry.fromNodeId === blocker.nodeId && entry.toNodeId === blocked.nodeId,
+    );
+    if (relation == null) {
+      throw new TypeError("矛盾fixtureのnative edgeがありません");
+    }
+    const publicData = harness.publicData.at(-1);
+    if (publicData == null) {
+      throw new TypeError("矛盾fixtureの公開DTOがありません");
+    }
+    const historyEdgeEvent = historyRecords
+      .flatMap((record) => record.events)
+      .find((event) => event.kind === "edge_set" && event.relationId === relation.id);
+    const publicEdge = publicData.details.graph.edges.find((edge) => edge.id === relation.id);
+    const publicHistoryEvent = publicData.details.graph.history.find(
+      (event) => event.relationId === relation.id,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(relation).toMatchObject({
+      type: "blocks",
+      provenance: "native",
+      confidence: 1,
+      contradictions: [
+        {
+          verdict: "current_blocks_target",
+          confidence: 0.95,
+        },
+      ],
+      active: true,
+    });
+    expect(Object.keys(relation.contradictions[0] ?? {}).sort()).toEqual(["confidence", "verdict"]);
+    expect(historyEdgeEvent).toMatchObject({
+      kind: "edge_set",
+      relationId: relation.id,
+      value: {
+        provenance: "native",
+        confidence: 1,
+        contradictions: [
+          {
+            verdict: "current_blocks_target",
+            confidence: 0.95,
+          },
+        ],
+        active: true,
+      },
+    });
+    expect(publicEdge).toMatchObject({
+      id: relation.id,
+      provenance: "native",
+      confidence: 1,
+      contradictions: [
+        {
+          verdict: "current_blocks_target",
+          confidence: 0.95,
+        },
+      ],
+      active: true,
+    });
+    expect(publicHistoryEvent).toMatchObject({
+      relationId: relation.id,
+      after: {
+        state: "present",
+        value: {
+          contradictions: [
+            {
+              verdict: "current_blocks_target",
+              confidence: 0.95,
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it("同じupdated_atの正規化イベントをkind別に履歴へ一度だけ保存する", async () => {
     const repository = createRepository("R_history_events", "history-events", FIRST_RUN_AT);
     const fixture = createRepositoryFixture(repository);

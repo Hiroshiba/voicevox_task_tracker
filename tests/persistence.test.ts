@@ -153,6 +153,7 @@ function createRelations(edge: EdgeFixture): readonly unknown[] {
         summary: "native dependency",
       },
     ],
+    contradictions: [],
     firstSeenAt: fixedItemAt,
     lastConfirmedAt: fixedItemAt,
   };
@@ -1325,6 +1326,7 @@ describe("メモリstate branch transaction", () => {
                 summary: "native dependency",
               },
             ],
+            contradictions: [],
             firstSeenAt: "2026-07-30T23:30:00.000Z",
             lastConfirmedAt: "2026-07-30T23:30:00.000Z",
             active: false,

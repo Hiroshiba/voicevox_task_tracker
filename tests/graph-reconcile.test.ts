@@ -178,6 +178,63 @@ describe("authoritative edgeのreconcile", () => {
     );
   });
 
+  it("復元時にevidenceを失った同じ矛盾を変更として検出しない", () => {
+    const current = createNode({
+      nodeId: "I_current",
+      repository: "tracker",
+      number: 1,
+      state: "open",
+    });
+    const blocker = createNode({
+      nodeId: "I_blocker",
+      repository: "dependency",
+      number: 2,
+      state: "open",
+    });
+    const candidate = createNativeBlocksCandidate(
+      blocker,
+      current,
+      buildSourceId("github_native_dependency", "continued-contradiction"),
+    );
+    const assessment = createAssessment(candidate, current, "current_blocks_target", 0.99);
+    const first = reconcile(
+      EMPTY_GRAPH,
+      [candidate],
+      [assessment],
+      createUtcIsoDateTime("2026-07-31T00:00:00Z"),
+    );
+    const firstEdge = first.activeEdges[0];
+    if (firstEdge == null) {
+      throw new TypeError("継続する矛盾の初回edgeがありません");
+    }
+    const restoredEdge = Object.freeze({
+      ...firstEdge,
+      contradictions: Object.freeze(
+        firstEdge.contradictions.map((contradiction) =>
+          Object.freeze({
+            verdict: contradiction.verdict,
+            confidence: contradiction.confidence,
+            evidence: Object.freeze([]),
+          }),
+        ),
+      ),
+    }) satisfies ReconciledGraphEdge;
+
+    const second = reconcile(
+      {
+        edges: [restoredEdge],
+        historyEvents: first.historyEvents,
+      },
+      [candidate],
+      [assessment],
+      createUtcIsoDateTime("2026-08-01T00:00:00Z"),
+    );
+
+    expect(restoredEdge.contradictions[0]?.evidence).toEqual([]);
+    expect(second.activeEdges[0]?.contradictions[0]?.evidence.length).toBeGreaterThan(0);
+    expect(second.emittedHistoryEvents).toEqual([]);
+  });
+
   it("GitHub上からnative候補が消えたらedgeを非activeにする", () => {
     const current = createNode({
       nodeId: "I_current",

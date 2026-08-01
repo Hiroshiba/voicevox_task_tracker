@@ -571,6 +571,7 @@
             "sourceUrl": "https://github.com/VOICEVOX/sample-editor/issues/103"
           }
         ],
+        "contradictions": [],
         "firstSeenAt": "2026-07-10T00:00:00.000Z",
         "lastConfirmedAt": "2026-07-31T00:00:00.000Z",
         "active": true
@@ -590,6 +591,7 @@
             "sourceUrl": "https://github.com/VOICEVOX/sample-engine/issues/204"
           }
         ],
+        "contradictions": [],
         "firstSeenAt": "2026-07-25T02:00:00.000Z",
         "lastConfirmedAt": "2026-07-31T00:00:00.000Z",
         "active": true

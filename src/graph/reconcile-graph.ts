@@ -666,11 +666,7 @@ function sameEvidence(left: readonly Evidence[], right: readonly Evidence[]): bo
 }
 
 function contradictionSignature(contradiction: RelationContradiction): string {
-  return JSON.stringify([
-    contradiction.verdict,
-    contradiction.confidence,
-    evidenceSignatures(contradiction.evidence),
-  ]);
+  return JSON.stringify([contradiction.verdict, contradiction.confidence]);
 }
 
 function sameContradictions(

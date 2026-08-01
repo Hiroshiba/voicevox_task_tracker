@@ -74,6 +74,19 @@ const publicEvidenceSchema = z.strictObject({
   summary: shortStringSchema,
   sourceUrl: githubUrlSchema,
 });
+const relationContradictionSchema = z.strictObject({
+  verdict: z.enum([
+    "current_is_blocked_by_target",
+    "current_blocks_target",
+    "current_implements_target",
+    "target_is_subtask_of_current",
+    "current_is_subtask_of_target",
+    "duplicates",
+    "related",
+    "none",
+  ]),
+  confidence: z.number().min(0).max(1),
+});
 const trackedItemAiAnalysisSchema = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("not_used"),
@@ -281,6 +294,7 @@ const publicGraphEdgeFieldsSchema = z.strictObject({
   ]),
   confidence: z.number().min(0).max(1),
   evidence: z.array(publicEvidenceSchema),
+  contradictions: z.array(relationContradictionSchema),
   firstSeenAt: dateTimeSchema,
   lastConfirmedAt: dateTimeSchema,
 });
@@ -331,6 +345,7 @@ const edgeHistoryFieldsSchema = z.strictObject({
   ]),
   confidence: z.number().min(0).max(1),
   evidence: z.array(edgeHistoryEvidenceSchema),
+  contradictions: z.array(relationContradictionSchema),
   firstSeenAt: dateTimeSchema,
   lastConfirmedAt: dateTimeSchema,
 });

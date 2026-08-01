@@ -114,6 +114,7 @@ function createEdge(
         sourceUrl: "https://github.com/VOICEVOX/sample-editor/issues/1",
       },
     ],
+    contradictions: [],
     firstSeenAt: "2026-07-01T00:00:00.000Z",
     lastConfirmedAt: "2026-07-31T00:00:00.000Z",
     active: true,

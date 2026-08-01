@@ -187,6 +187,8 @@ export {
   type OperationsAlertLedgerEntry,
   type PrimaryWaitingOn,
   type Relation,
+  type RelationContradictionSummary,
+  type RelationContradictionVerdict,
   type RelationProvenance,
   type RelationType,
   type ReasoningEffort,

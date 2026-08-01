@@ -914,6 +914,30 @@
         }
       ]
     },
+    "relationContradiction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verdict", "confidence"],
+      "properties": {
+        "verdict": {
+          "enum": [
+            "current_is_blocked_by_target",
+            "current_blocks_target",
+            "current_implements_target",
+            "target_is_subtask_of_current",
+            "current_is_subtask_of_target",
+            "duplicates",
+            "related",
+            "none"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
     "relation": {
       "type": "object",
       "additionalProperties": false,
@@ -925,6 +949,7 @@
         "provenance",
         "confidence",
         "evidence",
+        "contradictions",
         "active",
         "firstSeenAt",
         "lastConfirmedAt"
@@ -961,6 +986,12 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/evidence"
+          }
+        },
+        "contradictions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/relationContradiction"
           }
         },
         "active": {
