@@ -48,6 +48,10 @@ describe("設定の読み込みと検証", () => {
     expect(config.ai.budget.maxEstimatedCostUsdPerRun).toBe(10);
     expect(config.ai.budget.estimatedInputCostUsdPerMillionTokens).toBe(1.25);
     expect(config.ai.execution.reasoningEffort).toBe("medium");
+    expect(config.notifications.automationNoiseTitles).toEqual([
+      "Dependency Dashboard",
+      "Renovate Dashboard",
+    ]);
     expect(config.notifications.discord.mentions.enabled).toBe(false);
     expect(config.state.runReportsDirectory).toBe("state/run-reports");
   });
@@ -313,6 +317,14 @@ describe("設定の読み込みと検証", () => {
     const config = parseConfig(source);
 
     expect(config.notifications.discord.mentions.enabled).toBe(false);
+  });
+
+  it("automation noise titleに空文字を指定できない", () => {
+    const source = replaceRequired(validConfigSource, "    - Renovate Dashboard", '    - ""');
+    const error = captureConfigError(source);
+
+    expect(error.message).toContain("notifications.automationNoiseTitles[1]");
+    expect(error.message).toContain("空文字は指定できません");
   });
 
   it("state保存先をtracker-state branchのstate配下へ制限する", () => {

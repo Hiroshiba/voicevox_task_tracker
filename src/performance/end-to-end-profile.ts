@@ -467,6 +467,7 @@ async function createPerformanceConfig(repositoryPath: string): Promise<Config> 
       }),
     }),
     notifications: Object.freeze({
+      ...base.notifications,
       discord: Object.freeze({
         ...base.notifications.discord,
         enabled: false,

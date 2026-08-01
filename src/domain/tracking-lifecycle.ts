@@ -1,4 +1,9 @@
-import { createUtcIsoDateTime, type TrackedItemState, type UtcIsoDateTime } from "./types.js";
+import {
+  createUtcIsoDateTime,
+  type TrackingNotificationClass,
+  type TrackedItemState,
+  type UtcIsoDateTime,
+} from "./types.js";
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -119,8 +124,13 @@ export type TrackedItemWorkDecision = Readonly<{
   stallNotification: StallNotificationWorkDecision;
 }>;
 
-/** 追跡とは独立して設定する既定digest上の通知分類。 */
-export type TrackingNotificationClass = "standard" | "automation_noise";
+/** 追跡項目の通知分類に必要な確定情報。 */
+export type ClassifyTrackingNotificationInput = Readonly<{
+  authorType: "human" | "bot" | "unknown";
+  title: string;
+  automationNoiseTitles: readonly string[];
+  notificationsSuppressedByLabel: boolean;
+}>;
 
 /** 既定digestへ含めるかの判定。 */
 export type DefaultDigestDecision =
@@ -155,6 +165,24 @@ function isTerminalState(state: TrackedItemState): state is "closed" | "merged" 
     case "merged":
       return true;
   }
+}
+
+function isAutomationNoiseTitle(title: string, automationNoiseTitles: readonly string[]): boolean {
+  const normalizedTitle = title.trim().toLowerCase();
+  return automationNoiseTitles.some(
+    (automationNoiseTitle) => automationNoiseTitle.trim().toLowerCase() === normalizedTitle,
+  );
+}
+
+/** bot作成かつdashboard相当の項目だけをautomation noiseへ分類する。 */
+export function classifyTrackingNotification(
+  input: ClassifyTrackingNotificationInput,
+): TrackingNotificationClass {
+  const automationNoiseTitle = isAutomationNoiseTitle(input.title, input.automationNoiseTitles);
+  return input.authorType === "bot" &&
+    (automationNoiseTitle || input.notificationsSuppressedByLabel)
+    ? "automation_noise"
+    : "standard";
 }
 
 /** 設定値、永続値、完全成功runの順でtracking.startAtを一度だけ確定する。 */

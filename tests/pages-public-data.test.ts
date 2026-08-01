@@ -162,6 +162,7 @@ function createItem(options: ItemFixtureOptions): unknown {
     url: `https://github.com/VOICEVOX/${options.repositoryName}/issues/${options.number.toString()}`,
     title: options.title,
     state: terminal ? "closed" : "open",
+    notificationClass: "standard",
     status: options.status,
     waitingOn: terminal
       ? []

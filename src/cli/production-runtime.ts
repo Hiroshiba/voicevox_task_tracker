@@ -23,6 +23,7 @@ import { type Config, type loadConfig } from "../config/index.js";
 import {
   aggregatePullRequestCheckState,
   aggregatePullRequestReviewState,
+  classifyTrackingNotification,
   createUtcIsoDateTime,
   createGitHubNodeId,
   createGitHubBotPredicate,
@@ -67,6 +68,7 @@ import {
   type ExternalGhostNode,
   type TrackedItem,
   type TrackingConnection,
+  type TrackingNotificationClass,
   type TrackingRunCompletion,
   type TrackingStartAtState,
   type TrackedItemWorkDecision,
@@ -238,6 +240,7 @@ type CollectedItems = Readonly<{
   observedItems: readonly FreshObservedGitHubItem[];
   staleItems: readonly StaleObservedGitHubItem<SnapshotCollectionItem>[];
   trackedNodeIds: ReadonlySet<GitHubNodeId>;
+  trackingNotificationClassByNodeId: ReadonlyMap<GitHubNodeId, TrackingNotificationClass>;
   analysisNodeIds: ReadonlySet<GitHubNodeId>;
   changedNodeIds: ReadonlySet<GitHubNodeId>;
   externalReferences: readonly ExternalGhostNode[];
@@ -269,6 +272,7 @@ type DeterministicItemAnalysis = Readonly<{
   item: FreshObservedGitHubItem;
   detail: GitHubItemDetail;
   decision: IssueStateDecision | PullRequestStateDecision;
+  notificationClass: TrackingNotificationClass;
   relationCandidates: readonly RelationCandidate[];
 }>;
 
@@ -1070,6 +1074,7 @@ function collectTrackingCandidates(
   const isBot = createGitHubBotPredicate(configuration.config.actors.bots);
   const organizationCandidates: OrganizationTrackingCandidate[] = enumeratedItems.map((item) => {
     const repository = findRepository(inventory, item.repositoryId);
+    const fullName = repositoryFullName(repository);
     const previous = previousItems.get(item.nodeId);
     const observed = observedItemsByNodeId.get(item.nodeId);
     const activity =
@@ -1097,18 +1102,26 @@ function collectTrackingCandidates(
                     lastProgressAt: previous.lastProgressAt,
                     lastHumanActivityAt: previous.lastHumanActivityAt,
                   },
-            repositoryFullName: repositoryFullName(repository),
+            repositoryFullName: fullName,
             resolveLabelEffects,
           });
     assertNonNullable(
       activity,
       `詳細未取得の新規項目を追跡候補へ変換できません。対象: ${item.nodeId}`,
     );
+    const itemAuthorType = enumeratedAuthorType(item, isBot);
+    const notificationClass = classifyTrackingNotification({
+      authorType: itemAuthorType,
+      title: item.title,
+      automationNoiseTitles: configuration.config.notifications.automationNoiseTitles,
+      notificationsSuppressedByLabel: resolveLabelEffects(fullName, item.labels)
+        .suppressNotifications,
+    });
     if (item.state === "open") {
       return Object.freeze({
         scope: "organization",
         nodeId: item.nodeId,
-        repositoryFullName: repositoryFullName(repository),
+        repositoryFullName: fullName,
         number: item.number,
         url: item.url,
         title: item.title,
@@ -1117,15 +1130,15 @@ function collectTrackingCandidates(
           lastHumanActivityAt: activity.lastHumanActivityAt,
           lastProgressAt: activity.lastProgressAt,
         }),
-        authorType: enumeratedAuthorType(item, isBot),
-        notificationClass: "standard",
+        authorType: itemAuthorType,
+        notificationClass,
         state: "open",
       });
     }
     return Object.freeze({
       scope: "organization",
       nodeId: item.nodeId,
-      repositoryFullName: repositoryFullName(repository),
+      repositoryFullName: fullName,
       number: item.number,
       url: item.url,
       title: item.title,
@@ -1134,8 +1147,8 @@ function collectTrackingCandidates(
         lastHumanActivityAt: activity.lastHumanActivityAt,
         lastProgressAt: activity.lastProgressAt,
       }),
-      authorType: enumeratedAuthorType(item, isBot),
-      notificationClass: "standard",
+      authorType: itemAuthorType,
+      notificationClass,
       state: "closed",
       terminalAt: item.closedAt,
     });
@@ -1383,6 +1396,8 @@ function applyDeterministicAnalysis(
       inventory.teams,
     );
     const detail = findDetail(collection, item.nodeId);
+    const notificationClass = collection.trackingNotificationClassByNodeId.get(item.nodeId);
+    assertNonNullable(notificationClass, `追跡項目の通知分類がありません。対象: ${item.nodeId}`);
     const relationCandidates = candidatesForNode(item.nodeId, collection.relationCandidates);
     const blockers = createNativeBlockers(item, relationCandidates);
     if (item.type === "issue" && detail.type === "issue") {
@@ -1402,6 +1417,7 @@ function applyDeterministicAnalysis(
           item,
           detail,
           decision,
+          notificationClass,
           relationCandidates,
         }),
       );
@@ -1425,6 +1441,7 @@ function applyDeterministicAnalysis(
           item,
           detail,
           decision,
+          notificationClass,
           relationCandidates,
         }),
       );
@@ -2347,6 +2364,7 @@ function createTrackedItem(
     url: analysis.item.url,
     title: analysis.item.title,
     state: trackedItemState(analysis.item, decision),
+    notificationClass: analysis.notificationClass,
     primaryWaitingOn,
     nextAction: decision.nextAction,
     createdAt: analysis.item.createdAt,
@@ -2466,6 +2484,27 @@ function recalculateTrackedItemStaleness(
   });
 }
 
+function retainedItemNotificationClass(
+  collection: CollectedItems,
+  item: SnapshotTrackedItem,
+): TrackingNotificationClass {
+  const currentClass = collection.trackingNotificationClassByNodeId.get(item.nodeId);
+  if (currentClass != null) {
+    return currentClass;
+  }
+  const repositoryResult = collection.repositoryResults.find(
+    (result) => result.repository.id === item.repositoryId,
+  );
+  assertNonNullable(
+    repositoryResult,
+    `保持項目のrepository収集結果がありません。対象: ${item.nodeId}`,
+  );
+  if (repositoryResult.freshness === "fresh") {
+    throw new TypeError(`保持項目の通知分類がありません。対象: ${item.nodeId}`);
+  }
+  return item.notificationClass;
+}
+
 function reduceAnalysisPass(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
@@ -2546,7 +2585,12 @@ function reduceAnalysisPass(
       collection.trackedNodeIds.has(previousItem.nodeId) &&
       currentRepositoryIds.has(previousItem.repositoryId)
     ) {
-      items.push(previousItem);
+      items.push(
+        Object.freeze({
+          ...previousItem,
+          notificationClass: retainedItemNotificationClass(collection, previousItem),
+        }),
+      );
       stalenessByNodeId.set(
         previousItem.nodeId,
         recalculateTrackedItemStaleness(
@@ -2992,7 +3036,7 @@ function notificationItem(
     createdAt: item.createdAt,
     draftState: notificationDraftState(item, enumeratedItemsByNodeId),
     repositoryFreshness: "fresh",
-    notificationClass: "standard",
+    notificationClass: item.notificationClass,
     notificationsSuppressedByLabel: labelEffects.suppressNotifications,
     latestChange:
       analysisState.availability === "available"
@@ -3787,6 +3831,12 @@ async function collectProductionItems(
   const trackedNodeIds = new Set(
     tracking.result.trackedItems.map((selected) => selected.item.nodeId),
   );
+  const trackingNotificationClassByNodeId = new Map(
+    tracking.result.trackedItems.map((selected) => [
+      selected.item.nodeId,
+      selected.item.notificationClass,
+    ]),
+  );
   for (const previousItem of previousSnapshot(state)?.items ?? []) {
     if (staleRepositoryIds.has(previousItem.repositoryId)) {
       trackedNodeIds.add(previousItem.nodeId);
@@ -3806,6 +3856,7 @@ async function collectProductionItems(
       observedItems: uniqueObservedItems,
       staleItems: Object.freeze(staleItems),
       trackedNodeIds,
+      trackingNotificationClassByNodeId,
       analysisNodeIds,
       changedNodeIds,
       externalReferences: tracking.result.ghostNodes,

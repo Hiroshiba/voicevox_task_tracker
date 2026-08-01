@@ -909,6 +909,7 @@ function createTrackedItem(repositoryName: string, analysis: ItemAnalysis): Trac
     url: itemUrl(repositoryName, item),
     title: item.title,
     state: item.state,
+    notificationClass: item.notificationClass,
     primaryWaitingOn:
       decision.waitingOn.length === 0
         ? Object.freeze({
@@ -1329,6 +1330,7 @@ function createLargeItems(itemCount: number, evaluatedAt: UtcIsoDateTime): reado
         url: `https://github.com/${ORGANIZATION}/${repositoryName}/${index % 2 === 0 ? "issues" : "pull"}/${(index + 1).toString()}`,
         title: `匿名性能項目 ${index.toString().padStart(4, "0")}`,
         state: "open",
+        notificationClass: "standard",
         status: "in_progress",
         waitingOn: Object.freeze([largeWaitingOn(nodeId)]),
         primaryWaitingOn: Object.freeze({

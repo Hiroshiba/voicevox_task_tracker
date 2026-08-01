@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_TERMINAL_RETENTION_DAYS,
   buildSourceId,
+  classifyTrackingNotification,
   createExternalReferenceNodeId,
   createGitHubNodeId,
   createLabelEffectsResolver,
@@ -771,6 +772,55 @@ describe("追跡後のライフサイクル", () => {
   });
 
   it("automation項目とbot作成項目を追跡し、automationだけを既定digestから外す", () => {
+    const automationNoiseTitles = Object.freeze(["Dependency Dashboard", "Renovate Dashboard"]);
+    expect(
+      classifyTrackingNotification({
+        authorType: "bot",
+        title: "Dependency Dashboard",
+        automationNoiseTitles,
+        notificationsSuppressedByLabel: false,
+      }),
+    ).toBe("automation_noise");
+    expect(
+      classifyTrackingNotification({
+        authorType: "bot",
+        title: "依存更新ダッシュボード",
+        automationNoiseTitles: ["依存更新ダッシュボード"],
+        notificationsSuppressedByLabel: false,
+      }),
+    ).toBe("automation_noise");
+    expect(
+      classifyTrackingNotification({
+        authorType: "bot",
+        title: "依存更新",
+        automationNoiseTitles,
+        notificationsSuppressedByLabel: true,
+      }),
+    ).toBe("automation_noise");
+    expect(
+      classifyTrackingNotification({
+        authorType: "bot",
+        title: "依存更新",
+        automationNoiseTitles,
+        notificationsSuppressedByLabel: false,
+      }),
+    ).toBe("standard");
+    expect(
+      classifyTrackingNotification({
+        authorType: "human",
+        title: "Dependency Dashboard",
+        automationNoiseTitles,
+        notificationsSuppressedByLabel: false,
+      }),
+    ).toBe("standard");
+    expect(
+      classifyTrackingNotification({
+        authorType: "human",
+        title: "",
+        automationNoiseTitles,
+        notificationsSuppressedByLabel: false,
+      }),
+    ).toBe("standard");
     const automation = createOrganizationCandidate({
       nodeId: "I_automation_dashboard",
       repositoryFullName: "VOICEVOX/core",
@@ -781,7 +831,12 @@ describe("追跡後のライフサイクル", () => {
         createUtcIsoDateTime("2026-07-20T00:00:00Z"),
       ),
       authorType: "bot",
-      notificationClass: "automation_noise",
+      notificationClass: classifyTrackingNotification({
+        authorType: "bot",
+        title: "Dependency Dashboard",
+        automationNoiseTitles,
+        notificationsSuppressedByLabel: false,
+      }),
       itemState: {
         state: "open",
       },
@@ -796,7 +851,12 @@ describe("追跡後のライフサイクル", () => {
         createUtcIsoDateTime("2026-07-21T00:00:00Z"),
       ),
       authorType: "bot",
-      notificationClass: "standard",
+      notificationClass: classifyTrackingNotification({
+        authorType: "bot",
+        title: "依存更新",
+        automationNoiseTitles,
+        notificationsSuppressedByLabel: false,
+      }),
       itemState: {
         state: "open",
       },

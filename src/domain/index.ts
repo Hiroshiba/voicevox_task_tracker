@@ -97,12 +97,14 @@ export {
 } from "./staleness.js";
 export { isTerminalStatus } from "./status.js";
 export {
+  classifyTrackingNotification,
   DEFAULT_TERMINAL_RETENTION_DAYS,
   determineDefaultDigestDecision,
   determineTerminalRetention,
   determineTrackedItemWork,
   resolveTrackingStartAt,
   type CodexAnalysisWorkDecision,
+  type ClassifyTrackingNotificationInput,
   type ConfiguredTrackingStartAt,
   type DefaultDigestDecision,
   type DetermineTerminalRetentionInput,
@@ -113,7 +115,6 @@ export {
   type StallNotificationWorkDecision,
   type TerminalRetentionDecision,
   type TrackedItemWorkDecision,
-  type TrackingNotificationClass,
   type TrackingRunCompletion,
   type TrackingStartAtState,
 } from "./tracking-lifecycle.js";
@@ -194,6 +195,7 @@ export {
   type Status,
   type SystemActor,
   type TerminalStatus,
+  type TrackingNotificationClass,
   type TrackedItem,
   type TrackedItemState,
   type TrackedItemType,

@@ -98,6 +98,9 @@ ai:
     reasoningEffort: medium
 
 notifications:
+  automationNoiseTitles:
+    - Dependency Dashboard
+    - Renovate Dashboard
   discord:
     enabled: true
     webhookSecretName: DISCORD_WEBHOOK_URL

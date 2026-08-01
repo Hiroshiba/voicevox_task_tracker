@@ -385,6 +385,7 @@ const configSchema = z.strictObject({
       }
     }),
   notifications: z.strictObject({
+    automationNoiseTitles: z.array(requiredStringSchema),
     discord: z.strictObject({
       enabled: z.boolean(),
       webhookSecretName: requiredStringSchema,

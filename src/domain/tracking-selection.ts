@@ -1,11 +1,12 @@
 import { type SourceId } from "./source-id.js";
-import { type RetentionItemState, type TrackingNotificationClass } from "./tracking-lifecycle.js";
+import { type RetentionItemState } from "./tracking-lifecycle.js";
 import {
   type ExternalReferenceNodeId,
   type GitHubItemUrl,
   type GitHubNodeId,
   type GraphNodeId,
   type RelationType,
+  type TrackingNotificationClass,
   type TrackedItemState,
   type UtcIsoDateTime,
 } from "./types.js";

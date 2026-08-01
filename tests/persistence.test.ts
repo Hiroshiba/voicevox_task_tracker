@@ -209,6 +209,7 @@ function createSnapshot(options: SnapshotFixtureOptions): StateSnapshot {
         url: "https://github.com/VOICEVOX/example/issues/1",
         title: "追跡対象",
         state: "open",
+        notificationClass: "standard",
         status: options.responsibility.status,
         waitingOn: [
           {

@@ -113,6 +113,7 @@ Zodのstrict schemaで未知のfieldも拒否するため、設定名は`config.
 | `ai.model`                                          | 固定したCodex CLIと認証情報で利用できる設定済みmodel ID       |
 | `ai.confidence`                                     | highとmediumの境界                                            |
 | `ai.budget`                                         | call数、入力文字数、推定費用のrun上限                         |
+| `notifications.automationNoiseTitles`               | bot作成時にautomation noiseとみなすIssueまたはPRのtitle一覧   |
 | `notifications.discord.enabled`                     | Discord通知を送るかどうか                                     |
 | `notifications.discord.webhookSecretName`           | 通常通知用secretの環境変数名                                  |
 | `notifications.discord.operationsWebhookSecretName` | 障害通知用secretの環境変数名                                  |

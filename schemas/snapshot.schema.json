@@ -560,6 +560,7 @@
         "url",
         "title",
         "state",
+        "notificationClass",
         "status",
         "waitingOn",
         "primaryWaitingOn",
@@ -614,6 +615,9 @@
         },
         "state": {
           "enum": ["open", "closed", "merged"]
+        },
+        "notificationClass": {
+          "enum": ["standard", "automation_noise"]
         },
         "status": {
           "enum": [

@@ -185,11 +185,13 @@ backfillはGitHub Actionsの`日次タスク追跡`を手動実行して指定�
 
 通知選別はseverityの変化、長期停滞、責務移動、重要な依存解消、dependency cycleを優先します。
 直近に意味のある進捗がある項目、botだけの活動、recent draft、低信頼のAI判定、labelで抑制した項目は通常通知から外します。
+botが作成した項目のtitleが`notifications.automationNoiseTitles`のいずれかと大文字小文字を区別せず一致した場合、graphへ残したまま通常通知から外します。
+Renovateの`dependencyDashboardTitle`を変更した場合は同じtitleをこの一覧へ追加します。
 
 通知が多すぎる場合は次の順で調整します。
 
 1. 誤った責務や依存をGitHub上で明確にします。
-2. automation dashboardなどへ`labels.rules.effects.suppressNotifications`を割り当てます。
+2. automation dashboardのtitleを`notifications.automationNoiseTitles`へ追加するか、対象labelへ`labels.rules.effects.suppressNotifications`を割り当てます。
 3. `staleness.thresholdsHours`と`recentProgressGraceHours`を増やします。
 4. `cooldownDays`を増やし、`maxItemsPerDigest`を減らします。
 5. AI推定が原因なら`ai.confidence.medium`を上げ、golden evalでrecallを確認します。

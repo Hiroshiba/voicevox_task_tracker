@@ -312,6 +312,9 @@ export type Repository = Readonly<{
 /** GitHub上の項目状態。 */
 export type TrackedItemState = "open" | "closed" | "merged";
 
+/** 追跡とは独立して設定する既定digest上の通知分類。 */
+export type TrackingNotificationClass = "standard" | "automation_noise";
+
 /** Pull Requestの集約review状態。 */
 export type ReviewState =
   "not_applicable" | "not_requested" | "requested" | "changes_requested" | "approved" | "unknown";
@@ -335,6 +338,7 @@ type TrackedItemFields = Readonly<{
   url: GitHubItemUrl;
   title: string;
   state: TrackedItemState;
+  notificationClass: TrackingNotificationClass;
   primaryWaitingOn: PrimaryWaitingOn;
   nextAction: string;
   createdAt: UtcIsoDateTime;

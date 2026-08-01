@@ -177,6 +177,24 @@ function replaceCreatedAt(
   });
 }
 
+function replaceWithAutomationDashboard(
+  item: EnumeratedGitHubItem,
+  title: string,
+): EnumeratedGitHubItem {
+  return Object.freeze({
+    ...item,
+    title,
+    author: Object.freeze({
+      kind: "account",
+      account: Object.freeze({
+        nodeId: createGitHubNodeId("BOT_RENOVATE"),
+        login: "renovate[bot]",
+        apiType: "Bot",
+      }),
+    }),
+  });
+}
+
 function createPullRequestItem(
   options: Readonly<{
     repository: PublicRepository;
@@ -430,6 +448,7 @@ async function createTestConfig(
       enabled: options.aiEnabled,
     }),
     notifications: Object.freeze({
+      ...base.notifications,
       discord: Object.freeze({
         ...base.notifications.discord,
         enabled: false,
@@ -573,6 +592,7 @@ function createCollectionHarness(
   const stateAdapter = new MemoryStateBranchAdapter();
   const artifacts: unknown[] = [];
   const publicData: GeneratedPublicData[] = [];
+  const discordCandidateNodeIds: GitHubNodeId[][] = [];
   const detailCalls: DetailCall[] = [];
   const individualCalls: string[][] = [];
   let codexExecutionCount = 0;
@@ -725,19 +745,22 @@ function createCollectionHarness(
         detailsBytes: 1,
       });
     },
-    sendDiscord: () =>
-      Promise.resolve(
+    sendDiscord: (input) => {
+      discordCandidateNodeIds.push(input.candidates.map((candidate) => candidate.itemNodeId));
+      return Promise.resolve(
         Object.freeze({
           status: "skipped",
           reason: "no_candidates",
         } satisfies DiscordDigestDelivery),
-      ),
+      );
+    },
   });
   const application = createProductionCliApplication(runtimeAdapters);
   return {
     artifacts,
     codexInputs,
     detailCalls,
+    discordCandidateNodeIds,
     individualCalls,
     stateAdapter,
     publicData,
@@ -824,6 +847,60 @@ describe("本番収集の接続", () => {
       available: false,
       degraded: false,
     });
+  });
+
+  it("automation dashboardをgraphに残しつつ既定digestから除外する", async () => {
+    const repository = createRepository("R_automation", "automation", FIRST_RUN_AT);
+    const fixture = createRepositoryFixture(repository);
+    const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const item = replaceWithAutomationDashboard(
+      createIssueItem({
+        repository: requirePublicRepository(repository),
+        number: 1,
+        fingerprint: "automation-dashboard",
+        updatedAt: observedAt,
+        observedAt,
+        state: Object.freeze({ state: "open" }),
+      }),
+      "依存更新ダッシュボード",
+    );
+    fixture.openItems = [item];
+    setIssueDetails(fixture, [item], observedAt);
+    const baseConfig = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: false,
+    });
+    const config = Object.freeze({
+      ...baseConfig,
+      notifications: Object.freeze({
+        ...baseConfig.notifications,
+        automationNoiseTitles: ["依存更新ダッシュボード"],
+      }),
+    });
+    const harness = createCollectionHarness({ repositories: [fixture], config });
+
+    const result = await harness.runDaily(FIRST_RUN_AT);
+    const files = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const snapshotSource = files.get("state/snapshot.json");
+    if (snapshotSource == null) {
+      throw new TypeError("automation dashboardのsnapshotがありません");
+    }
+    const snapshot = parseStateSnapshot(new TextDecoder().decode(snapshotSource));
+
+    expect(result.exitCode).toBe(0);
+    expect(snapshot.items).toContainEqual(
+      expect.objectContaining({
+        nodeId: item.nodeId,
+        notificationClass: "automation_noise",
+      }),
+    );
+    expect(harness.publicData[0]?.details.graph.nodes).toContainEqual(
+      expect.objectContaining({
+        nodeId: item.nodeId,
+      }),
+    );
+    expect(harness.discordCandidateNodeIds).toEqual([[]]);
   });
 
   it("tracked項目の本文とコメントから参照された開始日前項目を追跡する", async () => {

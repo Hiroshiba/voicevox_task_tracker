@@ -107,6 +107,7 @@ function createTrackedItem(number: number, options: ItemOptions): TrackedItem {
     url,
     title: options.title,
     state: "open",
+    notificationClass: "standard",
     status: "waiting_for_review",
     waitingOn: Object.freeze([...options.waitingOn]),
     primaryWaitingOn:
