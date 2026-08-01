@@ -61,11 +61,12 @@ pnpm install --frozen-lockfile
 | `tests/`             | unit、integration、security、golden fixtureのテスト                |
 | `schemas/`           | stateとCodex出力のJSON Schema                                      |
 | `prompts/`           | Codexへ渡す固定system prompt                                       |
-| `docs/`              | 設計、デプロイ、運用、実装計画                                     |
+| `docs/`              | 要求定義、アーキテクチャ、デプロイ、運用、参照資料                 |
 
 ## 詳細文書
 
+- [要求定義](docs/REQUIREMENTS.md)
 - [アーキテクチャ](docs/ARCHITECTURE.md)
 - [デプロイ手順](docs/DEPLOYMENT.md)
 - [運用手順](docs/OPERATIONS.md)
-- [実装計画](docs/IMPLEMENTATION_PLAN.md)
+- [参照資料](docs/RESEARCH_SOURCES.md)

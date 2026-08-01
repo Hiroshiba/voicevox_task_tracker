@@ -5,13 +5,7 @@ import tseslint from "typescript-eslint";
 
 export default defineConfig([
   {
-    ignores: [
-      "artifacts/workflow/runtime/**",
-      "coverage/**",
-      "dist/**",
-      "hiho_requirements/**",
-      "node_modules/**",
-    ],
+    ignores: ["artifacts/workflow/runtime/**", "coverage/**", "dist/**", "node_modules/**"],
   },
   {
     files: ["**/*.{cjs,js,mjs}"],

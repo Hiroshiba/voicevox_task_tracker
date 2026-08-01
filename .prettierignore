@@ -1,6 +1,5 @@
 coverage/
 dist/
-hiho_requirements/
 node_modules/
 pnpm-lock.yaml
 prompts/

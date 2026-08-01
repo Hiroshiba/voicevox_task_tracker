@@ -26,5 +26,5 @@
     "noEmit": true
   },
   "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts", "workflow.vite.config.ts"],
-  "exclude": ["coverage", "dist", "hiho_requirements", "node_modules"]
+  "exclude": ["coverage", "dist", "node_modules"]
 }
