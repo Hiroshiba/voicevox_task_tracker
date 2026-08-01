@@ -113,7 +113,8 @@ function parseWorkflowStageCommand(args: readonly string[]): WorkflowStageCliCom
     command.kind !== "persist-state" &&
     command.kind !== "build-pages" &&
     command.kind !== "notify-discord" &&
-    command.kind !== "notify-operations"
+    command.kind !== "notify-operations" &&
+    command.kind !== "report-workflow"
   ) {
     throw new TypeError("workflow stage commandではありません");
   }
@@ -168,11 +169,13 @@ describe("workflow stage", () => {
     const buildPages = vi.fn(() => Promise.resolve());
     const notifyDiscord = vi.fn(() => Promise.resolve());
     const notifyOperations = vi.fn(() => Promise.resolve());
+    const reportWorkflow = vi.fn(() => Promise.resolve());
     const runner = new WorkflowStageRunner({
       persistState,
       buildPages,
       notifyDiscord,
       notifyOperations,
+      reportWorkflow,
     });
     const commands = [
       parseWorkflowStageCommand(["persist-state"]),
@@ -187,6 +190,27 @@ describe("workflow stage", () => {
         "--occurred-at",
         NOW,
       ]),
+      parseWorkflowStageCommand([
+        "report-workflow",
+        "--run-id",
+        "123456789",
+        "--run-attempt",
+        "1",
+        "--test-eval-result",
+        "success",
+        "--collect-analyze-result",
+        "success",
+        "--persist-state-result",
+        "success",
+        "--build-pages-result",
+        "success",
+        "--deploy-pages-result",
+        "success",
+        "--notify-discord-result",
+        "success",
+        "--notify-operations-result",
+        "skipped",
+      ]),
     ];
 
     for (const command of commands) {
@@ -197,6 +221,7 @@ describe("workflow stage", () => {
     expect(buildPages).toHaveBeenCalledOnce();
     expect(notifyDiscord).toHaveBeenCalledOnce();
     expect(notifyOperations).toHaveBeenCalledOnce();
+    expect(reportWorkflow).toHaveBeenCalledOnce();
   });
 
   it("各stageは前stageのartifactが無ければ失敗する", async () => {
@@ -209,6 +234,7 @@ describe("workflow stage", () => {
       buildPages: readMissingArtifact,
       notifyDiscord: readMissingArtifact,
       notifyOperations: readMissingArtifact,
+      reportWorkflow: readMissingArtifact,
     });
     const commands = [
       parseWorkflowStageCommand(["persist-state"]),

@@ -3,14 +3,16 @@ import {
   type NotifyDiscordCliCommand,
   type NotifyOperationsCliCommand,
   type PersistStateCliCommand,
+  type ReportWorkflowCliCommand,
 } from "./command.js";
 
-/** collect-analyze後のworkflow stageで受け付けるCLI入力。 */
+/** 日次workflowの後続stageで受け付けるCLI入力。 */
 export type WorkflowStageCliCommand =
   | PersistStateCliCommand
   | BuildPagesCliCommand
   | NotifyDiscordCliCommand
-  | NotifyOperationsCliCommand;
+  | NotifyOperationsCliCommand
+  | ReportWorkflowCliCommand;
 
 /** workflow stageの外部副作用を注入する境界。 */
 export type WorkflowStageDependencies = Readonly<{
@@ -18,9 +20,10 @@ export type WorkflowStageDependencies = Readonly<{
   buildPages: (command: BuildPagesCliCommand) => Promise<void>;
   notifyDiscord: (command: NotifyDiscordCliCommand) => Promise<void>;
   notifyOperations: (command: NotifyOperationsCliCommand) => Promise<void>;
+  reportWorkflow: (command: ReportWorkflowCliCommand) => Promise<void>;
 }>;
 
-/** 検証済みartifactを消費するworkflow stageを振り分ける。 */
+/** 日次workflowの後続stageを振り分ける。 */
 export class WorkflowStageRunner {
   readonly #dependencies: WorkflowStageDependencies;
 
@@ -42,6 +45,9 @@ export class WorkflowStageRunner {
         return;
       case "notify-operations":
         await this.#dependencies.notifyOperations(command);
+        return;
+      case "report-workflow":
+        await this.#dependencies.reportWorkflow(command);
         return;
     }
   }

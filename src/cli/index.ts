@@ -19,6 +19,7 @@ export {
   type NotifyDiscordCliCommand,
   type NotifyOperationsCliCommand,
   type PersistStateCliCommand,
+  type ReportWorkflowCliCommand,
   type ReplayCliCommand,
   type ReplaySource,
 } from "./command.js";
@@ -94,3 +95,10 @@ export {
   type WorkflowStageCliCommand,
   type WorkflowStageDependencies,
 } from "./workflow-stage.js";
+export {
+  createWorkflowRunReport,
+  readOptionalRunReportFile,
+  type WorkflowJobResult,
+  type WorkflowJobResults,
+  type WorkflowRunReport,
+} from "./workflow-run-report.js";

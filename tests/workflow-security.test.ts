@@ -20,8 +20,11 @@ const permissionsSchema = z.record(z.string(), permissionSchema);
 const stepSchema = z
   .object({
     env: z.record(z.string(), z.string()).optional(),
+    if: z.string().optional(),
+    name: z.string().optional(),
     uses: z.string().optional(),
     run: z.string().optional(),
+    with: z.record(z.string(), z.unknown()).optional(),
   })
   .loose();
 const needsSchema = z.union([z.string(), z.array(z.string())]);
@@ -146,6 +149,14 @@ function environmentVariableNames(job: WorkflowJob): readonly string[] {
   return job.steps.flatMap((step) => (step.env == null ? [] : Object.keys(step.env)));
 }
 
+function requiredStep(job: WorkflowJob, name: string): WorkflowJob["steps"][number] {
+  const step = job.steps.find((candidate) => candidate.name === name);
+  if (step == null) {
+    throw new TypeError(`workflowに${name} stepがありません`);
+  }
+  return step;
+}
+
 describe("日次workflow", () => {
   it("08:00 JST相当のcron、手動trigger、直列化を定義する", async () => {
     const workflow = await readDailyWorkflow();
@@ -193,7 +204,54 @@ describe("日次workflow", () => {
       "notify-operations": {
         contents: "write",
       },
+      "report-workflow": {
+        contents: "read",
+      },
     });
+  });
+
+  it("失敗時も収集reportを保存し全job結果を一意なworkflow reportへまとめる", async () => {
+    const workflow = await readDailyWorkflow();
+    const collectJob = workflow.jobs["collect-analyze"];
+    const reportJob = workflow.jobs["report-workflow"];
+    if (collectJob == null || reportJob == null) {
+      throw new TypeError("収集またはworkflow report jobがありません");
+    }
+
+    const collectReportUpload = requiredStep(collectJob, "収集run reportを保存");
+    expect(collectReportUpload.if).toContain("always()");
+    expect(collectReportUpload.with?.["path"]).toBe("artifacts/run-reports/collect-analyze.json");
+    expect(collectReportUpload.with?.["name"]).toContain("${{ github.run_id }}");
+    expect(collectReportUpload.with?.["name"]).toContain("${{ github.run_attempt }}");
+
+    expect([...needs(reportJob)].sort()).toEqual(
+      [
+        "test-eval",
+        "collect-analyze",
+        "persist-state",
+        "build-pages",
+        "deploy-pages",
+        "notify-discord",
+        "notify-operations",
+      ].sort(),
+    );
+    expect(reportJob.if).toContain("always()");
+    const reportCommands = runCommands(reportJob).join("\n");
+    expect(reportCommands).toContain("report-workflow");
+    for (const jobName of needs(reportJob)) {
+      expect(JSON.stringify(reportJob)).toContain(`needs.${jobName}.result`);
+    }
+    const workflowReportUpload = requiredStep(reportJob, "workflow run reportを保存");
+    expect(workflowReportUpload.if).toContain("always()");
+    expect(workflowReportUpload.with?.["path"]).toBe("artifacts/run-reports/workflow.json");
+    expect(workflowReportUpload.with?.["name"]).toContain("${{ github.run_id }}");
+    expect(workflowReportUpload.with?.["name"]).toContain("${{ github.run_attempt }}");
+    expect(JSON.stringify(workflow.jobs["persist-state"])).not.toContain(
+      "artifacts/run-reports/workflow.json",
+    );
+    expect(JSON.stringify(workflow.jobs["build-pages"])).not.toContain(
+      "artifacts/run-reports/workflow.json",
+    );
   });
 
   it("Discord通知をPagesのdeploy成功後だけに実行する", async () => {

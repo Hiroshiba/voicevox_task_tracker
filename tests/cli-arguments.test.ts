@@ -134,6 +134,44 @@ describe("CLI引数解析", () => {
       occurredAt: "2026-08-01T00:00:00.000Z",
       retryAttempts: 1,
     });
+    expect(
+      parseCliArguments([
+        "report-workflow",
+        "--run-id",
+        "123456789",
+        "--run-attempt",
+        "2",
+        "--test-eval-result",
+        "success",
+        "--collect-analyze-result",
+        "failure",
+        "--persist-state-result",
+        "skipped",
+        "--build-pages-result",
+        "skipped",
+        "--deploy-pages-result",
+        "skipped",
+        "--notify-discord-result",
+        "skipped",
+        "--notify-operations-result",
+        "success",
+      ]),
+    ).toEqual({
+      kind: "report-workflow",
+      collectAnalyzeReportPath: "artifacts/run-reports/collect-analyze.json",
+      outputPath: "artifacts/run-reports/workflow.json",
+      workflowRunId: "123456789",
+      workflowRunAttempt: 2,
+      jobResults: {
+        "test-eval": "success",
+        "collect-analyze": "failure",
+        "persist-state": "skipped",
+        "build-pages": "skipped",
+        "deploy-pages": "skipped",
+        "notify-discord": "skipped",
+        "notify-operations": "success",
+      },
+    });
   });
 
   it("replayのfixtureとstateを区別する", () => {
@@ -180,6 +218,7 @@ describe("CLI引数解析", () => {
       ["collect-analyze", "--mode", "none", "--repository", "VOICEVOX/voicevox"],
       ["notify-discord"],
       ["notify-discord", "--pages-url", "http://example.com/"],
+      ["report-workflow", "--run-id", "123", "--run-attempt", "0"],
     ];
     for (const args of invalidArguments) {
       expect(() => parseCliArguments(args)).toThrow(CliUsageError);

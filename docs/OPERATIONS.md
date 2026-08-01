@@ -14,13 +14,16 @@ GitHub Actionsのscheduleには遅延があるため、厳密な投稿時刻は�
 5. `deploy-pages`
 6. `notify-discord`
 7. `notify-operations` 失敗時のみ
+8. `report-workflow`
 
-通常経路は`notify-discord`までの6 jobです。
-`notify-operations`は収集またはPages関連jobが失敗したときだけ実行されます。
+通常の公開経路は`notify-discord`までの6 jobです。
+`notify-operations`は収集、Pages関連、Discord通知のいずれかのjobが失敗したときだけ実行されます。
+`report-workflow`は先行jobの成否にかかわらず実行され、全job結果と収集metricをActions artifactへ保存します。
 
 Pagesでは生成時刻、repository数、item数、unknown数、状態別件数、severity別件数を確認します。
 `tracker-state`では`state/run-reports/YYYY-MM-DD.json`を確認します。
 ローカル実行のreportは`artifacts/run-reports/`へ出力されます。
+Actionsでは収集reportとworkflow全体のreportを、run IDと試行番号を含む別々のartifactへ保存します。
 
 run reportの主な確認項目は次のとおりです。
 
@@ -204,7 +207,7 @@ mentionは通知量の調整に使わず、運用上必要なuserだけをallowl
 
 ## 障害時の確認
 
-失敗したActions jobとrun reportの`failedStage`を対応させて確認します。
+失敗したActions jobをworkflow全体のreportにある`jobs`と照合し、収集失敗ではCLI reportの`failedStage`も確認します。
 
 | stageまたはjob                  | 確認内容                                                                                                                                                                                      |
 | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

@@ -75,6 +75,9 @@ workflowはCLIの実行前にremoteの`tracker-state`をlocal refへfetchし、C
 GitHub App key、installation token、OpenAI認証情報、Discord webhookはartifactへ含めません。
 artifactを利用する後続jobは同じartifactを再検証してから利用します。
 依存関係を再インストールせず`notify-discord`でCLIを動かすため、公開sourceから作った自己完結bundleも同じActions artifactへ保存します。
+収集時のCLI reportは収集jobの成否にかかわらず、run IDと試行番号を含む別のActions artifactへ保存します。
+最後の`report-workflow`は全jobの結果と必須metricを`artifacts/run-reports/workflow.json`へまとめ、別のActions artifactへ保存します。
+これらのreport artifactはstateとPagesの入力にしません。
 
 ## Pagesの設定
 

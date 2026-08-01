@@ -81,8 +81,9 @@ repository単位の収集は、再試行後も503で失敗し、同じrepository
 この縮退はdiagnosticとstale件数を記録して後続処理を続け、run statusを変更しません。
 前回値がない503、503以外の例外、不完全な結果は`failure`となり、通常の後続stageを実行しません。
 
-`.github/workflows/daily.yml`は通常経路の`test-eval`、`collect-analyze`、`persist-state`、`build-pages`、`deploy-pages`、`notify-discord`に、失敗時だけ動く`notify-operations`を加えた7 jobで構成されています。
+`.github/workflows/daily.yml`は通常経路の`test-eval`、`collect-analyze`、`persist-state`、`build-pages`、`deploy-pages`、`notify-discord`に、失敗時だけ動く`notify-operations`と全job結果を保存する`report-workflow`を加えた8 jobで構成されています。
 各jobは`contents`、`pages`、`id-token`を必要な範囲だけ要求し、secretを使うjobはdefault branchのscheduleと手動実行に限定しています。
+`report-workflow`は収集時のCLI reportと各jobの結果をActions artifactへ保存するだけで、stateとPagesを変更しません。
 現在のActions統合上の制約は[デプロイ手順](DEPLOYMENT.md)に記載しています。
 
 ## 公開境界の三重guard

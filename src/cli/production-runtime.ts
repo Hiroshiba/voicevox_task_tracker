@@ -157,6 +157,7 @@ import {
   type NotifyDiscordCliCommand,
   type NotifyOperationsCliCommand,
   type PersistStateCliCommand,
+  type ReportWorkflowCliCommand,
 } from "./command.js";
 import { type OnlineCliCommand } from "./daily-transaction.js";
 import {
@@ -183,6 +184,7 @@ import {
   workflowArtifactRepositoryInventory,
   type WorkflowArtifact,
 } from "./workflow-artifact.js";
+import { createWorkflowRunReport, readOptionalRunReportFile } from "./workflow-run-report.js";
 import { WorkflowStageRunner } from "./workflow-stage.js";
 
 const CODEX_CLI_VERSION = "0.145.0";
@@ -4216,12 +4218,29 @@ async function notifyWorkflowOperations(
   });
 }
 
+async function reportWorkflowRun(
+  adapters: ProductionRuntimeAdapters,
+  command: ReportWorkflowCliCommand,
+): Promise<void> {
+  const collectAnalyzeReport = await readOptionalRunReportFile(
+    resolve(adapters.repositoryPath, command.collectAnalyzeReportPath),
+  );
+  const report = createWorkflowRunReport({
+    workflowRunId: command.workflowRunId,
+    workflowRunAttempt: command.workflowRunAttempt,
+    jobs: command.jobResults,
+    collectAnalyzeReport,
+  });
+  await adapters.writeJsonArtifact(resolve(adapters.repositoryPath, command.outputPath), report);
+}
+
 function createWorkflowStageRunner(adapters: ProductionRuntimeAdapters): WorkflowStageRunner {
   return new WorkflowStageRunner({
     persistState: (command) => persistWorkflowState(adapters, command),
     buildPages: (command) => buildWorkflowPages(adapters, command),
     notifyDiscord: (command) => notifyWorkflowDiscord(adapters, command),
     notifyOperations: (command) => notifyWorkflowOperations(adapters, command),
+    reportWorkflow: (command) => reportWorkflowRun(adapters, command),
   });
 }
 

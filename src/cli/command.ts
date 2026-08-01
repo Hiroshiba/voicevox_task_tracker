@@ -5,12 +5,15 @@ import {
 } from "../domain/index.js";
 import { assertNonNullable } from "../util/index.js";
 import { CliUsageError } from "./errors.js";
+import { type WorkflowJobResult, type WorkflowJobResults } from "./workflow-run-report.js";
 
 const DEFAULT_CONFIG_PATH = "config.yml";
 const DEFAULT_REPORT_DIRECTORY = "artifacts/run-reports";
 const DEFAULT_ARTIFACT_DIRECTORY = "artifacts";
 const DEFAULT_WORKFLOW_ARTIFACT_PATH = "artifacts/workflow/validated-run.json";
 const DEFAULT_PAGES_OUTPUT_DIRECTORY = "artifacts/workflow/pages";
+const DEFAULT_COLLECT_ANALYZE_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/collect-analyze.json`;
+const DEFAULT_WORKFLOW_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/workflow.json`;
 const REPOSITORY_FILTER_PATTERN = /^VOICEVOX\/[A-Za-z0-9._-]+$/u;
 
 /** runの予定時刻を現在時刻または明示値から決める指定。 */
@@ -92,6 +95,16 @@ export type NotifyOperationsCliCommand = Readonly<{
   retryAttempts: number;
 }>;
 
+/** workflow全体のjob結果をCLI reportへ統合する入力。 */
+export type ReportWorkflowCliCommand = Readonly<{
+  kind: "report-workflow";
+  collectAnalyzeReportPath: string;
+  outputPath: string;
+  workflowRunId: string;
+  workflowRunAttempt: number;
+  jobResults: WorkflowJobResults;
+}>;
+
 /** replayへ渡すfixtureまたは過去stateの入力元。 */
 export type ReplaySource =
   | Readonly<{
@@ -136,6 +149,7 @@ export type CliCommand =
   | BuildPagesCliCommand
   | NotifyDiscordCliCommand
   | NotifyOperationsCliCommand
+  | ReportWorkflowCliCommand
   | ReplayCliCommand
   | EvalCliCommand
   | HelpCliCommand;
@@ -192,6 +206,14 @@ function optionalSingleOption(options: ParsedOptions, name: string): string | un
   assertNonNullable(value, `${name}の値を取得できませんでした`);
   if (value.length === 0) {
     throw usageError(`${name}に空文字は指定できません`);
+  }
+  return value;
+}
+
+function requiredSingleOption(options: ParsedOptions, name: string, commandName: string): string {
+  const value = optionalSingleOption(options, name);
+  if (value == null) {
+    throw usageError(`${commandName}には${name}が必要です`);
   }
   return value;
 }
@@ -416,6 +438,82 @@ function parseNotifyOperations(args: readonly string[]): NotifyOperationsCliComm
   });
 }
 
+function parseWorkflowJobResult(options: ParsedOptions, name: string): WorkflowJobResult {
+  const value = requiredSingleOption(options, name, "report-workflow");
+  switch (value) {
+    case "success":
+    case "failure":
+    case "cancelled":
+    case "skipped":
+      return value;
+    default:
+      throw usageError(
+        `${name}にはsuccess、failure、cancelled、skippedのいずれかを指定してください`,
+      );
+  }
+}
+
+function parseWorkflowRunAttempt(options: ParsedOptions): number {
+  const source = requiredSingleOption(options, "--run-attempt", "report-workflow");
+  const value = Number.parseInt(source, 10);
+  if (!/^\d+$/u.test(source) || !Number.isSafeInteger(value) || value < 1) {
+    throw usageError("--run-attemptには1以上の整数を指定してください");
+  }
+  return value;
+}
+
+function parseWorkflowRunId(options: ParsedOptions): string {
+  const value = requiredSingleOption(options, "--run-id", "report-workflow");
+  if (!/^[1-9]\d*$/u.test(value)) {
+    throw usageError("--run-idには1以上の整数を指定してください");
+  }
+  return value;
+}
+
+function parseReportWorkflow(args: readonly string[]): ReportWorkflowCliCommand {
+  const options = parseOptions(
+    args,
+    new Set([
+      "--build-pages-result",
+      "--collect-analyze-result",
+      "--collect-report",
+      "--deploy-pages-result",
+      "--notify-discord-result",
+      "--notify-operations-result",
+      "--output",
+      "--persist-state-result",
+      "--run-attempt",
+      "--run-id",
+      "--test-eval-result",
+    ]),
+  );
+  const collectAnalyzeReportPath = singleOption(
+    options,
+    "--collect-report",
+    DEFAULT_COLLECT_ANALYZE_REPORT_PATH,
+  );
+  const outputPath = singleOption(options, "--output", DEFAULT_WORKFLOW_REPORT_PATH);
+  if (collectAnalyzeReportPath === outputPath) {
+    throw usageError("--collect-reportと--outputには異なるパスを指定してください");
+  }
+  return Object.freeze({
+    kind: "report-workflow",
+    collectAnalyzeReportPath,
+    outputPath,
+    workflowRunId: parseWorkflowRunId(options),
+    workflowRunAttempt: parseWorkflowRunAttempt(options),
+    jobResults: Object.freeze({
+      "test-eval": parseWorkflowJobResult(options, "--test-eval-result"),
+      "collect-analyze": parseWorkflowJobResult(options, "--collect-analyze-result"),
+      "persist-state": parseWorkflowJobResult(options, "--persist-state-result"),
+      "build-pages": parseWorkflowJobResult(options, "--build-pages-result"),
+      "deploy-pages": parseWorkflowJobResult(options, "--deploy-pages-result"),
+      "notify-discord": parseWorkflowJobResult(options, "--notify-discord-result"),
+      "notify-operations": parseWorkflowJobResult(options, "--notify-operations-result"),
+    }),
+  });
+}
+
 function parseReplaySource(options: ParsedOptions): ReplaySource {
   const fixturePath = optionalSingleOption(options, "--fixture");
   const statePath = optionalSingleOption(options, "--state");
@@ -513,6 +611,8 @@ export function parseCliArguments(args: readonly string[]): CliCommand {
       return parseNotifyDiscord(options);
     case "notify-operations":
       return parseNotifyOperations(options);
+    case "report-workflow":
+      return parseReportWorkflow(options);
     case "replay":
       return parseReplay(options);
     case "eval":
@@ -534,6 +634,7 @@ export function formatCliUsage(): string {
     "  voicevox-task-tracker build-pages [--config PATH] [--artifact PATH] [--output PATH]",
     "  voicevox-task-tracker notify-discord --pages-url URL [--artifact PATH]",
     "  voicevox-task-tracker notify-operations --kind collection|pages|discord --incident-id ID --occurred-at ISO",
+    "  voicevox-task-tracker report-workflow --run-id ID --run-attempt NUMBER --test-eval-result RESULT --collect-analyze-result RESULT --persist-state-result RESULT --build-pages-result RESULT --deploy-pages-result RESULT --notify-discord-result RESULT --notify-operations-result RESULT",
     "  voicevox-task-tracker replay (--fixture PATH | --state PATH) [--artifact PATH]",
     "  voicevox-task-tracker eval --fixtures PATH [--artifact PATH]",
   ].join("\n");
