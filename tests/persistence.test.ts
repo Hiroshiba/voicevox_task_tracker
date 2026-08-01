@@ -300,6 +300,7 @@ function createCacheEntry(): AiCacheEntry {
   });
   const cacheKey = createAiCacheKey({
     model: "codex-model",
+    reasoningEffort: "medium",
     backendVersion: "codex-cli-1",
     promptVersion: "prompt-v1",
     schemaVersion: "schema-v1",
@@ -316,6 +317,7 @@ function createCacheEntry(): AiCacheEntry {
     metadata: {
       deterministicRulesVersion: "rules-v1",
       model: "codex-model",
+      reasoningEffort: "medium",
       backendVersion: "codex-cli-1",
       promptVersion: "prompt-v1",
       schemaVersion: "schema-v1",
@@ -693,6 +695,7 @@ describe("メモリstate branch transaction", () => {
     });
     const cacheKey = createAiCacheKey({
       model: "codex-model",
+      reasoningEffort: "medium",
       backendVersion: "codex-cli-1",
       promptVersion: "prompt-v1",
       schemaVersion: "schema-v1",
@@ -710,6 +713,7 @@ describe("メモリstate branch transaction", () => {
         metadata: {
           deterministicRulesVersion: "rules-v1",
           model: "codex-model",
+          reasoningEffort: "medium",
           backendVersion: "codex-cli-1",
           promptVersion: "prompt-v1",
           schemaVersion: "schema-v1",

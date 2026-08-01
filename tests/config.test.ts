@@ -46,6 +46,7 @@ describe("設定の読み込みと検証", () => {
     expect(config.ai.provider).toBe("codex");
     expect(config.ai.budget.maxEstimatedCostUsdPerRun).toBe(10);
     expect(config.ai.budget.estimatedInputCostUsdPerMillionTokens).toBe(1.25);
+    expect(config.ai.execution.reasoningEffort).toBe("medium");
     expect(config.notifications.discord.mentions.enabled).toBe(false);
     expect(config.state.runReportsDirectory).toBe("state/run-reports");
   });
@@ -139,6 +140,31 @@ describe("設定の読み込みと検証", () => {
     const config = parseConfig(source);
 
     expect(config.ai.model).toBe("YOUR_PINNED_CODEX_MODEL");
+  });
+
+  it.each(["none", "minimal", "low", "medium", "high", "xhigh", "max"])(
+    "reasoning effortの対応値%sを受け入れる",
+    (reasoningEffort) => {
+      const source = replaceRequired(
+        validConfigSource,
+        "    reasoningEffort: medium",
+        `    reasoningEffort: "${reasoningEffort}"`,
+      );
+      const config = parseConfig(source);
+
+      expect(config.ai.execution.reasoningEffort).toBe(reasoningEffort);
+    },
+  );
+
+  it("未対応のreasoning effortを拒否する", () => {
+    const source = replaceRequired(
+      validConfigSource,
+      "    reasoningEffort: medium",
+      "    reasoningEffort: extreme",
+    );
+    const error = captureConfigError(source);
+
+    expect(error.message).toContain("ai.execution.reasoningEffort");
   });
 
   it("placeholderのteam slugを拒否する", () => {

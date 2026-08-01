@@ -25,6 +25,7 @@ import {
   type CodexProcessResult,
   type CodexProcessRunner,
 } from "./process-runner.js";
+import { REASONING_EFFORTS } from "../domain/index.js";
 
 const CODEX_COMMAND = "codex";
 const CODEX_TEMPORARY_DIRECTORY_PREFIX = "voicevox-task-tracker-codex-";
@@ -47,6 +48,7 @@ const codexAdapterConfigurationSchema = z.strictObject({
     maxAttempts: z.number().int().positive(),
     sandbox: z.literal("read-only"),
     approvalPolicy: z.literal("never"),
+    reasoningEffort: z.enum(REASONING_EFFORTS),
   }),
 });
 
@@ -139,6 +141,8 @@ function createProcessRequest(
       configuration.execution.sandbox,
       "-c",
       `approval_policy="${configuration.execution.approvalPolicy}"`,
+      "-c",
+      `model_reasoning_effort="${configuration.execution.reasoningEffort}"`,
       "-C",
       workingDirectory,
       "--output-schema",

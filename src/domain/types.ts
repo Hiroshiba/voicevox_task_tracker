@@ -391,10 +391,25 @@ export type Relation =
         removedAt: UtcIsoDateTime;
       }>);
 
-/** Codex分析を再現するためのversion、hash、実行時刻。 */
+/** Codex実行で指定できるreasoning effortの許容値一覧。 */
+export const REASONING_EFFORTS = [
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
+/** Codex実行で指定するreasoning effort。 */
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
+/** Codex分析を再現するための実行設定、version、hash、実行時刻。 */
 export type AnalysisMetadata = Readonly<{
   deterministicRulesVersion: string;
   model: string;
+  reasoningEffort: ReasoningEffort;
   backendVersion: string;
   promptVersion: string;
   schemaVersion: string;

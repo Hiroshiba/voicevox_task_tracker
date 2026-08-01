@@ -19,13 +19,18 @@ import { type CodexAnalysisInput } from "./input.js";
 import { type ValidatedCodexAnalysisOutput } from "./output-types.js";
 import { validateCodexAnalysisOutput } from "./output-validation.js";
 import { executeValidatedCodexAnalysis, type CodexUnavailableReason } from "./reducer.js";
-import { createUtcIsoDateTime, type AnalysisMetadata } from "../domain/index.js";
+import {
+  createUtcIsoDateTime,
+  type AnalysisMetadata,
+  type ReasoningEffort,
+} from "../domain/index.js";
 import { assertNonNullable } from "../util/index.js";
 
-/** AI実行とcache再現性を固定するversion情報。 */
+/** AI実行とcache再現性を固定する実行設定とversion情報。 */
 export type AiAnalysisRunIdentity = Readonly<{
   deterministicRulesVersion: string;
   model: string;
+  reasoningEffort: ReasoningEffort;
   backendVersion: string;
   promptVersion: string;
   schemaVersion: string;
@@ -90,6 +95,7 @@ function createCacheIdentity(
 ): AiCacheIdentity {
   return Object.freeze({
     model: identity.model,
+    reasoningEffort: identity.reasoningEffort,
     backendVersion: identity.backendVersion,
     promptVersion: identity.promptVersion,
     schemaVersion: identity.schemaVersion,
@@ -194,6 +200,7 @@ async function executeSelectedCandidates(
     const metadata = Object.freeze({
       deterministicRulesVersion: configuration.identity.deterministicRulesVersion,
       model: configuration.identity.model,
+      reasoningEffort: configuration.identity.reasoningEffort,
       backendVersion: configuration.identity.backendVersion,
       promptVersion: configuration.identity.promptVersion,
       schemaVersion: configuration.identity.schemaVersion,

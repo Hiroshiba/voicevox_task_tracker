@@ -36,6 +36,7 @@ function createConfiguration(
       maxAttempts,
       sandbox: "read-only",
       approvalPolicy: "never",
+      reasoningEffort: "medium",
     },
   };
 }
@@ -230,6 +231,10 @@ describe("Codex CLI隔離実行", () => {
     expect(getRequiredArgumentValue(request, "--model")).toBe("codex-model");
     expect(getRequiredArgumentValue(request, "-s")).toBe("read-only");
     expect(getRequiredArgumentValue(request, "-c")).toBe('approval_policy="never"');
+    const configurationArgumentIndex = request.arguments.indexOf("-c");
+    expect(
+      request.arguments.slice(configurationArgumentIndex, configurationArgumentIndex + 4),
+    ).toEqual(["-c", 'approval_policy="never"', "-c", 'model_reasoning_effort="medium"']);
     expect(getRequiredArgumentValue(request, "-C")).toBe(request.workingDirectory);
     expect(request.timeoutMilliseconds).toBe(5000);
 

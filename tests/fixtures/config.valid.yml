@@ -90,6 +90,7 @@ ai:
     maxAttempts: 2
     sandbox: read-only
     approvalPolicy: never
+    reasoningEffort: medium
 
 notifications:
   discord:

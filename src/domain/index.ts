@@ -148,6 +148,7 @@ export {
   type TeamResolutionSettings,
 } from "./team-resolution.js";
 export {
+  REASONING_EFFORTS,
   createExternalReferenceNodeId,
   createGitHubNodeId,
   createGitHubRepositoryId,
@@ -176,6 +177,7 @@ export {
   type Relation,
   type RelationProvenance,
   type RelationType,
+  type ReasoningEffort,
   type Repository,
   type RepositoryVisibility,
   type ReviewState,

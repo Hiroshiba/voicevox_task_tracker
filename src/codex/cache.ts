@@ -10,7 +10,12 @@ import {
   type Sha256Hash,
 } from "./canonical-json.js";
 import { AiCacheFormatError, AiCacheReadError, AiCacheWriteError } from "./errors.js";
-import { createUtcIsoDateTime, type AnalysisMetadata } from "../domain/index.js";
+import {
+  createUtcIsoDateTime,
+  REASONING_EFFORTS,
+  type AnalysisMetadata,
+  type ReasoningEffort,
+} from "../domain/index.js";
 import { assertNonNullable } from "../util/index.js";
 
 const CACHE_KEY_PREFIX = "sha256:";
@@ -19,6 +24,7 @@ const sha256HashSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u, "SHA-256 has
 const analysisMetadataSchema = z.strictObject({
   deterministicRulesVersion: nonEmptyStringSchema,
   model: nonEmptyStringSchema,
+  reasoningEffort: z.enum(REASONING_EFFORTS),
   backendVersion: nonEmptyStringSchema,
   promptVersion: nonEmptyStringSchema,
   schemaVersion: nonEmptyStringSchema,
@@ -36,9 +42,10 @@ const cacheEntrySchema = z.strictObject({
   output: z.json(),
 });
 
-/** content-addressed cacheを構成するversionと入力hash。 */
+/** content-addressed cacheを構成する実行設定、versionと入力hash。 */
 export type AiCacheIdentity = Readonly<{
   model: string;
+  reasoningEffort: ReasoningEffort;
   backendVersion: string;
   promptVersion: string;
   schemaVersion: string;
@@ -89,6 +96,7 @@ export type AiCacheReuseDecision =
         | "cache_key_changed"
         | "source_hash_changed"
         | "model_changed"
+        | "reasoning_effort_changed"
         | "backend_version_changed"
         | "prompt_version_changed"
         | "schema_version_changed"
@@ -104,7 +112,7 @@ function validateIdentity(identity: AiCacheIdentity): void {
   parseSha256Hash(identity.inputHash);
 }
 
-/** modelと各versionと正規化入力hashからcache keyを生成する。 */
+/** model、reasoning effort、各versionと正規化入力hashからcache keyを生成する。 */
 export function createAiCacheKey(identity: AiCacheIdentity): AiCacheKey {
   validateIdentity(identity);
   return hashCanonicalJson({
@@ -112,6 +120,7 @@ export function createAiCacheKey(identity: AiCacheIdentity): AiCacheKey {
     inputHash: identity.inputHash,
     model: identity.model,
     promptVersion: identity.promptVersion,
+    reasoningEffort: identity.reasoningEffort,
     schemaVersion: identity.schemaVersion,
   });
 }
@@ -125,6 +134,7 @@ export function createAiCacheEntry(value: unknown): AiCacheEntry {
     metadata: Object.freeze({
       deterministicRulesVersion: parsed.metadata.deterministicRulesVersion,
       model: parsed.metadata.model,
+      reasoningEffort: parsed.metadata.reasoningEffort,
       backendVersion: parsed.metadata.backendVersion,
       promptVersion: parsed.metadata.promptVersion,
       schemaVersion: parsed.metadata.schemaVersion,
@@ -161,6 +171,12 @@ export function determineAiCacheReuse(
     return Object.freeze({
       status: "stale",
       reason: "model_changed",
+    });
+  }
+  if (entry.metadata.reasoningEffort !== identity.reasoningEffort) {
+    return Object.freeze({
+      status: "stale",
+      reason: "reasoning_effort_changed",
     });
   }
   if (entry.metadata.backendVersion !== identity.backendVersion) {
@@ -216,6 +232,7 @@ function assertCacheIntegrity(entry: AiCacheEntry, expectedCacheKey: AiCacheKey)
   }
   const metadataCacheKey = createAiCacheKey({
     model: entry.metadata.model,
+    reasoningEffort: entry.metadata.reasoningEffort,
     backendVersion: entry.metadata.backendVersion,
     promptVersion: entry.metadata.promptVersion,
     schemaVersion: entry.metadata.schemaVersion,

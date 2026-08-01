@@ -19,6 +19,7 @@ import {
   type AiAnalysisCandidate,
   type AiAnalysisPriority,
   type AiAnalysisRunConfiguration,
+  type AiCacheIdentity,
   type CodexAnalysisInput,
   type PreviousAiAnalysisFingerprint,
 } from "../src/codex/index.js";
@@ -119,6 +120,7 @@ function createConfiguration(
     identity: Object.freeze({
       deterministicRulesVersion: "rules-v1",
       model: "codex-model",
+      reasoningEffort: "medium",
       backendVersion: "codex-cli-1.2.3",
       promptVersion: "prompt-v1",
       schemaVersion: "schema-v1",
@@ -314,16 +316,21 @@ describe("content-addressed AI cache", () => {
     });
     const base = {
       model: "model-a",
+      reasoningEffort: "medium",
       backendVersion: "backend-a",
       promptVersion: "prompt-a",
       schemaVersion: "schema-a",
       inputHash,
-    };
+    } satisfies AiCacheIdentity;
     const cacheKeys = [
       createAiCacheKey(base),
       createAiCacheKey({
         ...base,
         model: "model-b",
+      }),
+      createAiCacheKey({
+        ...base,
+        reasoningEffort: "high",
       }),
       createAiCacheKey({
         ...base,
@@ -357,6 +364,7 @@ describe("content-addressed AI cache", () => {
         metadata: {
           deterministicRulesVersion: "rules-v1",
           model: base.model,
+          reasoningEffort: base.reasoningEffort,
           backendVersion: base.backendVersion,
           promptVersion: base.promptVersion,
           schemaVersion: base.schemaVersion,
@@ -832,7 +840,7 @@ describe("AI runの候補単位fallback", () => {
 });
 
 describe("AI結果の再現metadata", () => {
-  it("任意の結果からmodel、backend、prompt、schema、入出力hash、実行時刻を取得できる", async () => {
+  it("任意の結果からmodel、reasoning effort、backend、prompt、schema、入出力hash、実行時刻を取得できる", async () => {
     const candidate = createCandidate({
       id: "I_metadata",
       body: "再現metadata",
@@ -853,6 +861,7 @@ describe("AI結果の再現metadata", () => {
     expect(item.metadata).toEqual({
       deterministicRulesVersion: "rules-v1",
       model: "codex-model",
+      reasoningEffort: "medium",
       backendVersion: "codex-cli-1.2.3",
       promptVersion: "prompt-v1",
       schemaVersion: "schema-v1",

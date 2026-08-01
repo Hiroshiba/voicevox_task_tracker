@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { ConfigError, type ConfigIssue } from "./config-error.js";
+import { REASONING_EFFORTS } from "../domain/index.js";
 import { assertNonNullable } from "../util/assert-non-nullable.js";
 
 const SUPPORTED_SCHEMA_MAJOR = 1;
@@ -370,6 +371,7 @@ const configSchema = z.strictObject({
         maxAttempts: positiveIntegerSchema,
         sandbox: z.literal("read-only"),
         approvalPolicy: z.literal("never"),
+        reasoningEffort: z.enum(REASONING_EFFORTS),
       }),
     })
     .superRefine((ai, context) => {

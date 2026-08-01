@@ -195,7 +195,7 @@ backfillはGitHub Actionsの`日次タスク追跡`を手動実行して指定�
 4. 重要labelへ`priorityWeight`か`severityLift: 1`を設定します。
 5. AI予算不足なら`ai.budget`を増やし、費用とgolden evalを確認します。
 
-閾値、confidence、label規則、model、promptを変更する場合は、`pnpm test`と`pnpm eval:golden`を通してから反映します。
+閾値、confidence、label規則、model、reasoning effort、promptを変更する場合は、`pnpm test`と`pnpm eval:golden`を通してから反映します。
 mentionは通知量の調整に使わず、運用上必要なuserだけをallowlistへ追加します。
 
 ## 障害時の確認
@@ -209,7 +209,7 @@ mentionは通知量の調整に使わず、運用上必要なuserだけをallowl
 | `authentication`                | `GH_APP_ID`、PEM形式、Organizationへのinstallation、必要なread権限だけがあることを確認する              |
 | `repository_inventory`          | Appのrepository access、team access、public、archive、disabledの状態を確認する                          |
 | `incremental_collection`        | GitHub API残量、429と503、対象repositoryの一時障害を確認する                                            |
-| `codex_analysis`                | `codex` executable、model ID、`OPENAI_API_KEY`、予算、timeoutを確認する                                 |
+| `codex_analysis`                | `codex` executable、model ID、reasoning effort、`OPENAI_API_KEY`、予算、timeoutを確認する               |
 | `state_persistence`             | Actionsの`contents: write`、`tracker-state`のruleset、同時runがないことを確認する                       |
 | `build-pages`                   | Pages DTO、`web.basePath`、Web build、公開guardの診断を確認する                                         |
 | `deploy-pages`                  | Pages Source、`github-pages` environment、`pages: write`と`id-token: write`を確認する                   |

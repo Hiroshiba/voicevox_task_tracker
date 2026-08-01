@@ -1580,6 +1580,7 @@ async function analyzeCodex(
       identity: {
         deterministicRulesVersion: "daily-rules-v1",
         model: configuration.config.ai.model,
+        reasoningEffort: configuration.config.ai.execution.reasoningEffort,
         backendVersion: CODEX_BACKEND_VERSION,
         promptVersion: configuration.config.ai.promptVersion,
         schemaVersion: CODEX_SCHEMA_VERSION,
