@@ -3555,11 +3555,16 @@ async function deliverOperationsAlert(
     entries: [...notificationEntriesByKey.values()],
     operationsAlerts: [...operationsAlertsByKey.values()],
   });
-  await state.session.persistNotificationLedger({
+  const persistenceInput = Object.freeze({
     notificationLedger,
     committedAt: operationsDelivery.ledgerEntry.sentAt,
     knownSecrets,
   });
+  if (state.snapshot.status === "missing_branch") {
+    await state.session.persistInitialOperationsNotificationLedger(persistenceInput);
+  } else {
+    await state.session.persistNotificationLedger(persistenceInput);
+  }
   return Object.freeze({
     value: Object.freeze({ delivery }),
     notificationCount: 1,
@@ -4113,7 +4118,7 @@ async function buildWorkflowPages(
   );
   const persistedSnapshot = await session.loadSnapshot();
   if (
-    persistedSnapshot.status === "missing_branch" ||
+    persistedSnapshot.status !== "available" ||
     persistedSnapshot.snapshot.run.id !== artifact.snapshot.run.id
   ) {
     throw new TypeError("Pages生成対象のrunがtracker-state branchにありません");
@@ -4147,8 +4152,8 @@ async function notifyWorkflowDiscord(
     config.state,
   );
   const persistedSnapshot = await session.loadSnapshot();
-  if (persistedSnapshot.status === "missing_branch") {
-    throw new TypeError("Discord通知対象のstate branchがありません");
+  if (persistedSnapshot.status !== "available") {
+    throw new TypeError("Discord通知対象のstate snapshotがありません");
   }
   if (persistedSnapshot.snapshot.run.id !== artifact.snapshot.run.id) {
     throw new TypeError(
@@ -4190,9 +4195,6 @@ async function notifyWorkflowOperations(
     config.state,
   );
   const snapshot = await session.loadSnapshot();
-  if (snapshot.status === "missing_branch") {
-    throw new TypeError("運用障害通知を記録するstate branchがありません");
-  }
   const state = Object.freeze({
     session,
     snapshot,

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 import {
+  assertValidStateDirectory,
   assertValidStatePath,
   type StateBranchAdapter,
   type StateBranchCommitRequest,
@@ -273,7 +274,7 @@ export class GitStateBranchAdapter implements StateBranchAdapter {
   }
 
   public async listFiles(revision: string, directory: string): Promise<readonly string[]> {
-    assertValidStatePath(directory);
+    assertValidStateDirectory(directory);
     if (!OBJECT_ID_PATTERN.test(revision)) {
       throw new StateConfigurationError("一覧revisionのobject IDが不正です");
     }

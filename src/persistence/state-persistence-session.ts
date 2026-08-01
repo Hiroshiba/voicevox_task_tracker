@@ -46,11 +46,15 @@ import { type Repository, type UtcIsoDateTime } from "../domain/index.js";
 
 const CACHE_KEY_PREFIX = "sha256:";
 const HISTORY_FILE_PATTERN = /^(\d{4}-\d{2}-\d{2})\.jsonl$/u;
+const STATE_ROOT_DIRECTORY = "state";
 
 /** session開始時点のsnapshot読み取り結果。 */
 export type StateSnapshotReadResult =
   | Readonly<{
       status: "missing_branch";
+    }>
+  | Readonly<{
+      status: "operations_only";
     }>
   | Readonly<{
       status: "available";
@@ -263,6 +267,20 @@ export class StatePersistenceSession {
     );
     const source = decodeStateFile(result, "snapshot");
     if (source == null) {
+      const [notificationLedger, statePaths] = await Promise.all([
+        this.loadNotificationLedger(),
+        this.#adapter.listFiles(this.#head.revision, STATE_ROOT_DIRECTORY),
+      ]);
+      if (
+        notificationLedger.entries.length === 0 &&
+        notificationLedger.operationsAlerts.length > 0 &&
+        statePaths.length === 1 &&
+        statePaths[0] === this.#configuration.notificationLedgerPath
+      ) {
+        return Object.freeze({
+          status: "operations_only",
+        });
+      }
       throw new StateFormatError("snapshot", {
         cause: new TypeError("既存state branchにsnapshotがありません"),
       });
@@ -353,15 +371,9 @@ export class StatePersistenceSession {
     );
   }
 
-  /** 通知送信結果を既存state branchのledgerへatomic commitする。 */
-  public async persistNotificationLedger(
+  async #commitNotificationLedger(
     input: PersistNotificationLedgerInput,
   ): Promise<PersistStateTransactionResult> {
-    if (this.#head.status === "missing") {
-      throw new StateFormatError("notification ledger", {
-        cause: new TypeError("state branch作成前にnotification ledgerだけを保存できません"),
-      });
-    }
     const notificationLedger = createStateNotificationLedger(input.notificationLedger);
     assertStateValuesPublicSafety([notificationLedger], input.knownSecrets);
     const update = Object.freeze({
@@ -385,6 +397,42 @@ export class StatePersistenceSession {
     });
   }
 
+  /** 通知送信結果を既存state branchのledgerへatomic commitする。 */
+  public async persistNotificationLedger(
+    input: PersistNotificationLedgerInput,
+  ): Promise<PersistStateTransactionResult> {
+    if (this.#head.status === "missing") {
+      throw new StateFormatError("notification ledger", {
+        cause: new TypeError("state branch作成前にnotification ledgerだけを保存できません"),
+      });
+    }
+    return this.#commitNotificationLedger(input);
+  }
+
+  /** 初回運用障害の通知ledgerでstate branchを作成する。 */
+  public async persistInitialOperationsNotificationLedger(
+    input: PersistNotificationLedgerInput,
+  ): Promise<PersistStateTransactionResult> {
+    if (this.#head.status !== "missing") {
+      throw new StateFormatError("notification ledger", {
+        cause: new TypeError("既存state branchを初回運用障害通知で作成できません"),
+      });
+    }
+    const notificationLedger = createStateNotificationLedger(input.notificationLedger);
+    if (
+      notificationLedger.entries.length !== 0 ||
+      notificationLedger.operationsAlerts.length !== 1
+    ) {
+      throw new StateFormatError("notification ledger", {
+        cause: new TypeError("初回運用障害通知のledger内容が不正です"),
+      });
+    }
+    return this.#commitNotificationLedger({
+      ...input,
+      notificationLedger,
+    });
+  }
+
   /** 完全成功したrunの追跡開始時刻と通知ledgerをatomic commitする。 */
   public async persistRunCompletion(
     input: PersistRunCompletionInput,
@@ -399,7 +447,7 @@ export class StatePersistenceSession {
       throw new StateSnapshotSemanticError("完全成功したrunのtracking.startAtが確定していません");
     }
     const currentResult = await this.loadSnapshot();
-    if (currentResult.status === "missing_branch") {
+    if (currentResult.status !== "available") {
       throw new StateFormatError("run completion", {
         cause: new TypeError("state branchのsnapshotを読み取れません"),
       });
@@ -459,7 +507,7 @@ export class StatePersistenceSession {
 
     const previousResult = await this.loadSnapshot();
     const previousSnapshot =
-      previousResult.status === "missing_branch" ? undefined : previousResult.snapshot;
+      previousResult.status === "available" ? previousResult.snapshot : undefined;
     const historyRecord = createStateHistoryRecord(
       previousSnapshot,
       snapshot,

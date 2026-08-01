@@ -1,6 +1,7 @@
 import { StateConfigurationError } from "./errors.js";
 
 const STATE_BRANCH = "tracker-state";
+const STATE_ROOT_DIRECTORY = "state";
 const STATE_PATH_PREFIX = "state/";
 
 /** 永続化が利用する設定のstate節。 */
@@ -75,6 +76,14 @@ export function assertValidStatePath(path: string): void {
   ) {
     throw new StateConfigurationError("state配下の正規化された相対パスが必要です");
   }
+}
+
+/** state配下またはstateルートの一覧取得用directoryか検証する。 */
+export function assertValidStateDirectory(path: string): void {
+  if (path === STATE_ROOT_DIRECTORY) {
+    return;
+  }
+  assertValidStatePath(path);
 }
 
 /** state設定を永続化境界でも独立して検証する。 */

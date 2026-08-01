@@ -25,6 +25,7 @@ import {
   GitStateBranchAdapter,
   MemoryStateBranchAdapter,
   StateBranchCommitError,
+  StateFormatError,
   StatePersistenceSession,
   StatePublicSafetyError,
   StateSnapshotSchemaError,
@@ -34,6 +35,7 @@ import {
   createStateSnapshot,
   parseStateSnapshot,
   serializeCanonicalJson,
+  serializeStateNotificationLedger,
   serializeStateSnapshot,
   type StateNotificationLedger,
   type StatePersistenceConfiguration,
@@ -635,6 +637,49 @@ describe("メモリstate branch transaction", () => {
         "state/run-reports/2026-08-01.json",
       ]),
     );
+  });
+
+  it("snapshotを欠く既存stateを初回運用障害stateと誤認しない", async () => {
+    const adapter = new MemoryStateBranchAdapter();
+    const notificationLedger = createStateNotificationLedger({
+      schemaVersion: "1",
+      entries: [],
+      operationsAlerts: [
+        {
+          alertKey: "discord-operations-alert:v1:initial-collection",
+          incidentId: "workflow-run-initial:collection",
+          kind: "collection",
+          occurredAt: fixedItemAt,
+          sentAt: fixedItemAt,
+          discordMessageId: "discord-operations-message-initial",
+        },
+      ],
+    });
+    await adapter.commit({
+      branch: "tracker-state",
+      expectedHead: {
+        status: "missing",
+      },
+      updates: [
+        {
+          path: stateConfiguration.notificationLedgerPath,
+          bytes: new TextEncoder().encode(serializeStateNotificationLedger(notificationLedger)),
+        },
+        {
+          path: "state/run-reports/2026-07-31.json",
+          bytes: new TextEncoder().encode("不完全なstate fixture\n"),
+        },
+      ],
+      message: "incomplete state fixture",
+      committedAt: fixedItemAt,
+    });
+    const session = await StatePersistenceSession.open(adapter, stateConfiguration);
+    const error = await captureError(session.loadSnapshot());
+
+    expect(error).toBeInstanceOf(StateFormatError);
+    expect(error.cause).toMatchObject({
+      message: "既存state branchにsnapshotがありません",
+    });
   });
 
   it("ref更新前の失敗でlast good commitとsnapshotを変えない", async () => {

@@ -245,6 +245,11 @@ describe("日次workflow", () => {
     expect(notifyCommands).toContain("tracker-run.mjs notify-discord");
     expect(notifyCommands).not.toContain("curl");
     expect(operationsCommands).toContain("tracker:run notify-operations");
+    expect(operationsCommands).toContain("git ls-remote --exit-code --heads origin tracker-state");
+    expect(operationsCommands).toContain(
+      "git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state",
+    );
+    expect(operationsCommands).toContain('elif [[ "$state_branch_status" -ne 2 ]]');
     expect(operationsCommands).toContain("incident_kind=collection");
     expect(operationsCommands).toContain("incident_kind=pages");
     expect(operationsCommands).toContain("incident_kind=discord");

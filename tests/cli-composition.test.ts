@@ -655,7 +655,7 @@ describe("CLI合成root", () => {
       (await loadConfig(join(import.meta.dirname, "fixtures/config.valid.yml"))).state,
     );
     const failedRunSnapshot = await failedRunSession.loadSnapshot();
-    if (failedRunSnapshot.status === "missing_branch") {
+    if (failedRunSnapshot.status !== "available") {
       throw new TypeError("失敗runのsnapshotがありません");
     }
     expect(failedRunSnapshot.snapshot.trackingStartAt).toEqual({
@@ -675,7 +675,7 @@ describe("CLI合成root", () => {
       (await loadConfig(join(import.meta.dirname, "fixtures/config.valid.yml"))).state,
     );
     const successfulRunSnapshot = await successfulRunSession.loadSnapshot();
-    if (successfulRunSnapshot.status === "missing_branch") {
+    if (successfulRunSnapshot.status !== "available") {
       throw new TypeError("成功runのsnapshotがありません");
     }
 
@@ -709,20 +709,39 @@ describe("CLI合成root", () => {
 
   it.each([
     {
+      stateStatus: "available",
       incidentKind: "collection",
       incidentId: "workflow-run-123:collection",
       processName: "GitHub収集",
       summary: "GitHub収集がretry上限に達したため、公開処理を停止しました",
+      expectedStateCommitCount: 2,
     },
     {
+      stateStatus: "available",
       incidentKind: "discord",
       incidentId: "workflow-run-123:discord",
       processName: "Discord通知",
       summary: "通常digestのDiscord送信がretry上限に達しました",
+      expectedStateCommitCount: 2,
+    },
+    {
+      stateStatus: "missing_branch",
+      incidentKind: "collection",
+      incidentId: "workflow-run-initial:collection",
+      processName: "GitHub収集",
+      summary: "GitHub収集がretry上限に達したため、公開処理を停止しました",
+      expectedStateCommitCount: 1,
     },
   ])(
-    "$incidentKind運用障害stageが通常digestと別の1件を送りledgerで重複を抑止する",
-    async ({ incidentKind, incidentId, processName, summary }) => {
+    "$stateStatusの$incidentKind運用障害stageが1件だけ送りledgerで重複を抑止する",
+    async ({
+      stateStatus,
+      incidentKind,
+      incidentId,
+      processName,
+      summary,
+      expectedStateCommitCount,
+    }) => {
       let stateCommitCount = 0;
       const payloads: DiscordWebhookPayload[] = [];
       const artifact = createEmptyWorkflowArtifact("tracker-run:composition-workflow-stage");
@@ -770,7 +789,9 @@ describe("CLI合成root", () => {
       });
       const application = createProductionCliApplication(runtimeAdapters);
 
-      await application.run(["persist-state", "--config", "tests/fixtures/config.valid.yml"]);
+      if (stateStatus === "available") {
+        await application.run(["persist-state", "--config", "tests/fixtures/config.valid.yml"]);
+      }
       const command = [
         "notify-operations",
         "--config",
@@ -788,9 +809,11 @@ describe("CLI合成root", () => {
       const second = await application.run(command);
       const config = await loadConfig(join(import.meta.dirname, "fixtures/config.valid.yml"));
       const session = await StatePersistenceSession.open(stateAdapter, config.state);
+      const snapshot = await session.loadSnapshot();
       const ledger = await session.loadNotificationLedger();
 
       expect([first.exitCode, second.exitCode]).toEqual([0, 0]);
+      expect(snapshot.status).toBe(stateStatus === "available" ? "available" : "operations_only");
       expect(payloads).toHaveLength(1);
       expect(payloads[0]?.content).toContain("VOICEVOX Task Tracker 運用障害");
       expect(payloads[0]?.embeds[0]?.fields).toContainEqual(
@@ -811,7 +834,7 @@ describe("CLI合成root", () => {
           kind: incidentKind,
         }),
       ]);
-      expect(stateCommitCount).toBe(2);
+      expect(stateCommitCount).toBe(expectedStateCommitCount);
     },
   );
 });

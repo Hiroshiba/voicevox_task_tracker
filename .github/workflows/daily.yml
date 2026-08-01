@@ -273,7 +273,16 @@ jobs:
         with:
           fetch-depth: 0
       - name: 既存stateを取得
-        run: git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state
+        run: |
+          set +e
+          git ls-remote --exit-code --heads origin tracker-state >/dev/null
+          state_branch_status=$?
+          set -e
+          if [[ "$state_branch_status" -eq 0 ]]; then
+            git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state
+          elif [[ "$state_branch_status" -ne 2 ]]; then
+            exit "$state_branch_status"
+          fi
       - name: Node.jsを準備
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:

@@ -1,4 +1,5 @@
 import {
+  assertValidStateDirectory,
   assertValidStatePath,
   type StateBranchAdapter,
   type StateBranchCommitRequest,
@@ -95,7 +96,7 @@ export class MemoryStateBranchAdapter implements StateBranchAdapter {
   }
 
   public listFiles(revision: string, directory: string): Promise<readonly string[]> {
-    assertValidStatePath(directory);
+    assertValidStateDirectory(directory);
     const commit = this.#commits.get(revision);
     if (commit == null) {
       return Promise.reject(
