@@ -114,7 +114,6 @@ Zodのstrict schemaで未知のfieldも拒否するため、設定名は`config.
 | `notifications.discord.mentions`                    | mentionの有効化とGitHub loginからDiscord user IDへのallowlist |
 | `notifications.discord.maxItemsPerDigest`           | 1回のdigestへ含める最大項目数                                 |
 | `notifications.discord.cooldownDays`                | urgentとcriticalの再通知間隔                                  |
-| `notifications.discord.silenceWhenEmpty`            | 候補0件の通常digestを送らない設定                             |
 | `state`                                             | 固定branch、snapshot、履歴、cache、ledger、reportの保存先     |
 | `web`                                               | base path、画面名、locale、初期graph上限                      |
 | `operations.githubApiBudgetRatio`                   | 1 runで使ってよいGitHub API予算の比率                         |
@@ -122,7 +121,6 @@ Zodのstrict schemaで未知のfieldも拒否するため、設定名は`config.
 
 現行設定ではCodexとDiscord通知が有効です。
 `ai.model`の利用可否は、lockfileで固定したCodex CLIと`OPENAI_API_KEY`を使うdry-runで確認します。
-`operations.failOnPrivateDataGuard`は`true`、`operations.publishPartialData`は`false`のまま運用します。
 `webhookSecretName`には`DISCORD_WEBHOOK_URL`、`operationsWebhookSecretName`には`DISCORD_OPERATIONS_WEBHOOK_URL`を指定します。
 通常digestと運用障害通知を同じchannelへ送る場合は、2つのsecretへ同じIncoming Webhook URLを登録します。
 

@@ -356,7 +356,6 @@ const configSchema = z.strictObject({
       authentication: z.enum(CODEX_AUTHENTICATIONS),
       model: requiredStringSchema,
       promptVersion: requiredStringSchema,
-      schemaPath: requiredStringSchema,
       confidence: aiConfidenceSchema.default({
         high: DEFAULT_HIGH_CONFIDENCE,
         medium: DEFAULT_MEDIUM_CONFIDENCE,
@@ -396,15 +395,12 @@ const configSchema = z.strictObject({
         urgent: nonNegativeIntegerSchema,
         critical: nonNegativeIntegerSchema,
       }),
-      silenceWhenEmpty: z.boolean(),
     }),
   }),
   state: stateSchema,
   web: webConfigSchema,
   operations: z.strictObject({
     githubApiBudgetRatio: probabilitySchema,
-    failOnPrivateDataGuard: z.boolean(),
-    publishPartialData: z.boolean(),
     retry: z.strictObject({
       maxAttempts: positiveIntegerSchema,
       initialDelaySeconds: nonNegativeNumberSchema,

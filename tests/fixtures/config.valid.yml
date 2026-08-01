@@ -76,7 +76,6 @@ ai:
   authentication: api-key
   model: codex-model
   promptVersion: v1
-  schemaPath: schemas/codex-analysis.schema.json
   confidence:
     high: 0.85
     medium: 0.65
@@ -106,7 +105,6 @@ notifications:
     cooldownDays:
       urgent: 3
       critical: 2
-    silenceWhenEmpty: true
 
 state:
   branch: tracker-state
@@ -127,8 +125,6 @@ web:
 
 operations:
   githubApiBudgetRatio: 0.70
-  failOnPrivateDataGuard: true
-  publishPartialData: false
   retry:
     maxAttempts: 4
     initialDelaySeconds: 2
