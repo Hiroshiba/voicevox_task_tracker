@@ -8,6 +8,7 @@ export {
   type DiscordNotificationLatestChange,
   type DiscordNotificationPrevious,
   type DiscordNotificationPreviousState,
+  type DiscordNotificationRecommendation,
   type DiscordNotificationReasonCode,
   type DiscordNotificationSelection,
   type DiscordNotificationSelectionSettings,

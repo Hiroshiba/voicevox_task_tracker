@@ -19,6 +19,7 @@ import {
   selectDiscordNotifications,
   type DiscordNotificationItem,
   type DiscordNotificationPrevious,
+  type DiscordNotificationRecommendation,
   type DiscordNotificationReasonCode,
   type DiscordNotificationSelection,
   type DiscordNotificationSelectionSettings,
@@ -60,6 +61,7 @@ type ItemOverrides = Readonly<{
   notificationsSuppressedByLabel?: boolean;
   latestChange?: DiscordNotificationItem["latestChange"];
   decisionBasis?: DiscordNotificationItem["decisionBasis"];
+  notificationRecommendation?: DiscordNotificationRecommendation;
   priorityWeight?: number;
   previous?: DiscordNotificationPrevious;
   downstreamOpenNodeCount?: number;
@@ -139,6 +141,8 @@ function createItem(nodeIdValue: string, overrides: ItemOverrides): DiscordNotif
     notificationsSuppressedByLabel: overrides.notificationsSuppressedByLabel ?? false,
     latestChange: overrides.latestChange ?? "none",
     decisionBasis: overrides.decisionBasis ?? Object.freeze({ source: "deterministic" }),
+    notificationRecommendation:
+      overrides.notificationRecommendation ?? Object.freeze({ availability: "not_available" }),
     priorityWeight: overrides.priorityWeight ?? 0,
     current: Object.freeze({
       status: overrides.status ?? "in_progress",
@@ -371,6 +375,110 @@ describe("通知理由の抽出", () => {
       "owner_unknown",
     ]);
     expect(selection.ledgerReservations).toHaveLength(2);
+  });
+});
+
+describe("Codex通知提案の統合", () => {
+  function createAvailableRecommendation(
+    reasonCode: DiscordNotificationReasonCode,
+    policy: "eligible" | "normal_priority_only",
+  ): DiscordNotificationRecommendation {
+    return Object.freeze({
+      availability: "available",
+      value: Object.freeze({
+        recommended: true,
+        reasonCode,
+        reasonSummary: "検証済みCodex出力による通知提案です",
+        policy,
+        highPriorityEligible: policy === "eligible",
+      }),
+    });
+  }
+
+  it("高信頼recommendationがある場合だけ定式理由のない項目を候補にする", () => {
+    const withoutRecommendation = createItem("I_without_recommendation", {});
+    const withRecommendation = createItem("I_with_recommendation", {
+      decisionBasis: {
+        source: "ai_only",
+        confidence: 0.95,
+      },
+      notificationRecommendation: createAvailableRecommendation("review_overdue", "eligible"),
+    });
+
+    expect(selectOne(withoutRecommendation).candidates).toEqual([]);
+    expect(candidateReasonCodes(selectOne(withRecommendation))).toEqual(["review_overdue"]);
+  });
+
+  it("通知しないrecommendationでも定式ルールの候補を残す", () => {
+    const item = createItem("I_deterministic_with_suppressed_recommendation", {
+      status: "waiting_for_review",
+      waitingOn: [reviewer],
+      severity: "watch",
+      waitClass: "reviewer",
+      notificationRecommendation: Object.freeze({
+        availability: "available",
+        value: Object.freeze({
+          recommended: false,
+          reasonCode: "none",
+          reasonSummary: "Codexは通知を提案していません",
+          policy: "suppressed",
+          highPriorityEligible: false,
+        }),
+      }),
+    });
+
+    expect(candidateReasonCodes(selectOne(item))).toEqual(["review_overdue"]);
+  });
+
+  it("中信頼recommendationだけの候補を通常優先度に制限する", () => {
+    const deterministicWatch = createItem("I_deterministic_watch", {
+      status: "waiting_for_review",
+      waitingOn: [reviewer],
+      severity: "watch",
+      waitClass: "reviewer",
+    });
+    const mediumRecommendation = createItem("I_medium_recommendation", {
+      severity: "critical",
+      decisionBasis: {
+        source: "ai_only",
+        confidence: 0.7,
+      },
+      notificationRecommendation: createAvailableRecommendation(
+        "triage_overdue",
+        "normal_priority_only",
+      ),
+    });
+    const limitedSettings = Object.freeze({
+      ...settings,
+      maxItemsPerDigest: 1,
+    });
+
+    const selection = selectDiscordNotifications(
+      createInput(NOW, [mediumRecommendation, deterministicWatch], [], limitedSettings),
+    );
+
+    expect(selectedNodeIds(selection)).toEqual([deterministicWatch.nodeId]);
+  });
+
+  it("低信頼で抑制されたrecommendationだけでは候補にしない", () => {
+    const item = createItem("I_low_recommendation", {
+      decisionBasis: {
+        source: "ai_only",
+        confidence: 0.649_999,
+      },
+      notificationRecommendation: Object.freeze({
+        availability: "available",
+        value: Object.freeze({
+          recommended: false,
+          reasonCode: "none",
+          reasonSummary: "Codex判定のconfidenceが低いため抑制されました",
+          policy: "suppressed",
+          highPriorityEligible: false,
+        }),
+      }),
+    });
+
+    expect(selectOne(item).candidates).toEqual([]);
   });
 });
 

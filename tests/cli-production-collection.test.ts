@@ -18,6 +18,7 @@ import {
   type GitHubItemDisplayReference,
   type GitHubItemUrl,
   type GitHubNodeId,
+  type NotificationReasonCode,
   type ObservedGitHubItemState,
   type Repository,
   type UtcIsoDateTime,
@@ -529,6 +530,11 @@ function createCodexOutput(
     latestMeaningfulSourceId: string | null;
     confidence: number;
     relationVerdict: RelationAssessmentVerdict;
+    notification: Readonly<{
+      recommended: boolean;
+      reasonCode: NotificationReasonCode;
+      reasonSummary: string;
+    }>;
   }>,
 ): unknown {
   const evidenceSource = input.sources[0];
@@ -574,11 +580,7 @@ function createCodexOutput(
     ],
     confidence: options.confidence,
     uncertainties: [],
-    notification: {
-      recommended: false,
-      reasonCode: "none",
-      reasonSummary: "通知しません",
-    },
+    notification: options.notification,
   };
 }
 
@@ -1870,6 +1872,11 @@ describe("本番判定入力の接続", () => {
             latestMeaningfulSourceId: meaningfulComment.sourceId,
             confidence: 0.95,
             relationVerdict: "related",
+            notification: {
+              recommended: false,
+              reasonCode: "none",
+              reasonSummary: "通知しません",
+            },
           }),
         );
       },
@@ -1963,6 +1970,101 @@ describe("本番判定入力の接続", () => {
     });
   });
 
+  it("reducerの検証済み通知提案を通知選別へ渡す", async () => {
+    const repository = createRepository("R_codex_notification", "codex-notification", FIRST_RUN_AT);
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const recommendedItem = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "notification-recommended",
+      updatedAt: observedAt,
+      observedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const notRecommendedItem = createIssueItem({
+      repository: publicRepository,
+      number: 2,
+      fingerprint: "notification-not-recommended",
+      updatedAt: observedAt,
+      observedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const items = [recommendedItem, notRecommendedItem];
+    fixture.openItems = items;
+    for (const item of items) {
+      fixture.details.set(
+        item.nodeId,
+        createIssueDetail({
+          item,
+          body: "@requested-user に対応をお願いします",
+          observedAt,
+          nativeDependencies: Object.freeze([]),
+          duplicateComments: false,
+        }),
+      );
+    }
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: true,
+    });
+    const harness = createCollectionHarness({
+      repositories: [fixture],
+      config,
+      executeCodexAnalysis: (input) => {
+        const source = input.sources.find((candidate) => candidate.kind === "body");
+        if (source == null) {
+          throw new TypeError("通知提案fixtureのbody sourceがありません");
+        }
+        const recommended = input.item.nodeId === recommendedItem.nodeId;
+        return Promise.resolve(
+          createCodexOutput(input, {
+            status: "in_progress",
+            waitingOn: {
+              candidateId: "requested-user",
+              kind: "user",
+              role: "assignee",
+              sourceId: source.id,
+            },
+            latestMeaningfulSourceId: null,
+            confidence: 0.7,
+            relationVerdict: "related",
+            notification: recommended
+              ? {
+                  recommended: true,
+                  reasonCode: "review_overdue",
+                  reasonSummary: "レビュー状況の確認が必要です",
+                }
+              : {
+                  recommended: false,
+                  reasonCode: "none",
+                  reasonSummary: "通知は不要です",
+                },
+          }),
+        );
+      },
+    });
+
+    const result = await harness.runDry(FIRST_RUN_AT);
+
+    expect(result.exitCode).toBe(0);
+    expect(harness.codexInputs).toHaveLength(2);
+    expect(harness.artifacts.at(-1)).toMatchObject({
+      result: {
+        notificationSelection: {
+          candidates: [
+            {
+              itemNodeId: recommendedItem.nodeId,
+              reasonCode: "review_overdue",
+            },
+          ],
+        },
+      },
+    });
+  });
+
   it("required check失敗をCodexへ渡しコード起因だけをauthor待ちにする", async () => {
     const repository = createRepository("R_codex_pr", "codex-pr", FIRST_RUN_AT);
     const publicRepository = requirePublicRepository(repository);
@@ -2017,6 +2119,11 @@ describe("本番判定入力の接続", () => {
             latestMeaningfulSourceId: null,
             confidence: 0.95,
             relationVerdict: "related",
+            notification: {
+              recommended: false,
+              reasonCode: "none",
+              reasonSummary: "通知しません",
+            },
           }),
         );
       },
@@ -2269,6 +2376,11 @@ describe("本番判定入力の接続", () => {
               input.item.nodeId === blocked.nodeId && relationExists
                 ? "current_is_blocked_by_target"
                 : "none",
+            notification: {
+              recommended: false,
+              reasonCode: "none",
+              reasonSummary: "通知しません",
+            },
           }),
         );
       },
@@ -2534,6 +2646,11 @@ describe("本番判定入力の接続", () => {
             latestMeaningfulSourceId: null,
             confidence: 0.95,
             relationVerdict: "related",
+            notification: {
+              recommended: false,
+              reasonCode: "none",
+              reasonSummary: "通知しません",
+            },
           }),
         );
       },

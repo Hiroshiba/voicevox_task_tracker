@@ -133,6 +133,7 @@ type ItemAnalysis = Readonly<{
   input: GoldenItemInput;
   deterministicDecision: IssueStateDecision | PullRequestStateDecision;
   decision: ReducedCodexDecision;
+  notificationRecommendation: DiscordNotificationItem["notificationRecommendation"];
   staleness: StalenessResult;
 }>;
 
@@ -676,13 +677,27 @@ function applyFixedAiAnalyses(
   deterministicDecisions: ReadonlyMap<string, IssueStateDecision | PullRequestStateDecision>,
 ): Readonly<{
   decisions: ReadonlyMap<string, ReducedCodexDecision>;
+  notificationRecommendations: ReadonlyMap<
+    string,
+    DiscordNotificationItem["notificationRecommendation"]
+  >;
   relationAssessments: readonly RelationCandidateAssessment[];
   acceptedOutputCount: number;
   rejectedOutputCount: number;
 }> {
   const decisions = new Map<string, ReducedCodexDecision>();
+  const notificationRecommendations = new Map<
+    string,
+    DiscordNotificationItem["notificationRecommendation"]
+  >();
   for (const [nodeId, decision] of deterministicDecisions) {
     decisions.set(nodeId, deterministicReducedDecision(decision));
+    notificationRecommendations.set(
+      nodeId,
+      Object.freeze({
+        availability: "not_available",
+      }),
+    );
   }
   const relationAssessments: RelationCandidateAssessment[] = [];
   let rejectedOutputCount = 0;
@@ -716,10 +731,18 @@ function applyFixedAiAnalyses(
       CONFIDENCE_THRESHOLDS,
     );
     decisions.set(analysis.itemNodeId, reduction.decision);
+    notificationRecommendations.set(
+      analysis.itemNodeId,
+      Object.freeze({
+        availability: "available",
+        value: reduction.notification,
+      }),
+    );
     relationAssessments.push(...reduction.relationAssessments);
   }
   return Object.freeze({
     decisions,
+    notificationRecommendations,
     relationAssessments: Object.freeze(relationAssessments),
     acceptedOutputCount: input.fixedAiAnalyses.length,
     rejectedOutputCount,
@@ -1149,6 +1172,7 @@ function selectNotifications(
               source: "ai_only",
               confidence: analysis.decision.confidence,
             }),
+      notificationRecommendation: analysis.notificationRecommendation,
       priorityWeight: analysis.input.priorityWeight,
       current: Object.freeze({
         status: analysis.decision.status,
@@ -1246,12 +1270,18 @@ function analyzeStandardFixture(input: StandardGoldenInput): GoldenFixtureAnalys
     input.items.map((item) => {
       const deterministicDecision = deterministicDecisions.get(item.nodeId);
       const decision = fixedAi.decisions.get(item.nodeId);
+      const notificationRecommendation = fixedAi.notificationRecommendations.get(item.nodeId);
       assertNonNullable(deterministicDecision, `項目 ${item.nodeId}の決定論的判定がありません`);
       assertNonNullable(decision, `項目 ${item.nodeId}の最終判定がありません`);
+      assertNonNullable(
+        notificationRecommendation,
+        `項目 ${item.nodeId}のCodex通知提案がありません`,
+      );
       return Object.freeze({
         input: item,
         deterministicDecision,
         decision,
+        notificationRecommendation,
         staleness: createStaleness(input, item, deterministicDecision, decision),
       });
     }),

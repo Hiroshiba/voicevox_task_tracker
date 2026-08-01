@@ -39,6 +39,22 @@ export type DiscordNotificationDecisionBasis =
       confidence: number;
     }>;
 
+/** reducerで検証済みのCodex通知提案を利用できるかを表す。 */
+export type DiscordNotificationRecommendation =
+  | Readonly<{
+      availability: "not_available";
+    }>
+  | Readonly<{
+      availability: "available";
+      value: Readonly<{
+        recommended: boolean;
+        reasonCode: NotificationReasonCode;
+        reasonSummary: string;
+        policy: "eligible" | "normal_priority_only" | "suppressed";
+        highPriorityEligible: boolean;
+      }>;
+    }>;
+
 /** 通知判定時点の項目状態。 */
 export type DiscordNotificationCurrentState = Readonly<{
   status: Status;
@@ -95,6 +111,7 @@ export type DiscordNotificationItem = Readonly<{
   notificationsSuppressedByLabel: boolean;
   latestChange: DiscordNotificationLatestChange;
   decisionBasis: DiscordNotificationDecisionBasis;
+  notificationRecommendation: DiscordNotificationRecommendation;
   priorityWeight: number;
   current: DiscordNotificationCurrentState;
   previous: DiscordNotificationPrevious;
@@ -160,6 +177,7 @@ type ReasonSignal = Readonly<{
   reasonCode: DiscordNotificationReasonCode;
   stateDiscriminator: string;
   repeatable: boolean;
+  highPriorityEligible: boolean;
 }>;
 
 type EligibleReason = Readonly<{
@@ -294,6 +312,25 @@ function validateGraphContext(item: DiscordNotificationItem): void {
   }
 }
 
+function validateNotificationRecommendation(item: DiscordNotificationItem): void {
+  if (item.notificationRecommendation.availability === "not_available") {
+    return;
+  }
+  const recommendation = item.notificationRecommendation.value;
+  if (recommendation.recommended === (recommendation.reasonCode === "none")) {
+    throw new TypeError(`${item.nodeId}のCodex通知提案とreason codeが一致しません`);
+  }
+  if (
+    recommendation.highPriorityEligible !==
+    (recommendation.recommended && recommendation.policy === "eligible")
+  ) {
+    throw new TypeError(`${item.nodeId}のCodex通知提案と優先度ポリシーが一致しません`);
+  }
+  if (recommendation.recommended && recommendation.policy === "suppressed") {
+    throw new TypeError(`${item.nodeId}の抑制対象Codex通知提案を推薦扱いにはできません`);
+  }
+}
+
 function validateLedger(
   ledger: readonly NotificationLedgerEntry[],
   evaluatedTimestamp: number,
@@ -351,6 +388,7 @@ function validateInput(input: SelectDiscordNotificationsInput): number {
     if (item.decisionBasis.source === "ai_only") {
       validateProbability(item.decisionBasis.confidence, `${item.nodeId}のAI confidence`);
     }
+    validateNotificationRecommendation(item);
     validateCurrentState(item, evaluatedTimestamp);
     validatePreviousState(item, evaluatedTimestamp);
     validateGraphContext(item);
@@ -473,6 +511,7 @@ function createOverdueSignals(
       reasonCode,
       stateDiscriminator: item.current.waitClass,
       repeatable: true,
+      highPriorityEligible: true,
     });
   }
 
@@ -489,6 +528,7 @@ function createOverdueSignals(
       reasonCode: "blocker_overdue",
       stateDiscriminator: JSON.stringify([impact.openNodeCount, impact.repositoryCount]),
       repeatable: true,
+      highPriorityEligible: true,
     });
   }
   return signals;
@@ -513,6 +553,7 @@ function createNewlyUnblockedSignal(item: DiscordNotificationItem): ReasonSignal
     reasonCode: "newly_unblocked",
     stateDiscriminator: item.current.statusSince,
     repeatable: false,
+    highPriorityEligible: true,
   };
 }
 
@@ -542,6 +583,43 @@ function createResponsibilityChangedSignal(
     reasonCode: "responsibility_changed",
     stateDiscriminator: item.current.ownerSince,
     repeatable: false,
+    highPriorityEligible: true,
+  };
+}
+
+function recommendationIsRepeatable(reasonCode: DiscordNotificationReasonCode): boolean {
+  switch (reasonCode) {
+    case "triage_overdue":
+    case "review_overdue":
+    case "author_overdue":
+    case "owner_unknown":
+    case "blocker_overdue":
+    case "ready_to_merge_overdue":
+    case "automation_stuck":
+      return true;
+    case "newly_unblocked":
+    case "dependency_cycle":
+    case "responsibility_changed":
+      return false;
+  }
+}
+
+function createRecommendationSignal(item: DiscordNotificationItem): ReasonSignal | undefined {
+  if (item.notificationRecommendation.availability === "not_available") {
+    return undefined;
+  }
+  const recommendation = item.notificationRecommendation.value;
+  if (!recommendation.recommended || recommendation.policy === "suppressed") {
+    return undefined;
+  }
+  if (recommendation.reasonCode === "none") {
+    throw new TypeError(`${item.nodeId}のCodex通知提案にreason codeがありません`);
+  }
+  return {
+    reasonCode: recommendation.reasonCode,
+    stateDiscriminator: JSON.stringify([item.nodeId, "codex_recommendation"]),
+    repeatable: recommendationIsRepeatable(recommendation.reasonCode),
+    highPriorityEligible: recommendation.highPriorityEligible,
   };
 }
 
@@ -663,7 +741,15 @@ function createSignals(
       reasonCode: "dependency_cycle",
       stateDiscriminator: cycleId,
       repeatable: false,
+      highPriorityEligible: true,
     });
+  }
+  const recommendation = createRecommendationSignal(item);
+  if (
+    recommendation != null &&
+    !signals.some((signal) => signal.reasonCode === recommendation.reasonCode)
+  ) {
+    signals.push(recommendation);
   }
   return signals;
 }
@@ -847,6 +933,9 @@ function createCandidateDrafts(
 }
 
 function candidateTier(draft: CandidateDraft): number {
+  if (!draft.reasons.some((reason) => reason.signal.highPriorityEligible)) {
+    return 1;
+  }
   if (draft.item.current.severity === "critical") {
     return 7;
   }

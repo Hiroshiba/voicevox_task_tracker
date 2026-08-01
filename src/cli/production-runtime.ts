@@ -298,6 +298,7 @@ type ReducedItemAnalysis = Readonly<{
   item: FreshObservedGitHubItem;
   detail: GitHubItemDetail;
   decision: ReducedCodexDecision;
+  notificationRecommendation: DiscordNotificationItem["notificationRecommendation"];
   primaryWaitingOn: PrimaryWaitingOn;
   staleness: StalenessResult;
 }>;
@@ -2665,6 +2666,15 @@ function reduceAnalysisPass(
         item: analysis.item,
         detail: analysis.detail,
         decision,
+        notificationRecommendation:
+          reduction == null
+            ? Object.freeze({
+                availability: "not_available",
+              })
+            : Object.freeze({
+                availability: "available",
+                value: reduction.notification,
+              }),
         primaryWaitingOn,
         staleness,
       }),
@@ -3142,6 +3152,12 @@ function notificationItem(
         ? notificationLatestChange(analysisState.value, previous)
         : "none",
     decisionBasis: notificationDecisionBasis(item, staleness, analysisState),
+    notificationRecommendation:
+      analysisState.availability === "available"
+        ? analysisState.value.notificationRecommendation
+        : Object.freeze({
+            availability: "not_available",
+          }),
     priorityWeight: labelEffects.priorityWeight,
     current: {
       status: item.status,
