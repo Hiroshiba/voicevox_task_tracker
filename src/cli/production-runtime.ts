@@ -867,29 +867,74 @@ function createTrackingConnections(
 ): readonly TrackingConnection[] {
   const connections: TrackingConnection[] = [];
   for (const candidate of candidates) {
-    if (candidate.authority !== "authoritative") {
-      continue;
-    }
     const sourceId = candidate.sourceIds[0];
     assertNonNullable(sourceId, `関係候補 ${candidate.id}のsource IDがありません`);
-    if (candidate.relation.type === "blocks") {
-      connections.push(
-        Object.freeze({
-          kind: "native_dependency",
-          sourceId,
-          blockerNodeId: candidate.relation.blocker.nodeId,
-          blockedNodeId: candidate.relation.blocked.nodeId,
-        }),
-      );
-    } else {
-      connections.push(
-        Object.freeze({
-          kind: "native_sub_issue",
-          sourceId,
-          parentNodeId: candidate.relation.parent.nodeId,
-          subIssueNodeId: candidate.relation.subtask.nodeId,
-        }),
-      );
+    switch (candidate.relation.type) {
+      case "blocks":
+        connections.push(
+          Object.freeze({
+            kind: "native_dependency",
+            sourceId,
+            blockerNodeId: candidate.relation.blocker.nodeId,
+            blockedNodeId: candidate.relation.blocked.nodeId,
+          }),
+        );
+        break;
+      case "parent_of":
+        if (candidate.authority === "authoritative") {
+          connections.push(
+            Object.freeze({
+              kind: "native_sub_issue",
+              sourceId,
+              parentNodeId: candidate.relation.parent.nodeId,
+              subIssueNodeId: candidate.relation.subtask.nodeId,
+            }),
+          );
+          break;
+        }
+        connections.push(
+          Object.freeze({
+            kind: "reference",
+            sourceId,
+            referencingNodeId: candidate.relation.parent.nodeId,
+            referencedNodeId: candidate.relation.subtask.nodeId,
+            relation: Object.freeze({
+              type: "non_blocking",
+              relationType: "parent_of",
+            }),
+          }),
+        );
+        break;
+      case "implements":
+        connections.push(
+          Object.freeze({
+            kind: "reference",
+            sourceId,
+            referencingNodeId: candidate.relation.implementation.nodeId,
+            referencedNodeId: candidate.relation.target.nodeId,
+            relation: Object.freeze({
+              type: "non_blocking",
+              relationType: "implements",
+            }),
+          }),
+        );
+        break;
+      case "unclassified":
+        connections.push(
+          Object.freeze({
+            kind: "reference",
+            sourceId,
+            referencingNodeId: candidate.relation.referencing.nodeId,
+            referencedNodeId: candidate.relation.referenced.nodeId,
+            relation: Object.freeze({
+              type: "non_blocking",
+              relationType: "related_to",
+            }),
+          }),
+        );
+        break;
+      default:
+        throw new UnreachableError(candidate.relation);
     }
   }
   return Object.freeze(connections);

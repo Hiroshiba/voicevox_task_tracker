@@ -29,8 +29,11 @@ import {
   type EnumeratedGitHubItem,
   type GitHubItemDetail,
   type GitHubItemDetailEventWindow,
+  type GitHubInboundCrossReferenceCandidate,
   type GitHubIssueComment,
   type GitHubNativeDependency,
+  type GitHubReferencedItem,
+  type GitHubTimelineEvent,
   type PublicRepository,
 } from "../src/github/index.js";
 import { type RelationAssessmentVerdict } from "../src/graph/index.js";
@@ -54,6 +57,7 @@ const FIRST_RUN_AT = "2026-08-01T00:00:00.000Z";
 const SECOND_RUN_AT = "2026-08-02T00:00:00.000Z";
 const THIRD_RUN_AT = "2026-08-04T00:00:00.000Z";
 const FOURTH_RUN_AT = "2026-08-05T00:00:00.000Z";
+const OLD_ITEM_AT = "2025-12-01T00:00:00.000Z";
 const displayReferenceSchema = z.custom<GitHubItemDisplayReference>(
   (value) => typeof value === "string" && /^[^/\s]+\/[^#\s]+#[1-9]\d*$/u.test(value),
 );
@@ -160,6 +164,16 @@ function createIssueItem(
     type: "issue",
     draft: "not_applicable",
     ...stateFields,
+  });
+}
+
+function replaceCreatedAt(
+  item: EnumeratedGitHubItem,
+  createdAt: UtcIsoDateTime,
+): EnumeratedGitHubItem {
+  return Object.freeze({
+    ...item,
+    createdAt,
   });
 }
 
@@ -810,6 +824,208 @@ describe("本番収集の接続", () => {
       available: false,
       degraded: false,
     });
+  });
+
+  it("tracked項目の本文とコメントから参照された開始日前項目を追跡する", async () => {
+    const repository = createRepository("R_outbound_reference", "outbound-reference", FIRST_RUN_AT);
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const oldItemAt = createUtcIsoDateTime(OLD_ITEM_AT);
+    const tracked = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "tracked",
+      updatedAt: observedAt,
+      observedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const bodyReferenced = replaceCreatedAt(
+      createIssueItem({
+        repository: publicRepository,
+        number: 2,
+        fingerprint: "body-referenced",
+        updatedAt: oldItemAt,
+        observedAt,
+        state: Object.freeze({ state: "open" }),
+      }),
+      oldItemAt,
+    );
+    const commentReferenced = replaceCreatedAt(
+      createIssueItem({
+        repository: publicRepository,
+        number: 3,
+        fingerprint: "comment-referenced",
+        updatedAt: oldItemAt,
+        observedAt,
+        state: Object.freeze({ state: "open" }),
+      }),
+      oldItemAt,
+    );
+    const commentNodeId = createGitHubNodeId("IC_outbound_reference");
+    const referenceComment = Object.freeze({
+      sourceId: buildSourceId("github_issue_comment", commentNodeId),
+      nodeId: commentNodeId,
+      sequence: 0,
+      author: Object.freeze({
+        status: "identified",
+        account: Object.freeze({
+          sourceId: buildSourceId("github_account", "U_outbound_reference"),
+          nodeId: createGitHubNodeId("U_outbound_reference"),
+          login: "outbound-reference-author",
+          apiType: "User",
+        }),
+      }),
+      body: `${commentReferenced.url} をコメントから参照します`,
+      createdAt: observedAt,
+      updatedAt: observedAt,
+      url: tracked.url,
+    } satisfies GitHubIssueComment);
+    fixture.openItems = [tracked, bodyReferenced, commentReferenced];
+    setIssueDetails(fixture, fixture.openItems, observedAt);
+    fixture.details.set(
+      tracked.nodeId,
+      Object.freeze({
+        ...createIssueDetail({
+          item: tracked,
+          body: `${bodyReferenced.url} を本文から参照します`,
+          observedAt,
+          nativeDependencies: Object.freeze([]),
+          duplicateComments: false,
+        }),
+        comments: Object.freeze([referenceComment]),
+      }),
+    );
+    const baseConfig = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: false,
+    });
+    const config = Object.freeze({
+      ...baseConfig,
+      tracking: Object.freeze({
+        ...baseConfig.tracking,
+        autoInclude: Object.freeze({
+          ...baseConfig.tracking.autoInclude,
+          referencesTracked: false,
+        }),
+      }),
+    });
+    const harness = createCollectionHarness({ repositories: [fixture], config });
+
+    const result = await harness.runDry(FIRST_RUN_AT);
+    const trackedNodeIds = requireDryRunSnapshot(harness.artifacts).items.map(
+      (item) => item.nodeId,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(trackedNodeIds).toHaveLength(3);
+    expect(trackedNodeIds).toEqual(
+      expect.arrayContaining([tracked.nodeId, bodyReferenced.nodeId, commentReferenced.nodeId]),
+    );
+  });
+
+  it("tracked項目へのcross-reference元である開始日前項目を追跡する", async () => {
+    const repository = createRepository("R_inbound_reference", "inbound-reference", FIRST_RUN_AT);
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const oldItemAt = createUtcIsoDateTime(OLD_ITEM_AT);
+    const tracked = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "tracked",
+      updatedAt: observedAt,
+      observedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const source = replaceCreatedAt(
+      createIssueItem({
+        repository: publicRepository,
+        number: 2,
+        fingerprint: "cross-reference-source",
+        updatedAt: oldItemAt,
+        observedAt,
+        state: Object.freeze({ state: "open" }),
+      }),
+      oldItemAt,
+    );
+    const sourceItem = Object.freeze({
+      sourceId: buildSourceId("github_item", source.nodeId),
+      nodeId: source.nodeId,
+      repositoryId: source.repositoryId,
+      repositoryOwner: publicRepository.owner,
+      repositoryName: publicRepository.name,
+      repositoryArchived: false,
+      repositoryDisabled: false,
+      type: source.type,
+      number: source.number,
+      url: source.url,
+      state: source.state,
+    } satisfies GitHubReferencedItem);
+    const eventNodeId = createGitHubNodeId("CRE_inbound_reference");
+    const eventSourceId = buildSourceId("github_timeline_event", eventNodeId);
+    const crossReferenceEvent = Object.freeze({
+      sourceId: eventSourceId,
+      nodeId: eventNodeId,
+      sequence: 0,
+      occurredAt: observedAt,
+      actor: Object.freeze({
+        status: "unavailable",
+        reason: "github_did_not_return_actor",
+      }),
+      kind: "cross_referenced",
+      source: sourceItem,
+      willCloseTarget: false,
+    } satisfies GitHubTimelineEvent);
+    const inboundCrossReference = Object.freeze({
+      sourceId: buildSourceId("github_inbound_cross_reference", `${eventNodeId}:${source.nodeId}`),
+      candidateOnly: true,
+      provenance: "cross_reference",
+      eventSourceId,
+      sourceItem,
+    } satisfies GitHubInboundCrossReferenceCandidate);
+    fixture.openItems = [tracked, source];
+    setIssueDetails(fixture, fixture.openItems, observedAt);
+    fixture.details.set(
+      tracked.nodeId,
+      Object.freeze({
+        ...createIssueDetail({
+          item: tracked,
+          body: "本文",
+          observedAt,
+          nativeDependencies: Object.freeze([]),
+          duplicateComments: false,
+        }),
+        timeline: Object.freeze([crossReferenceEvent]),
+        inboundCrossReferences: Object.freeze([inboundCrossReference]),
+      }),
+    );
+    const baseConfig = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: false,
+    });
+    const config = Object.freeze({
+      ...baseConfig,
+      tracking: Object.freeze({
+        ...baseConfig.tracking,
+        autoInclude: Object.freeze({
+          ...baseConfig.tracking.autoInclude,
+          referencedByTracked: false,
+        }),
+      }),
+    });
+    const harness = createCollectionHarness({ repositories: [fixture], config });
+
+    const result = await harness.runDry(FIRST_RUN_AT);
+    const trackedNodeIds = requireDryRunSnapshot(harness.artifacts).items.map(
+      (item) => item.nodeId,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(trackedNodeIds).toHaveLength(2);
+    expect(trackedNodeIds).toEqual(expect.arrayContaining([tracked.nodeId, source.nodeId]));
   });
 
   it("fingerprint変更項目とgraph隣接nodeだけをoverlap起点で詳細取得する", async () => {
