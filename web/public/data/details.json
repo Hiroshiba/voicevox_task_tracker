@@ -630,6 +630,23 @@
         "edgeIds": []
       }
     ],
+    "repositoryClusters": [
+      {
+        "repositoryId": "sample-repository-editor",
+        "nodeIds": ["sample-item-editor-101", "sample-item-editor-103"],
+        "edgeIds": []
+      },
+      {
+        "repositoryId": "sample-repository-engine",
+        "nodeIds": ["sample-item-engine-202", "sample-item-engine-204"],
+        "edgeIds": []
+      },
+      {
+        "repositoryId": "sample-repository-core",
+        "nodeIds": ["sample-item-core-305"],
+        "edgeIds": []
+      }
+    ],
     "frontierNodeIds": [
       "sample-item-editor-101",
       "sample-item-engine-202",

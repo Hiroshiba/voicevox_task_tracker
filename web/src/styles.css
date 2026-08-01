@@ -942,6 +942,34 @@ tbody th {
   margin-top: 1rem;
 }
 
+.graph-cluster-kind {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin: 1rem 0 0;
+  padding: 0.65rem 0.8rem 0.8rem;
+  color: #31425f;
+  background: #f5f8fd;
+  border: 1px solid #cbd7e8;
+  border-radius: 0.65rem;
+}
+
+.graph-cluster-kind legend {
+  padding-inline: 0.25rem;
+  font-weight: 750;
+}
+
+.graph-cluster-kind label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.55rem;
+  background: #ffffff;
+  border: 1px solid #bfc9d8;
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
 .component-browser {
   align-self: start;
   padding: 0.8rem;

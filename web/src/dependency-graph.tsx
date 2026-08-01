@@ -6,18 +6,23 @@ import {
   assertPublicDetailsMatchSummary,
   createComponentGraphView,
   createGraphComponentList,
+  createGraphRepositoryList,
+  createRepositoryGraphView,
   graphNodeKindLabel,
   graphNodeSeverityLabel,
   MAX_GRAPH_NODE_SIZE,
-  type ComponentGraphView,
+  type GraphClusterView,
+  type GraphComponentListItem,
   type GraphNodeLink,
+  type GraphRepositoryListItem,
   type GraphViewEdge,
   type GraphViewNode,
 } from "./graph-model.js";
 import type { GraphLayout, LayoutedGraphNode } from "./graph-layout.js";
 import { SafeGitHubLink } from "./safe-link.js";
+import type { GraphSelection } from "./url-state.js";
 
-const COMPONENTS_PER_PAGE = 50;
+const CLUSTERS_PER_PAGE = 50;
 
 /** details.jsonを検証して返す遅延loader。 */
 export type PublicDetailsLoader = () => Promise<PublicDetailsDto>;
@@ -26,17 +31,10 @@ type DependencyGraphProps = Readonly<{
   loadDetails: PublicDetailsLoader;
   locale: string;
   now: Date;
+  onSelectionChange: (selection: GraphSelection) => void;
+  selection: GraphSelection;
   summary: PublicSummaryDto;
 }>;
-
-type ComponentSelection =
-  | Readonly<{
-      status: "none";
-    }>
-  | Readonly<{
-      status: "selected";
-      componentId: string;
-    }>;
 
 type DetailsState =
   | Readonly<{
@@ -53,13 +51,13 @@ type DetailsState =
       status: "failed";
     }>;
 
-type ComponentViewState =
+type ClusterViewState =
   | Readonly<{
       status: "unavailable";
     }>
   | Readonly<{
       status: "available";
-      view: ComponentGraphView;
+      view: GraphClusterView;
     }>;
 
 type LayoutState =
@@ -187,7 +185,7 @@ function GraphSvg({ layout }: Readonly<{ layout: GraphLayout }>) {
         aria-labelledby="dependency-graph-title dependency-graph-description"
         data-rendered-node-count={layout.nodes.length}
       >
-        <title id="dependency-graph-title">選択したcomponentの依存グラフ</title>
+        <title id="dependency-graph-title">選択したclusterの依存グラフ</title>
         <desc id="dependency-graph-description">
           矢印は関係の始点から終点へ向き、blocksはblockerからblocked itemへ向きます。
         </desc>
@@ -269,7 +267,7 @@ function GraphSvg({ layout }: Readonly<{ layout: GraphLayout }>) {
   );
 }
 
-function GraphCanvas({ view }: Readonly<{ view: ComponentGraphView }>) {
+function GraphCanvas({ view }: Readonly<{ view: GraphClusterView }>) {
   const [layoutState, setLayoutState] = useState<LayoutState>({
     status: "loading",
   });
@@ -280,7 +278,7 @@ function GraphCanvas({ view }: Readonly<{ view: ComponentGraphView }>) {
       status: "loading",
     });
     void import("./graph-layout.js")
-      .then(({ layoutComponentGraph }) => layoutComponentGraph(view))
+      .then(({ layoutGraphCluster }) => layoutGraphCluster(view))
       .then((layout) => {
         if (active) {
           setLayoutState({
@@ -425,14 +423,14 @@ function edgeEndpointLabel(
 function GraphAlternativeTables({
   locale,
   view,
-}: Readonly<{ locale: string; view: ComponentGraphView }>) {
+}: Readonly<{ locale: string; view: GraphClusterView }>) {
   const sourceNodesById = new Map(view.sourceNodes.map((node) => [node.id, node]));
   return (
     <details class="graph-alternative">
       <summary>グラフと同じ情報を表形式で確認</summary>
       <div class="table-scroll">
         <table class="graph-node-table">
-          <caption>選択したcomponentのnode一覧</caption>
+          <caption>選択したclusterのnode一覧</caption>
           <thead>
             <tr>
               <th scope="col">項目</th>
@@ -483,7 +481,7 @@ function GraphAlternativeTables({
       </div>
       <div class="table-scroll">
         <table class="graph-edge-table">
-          <caption>選択したcomponentのedge一覧</caption>
+          <caption>選択したclusterのedge一覧</caption>
           <thead>
             <tr>
               <th scope="col">向き</th>
@@ -536,10 +534,10 @@ function CycleControls({
 }: Readonly<{
   expandedCycleIds: readonly string[];
   onToggle: (cycleId: string) => void;
-  view: ComponentGraphView;
+  view: GraphClusterView;
 }>) {
   if (view.cycles.length === 0) {
-    return <p class="graph-no-cycles">このcomponentにdependency cycleはありません。</p>;
+    return <p class="graph-no-cycles">このclusterにdependency cycleはありません。</p>;
   }
   return (
     <section class="graph-cycles" aria-labelledby="graph-cycles-heading">
@@ -580,7 +578,7 @@ function SelectedComponentGraph({
   expandedCycleIds: readonly string[];
   locale: string;
   onToggleCycle: (cycleId: string) => void;
-  view: ComponentGraphView;
+  view: GraphClusterView;
 }>) {
   return (
     <div class="selected-component-graph">
@@ -602,47 +600,85 @@ function SelectedComponentGraph({
   );
 }
 
-/** component一覧から選択した依存グラフだけを遅延取得して描画する。 */
-export function DependencyGraph({ loadDetails, locale, now, summary }: DependencyGraphProps) {
+type GraphClusterListItem = GraphComponentListItem | GraphRepositoryListItem;
+
+function selectedClusterId(
+  selection: Exclude<GraphSelection, Readonly<{ status: "none" }>>,
+): string {
+  return selection.kind === "component" ? selection.componentId : selection.repositoryId;
+}
+
+/** cluster一覧から選択した依存グラフだけを遅延取得して描画する。 */
+export function DependencyGraph({
+  loadDetails,
+  locale,
+  now,
+  onSelectionChange,
+  selection,
+  summary,
+}: DependencyGraphProps) {
   const components = useMemo(() => createGraphComponentList(summary), [summary]);
-  const [componentPage, setComponentPage] = useState(0);
-  const [selection, setSelection] = useState<ComponentSelection>({
-    status: "none",
-  });
+  const repositories = useMemo(() => createGraphRepositoryList(summary), [summary]);
+  const [clusterKind, setClusterKind] = useState<"component" | "repository">(
+    selection.status === "selected" ? selection.kind : "component",
+  );
+  const [clusterPage, setClusterPage] = useState(0);
   const [detailsState, setDetailsState] = useState<DetailsState>({
     status: "not_requested",
   });
   const [expandedCycleIds, setExpandedCycleIds] = useState<readonly string[]>([]);
-  const pageCount = Math.max(1, Math.ceil(components.length / COMPONENTS_PER_PAGE));
-  const visibleComponents = components.slice(
-    componentPage * COMPONENTS_PER_PAGE,
-    (componentPage + 1) * COMPONENTS_PER_PAGE,
+  const clusters: readonly GraphClusterListItem[] =
+    clusterKind === "component" ? components : repositories;
+  const pageCount = Math.max(1, Math.ceil(clusters.length / CLUSTERS_PER_PAGE));
+  const visibleClusters = clusters.slice(
+    clusterPage * CLUSTERS_PER_PAGE,
+    (clusterPage + 1) * CLUSTERS_PER_PAGE,
   );
-  const componentViewState = useMemo<ComponentViewState>(() => {
+  const clusterViewState = useMemo<ClusterViewState>(() => {
     if (selection.status === "none" || detailsState.status !== "loaded") {
       return {
         status: "unavailable",
       };
     }
+    const expandedCycles = new Set(expandedCycleIds);
     return {
       status: "available",
-      view: createComponentGraphView(
-        summary,
-        detailsState.details,
-        selection.componentId,
-        new Set(expandedCycleIds),
-        now,
-      ),
+      view:
+        selection.kind === "component"
+          ? createComponentGraphView(
+              summary,
+              detailsState.details,
+              selection.componentId,
+              expandedCycles,
+              now,
+            )
+          : createRepositoryGraphView(
+              summary,
+              detailsState.details,
+              selection.repositoryId,
+              expandedCycles,
+              now,
+            ),
     };
   }, [detailsState, expandedCycleIds, now, selection, summary]);
 
-  function selectComponent(componentId: string): void {
-    setSelection({
-      status: "selected",
-      componentId,
-    });
+  useEffect(() => {
+    if (selection.status === "none") {
+      return;
+    }
+    const selectedId = selectedClusterId(selection);
+    const selectedClusters = selection.kind === "component" ? components : repositories;
+    const selectedIndex = selectedClusters.findIndex((cluster) => cluster.id === selectedId);
+    if (selectedIndex < 0) {
+      throw new TypeError(`選択された依存グラフclusterがありません: ${selectedId}`);
+    }
+    setClusterKind(selection.kind);
+    setClusterPage(Math.floor(selectedIndex / CLUSTERS_PER_PAGE));
     setExpandedCycleIds([]);
-    if (detailsState.status === "loaded" || detailsState.status === "loading") {
+  }, [components, repositories, selection]);
+
+  useEffect(() => {
+    if (selection.status === "none" || detailsState.status !== "not_requested") {
       return;
     }
     setDetailsState({
@@ -672,6 +708,39 @@ export function DependencyGraph({ loadDetails, locale, now, summary }: Dependenc
           status: "failed",
         });
       });
+  }, [detailsState.status, loadDetails, selection.status, summary]);
+
+  function changeClusterKind(nextKind: "component" | "repository"): void {
+    setClusterKind(nextKind);
+    setClusterPage(0);
+    setExpandedCycleIds([]);
+    if (selection.status === "selected") {
+      onSelectionChange({
+        status: "none",
+      });
+    }
+  }
+
+  function selectCluster(clusterId: string): void {
+    setExpandedCycleIds([]);
+    if (detailsState.status === "failed") {
+      setDetailsState({
+        status: "not_requested",
+      });
+    }
+    onSelectionChange(
+      clusterKind === "component"
+        ? {
+            status: "selected",
+            kind: "component",
+            componentId: clusterId,
+          }
+        : {
+            status: "selected",
+            kind: "repository",
+            repositoryId: clusterId,
+          },
+    );
   }
 
   function toggleCycle(cycleId: string): void {
@@ -689,109 +758,166 @@ export function DependencyGraph({ loadDetails, locale, now, summary }: Dependenc
           <p class="eyebrow">Dependency graph</p>
           <h2 id="dependency-heading">依存グラフ</h2>
         </div>
-        <p>connected componentを選ぶと、そのcomponentだけを取得して自動配置します。</p>
+        <p>connected componentまたはrepository clusterを選んで自動配置します。</p>
       </div>
       <GraphLegend />
       {components.length === 0 ? (
         <p class="empty-state">表示できる依存componentはありません。</p>
       ) : (
-        <div class="dependency-workspace">
-          <nav class="component-browser" aria-label="依存componentの選択">
-            <div class="component-browser-heading">
-              <h3>connected component</h3>
-              <p>{components.length.toLocaleString(locale)}件</p>
+        <>
+          {summary.graph.clusterByRepository && (
+            <fieldset class="graph-cluster-kind">
+              <legend>表示単位</legend>
+              <label>
+                <input
+                  type="radio"
+                  name="graph-cluster-kind"
+                  value="component"
+                  checked={clusterKind === "component"}
+                  onChange={() => {
+                    changeClusterKind("component");
+                  }}
+                />
+                connected component
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="graph-cluster-kind"
+                  value="repository"
+                  checked={clusterKind === "repository"}
+                  onChange={() => {
+                    changeClusterKind("repository");
+                  }}
+                />
+                repository cluster
+              </label>
+            </fieldset>
+          )}
+          <div class="dependency-workspace">
+            <nav
+              class="component-browser"
+              aria-label={
+                clusterKind === "component"
+                  ? "connected componentの選択"
+                  : "repository clusterの選択"
+              }
+            >
+              <div class="component-browser-heading">
+                <h3>
+                  {clusterKind === "component" ? "connected component" : "repository cluster"}
+                </h3>
+                <p>{clusters.length.toLocaleString(locale)}件</p>
+              </div>
+              <ol start={clusterPage * CLUSTERS_PER_PAGE + 1}>
+                {visibleClusters.map((cluster) => {
+                  const selected =
+                    selection.status === "selected" &&
+                    selection.kind === clusterKind &&
+                    selectedClusterId(selection) === cluster.id;
+                  return (
+                    <li key={cluster.id}>
+                      <button
+                        type="button"
+                        class={
+                          selected
+                            ? "component-button component-button-selected"
+                            : "component-button"
+                        }
+                        data-cluster-id={cluster.id}
+                        {...(clusterKind === "component"
+                          ? { "data-component-id": cluster.id }
+                          : { "data-repository-id": cluster.id })}
+                        aria-pressed={selected}
+                        disabled={detailsState.status === "loading"}
+                        onClick={() => {
+                          selectCluster(cluster.id);
+                        }}
+                      >
+                        <strong>
+                          {clusterKind === "component"
+                            ? `component ${cluster.ordinal.toLocaleString(locale)}`
+                            : cluster.repositoryText}
+                        </strong>
+                        <span>
+                          {clusterKind === "component"
+                            ? cluster.repositoryText
+                            : `repository cluster ${cluster.ordinal.toLocaleString(locale)}`}
+                        </span>
+                        <span>
+                          {cluster.nodeCount.toLocaleString(locale)} node・
+                          {cluster.edgeCount.toLocaleString(locale)} edge
+                        </span>
+                        <span>
+                          frontier {cluster.frontierCount.toLocaleString(locale)}・cycle{" "}
+                          {cluster.cycleCount.toLocaleString(locale)}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ol>
+              {pageCount > 1 && (
+                <div class="component-pagination">
+                  <button
+                    type="button"
+                    disabled={clusterPage === 0}
+                    onClick={() => {
+                      setClusterPage((currentPage) => currentPage - 1);
+                    }}
+                  >
+                    前
+                  </button>
+                  <span aria-live="polite">
+                    {clusterPage + 1} / {pageCount}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={clusterPage + 1 >= pageCount}
+                    onClick={() => {
+                      setClusterPage((currentPage) => currentPage + 1);
+                    }}
+                  >
+                    次
+                  </button>
+                </div>
+              )}
+            </nav>
+            <div class="component-graph-panel">
+              {selection.status === "none" && (
+                <p class="graph-placeholder">clusterを選ぶと依存グラフを開きます。</p>
+              )}
+              {selection.status === "selected" && detailsState.status === "loading" && (
+                <p class="graph-loading" role="status">
+                  選択したclusterのグラフを取得しています。
+                </p>
+              )}
+              {selection.status === "selected" && detailsState.status === "failed" && (
+                <div class="graph-load-failure" role="alert">
+                  <p>選択したclusterのグラフを取得できませんでした。</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDetailsState({
+                        status: "not_requested",
+                      });
+                    }}
+                  >
+                    再取得
+                  </button>
+                </div>
+              )}
+              {clusterViewState.status === "available" && (
+                <SelectedComponentGraph
+                  view={clusterViewState.view}
+                  locale={locale}
+                  expandedCycleIds={expandedCycleIds}
+                  onToggleCycle={toggleCycle}
+                />
+              )}
             </div>
-            <ol start={componentPage * COMPONENTS_PER_PAGE + 1}>
-              {visibleComponents.map((component) => {
-                const selected =
-                  selection.status === "selected" && selection.componentId === component.id;
-                return (
-                  <li key={component.id}>
-                    <button
-                      type="button"
-                      class={
-                        selected ? "component-button component-button-selected" : "component-button"
-                      }
-                      data-component-id={component.id}
-                      aria-pressed={selected}
-                      disabled={detailsState.status === "loading"}
-                      onClick={() => {
-                        selectComponent(component.id);
-                      }}
-                    >
-                      <strong>component {component.ordinal.toLocaleString(locale)}</strong>
-                      <span>{component.repositoryText}</span>
-                      <span>
-                        {component.nodeCount.toLocaleString(locale)} node・
-                        {component.edgeCount.toLocaleString(locale)} edge
-                      </span>
-                      <span>
-                        frontier {component.frontierCount.toLocaleString(locale)}・cycle{" "}
-                        {component.cycleCount.toLocaleString(locale)}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ol>
-            {pageCount > 1 && (
-              <div class="component-pagination">
-                <button
-                  type="button"
-                  disabled={componentPage === 0}
-                  onClick={() => {
-                    setComponentPage((currentPage) => currentPage - 1);
-                  }}
-                >
-                  前
-                </button>
-                <span aria-live="polite">
-                  {componentPage + 1} / {pageCount}
-                </span>
-                <button
-                  type="button"
-                  disabled={componentPage + 1 >= pageCount}
-                  onClick={() => {
-                    setComponentPage((currentPage) => currentPage + 1);
-                  }}
-                >
-                  次
-                </button>
-              </div>
-            )}
-          </nav>
-          <div class="component-graph-panel">
-            {selection.status === "none" && (
-              <p class="graph-placeholder">componentを選ぶと依存グラフを開きます。</p>
-            )}
-            {selection.status === "selected" && detailsState.status === "loading" && (
-              <p class="graph-loading" role="status">
-                選択したcomponentのグラフを取得しています。
-              </p>
-            )}
-            {selection.status === "selected" && detailsState.status === "failed" && (
-              <div class="graph-load-failure" role="alert">
-                <p>選択したcomponentのグラフを取得できませんでした。</p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    selectComponent(selection.componentId);
-                  }}
-                >
-                  再取得
-                </button>
-              </div>
-            )}
-            {componentViewState.status === "available" && (
-              <SelectedComponentGraph
-                view={componentViewState.view}
-                locale={locale}
-                expandedCycleIds={expandedCycleIds}
-                onToggleCycle={toggleCycle}
-              />
-            )}
           </div>
-        </div>
+        </>
       )}
     </section>
   );

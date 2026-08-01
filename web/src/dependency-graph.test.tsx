@@ -1,8 +1,10 @@
 import { render } from "preact";
+import { useState } from "preact/hooks";
 import { act } from "preact/test-utils";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import sampleSummarySource from "../public/data/summary.json";
+import sampleDetailsSource from "../public/data/details.json";
 import {
   createPublicDetailsDto,
   createPublicSummaryDto,
@@ -13,18 +15,22 @@ import {
   type PublicSummaryDto,
 } from "../../src/pages/public-dto.js";
 import { assertNonNullable } from "../../src/util/index.js";
+import { App } from "./app.js";
 import { DependencyGraph } from "./dependency-graph.js";
 import {
   calculateGraphNodeSize,
   createComponentGraphView,
+  createRepositoryGraphView,
   graphNodeKindLabel,
   MAX_GRAPH_NODE_SIZE,
 } from "./graph-model.js";
+import type { GraphSelection } from "./url-state.js";
 
 const NOW = new Date("2026-08-01T00:00:00.000Z");
 const LOCALE = "ja-JP";
 const COMPONENT_ID = "component:test";
 const sampleSummary = createPublicSummaryDto(sampleSummarySource);
+const sampleDetails = createPublicDetailsDto(sampleDetailsSource);
 
 let container: HTMLDivElement | undefined;
 
@@ -142,6 +148,22 @@ function createGraphFixture(options: GraphFixtureOptions): Readonly<{
       ),
     ),
   ];
+  const repositoryClusters = repositoryIds.map((repositoryId) => {
+    const nodeIds = options.nodes.flatMap((node) =>
+      node.kind !== "external_reference" && node.repositoryId === repositoryId ? [node.nodeId] : [],
+    );
+    const nodeIdSet = new Set(nodeIds);
+    const edgeIds = options.edges
+      .filter(
+        (edge) => nodeIdSet.has(edge.fromNodeId) && nodeIdSet.has(edge.toNodeId) && edge.active,
+      )
+      .map((edge) => edge.id);
+    return {
+      repositoryId,
+      nodeIds,
+      edgeIds,
+    };
+  });
   const component = {
     id: COMPONENT_ID,
     nodeIds: options.nodes.map((node) => node.nodeId),
@@ -152,6 +174,10 @@ function createGraphFixture(options: GraphFixtureOptions): Readonly<{
     ...sampleSummary,
     runId: "run-graph-fixture",
     generatedAt: "2026-07-31T00:05:00.000Z",
+    repositories: sampleSummary.repositories.map((repository) => ({
+      ...repository,
+      itemCount: options.items.filter((item) => item.repositoryId === repository.id).length,
+    })),
     items: options.items,
     graph: {
       nodes: options.nodes.slice(0, options.maxNodes),
@@ -171,6 +197,19 @@ function createGraphFixture(options: GraphFixtureOptions): Readonly<{
           cycleCount: options.cycles.length,
         },
       ],
+      clusterByRepository: true,
+      repositoryClusters: repositoryClusters.map((cluster) => {
+        const nodeIdSet = new Set(cluster.nodeIds);
+        return {
+          repositoryId: cluster.repositoryId,
+          nodeCount: cluster.nodeIds.length,
+          edgeCount: cluster.edgeIds.length,
+          frontierCount: options.frontierNodeIds.filter((nodeId) => nodeIdSet.has(nodeId)).length,
+          cycleCount: options.cycles.filter((cycle) =>
+            cycle.nodeIds.every((nodeId) => nodeIdSet.has(nodeId)),
+          ).length,
+        };
+      }),
       frontierNodeIds: options.frontierNodeIds,
       cycles: options.cycles,
       maxNodes: options.maxNodes,
@@ -186,6 +225,7 @@ function createGraphFixture(options: GraphFixtureOptions): Readonly<{
       nodes: options.nodes,
       edges: options.edges,
       components: [component],
+      repositoryClusters,
       frontierNodeIds: options.frontierNodeIds,
       cycles: options.cycles,
       downstreamImpacts: options.items.map((item) => ({
@@ -200,12 +240,34 @@ function createGraphFixture(options: GraphFixtureOptions): Readonly<{
   };
 }
 
+function DependencyGraphHarness({
+  loadDetails,
+  summary,
+}: Readonly<{
+  loadDetails: () => Promise<PublicDetailsDto>;
+  summary: PublicSummaryDto;
+}>) {
+  const [selection, setSelection] = useState<GraphSelection>({
+    status: "none",
+  });
+  return (
+    <DependencyGraph
+      summary={summary}
+      loadDetails={loadDetails}
+      locale={LOCALE}
+      now={NOW}
+      selection={selection}
+      onSelectionChange={setSelection}
+    />
+  );
+}
+
 function renderDependencyGraph(
   summary: PublicSummaryDto,
   loadDetails: () => Promise<PublicDetailsDto>,
 ): void {
   render(
-    <DependencyGraph summary={summary} loadDetails={loadDetails} locale={LOCALE} now={NOW} />,
+    <DependencyGraphHarness summary={summary} loadDetails={loadDetails} />,
     currentContainer(),
   );
 }
@@ -221,6 +283,7 @@ async function selectFirstComponent(): Promise<void> {
 }
 
 beforeEach(() => {
+  window.history.replaceState({}, "", "/voicevox_task_tracker/");
   container = document.createElement("div");
   document.body.replaceChildren(currentContainer());
 });
@@ -402,6 +465,131 @@ describe("依存グラフUI", () => {
     expect(svg.dataset["renderedNodeCount"]).toBe(maxNodes.toString());
     expect(currentContainer().textContent).toContain("上限外の960件");
   }, 10_000);
+
+  it("repository clusterへ切り替えてrepository内のnodeとedgeだけを表示する", async () => {
+    const editorIssue = createItem("node:editor:issue", "issue", 21, "2026-07-10T00:00:00.000Z");
+    const editorPullRequest = createItem(
+      "node:editor:pull-request",
+      "pull_request",
+      22,
+      "2026-07-11T00:00:00.000Z",
+    );
+    const engineIssue: PublicItemSummaryDto = {
+      ...createItem("node:engine:issue", "issue", 23, "2026-07-12T00:00:00.000Z"),
+      repositoryId: "sample-repository-engine",
+      displayReference: "VOICEVOX/sample-engine#23",
+      url: "https://github.com/VOICEVOX/sample-engine/issues/23",
+    };
+    const internalEdge = createEdge(
+      "edge:editor:internal",
+      editorIssue.nodeId,
+      editorPullRequest.nodeId,
+      "blocks",
+      "native",
+    );
+    const crossRepositoryEdge = createEdge(
+      "edge:editor:engine",
+      editorPullRequest.nodeId,
+      engineIssue.nodeId,
+      "blocks",
+      "native",
+    );
+    const fixture = createGraphFixture({
+      items: [editorIssue, editorPullRequest, engineIssue],
+      nodes: [editorIssue, editorPullRequest, engineIssue].map(trackedGraphNode),
+      edges: [internalEdge, crossRepositoryEdge],
+      frontierNodeIds: [editorIssue.nodeId, engineIssue.nodeId],
+      cycles: [],
+      maxNodes: 10,
+    });
+    const repositoryView = createRepositoryGraphView(
+      fixture.summary,
+      fixture.details,
+      "sample-repository-editor",
+      new Set(),
+      NOW,
+    );
+    expect(repositoryView.sourceNodes.map((node) => node.id)).toEqual([
+      editorIssue.nodeId,
+      editorPullRequest.nodeId,
+    ]);
+    expect(repositoryView.sourceEdges.map((edge) => edge.id)).toEqual([internalEdge.id]);
+
+    const loadDetails = vi.fn(() => Promise.resolve(fixture.details));
+    renderDependencyGraph(fixture.summary, loadDetails);
+    const repositoryMode = requiredElement<HTMLInputElement>(
+      'input[name="graph-cluster-kind"][value="repository"]',
+    );
+    act(() => {
+      repositoryMode.click();
+    });
+    const repositoryButton = requiredElement<HTMLButtonElement>(
+      '.component-browser [data-repository-id="sample-repository-editor"]',
+    );
+    act(() => {
+      repositoryButton.click();
+    });
+    await vi.waitFor(() => {
+      expect(currentContainer().querySelector('[data-layout-status="ready"]')).not.toBeNull();
+    });
+
+    expect(repositoryMode.checked).toBe(true);
+    expect(repositoryButton.getAttribute("aria-pressed")).toBe("true");
+    expect(loadDetails).toHaveBeenCalledTimes(1);
+    expect(
+      [...currentContainer().querySelectorAll<SVGGElement>(".graph-node")].map(
+        (node) => node.dataset["nodeId"],
+      ),
+    ).toEqual([editorIssue.nodeId, editorPullRequest.nodeId]);
+    expect(
+      [...currentContainer().querySelectorAll<SVGGElement>(".graph-edge")].map(
+        (edge) => edge.dataset["edgeId"],
+      ),
+    ).toEqual([internalEdge.id]);
+    expect(currentContainer().textContent).not.toContain(engineIssue.displayReference);
+    expect(currentContainer().textContent).not.toContain(crossRepositoryEdge.id);
+  });
+
+  it("repository clusterのdeep linkから選択と表示を復元する", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/voicevox_task_tracker/?graph=repository&cluster=sample-repository-editor#dependency-heading",
+    );
+    const loadDetails = vi.fn(() => Promise.resolve(sampleDetails));
+    render(
+      <App
+        loadDetails={loadDetails}
+        locale={LOCALE}
+        now={NOW}
+        summary={sampleSummary}
+        title="VOICEVOX Task Tracker"
+      />,
+      currentContainer(),
+    );
+    await vi.waitFor(() => {
+      expect(currentContainer().querySelector('[data-layout-status="ready"]')).not.toBeNull();
+    });
+
+    const repositoryMode = requiredElement<HTMLInputElement>(
+      'input[name="graph-cluster-kind"][value="repository"]',
+    );
+    const repositoryButton = requiredElement<HTMLButtonElement>(
+      '.component-browser [data-repository-id="sample-repository-editor"]',
+    );
+    expect(repositoryMode.checked).toBe(true);
+    expect(repositoryButton.getAttribute("aria-pressed")).toBe("true");
+    expect(loadDetails).toHaveBeenCalledTimes(1);
+    expect(new URL(window.location.href).searchParams.get("graph")).toBe("repository");
+    expect(new URL(window.location.href).searchParams.get("cluster")).toBe(
+      "sample-repository-editor",
+    );
+    expect(
+      [...currentContainer().querySelectorAll<SVGGElement>(".graph-node")].map(
+        (node) => node.dataset["nodeId"],
+      ),
+    ).toEqual(["sample-item-editor-101", "sample-item-editor-103"]);
+  });
 
   it("3 node cycleを折り畳んで表示し構成nodeへ展開する", async () => {
     const items = [

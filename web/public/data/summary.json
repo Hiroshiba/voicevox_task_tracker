@@ -386,6 +386,30 @@
         "cycleCount": 0
       }
     ],
+    "clusterByRepository": true,
+    "repositoryClusters": [
+      {
+        "repositoryId": "sample-repository-editor",
+        "nodeCount": 2,
+        "edgeCount": 0,
+        "frontierCount": 2,
+        "cycleCount": 0
+      },
+      {
+        "repositoryId": "sample-repository-engine",
+        "nodeCount": 2,
+        "edgeCount": 0,
+        "frontierCount": 1,
+        "cycleCount": 0
+      },
+      {
+        "repositoryId": "sample-repository-core",
+        "nodeCount": 1,
+        "edgeCount": 0,
+        "frontierCount": 1,
+        "cycleCount": 0
+      }
+    ],
     "frontierNodeIds": [
       "sample-item-editor-101",
       "sample-item-engine-202",

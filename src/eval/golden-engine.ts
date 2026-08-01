@@ -1104,6 +1104,7 @@ function publicationStatus(
       repositoryInventory: inventory,
       knownSecrets: Object.freeze([]),
       options: Object.freeze({
+        clusterByRepository: true,
         confidenceThresholds: CONFIDENCE_THRESHOLDS,
         labelRules: Object.freeze([]),
         maxInitialGraphNodes: DEFAULT_INITIAL_GRAPH_NODE_LIMIT,
@@ -1564,6 +1565,7 @@ function analyzeLargeFixture(
     repositoryInventory: repositories,
     knownSecrets: Object.freeze([]),
     options: Object.freeze({
+      clusterByRepository: true,
       confidenceThresholds: CONFIDENCE_THRESHOLDS,
       labelRules: Object.freeze([]),
       maxInitialGraphNodes: DEFAULT_INITIAL_GRAPH_NODE_LIMIT,

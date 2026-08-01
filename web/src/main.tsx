@@ -7,7 +7,6 @@ import {
   type PublicSummaryDto,
 } from "../../src/pages/public-dto.js";
 import { App, DataLoadFailure } from "./app.js";
-import "./styles.css";
 
 /** 公開summary DTOの取得に失敗したことを表す。 */
 class PublicSummaryLoadError extends Error {}

@@ -19,6 +19,8 @@ const URL_PARAMETER_NAMES: readonly string[] = [
   "sort",
   "direction",
   "item",
+  "graph",
+  "cluster",
 ];
 
 const tableColumnKeySchema = z.enum([
@@ -44,6 +46,8 @@ const filterValueSchema = z
     return true;
   });
 const itemNodeIdSchema = z.string().min(1).max(512).regex(/^\S+$/u);
+const graphClusterKindSchema = z.enum(["component", "repository"]);
+const graphClusterIdSchema = z.string().min(1).max(512).regex(/^\S+$/u);
 
 const FILTER_PARAMETER_NAMES = {
   repository: "repo",
@@ -65,12 +69,35 @@ export type ItemSelection =
       nodeId: string;
     }>;
 
+/** URLで共有する依存グラフのcluster選択。 */
+export type GraphSelection =
+  | Readonly<{
+      status: "none";
+    }>
+  | Readonly<{
+      status: "selected";
+      kind: "component";
+      componentId: string;
+    }>
+  | Readonly<{
+      status: "selected";
+      kind: "repository";
+      repositoryId: string;
+    }>;
+
+/** 選択可能な依存グラフのcluster ID。 */
+export type ValidGraphClusterIds = Readonly<{
+  componentIds: ReadonlySet<string>;
+  repositoryIds: ReadonlySet<string>;
+}>;
+
 /** URLで共有する検索、絞り込み、並び順、選択項目。 */
 export type WebViewState = Readonly<{
   searchQuery: string;
   tableFilters: TableFilters;
   tableSort: TableSort;
   selection: ItemSelection;
+  graphSelection: GraphSelection;
 }>;
 
 /** URL状態を検証した結果。 */
@@ -106,6 +133,9 @@ export function createDefaultWebViewState(): WebViewState {
       direction: "ascending",
     },
     selection: {
+      status: "none",
+    },
+    graphSelection: {
       status: "none",
     },
   };
@@ -170,10 +200,64 @@ function hasUnknownParameter(parameters: URLSearchParams): boolean {
   return [...parameters.keys()].some((name) => !allowedNames.has(name));
 }
 
+function parseGraphSelection(
+  parameters: URLSearchParams,
+  validIds: ValidGraphClusterIds,
+): Readonly<{
+  invalid: boolean;
+  selection: GraphSelection;
+}> {
+  const kind = parseParameter(parameters, "graph", graphClusterKindSchema);
+  const clusterId = parseParameter(parameters, "cluster", graphClusterIdSchema);
+  if (kind.status === "absent" && clusterId.status === "absent") {
+    return {
+      invalid: false,
+      selection: {
+        status: "none",
+      },
+    };
+  }
+  if (kind.status !== "valid" || clusterId.status !== "valid") {
+    return {
+      invalid: true,
+      selection: {
+        status: "none",
+      },
+    };
+  }
+  if (kind.value === "component" && validIds.componentIds.has(clusterId.value)) {
+    return {
+      invalid: false,
+      selection: {
+        status: "selected",
+        kind: "component",
+        componentId: clusterId.value,
+      },
+    };
+  }
+  if (kind.value === "repository" && validIds.repositoryIds.has(clusterId.value)) {
+    return {
+      invalid: false,
+      selection: {
+        status: "selected",
+        kind: "repository",
+        repositoryId: clusterId.value,
+      },
+    };
+  }
+  return {
+    invalid: true,
+    selection: {
+      status: "none",
+    },
+  };
+}
+
 /** query stringを検証し、不正な値だけを安全な既定値へ戻す。 */
 export function parseWebViewState(
   search: string,
   validItemNodeIds: ReadonlySet<string>,
+  validGraphClusterIds: ValidGraphClusterIds,
 ): ParsedWebViewState {
   const parameters = new URLSearchParams(search);
   const defaults = createDefaultWebViewState();
@@ -245,6 +329,8 @@ export function parseWebViewState(
       };
       break;
   }
+  const graphSelection = parseGraphSelection(parameters, validGraphClusterIds);
+  sanitized ||= graphSelection.invalid;
 
   const state = {
     searchQuery: searchQuery.value,
@@ -254,6 +340,7 @@ export function parseWebViewState(
       direction: sortDirection.value,
     },
     selection,
+    graphSelection: graphSelection.selection,
   };
   return sanitized
     ? {
@@ -299,7 +386,21 @@ export function createWebViewHref(pathname: string, state: WebViewState): string
   if (state.selection.status === "selected") {
     parameters.set("item", state.selection.nodeId);
   }
+  if (state.graphSelection.status === "selected") {
+    parameters.set("graph", state.graphSelection.kind);
+    parameters.set(
+      "cluster",
+      state.graphSelection.kind === "component"
+        ? state.graphSelection.componentId
+        : state.graphSelection.repositoryId,
+    );
+  }
   const query = parameters.toString();
-  const hash = state.selection.status === "selected" ? "#item-details" : "";
+  const hash =
+    state.selection.status === "selected"
+      ? "#item-details"
+      : state.graphSelection.status === "selected"
+        ? "#dependency-heading"
+        : "";
   return `${pathname}${query.length === 0 ? "" : `?${query}`}${hash}`;
 }

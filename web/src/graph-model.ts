@@ -75,9 +75,10 @@ export type GraphViewCycle = Readonly<{
   edgeIds: readonly string[];
 }>;
 
-/** 選択したcomponentの描画用データと表形式データ。 */
-export type ComponentGraphView = Readonly<{
-  componentId: string;
+/** 選択したclusterの描画用データと表形式データ。 */
+export type GraphClusterView = Readonly<{
+  clusterKind: "component" | "repository";
+  clusterId: string;
   displayNodes: readonly GraphViewNode[];
   displayEdges: readonly GraphViewEdge[];
   sourceNodes: readonly GraphViewNode[];
@@ -91,6 +92,17 @@ export type ComponentGraphView = Readonly<{
 
 /** component一覧へ表示する集計値。 */
 export type GraphComponentListItem = Readonly<{
+  id: string;
+  ordinal: number;
+  repositoryText: string;
+  nodeCount: number;
+  edgeCount: number;
+  frontierCount: number;
+  cycleCount: number;
+}>;
+
+/** repository cluster一覧へ表示する集計値。 */
+export type GraphRepositoryListItem = Readonly<{
   id: string;
   ordinal: number;
   repositoryText: string;
@@ -429,6 +441,47 @@ export function createGraphComponentList(
   }));
 }
 
+/** summaryの軽量索引から初期表示用repository cluster一覧を作る。 */
+export function createGraphRepositoryList(
+  summary: PublicSummaryDto,
+): readonly GraphRepositoryListItem[] {
+  if (!summary.graph.clusterByRepository) {
+    if (summary.graph.repositoryClusters.length !== 0) {
+      throw new TypeError("repository cluster無効時にcluster索引を公開できません");
+    }
+    return [];
+  }
+  const repositoriesById = new Map(
+    summary.repositories.map((repository) => [repository.id, repository]),
+  );
+  return summary.graph.repositoryClusters
+    .map((cluster) => {
+      const repository = repositoriesById.get(cluster.repositoryId);
+      assertNonNullable(
+        repository,
+        `repository cluster ${cluster.repositoryId}のrepositoryがありません`,
+      );
+      if (cluster.nodeCount !== repository.itemCount) {
+        throw new TypeError(
+          `repository cluster ${cluster.repositoryId}のnode数がrepository集計と一致しません`,
+        );
+      }
+      return {
+        id: cluster.repositoryId,
+        repositoryText: repository.fullName,
+        nodeCount: cluster.nodeCount,
+        edgeCount: cluster.edgeCount,
+        frontierCount: cluster.frontierCount,
+        cycleCount: cluster.cycleCount,
+      };
+    })
+    .sort((left, right) => compareStrings(left.repositoryText, right.repositoryText))
+    .map((cluster, index) => ({
+      ...cluster,
+      ordinal: index + 1,
+    }));
+}
+
 /** summaryと遅延取得したdetailsが同じ生成runか検証する。 */
 export function assertPublicDetailsMatchSummary(
   summary: PublicSummaryDto,
@@ -469,13 +522,18 @@ function cycleIdsByNodeId(
   return result;
 }
 
-function componentCycles(
-  componentNodeIds: ReadonlySet<string>,
+function clusterCycles(
+  clusterNodeIds: ReadonlySet<string>,
   cycles: readonly PublicDetailsDto["graph"]["cycles"][number][],
+  clusterKind: GraphClusterView["clusterKind"],
 ): readonly PublicDetailsDto["graph"]["cycles"][number][] {
   return cycles.filter((cycle) => {
-    const includedCount = cycle.nodeIds.filter((nodeId) => componentNodeIds.has(nodeId)).length;
-    if (includedCount !== 0 && includedCount !== cycle.nodeIds.length) {
+    const includedCount = cycle.nodeIds.filter((nodeId) => clusterNodeIds.has(nodeId)).length;
+    if (
+      clusterKind === "component" &&
+      includedCount !== 0 &&
+      includedCount !== cycle.nodeIds.length
+    ) {
       throw new TypeError(`dependency cycle ${cycle.id}がcomponent境界をまたいでいます`);
     }
     return includedCount === cycle.nodeIds.length;
@@ -485,7 +543,7 @@ function componentCycles(
 function createSourceNodes(
   summary: PublicSummaryDto,
   details: PublicDetailsDto,
-  componentNodeIds: readonly string[],
+  clusterNodeIds: readonly string[],
   cycles: readonly PublicDetailsDto["graph"]["cycles"][number][],
   now: Date,
 ): readonly GraphViewNode[] {
@@ -497,9 +555,9 @@ function createSourceNodes(
   const frontierNodeIds = new Set(details.graph.frontierNodeIds);
   const nodeCycleIds = cycleIdsByNodeId(cycles);
 
-  return componentNodeIds.map((nodeId) => {
+  return clusterNodeIds.map((nodeId) => {
     const node = graphNodesById.get(nodeId);
-    assertNonNullable(node, `componentのgraph node ${nodeId}がありません`);
+    assertNonNullable(node, `clusterのgraph node ${nodeId}がありません`);
     const cycleIds = nodeCycleIds.get(nodeId) ?? Object.freeze([]);
     if (node.kind === "external_reference") {
       return createExternalGraphNode(node, frontierNodeIds, cycleIds);
@@ -555,32 +613,23 @@ function validateMaxInitialNodes(value: number): void {
   }
 }
 
-/** 選択componentをcycle縮約と設定上限を適用した描画モデルへ変換する。 */
-export function createComponentGraphView(
+type GraphClusterDefinition = Readonly<{
+  kind: GraphClusterView["clusterKind"];
+  id: string;
+  nodeIds: readonly string[];
+  edgeIds: readonly string[];
+}>;
+
+function createGraphClusterView(
   summary: PublicSummaryDto,
   details: PublicDetailsDto,
-  componentId: string,
+  cluster: GraphClusterDefinition,
   expandedCycleIds: ReadonlySet<string>,
   now: Date,
-): ComponentGraphView {
-  assertPublicDetailsMatchSummary(summary, details);
-  validateMaxInitialNodes(summary.graph.maxNodes);
-  const componentSummary = summary.graph.components.find(
-    (component) => component.id === componentId,
-  );
-  const component = details.graph.components.find((candidate) => candidate.id === componentId);
-  assertNonNullable(componentSummary, `summaryにcomponent ${componentId}がありません`);
-  assertNonNullable(component, `detailsにcomponent ${componentId}がありません`);
-  if (
-    componentSummary.nodeCount !== component.nodeIds.length ||
-    componentSummary.edgeCount !== component.edgeIds.length
-  ) {
-    throw new TypeError(`component ${componentId}のsummaryとdetailsが一致しません`);
-  }
-
-  const componentNodeIds = new Set(component.nodeIds);
-  const cycles = componentCycles(componentNodeIds, details.graph.cycles);
-  const sourceNodes = createSourceNodes(summary, details, component.nodeIds, cycles, now);
+): GraphClusterView {
+  const clusterNodeIds = new Set(cluster.nodeIds);
+  const cycles = clusterCycles(clusterNodeIds, details.graph.cycles, cluster.kind);
+  const sourceNodes = createSourceNodes(summary, details, cluster.nodeIds, cycles, now);
   const displayNodes = selectDisplayNodes(
     sourceNodes,
     cycles,
@@ -598,25 +647,25 @@ export function createComponentGraphView(
   }
   const representedSourceNodeIds = new Set(displayNodeIdBySourceNodeId.keys());
   const graphEdgesById = createUniqueMap(details.graph.edges, "graph edge");
-  const activeComponentEdges = component.edgeIds.map((edgeId) => {
+  const activeClusterEdges = cluster.edgeIds.map((edgeId) => {
     const edge = graphEdgesById.get(edgeId);
-    assertNonNullable(edge, `component ${componentId}のedge ${edgeId}がありません`);
+    assertNonNullable(edge, `cluster ${cluster.id}のedge ${edgeId}がありません`);
     if (!edge.active) {
-      throw new TypeError(`component ${componentId}が非active edge ${edgeId}を参照しています`);
+      throw new TypeError(`cluster ${cluster.id}が非active edge ${edgeId}を参照しています`);
     }
-    if (!componentNodeIds.has(edge.fromNodeId) || !componentNodeIds.has(edge.toNodeId)) {
-      throw new TypeError(`component ${componentId}のedge ${edgeId}が境界外を参照しています`);
+    if (!clusterNodeIds.has(edge.fromNodeId) || !clusterNodeIds.has(edge.toNodeId)) {
+      throw new TypeError(`cluster ${cluster.id}のedge ${edgeId}が境界外を参照しています`);
     }
     return edge;
   });
-  const sourceEdges = activeComponentEdges
+  const sourceEdges = activeClusterEdges
     .filter(
       (edge) =>
         representedSourceNodeIds.has(edge.fromNodeId) &&
         representedSourceNodeIds.has(edge.toNodeId),
     )
     .map((edge) => createEdgeView(edge, edge.fromNodeId, edge.toNodeId));
-  const displayEdges = activeComponentEdges.flatMap((edge) => {
+  const displayEdges = activeClusterEdges.flatMap((edge) => {
     const fromNodeId = displayNodeIdBySourceNodeId.get(edge.fromNodeId);
     const toNodeId = displayNodeIdBySourceNodeId.get(edge.toNodeId);
     if (fromNodeId == null || toNodeId == null || fromNodeId === toNodeId) {
@@ -638,7 +687,8 @@ export function createComponentGraphView(
   }));
 
   return {
-    componentId,
+    clusterKind: cluster.kind,
+    clusterId: cluster.id,
     displayNodes,
     displayEdges,
     sourceNodes: sourceNodes
@@ -648,9 +698,97 @@ export function createComponentGraphView(
     cycles: graphCycles,
     renderedNodeCount: displayNodes.length,
     representedSourceNodeCount: representedSourceNodeIds.size,
-    omittedSourceNodeCount: component.nodeIds.length - representedSourceNodeIds.size,
+    omittedSourceNodeCount: cluster.nodeIds.length - representedSourceNodeIds.size,
     maxInitialNodes: summary.graph.maxNodes,
   };
+}
+
+/** 選択componentをcycle縮約と設定上限を適用した描画モデルへ変換する。 */
+export function createComponentGraphView(
+  summary: PublicSummaryDto,
+  details: PublicDetailsDto,
+  componentId: string,
+  expandedCycleIds: ReadonlySet<string>,
+  now: Date,
+): GraphClusterView {
+  assertPublicDetailsMatchSummary(summary, details);
+  validateMaxInitialNodes(summary.graph.maxNodes);
+  const componentSummary = summary.graph.components.find(
+    (component) => component.id === componentId,
+  );
+  const component = details.graph.components.find((candidate) => candidate.id === componentId);
+  assertNonNullable(componentSummary, `summaryにcomponent ${componentId}がありません`);
+  assertNonNullable(component, `detailsにcomponent ${componentId}がありません`);
+  if (
+    componentSummary.nodeCount !== component.nodeIds.length ||
+    componentSummary.edgeCount !== component.edgeIds.length
+  ) {
+    throw new TypeError(`component ${componentId}のsummaryとdetailsが一致しません`);
+  }
+
+  return createGraphClusterView(
+    summary,
+    details,
+    {
+      kind: "component",
+      id: componentId,
+      nodeIds: component.nodeIds,
+      edgeIds: component.edgeIds,
+    },
+    expandedCycleIds,
+    now,
+  );
+}
+
+/** 選択repositoryをcycle縮約と設定上限を適用した描画モデルへ変換する。 */
+export function createRepositoryGraphView(
+  summary: PublicSummaryDto,
+  details: PublicDetailsDto,
+  repositoryId: string,
+  expandedCycleIds: ReadonlySet<string>,
+  now: Date,
+): GraphClusterView {
+  assertPublicDetailsMatchSummary(summary, details);
+  validateMaxInitialNodes(summary.graph.maxNodes);
+  if (!summary.graph.clusterByRepository) {
+    throw new TypeError("repository clusterは設定で無効です");
+  }
+  const clusterSummary = summary.graph.repositoryClusters.find(
+    (cluster) => cluster.repositoryId === repositoryId,
+  );
+  const cluster = details.graph.repositoryClusters.find(
+    (candidate) => candidate.repositoryId === repositoryId,
+  );
+  assertNonNullable(clusterSummary, `summaryにrepository cluster ${repositoryId}がありません`);
+  assertNonNullable(cluster, `detailsにrepository cluster ${repositoryId}がありません`);
+  if (
+    clusterSummary.nodeCount !== cluster.nodeIds.length ||
+    clusterSummary.edgeCount !== cluster.edgeIds.length
+  ) {
+    throw new TypeError(`repository cluster ${repositoryId}のsummaryとdetailsが一致しません`);
+  }
+  const graphNodesById = new Map(details.graph.nodes.map((node) => [node.nodeId, node]));
+  for (const nodeId of cluster.nodeIds) {
+    const node = graphNodesById.get(nodeId);
+    assertNonNullable(node, `repository cluster ${repositoryId}のnode ${nodeId}がありません`);
+    if (node.kind === "external_reference" || node.repositoryId !== repositoryId) {
+      throw new TypeError(
+        `repository cluster ${repositoryId}に別repositoryのnode ${nodeId}が含まれています`,
+      );
+    }
+  }
+  return createGraphClusterView(
+    summary,
+    details,
+    {
+      kind: "repository",
+      id: repositoryId,
+      nodeIds: cluster.nodeIds,
+      edgeIds: cluster.edgeIds,
+    },
+    expandedCycleIds,
+    now,
+  );
 }
 
 /** node severityを凡例とCSSで使う表示名へ変換する。 */

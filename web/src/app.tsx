@@ -34,7 +34,9 @@ import { SafeGitHubLink } from "./safe-link.js";
 import {
   createWebViewHref,
   parseWebViewState,
+  type GraphSelection,
   type ParsedWebViewState,
+  type ValidGraphClusterIds,
   type WebViewState,
 } from "./url-state.js";
 
@@ -680,9 +682,18 @@ export function App({ loadDetails, locale, now, summary, title }: AppProps) {
     () => new Set(summary.items.map((item) => item.nodeId)),
     [summary.items],
   );
+  const validGraphClusterIds = useMemo<ValidGraphClusterIds>(
+    () => ({
+      componentIds: new Set(summary.graph.components.map((component) => component.id)),
+      repositoryIds: new Set(
+        summary.graph.repositoryClusters.map((cluster) => cluster.repositoryId),
+      ),
+    }),
+    [summary.graph.components, summary.graph.repositoryClusters],
+  );
   const sharedLoadDetails = useMemo(() => createSharedDetailsLoader(loadDetails), [loadDetails]);
   const [navigationState, setNavigationState] = useState<ParsedWebViewState>(() =>
-    parseWebViewState(window.location.search, validItemNodeIds),
+    parseWebViewState(window.location.search, validItemNodeIds, validGraphClusterIds),
   );
   const [detailsState, setDetailsState] = useState<ItemDetailsState>({
     status: "not_requested",
@@ -703,7 +714,11 @@ export function App({ loadDetails, locale, now, summary, title }: AppProps) {
 
   useEffect(() => {
     function applyBrowserHistory(): void {
-      const parsedState = parseWebViewState(window.location.search, validItemNodeIds);
+      const parsedState = parseWebViewState(
+        window.location.search,
+        validItemNodeIds,
+        validGraphClusterIds,
+      );
       if (parsedState.status === "sanitized") {
         window.history.replaceState(
           {},
@@ -717,7 +732,7 @@ export function App({ loadDetails, locale, now, summary, title }: AppProps) {
     return () => {
       window.removeEventListener("popstate", applyBrowserHistory);
     };
-  }, [validItemNodeIds]);
+  }, [validGraphClusterIds, validItemNodeIds]);
 
   useEffect(() => {
     if (!detailsNeeded || detailsState.status !== "not_requested") {
@@ -804,6 +819,27 @@ export function App({ loadDetails, locale, now, summary, title }: AppProps) {
         selection: {
           status: "none",
         },
+      },
+      "push",
+    );
+  }
+
+  function selectGraphCluster(selection: GraphSelection): void {
+    if (selection.status === "selected") {
+      const validIds =
+        selection.kind === "component"
+          ? validGraphClusterIds.componentIds
+          : validGraphClusterIds.repositoryIds;
+      const selectedId =
+        selection.kind === "component" ? selection.componentId : selection.repositoryId;
+      if (!validIds.has(selectedId)) {
+        throw new TypeError(`選択できない依存グラフclusterです: ${selectedId}`);
+      }
+    }
+    navigate(
+      {
+        ...viewState,
+        graphSelection: selection,
       },
       "push",
     );
@@ -923,6 +959,8 @@ export function App({ loadDetails, locale, now, summary, title }: AppProps) {
           now={now}
           locale={locale}
           loadDetails={sharedLoadDetails}
+          selection={viewState.graphSelection}
+          onSelectionChange={selectGraphCluster}
         />
         <ItemTable
           createItemHref={createItemHref}

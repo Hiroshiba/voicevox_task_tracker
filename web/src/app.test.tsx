@@ -1,7 +1,7 @@
 import axe from "axe-core";
 import { render } from "preact";
 import { act } from "preact/test-utils";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import indexHtml from "../index.html?raw";
 import sampleDetailsSource from "../public/data/details.json";
@@ -643,6 +643,55 @@ describe("Web UI", () => {
     );
   });
 
+  it("repository clusterの選択をdeep linkから再現する", async () => {
+    renderApp(sampleSummary);
+    const repositoryMode = requiredElement<HTMLInputElement>(
+      'input[name="graph-cluster-kind"][value="repository"]',
+    );
+    act(() => {
+      repositoryMode.click();
+    });
+    const repositoryButton = requiredElement<HTMLButtonElement>(
+      '.component-browser [data-repository-id="sample-repository-editor"]',
+    );
+    act(() => {
+      repositoryButton.click();
+    });
+    expect(new URL(window.location.href).searchParams.get("graph")).toBe("repository");
+    await vi.waitFor(() => {
+      expect(currentContainer().querySelector('[data-layout-status="ready"]')).not.toBeNull();
+    });
+
+    expect(new URL(window.location.href).searchParams.get("graph")).toBe("repository");
+    expect(new URL(window.location.href).searchParams.get("cluster")).toBe(
+      "sample-repository-editor",
+    );
+    expect(window.location.hash).toBe("#dependency-heading");
+
+    act(() => {
+      render(null, currentContainer());
+    });
+    renderApp(sampleSummary);
+    await vi.waitFor(() => {
+      expect(currentContainer().querySelector('[data-layout-status="ready"]')).not.toBeNull();
+    });
+
+    expect(
+      requiredElement<HTMLInputElement>('input[name="graph-cluster-kind"][value="repository"]')
+        .checked,
+    ).toBe(true);
+    expect(
+      requiredElement<HTMLButtonElement>(
+        '.component-browser [data-repository-id="sample-repository-editor"]',
+      ).getAttribute("aria-pressed"),
+    ).toBe("true");
+    expect(
+      [...currentContainer().querySelectorAll<SVGGElement>(".graph-node")].map(
+        (node) => node.dataset["nodeId"],
+      ),
+    ).toEqual(["sample-item-editor-101", "sample-item-editor-103"]);
+  });
+
   it("不正なURL状態を個別に無視して安全な既定状態へ戻す", async () => {
     window.history.replaceState(
       {},
@@ -851,6 +900,7 @@ describe("Web UI", () => {
     expect(indexHtml).toContain("base-uri 'none'");
     expect(indexHtml).toContain("form-action 'none'");
     expect(indexHtml).toContain("object-src 'none'");
+    expect(indexHtml).toContain('<link rel="stylesheet" href="/src/styles.css" />');
     expect(indexHtml).not.toContain("'unsafe-inline'");
     expect(indexHtml).not.toContain("'unsafe-eval'");
   });

@@ -49,6 +49,7 @@ const PUBLIC_REPOSITORY_ID = "R_PUBLIC";
 const STALE_REPOSITORY_ID = "R_STALE";
 const PRIVATE_REPOSITORY_ID = "R_PRIVATE_SENTINEL";
 const defaultGenerationOptions = Object.freeze({
+  clusterByRepository: true,
   confidenceThresholds: {
     high: 0.85,
     medium: 0.65,
@@ -835,6 +836,16 @@ describe("公開DTO生成", () => {
       },
     });
     expect(generated.summary.graph.maxNodes).toBe(DEFAULT_INITIAL_GRAPH_NODE_LIMIT);
+    expect(generated.summary.graph.clusterByRepository).toBe(true);
+    expect(generated.summary.graph.repositoryClusters).toEqual([
+      {
+        repositoryId: PUBLIC_REPOSITORY_ID,
+        nodeCount: 3,
+        edgeCount: 2,
+        frontierCount: 1,
+        cycleCount: 1,
+      },
+    ]);
     expect(generated.summary.graph.components).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -855,6 +866,13 @@ describe("公開DTO生成", () => {
     expect(generated.details.graph.cycles).toMatchObject([
       {
         nodeIds: ["I_A", "I_B"],
+        edgeIds: ["rel:A-B", "rel:B-A"],
+      },
+    ]);
+    expect(generated.details.graph.repositoryClusters).toEqual([
+      {
+        repositoryId: PUBLIC_REPOSITORY_ID,
+        nodeIds: ["I_A", "I_B", "I_C"],
         edgeIds: ["rel:A-B", "rel:B-A"],
       },
     ]);
@@ -917,6 +935,23 @@ describe("公開DTO生成", () => {
       },
     });
     expect(generated.details.graph.history).toHaveLength(2);
+  });
+
+  it("repository cluster設定を公開し無効時はcluster索引を生成しない", () => {
+    const generated = generateFixture(
+      createSingleItemSnapshot("repository cluster無効fixture"),
+      [],
+      publicInventory(),
+      [],
+      {
+        ...defaultGenerationOptions,
+        clusterByRepository: false,
+      },
+    );
+
+    expect(generated.summary.graph.clusterByRepository).toBe(false);
+    expect(generated.summary.graph.repositoryClusters).toEqual([]);
+    expect(generated.details.graph.repositoryClusters).toEqual([]);
   });
 
   it("stale repositoryとAI unavailableを項目まで明示する", () => {
@@ -1063,6 +1098,7 @@ describe("公開summaryサイズと書き出し", () => {
       }),
     });
     const options = {
+      clusterByRepository: defaultGenerationOptions.clusterByRepository,
       confidenceThresholds: defaultGenerationOptions.confidenceThresholds,
       labelRules: defaultGenerationOptions.labelRules,
       maxInitialGraphNodes: 100,
@@ -1081,6 +1117,7 @@ describe("公開summaryサイズと書き出し", () => {
   it("設定した上限を超えるfixtureではDTO生成を失敗させる", () => {
     const snapshot = createSingleItemSnapshot("gzip上限超過fixture");
     const options = {
+      clusterByRepository: defaultGenerationOptions.clusterByRepository,
       confidenceThresholds: defaultGenerationOptions.confidenceThresholds,
       labelRules: defaultGenerationOptions.labelRules,
       maxInitialGraphNodes: 1,

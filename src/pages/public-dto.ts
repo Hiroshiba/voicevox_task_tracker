@@ -321,6 +321,18 @@ const publicGraphComponentSummarySchema = z.strictObject({
   frontierCount: nonNegativeIntegerSchema,
   cycleCount: nonNegativeIntegerSchema,
 });
+const publicGraphRepositoryClusterSchema = z.strictObject({
+  repositoryId: identifierSchema,
+  nodeIds: z.array(identifierSchema).min(1),
+  edgeIds: z.array(identifierSchema),
+});
+const publicGraphRepositoryClusterSummarySchema = z.strictObject({
+  repositoryId: identifierSchema,
+  nodeCount: z.number().int().positive(),
+  edgeCount: nonNegativeIntegerSchema,
+  frontierCount: nonNegativeIntegerSchema,
+  cycleCount: nonNegativeIntegerSchema,
+});
 const publicDependencyCycleSchema = z.strictObject({
   id: identifierSchema,
   nodeIds: z.array(identifierSchema).min(1),
@@ -385,6 +397,8 @@ const publicInitialGraphSchema = z.strictObject({
   nodes: z.array(publicGraphNodeSchema),
   edges: z.array(publicInitialGraphEdgeSchema),
   components: z.array(publicGraphComponentSummarySchema),
+  clusterByRepository: z.boolean(),
+  repositoryClusters: z.array(publicGraphRepositoryClusterSummarySchema),
   frontierNodeIds: z.array(identifierSchema),
   cycles: z.array(publicDependencyCycleSchema),
   maxNodes: z.number().int().positive(),
@@ -426,6 +440,7 @@ const publicGraphSchema = z.strictObject({
   nodes: z.array(publicGraphNodeSchema),
   edges: z.array(publicGraphEdgeSchema),
   components: z.array(publicGraphComponentSchema),
+  repositoryClusters: z.array(publicGraphRepositoryClusterSchema),
   frontierNodeIds: z.array(identifierSchema),
   cycles: z.array(publicDependencyCycleSchema),
   downstreamImpacts: z.array(downstreamImpactSchema),

@@ -47,6 +47,7 @@ export const DEFAULT_INITIAL_GRAPH_NODE_LIMIT = 500;
 
 /** 公開DTO生成時のラベルルール、初期graph、summaryサイズ設定。 */
 export type PublicDtoGenerationOptions = Readonly<{
+  clusterByRepository: boolean;
   confidenceThresholds: PublicSummaryDto["confidenceThresholds"];
   labelRules: readonly LabelRule[];
   maxInitialGraphNodes: number;
@@ -107,6 +108,9 @@ function compareHistoryRecords(left: StateHistoryRecord, right: StateHistoryReco
 }
 
 function validateOptions(options: PublicDtoGenerationOptions): void {
+  if (typeof options.clusterByRepository !== "boolean") {
+    throw new PublicDtoSemanticError("clusterByRepositoryはbooleanにしてください");
+  }
   if (!Number.isInteger(options.maxInitialGraphNodes) || options.maxInitialGraphNodes <= 0) {
     throw new PublicDtoSemanticError("maxInitialGraphNodesは正の整数にしてください");
   }
@@ -623,7 +627,9 @@ function createInitialGraph(
   graph: PublicGraph,
   items: readonly PublicItemSummaryDto[],
   components: PublicDetailsDto["graph"]["components"],
+  repositoryClusters: PublicDetailsDto["graph"]["repositoryClusters"],
   cycles: PublicDetailsDto["graph"]["cycles"],
+  clusterByRepository: boolean,
   maxInitialGraphNodes: number,
 ): PublicSummaryDto["graph"] {
   const summaryByNodeId = new Map(items.map((item) => [item.nodeId, item]));
@@ -684,6 +690,19 @@ function createInitialGraph(
         nodeCount: component.nodeIds.length,
         repositoryIds: [...component.repositoryIds],
         edgeCount: component.edgeIds.length,
+        frontierCount: graph.analysis.actionableFrontier.filter((nodeId) => nodeIds.has(nodeId))
+          .length,
+        cycleCount: cycles.filter((cycle) => cycle.nodeIds.every((nodeId) => nodeIds.has(nodeId)))
+          .length,
+      };
+    }),
+    clusterByRepository,
+    repositoryClusters: repositoryClusters.map((cluster) => {
+      const nodeIds = new Set(cluster.nodeIds);
+      return {
+        repositoryId: cluster.repositoryId,
+        nodeCount: cluster.nodeIds.length,
+        edgeCount: cluster.edgeIds.length,
         frontierCount: graph.analysis.actionableFrontier.filter((nodeId) => nodeIds.has(nodeId))
           .length,
         cycleCount: cycles.filter((cycle) => cycle.nodeIds.every((nodeId) => nodeIds.has(nodeId)))
@@ -824,6 +843,30 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
       ),
     };
   });
+  const repositoryClusters: PublicDetailsDto["graph"]["repositoryClusters"] = input.options
+    .clusterByRepository
+    ? snapshot.repositories.flatMap((repository) => {
+        const nodeIds = snapshot.items
+          .filter((item) => item.repositoryId === repository.id)
+          .map((item) => item.nodeId);
+        if (nodeIds.length === 0) {
+          return [];
+        }
+        const nodeIdSet = new Set<string>(nodeIds);
+        return [
+          {
+            repositoryId: repository.id,
+            nodeIds,
+            edgeIds: graph.edges
+              .filter(
+                (edge) =>
+                  edge.active && nodeIdSet.has(edge.fromNodeId) && nodeIdSet.has(edge.toNodeId),
+              )
+              .map((edge) => edge.id),
+          },
+        ];
+      })
+    : [];
   const cycles = graph.analysis.dependencyCycles.map((cycle) => ({
     id: cycle.id,
     nodeIds: [...cycle.nodeIds],
@@ -873,7 +916,9 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
       graph,
       itemSummaries,
       components,
+      repositoryClusters,
       cycles,
+      input.options.clusterByRepository,
       input.options.maxInitialGraphNodes,
     ),
   });
@@ -939,6 +984,7 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
       nodes: graph.nodes,
       edges: graph.edges,
       components,
+      repositoryClusters,
       frontierNodeIds: [...graph.analysis.actionableFrontier],
       cycles,
       downstreamImpacts: graph.analysis.downstreamImpacts.map((impact) => ({
