@@ -199,6 +199,33 @@ describe("Web UI", () => {
     expect(currentContainer().textContent).toContain("1 日前");
   });
 
+  it("公開DTOのtimezoneを絶対時刻へ反映する", () => {
+    const newYorkFixture = createPublicSummaryDto({
+      ...sampleSummary,
+      timezone: "America/New_York",
+    });
+
+    renderApp(newYorkFixture);
+
+    const generatedTime = [
+      ...currentContainer().querySelectorAll<HTMLTimeElement>(".run-times time"),
+    ].find((element) => element.dateTime === newYorkFixture.generatedAt);
+    assertNonNullable(generatedTime, "生成時刻の表示がありません");
+    expect(generatedTime.textContent).toBe("2026/07/30 20:05:00 GMT-4");
+    expect(generatedTime.parentElement?.querySelector(".relative-time")?.textContent).toBe(
+      "24 時間前",
+    );
+  });
+
+  it("公開DTOのtimezoneを必須とする", () => {
+    expect(() =>
+      createPublicSummaryDto({
+        ...sampleSummary,
+        timezone: undefined,
+      }),
+    ).toThrow();
+  });
+
   it("AI無効をAI利用失敗と区別して表示する", () => {
     renderApp({
       ...sampleSummary,

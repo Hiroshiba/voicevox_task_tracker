@@ -79,6 +79,7 @@ import {
 } from "./golden-schema.js";
 
 const ORGANIZATION = "VOICEVOX";
+const PUBLIC_TIMEZONE = "Asia/Tokyo";
 const THIRTY_MINUTES_MILLISECONDS = 30 * 60 * 1_000;
 const githubItemDisplayReferenceSchema = z.custom<GitHubItemDisplayReference>(
   (value) => typeof value === "string" && /^[^/\s]+\/[^#\s]+#[1-9]\d*$/u.test(value),
@@ -1109,6 +1110,7 @@ function publicationStatus(
         labelRules: Object.freeze([]),
         maxInitialGraphNodes: DEFAULT_INITIAL_GRAPH_NODE_LIMIT,
         maxSummaryGzipBytes: PUBLIC_SUMMARY_GZIP_LIMIT_BYTES,
+        timezone: PUBLIC_TIMEZONE,
       }),
     });
   } catch (error: unknown) {
@@ -1570,6 +1572,7 @@ function analyzeLargeFixture(
       labelRules: Object.freeze([]),
       maxInitialGraphNodes: DEFAULT_INITIAL_GRAPH_NODE_LIMIT,
       maxSummaryGzipBytes: PUBLIC_SUMMARY_GZIP_LIMIT_BYTES,
+      timezone: PUBLIC_TIMEZONE,
     }),
   });
   const largeItemsMatchExpectation = snapshot.items.every((item) => {

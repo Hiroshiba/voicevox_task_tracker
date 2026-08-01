@@ -65,6 +65,7 @@ const defaultGenerationOptions = Object.freeze({
   ],
   maxInitialGraphNodes: DEFAULT_INITIAL_GRAPH_NODE_LIMIT,
   maxSummaryGzipBytes: PUBLIC_SUMMARY_GZIP_LIMIT_BYTES,
+  timezone: "Asia/Tokyo",
 }) satisfies PublicDtoGenerationOptions;
 
 type RepositoryFixture =
@@ -814,6 +815,7 @@ describe("公開DTO生成", () => {
     expect(generated.summary.confidenceThresholds).toEqual(
       defaultGenerationOptions.confidenceThresholds,
     );
+    expect(generated.summary.timezone).toBe(defaultGenerationOptions.timezone);
     expect(generated.summary.aggregates).toMatchObject({
       repositoryCount: 1,
       itemCount: 3,
@@ -1103,6 +1105,7 @@ describe("公開summaryサイズと書き出し", () => {
       labelRules: defaultGenerationOptions.labelRules,
       maxInitialGraphNodes: 100,
       maxSummaryGzipBytes: PUBLIC_SUMMARY_GZIP_LIMIT_BYTES,
+      timezone: defaultGenerationOptions.timezone,
     } satisfies PublicDtoGenerationOptions;
 
     const generated = generateFixture(snapshot, [], publicInventory(), [], options);
@@ -1122,6 +1125,7 @@ describe("公開summaryサイズと書き出し", () => {
       labelRules: defaultGenerationOptions.labelRules,
       maxInitialGraphNodes: 1,
       maxSummaryGzipBytes: 64,
+      timezone: defaultGenerationOptions.timezone,
     } satisfies PublicDtoGenerationOptions;
 
     expect(() => generateFixture(snapshot, [], publicInventory(), [], options)).toThrow(

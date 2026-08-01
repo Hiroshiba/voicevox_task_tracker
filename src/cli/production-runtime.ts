@@ -3567,6 +3567,7 @@ async function buildPublicPages(
       labelRules: normalizeLabelRules(config),
       maxInitialGraphNodes: config.web.graph.maxInitialNodes,
       maxSummaryGzipBytes: PUBLIC_SUMMARY_GZIP_LIMIT_BYTES,
+      timezone: config.staleness.timezone,
     },
   });
   const output = await adapters.writePublicData(outputDirectory, data);

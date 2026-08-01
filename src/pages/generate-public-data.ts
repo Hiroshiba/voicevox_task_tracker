@@ -45,13 +45,14 @@ import { assertPublicSummarySize, type PublicSummarySizeMeasurement } from "./su
 /** 初期表示へ含めるgraph node数の既定値。 */
 export const DEFAULT_INITIAL_GRAPH_NODE_LIMIT = 500;
 
-/** 公開DTO生成時のラベルルール、初期graph、summaryサイズ設定。 */
+/** 公開DTO生成時のtimezone、ラベルルール、初期graph、summaryサイズ設定。 */
 export type PublicDtoGenerationOptions = Readonly<{
   clusterByRepository: boolean;
   confidenceThresholds: PublicSummaryDto["confidenceThresholds"];
   labelRules: readonly LabelRule[];
   maxInitialGraphNodes: number;
   maxSummaryGzipBytes: number;
+  timezone: PublicSummaryDto["timezone"];
 }>;
 
 /** 永続化済みstateから公開DTOを生成する入力。 */
@@ -881,6 +882,7 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
       snapshot.trackingStartAt.status === "fixed"
         ? snapshot.trackingStartAt.value
         : snapshot.generatedAt,
+    timezone: input.options.timezone,
     ai: {
       ...snapshot.ai,
     },

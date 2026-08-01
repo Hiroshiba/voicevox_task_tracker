@@ -18,7 +18,7 @@ import {
   createItemDetailsMap,
   createItemTableRows,
   filterAndSortTableRows,
-  formatJstDateTime,
+  formatDateTime,
   formatRelativeTime,
   formatStallDuration,
   formatWaitingOn,
@@ -54,6 +54,7 @@ type TimeDisplayProps = Readonly<{
   label: string;
   locale: string;
   now: Date;
+  timezone: string;
   value: string;
 }>;
 
@@ -191,11 +192,11 @@ function createSharedDetailsLoader(loadDetails: PublicDetailsLoader): PublicDeta
   };
 }
 
-function TimeDisplay({ label, locale, now, value }: TimeDisplayProps) {
+function TimeDisplay({ label, locale, now, timezone, value }: TimeDisplayProps) {
   return (
     <span class="time-display">
       <span class="time-label">{label}</span>
-      <time dateTime={value}>{formatJstDateTime(value, locale)}</time>
+      <time dateTime={value}>{formatDateTime(value, timezone, locale)}</time>
       <span class="relative-time">{formatRelativeTime(value, now, locale)}</span>
     </span>
   );
@@ -234,8 +235,20 @@ function Dashboard({ locale, now, summary }: Omit<AppProps, "loadDetails" | "tit
           <h2 id="overview-heading">概要</h2>
         </div>
         <div class="run-times">
-          <TimeDisplay label="全体観測" value={summary.observedAt} now={now} locale={locale} />
-          <TimeDisplay label="生成" value={summary.generatedAt} now={now} locale={locale} />
+          <TimeDisplay
+            label="全体観測"
+            value={summary.observedAt}
+            now={now}
+            timezone={summary.timezone}
+            locale={locale}
+          />
+          <TimeDisplay
+            label="生成"
+            value={summary.generatedAt}
+            now={now}
+            timezone={summary.timezone}
+            locale={locale}
+          />
         </div>
       </div>
 
@@ -348,6 +361,7 @@ function RepositoryFreshness({ locale, now, summary }: Omit<AppProps, "loadDetai
                     label="観測"
                     value={repository.observedAt}
                     now={now}
+                    timezone={summary.timezone}
                     locale={locale}
                   />
                 </td>
@@ -361,6 +375,7 @@ function RepositoryFreshness({ locale, now, summary }: Omit<AppProps, "loadDetai
                         label="取得失敗"
                         value={repository.freshness.failedAt}
                         now={now}
+                        timezone={summary.timezone}
                         locale={locale}
                       />
                     </span>
@@ -450,6 +465,7 @@ function AttentionQueue({
                           label="観測"
                           value={item.observedAt}
                           now={now}
+                          timezone={summary.timezone}
                           locale={locale}
                         />
                       </dd>
@@ -617,7 +633,7 @@ function ItemTable({
                 <td>
                   <strong>{formatStallDuration(row.item.stallSince, now)}</strong>
                   <time dateTime={row.item.stallSince}>
-                    {formatJstDateTime(row.item.stallSince, locale)}
+                    {formatDateTime(row.item.stallSince, summary.timezone, locale)}
                   </time>
                 </td>
                 <td>{row.blockerText}</td>
@@ -626,12 +642,14 @@ function ItemTable({
                     label="GitHub更新"
                     value={row.item.githubUpdatedAt}
                     now={now}
+                    timezone={summary.timezone}
                     locale={locale}
                   />
                   <TimeDisplay
                     label="項目観測"
                     value={row.item.observedAt}
                     now={now}
+                    timezone={summary.timezone}
                     locale={locale}
                   />
                 </td>

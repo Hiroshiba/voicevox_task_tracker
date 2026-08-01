@@ -478,6 +478,7 @@ const publicSummaryDtoSchema = z.strictObject({
   generatedAt: dateTimeSchema,
   observedAt: dateTimeSchema,
   trackingStartAt: dateTimeSchema,
+  timezone: identifierSchema,
   ai: publicAiStateSchema,
   confidenceThresholds: publicConfidenceThresholdsSchema,
   aggregates: publicAggregateSchema,

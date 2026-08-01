@@ -43,25 +43,25 @@ pnpm install --frozen-lockfile
 
 ## ディレクトリ構成
 
-| パス                 | 内容                                                                     |
-| -------------------- | ------------------------------------------------------------------------ |
-| `.github/workflows/` | CIと日次runのGitHub Actions workflow                                     |
-| `src/cli/`           | コマンド解析、日次トランザクション、実アダプターの合成                   |
-| `src/config/`        | `config.yml`の読み込みと検証                                             |
-| `src/github/`        | GitHub App認証、読み取り専用API、収集、正規化、公開allowlist             |
-| `src/domain/`        | 状態機械、追跡選定、停滞時間、severityのpure TypeScript                  |
-| `src/graph/`         | 関係候補、edge reconcile、cycle、frontier、影響度のpure TypeScript       |
-| `src/codex/`         | Codexの隔離実行、cache、予算、出力検証                                   |
-| `src/persistence/`   | canonical state、履歴、ledger、state branch操作                          |
-| `src/pages/`         | 公開guardとPages用DTO生成                                                |
-| `src/discord/`       | 通知選別、payload生成、Webhook送信                                       |
-| `src/eval/`          | golden fixtureの回帰評価                                                 |
-| `src/performance/`   | 日次run全体の性能と予算のprofile                                         |
-| `web/`               | ViteとPreactによる静的Web UI                                             |
-| `tests/`             | unit、integration、security、golden fixtureのテスト                      |
-| `schemas/`           | stateとCodex出力のJSON Schema                                            |
-| `prompts/`           | Codexへ渡す固定system prompt                                             |
-| `docs/`              | 要求定義、アーキテクチャ、デプロイ、運用、未実装要件の課題一覧、参照資料 |
+| パス                 | 内容                                                               |
+| -------------------- | ------------------------------------------------------------------ |
+| `.github/workflows/` | CIと日次runのGitHub Actions workflow                               |
+| `src/cli/`           | コマンド解析、日次トランザクション、実アダプターの合成             |
+| `src/config/`        | `config.yml`の読み込みと検証                                       |
+| `src/github/`        | GitHub App認証、読み取り専用API、収集、正規化、公開allowlist       |
+| `src/domain/`        | 状態機械、追跡選定、停滞時間、severityのpure TypeScript            |
+| `src/graph/`         | 関係候補、edge reconcile、cycle、frontier、影響度のpure TypeScript |
+| `src/codex/`         | Codexの隔離実行、cache、予算、出力検証                             |
+| `src/persistence/`   | canonical state、履歴、ledger、state branch操作                    |
+| `src/pages/`         | 公開guardとPages用DTO生成                                          |
+| `src/discord/`       | 通知選別、payload生成、Webhook送信                                 |
+| `src/eval/`          | golden fixtureの回帰評価                                           |
+| `src/performance/`   | 日次run全体の性能と予算のprofile                                   |
+| `web/`               | ViteとPreactによる静的Web UI                                       |
+| `tests/`             | unit、integration、security、golden fixtureのテスト                |
+| `schemas/`           | stateとCodex出力のJSON Schema                                      |
+| `prompts/`           | Codexへ渡す固定system prompt                                       |
+| `docs/`              | 要求定義、アーキテクチャ、デプロイ、運用、参照資料                 |
 
 ## 詳細文書
 
@@ -69,5 +69,4 @@ pnpm install --frozen-lockfile
 - [アーキテクチャ](docs/ARCHITECTURE.md)
 - [デプロイ手順](docs/DEPLOYMENT.md)
 - [運用手順](docs/OPERATIONS.md)
-- [未実装要件の課題一覧](docs/UNIMPLEMENTED_REQUIREMENTS.md)
 - [参照資料](docs/RESEARCH_SOURCES.md)

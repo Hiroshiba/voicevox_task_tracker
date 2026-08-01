@@ -11,7 +11,7 @@ import { assertNonNullable, UnreachableError } from "../../src/util/index.js";
 import {
   confidencePresentation,
   formatConfidence,
-  formatJstDateTime,
+  formatDateTime,
   formatRelativeTime,
   severityLabel,
   statusLabel,
@@ -216,13 +216,14 @@ function DetailTime({
   label,
   locale,
   now,
+  timezone,
   value,
-}: Readonly<{ label: string; locale: string; now: Date; value: string }>) {
+}: Readonly<{ label: string; locale: string; now: Date; timezone: string; value: string }>) {
   return (
     <div>
       <dt>{label}</dt>
       <dd>
-        <time dateTime={value}>{formatJstDateTime(value, locale)}</time>
+        <time dateTime={value}>{formatDateTime(value, timezone, locale)}</time>
         <span class="relative-time">{formatRelativeTime(value, now, locale)}</span>
       </dd>
     </div>
@@ -247,7 +248,8 @@ function formatSeverityHistoryValue(value: SeverityHistoryValue): string {
 function HistoryEvent({
   event,
   locale,
-}: Readonly<{ event: PublicItemHistoryEventDto; locale: string }>) {
+  timezone,
+}: Readonly<{ event: PublicItemHistoryEventDto; locale: string; timezone: string }>) {
   let label: string;
   let before: string;
   let after: string;
@@ -269,7 +271,9 @@ function HistoryEvent({
     <article class="history-event" data-history-kind={event.kind}>
       <div>
         <h4>{label}</h4>
-        <time dateTime={event.recordedAt}>{formatJstDateTime(event.recordedAt, locale)}</time>
+        <time dateTime={event.recordedAt}>
+          {formatDateTime(event.recordedAt, timezone, locale)}
+        </time>
       </div>
       <p>
         <span>{before}</span>
@@ -285,7 +289,12 @@ function HistoryEvent({
 function ItemHistory({
   history,
   locale,
-}: Readonly<{ history: readonly PublicItemHistoryEventDto[]; locale: string }>) {
+  timezone,
+}: Readonly<{
+  history: readonly PublicItemHistoryEventDto[];
+  locale: string;
+  timezone: string;
+}>) {
   const latestEvent = history.at(-1);
   return (
     <section aria-labelledby="item-history-heading" class="detail-subsection">
@@ -296,14 +305,14 @@ function ItemHistory({
         <>
           <div class="latest-difference">
             <h4>前回との差分</h4>
-            <HistoryEvent event={latestEvent} locale={locale} />
+            <HistoryEvent event={latestEvent} locale={locale} timezone={timezone} />
           </div>
           <details class="history-list">
             <summary>全履歴を表示</summary>
             <ol>
               {[...history].reverse().map((event) => (
                 <li key={`${event.runId}:${event.kind}:${event.recordedAt}`}>
-                  <HistoryEvent event={event} locale={locale} />
+                  <HistoryEvent event={event} locale={locale} timezone={timezone} />
                 </li>
               ))}
             </ol>
@@ -490,6 +499,7 @@ function ItemDetails({
               label={field.label}
               value={field.value}
               now={now}
+              timezone={summary.timezone}
               locale={locale}
             />
           ))}
@@ -594,7 +604,7 @@ function ItemDetails({
         )}
       </section>
 
-      <ItemHistory history={details.history} locale={locale} />
+      <ItemHistory history={details.history} locale={locale} timezone={summary.timezone} />
     </article>
   );
 }

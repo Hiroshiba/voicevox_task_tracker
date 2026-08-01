@@ -95,7 +95,7 @@ const SEVERITY_RANKS = {
   critical: 3,
 } satisfies Readonly<Record<Severity, number>>;
 
-const jstDateTimeFormatters = new Map<string, Intl.DateTimeFormat>();
+const dateTimeFormatters = new Map<string, Map<string, Intl.DateTimeFormat>>();
 const relativeTimeFormatters = new Map<string, Intl.RelativeTimeFormat>();
 
 const ROLE_LABELS = {
@@ -148,18 +148,28 @@ function parseTimestamp(value: string): number {
   return timestamp;
 }
 
-function jstDateTimeFormatter(locale: string): Intl.DateTimeFormat {
-  const cached = jstDateTimeFormatters.get(locale);
+function dateTimeFormatter(timezone: string, locale: string): Intl.DateTimeFormat {
+  const localeFormatters = dateTimeFormatters.get(locale);
+  const cached = localeFormatters?.get(timezone);
   if (cached != null) {
     return cached;
   }
   const formatter = new Intl.DateTimeFormat(locale, {
-    timeZone: "Asia/Tokyo",
-    dateStyle: "medium",
-    timeStyle: "medium",
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
     hour12: false,
+    timeZoneName: "short",
   });
-  jstDateTimeFormatters.set(locale, formatter);
+  if (localeFormatters == null) {
+    dateTimeFormatters.set(locale, new Map([[timezone, formatter]]));
+  } else {
+    localeFormatters.set(timezone, formatter);
+  }
   return formatter;
 }
 
@@ -175,10 +185,10 @@ function relativeTimeFormatter(locale: string): Intl.RelativeTimeFormat {
   return formatter;
 }
 
-/** 日時をJSTの絶対時刻へ整形する。 */
-export function formatJstDateTime(value: string, locale: string): string {
+/** 日時を指定timezoneの絶対時刻へ整形する。 */
+export function formatDateTime(value: string, timezone: string, locale: string): string {
   const timestamp = parseTimestamp(value);
-  return `${jstDateTimeFormatter(locale).format(timestamp)} JST`;
+  return dateTimeFormatter(timezone, locale).format(timestamp);
 }
 
 /** 日時を現在時刻からの相対時間へ整形する。 */
@@ -466,12 +476,12 @@ export function createItemTableRows(
         .join(" ")}`,
       stallText: `${formatStallDuration(item.stallSince, now)} ${item.stallSince}`,
       blockerText: blockerText(item, itemsByNodeId, initialGraphNodesByNodeId),
-      updatedText: `${formatJstDateTime(item.githubUpdatedAt, locale)} ${formatRelativeTime(
+      updatedText: `${formatDateTime(item.githubUpdatedAt, summary.timezone, locale)} ${formatRelativeTime(
         item.githubUpdatedAt,
         now,
         locale,
       )} ${item.githubUpdatedAt}`,
-      observedText: `${formatJstDateTime(item.observedAt, locale)} ${formatRelativeTime(
+      observedText: `${formatDateTime(item.observedAt, summary.timezone, locale)} ${formatRelativeTime(
         item.observedAt,
         now,
         locale,

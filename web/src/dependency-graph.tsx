@@ -21,7 +21,7 @@ import {
   relationTypeLabel,
 } from "./graph-model.js";
 import type { GraphLayout, LayoutedGraphNode } from "./graph-layout.js";
-import { formatConfidence, formatJstDateTime } from "./model.js";
+import { formatConfidence, formatDateTime } from "./model.js";
 import { SafeGitHubLink } from "./safe-link.js";
 import type { GraphSelection } from "./url-state.js";
 
@@ -680,7 +680,8 @@ function EdgeHistoryChange({
 function EdgeHistoryEventCard({
   event,
   locale,
-}: Readonly<{ event: EdgeHistoryEvent; locale: string }>) {
+  timezone,
+}: Readonly<{ event: EdgeHistoryEvent; locale: string; timezone: string }>) {
   const operation = edgeHistoryEventOperation(event);
   let label: string;
   let content: VNode;
@@ -714,7 +715,9 @@ function EdgeHistoryEventCard({
     <article class="history-event edge-history-event" data-edge-event-kind={operation}>
       <div>
         <h5>{label}</h5>
-        <time dateTime={event.recordedAt}>{formatJstDateTime(event.recordedAt, locale)}</time>
+        <time dateTime={event.recordedAt}>
+          {formatDateTime(event.recordedAt, timezone, locale)}
+        </time>
       </div>
       {content}
       <p class="history-run-id">Run {event.runId}</p>
@@ -722,7 +725,11 @@ function EdgeHistoryEventCard({
   );
 }
 
-function EdgeHistoryPanel({ locale, view }: Readonly<{ locale: string; view: GraphClusterView }>) {
+function EdgeHistoryPanel({
+  locale,
+  timezone,
+  view,
+}: Readonly<{ locale: string; timezone: string; view: GraphClusterView }>) {
   const [selection, setSelection] = useState<EdgeHistorySelection>({
     status: "none",
   });
@@ -803,7 +810,7 @@ function EdgeHistoryPanel({ locale, view }: Readonly<{ locale: string; view: Gra
               <ol>
                 {selectedHistory.events.map((event) => (
                   <li key={`${event.runId}:${event.recordedAt}`}>
-                    <EdgeHistoryEventCard event={event} locale={locale} />
+                    <EdgeHistoryEventCard event={event} locale={locale} timezone={timezone} />
                   </li>
                 ))}
               </ol>
@@ -819,11 +826,13 @@ function SelectedComponentGraph({
   expandedCycleIds,
   locale,
   onToggleCycle,
+  timezone,
   view,
 }: Readonly<{
   expandedCycleIds: readonly string[];
   locale: string;
   onToggleCycle: (cycleId: string) => void;
+  timezone: string;
   view: GraphClusterView;
 }>) {
   return (
@@ -842,7 +851,12 @@ function SelectedComponentGraph({
       <CycleControls view={view} expandedCycleIds={expandedCycleIds} onToggle={onToggleCycle} />
       <GraphCanvas view={view} />
       <GraphAlternativeTables view={view} locale={locale} />
-      <EdgeHistoryPanel key={`${view.clusterKind}:${view.clusterId}`} view={view} locale={locale} />
+      <EdgeHistoryPanel
+        key={`${view.clusterKind}:${view.clusterId}`}
+        view={view}
+        locale={locale}
+        timezone={timezone}
+      />
     </div>
   );
 }
@@ -1160,6 +1174,7 @@ export function DependencyGraph({
                   locale={locale}
                   expandedCycleIds={expandedCycleIds}
                   onToggleCycle={toggleCycle}
+                  timezone={summary.timezone}
                 />
               )}
             </div>
