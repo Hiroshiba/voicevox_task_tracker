@@ -40,10 +40,10 @@ class HttpFixtureError extends Error {
   }
 }
 
-function createInput(id: string, body: string): CodexAnalysisInput {
+function createInputAt(id: string, body: string, now: string): CodexAnalysisInput {
   return createCodexAnalysisInput({
     schemaVersion: "1",
-    now: "2026-07-30T23:00:00Z",
+    now,
     item: {
       nodeId: id,
       url: "https://github.com/VOICEVOX/example/issues/1",
@@ -73,6 +73,10 @@ function createInput(id: string, body: string): CodexAnalysisInput {
     },
     priorAnalysis: null,
   });
+}
+
+function createInput(id: string, body: string): CodexAnalysisInput {
+  return createInputAt(id, body, "2026-07-30T23:00:00Z");
 }
 
 function createPriority(
@@ -228,16 +232,21 @@ describe("Codex分析対象の絞り込み", () => {
         estimatedCostUsd: 0.1,
       }),
     ];
+    const cache = new MemoryAiCacheStore();
     const execute = createExecutor();
-
-    const result = await runAiAnalyses(candidates, createConfiguration(10, 1_000_000, 10), {
-      cache: new MemoryAiCacheStore(),
+    const configuration = createConfiguration(10, 1_000_000, 10);
+    const dependencies = {
+      cache,
       execute,
       executedAt: () => fixedExecutedAt,
-    });
+    };
+    await runAiAnalyses([unchangedBase], configuration, dependencies);
+    execute.mockClear();
+
+    const result = await runAiAnalyses(candidates, configuration, dependencies);
 
     expect(execute).toHaveBeenCalledTimes(1);
-    expect(result.results.map((value) => value.candidateId)).toEqual(["I_changed"]);
+    expect(result.results.map((value) => value.candidateId)).toEqual(["I_unchanged", "I_changed"]);
     expect(result.skipped).toEqual([
       {
         candidateId: "I_clear",
@@ -248,6 +257,40 @@ describe("Codex分析対象の絞り込み", () => {
         reason: "unchanged",
       },
     ]);
+  });
+
+  it("未変更fingerprintに対応するcacheがなければCodexを呼ばず例外にする", async () => {
+    const base = createCandidate({
+      id: "I_uncached_unchanged",
+      body: "未変更",
+      deterministicResolution: "ambiguous",
+      previousFingerprint: unavailablePreviousFingerprint,
+      priority: createPriority("ordinary"),
+      graphVersion: 1,
+      estimatedCostUsd: 0.1,
+    });
+    const candidate = createCandidate({
+      id: "I_uncached_unchanged",
+      body: "未変更",
+      deterministicResolution: "ambiguous",
+      previousFingerprint: {
+        status: "available",
+        fingerprint: prepareAiAnalysisCandidate(base).fingerprint,
+      },
+      priority: createPriority("ordinary"),
+      graphVersion: 1,
+      estimatedCostUsd: 0.1,
+    });
+    const execute = createExecutor();
+
+    await expect(
+      runAiAnalyses([candidate], createConfiguration(10, 1_000_000, 10), {
+        cache: new MemoryAiCacheStore(),
+        execute,
+        executedAt: () => fixedExecutedAt,
+      }),
+    ).rejects.toThrow(TypeError);
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("本文が同じでもグラフ隣接情報が変われば呼び出す", async () => {
@@ -385,6 +428,44 @@ describe("content-addressed AI cache", () => {
         status: "miss",
       });
     }
+  });
+
+  it("run開始時刻だけが異なる同一入力はcacheから再利用する", async () => {
+    const cache = new MemoryAiCacheStore();
+    const execute = createExecutor();
+    const firstCandidate = createCandidate({
+      id: "I_cache_across_runs",
+      body: "同一入力",
+      deterministicResolution: "ambiguous",
+      previousFingerprint: unavailablePreviousFingerprint,
+      priority: createPriority("ordinary"),
+      graphVersion: 1,
+      estimatedCostUsd: 0.1,
+    });
+    const secondCandidate = Object.freeze({
+      ...firstCandidate,
+      input: createInputAt("I_cache_across_runs", "同一入力", "2026-07-31T23:00:00Z"),
+      previousFingerprint: Object.freeze({
+        status: "available",
+        fingerprint: prepareAiAnalysisCandidate(firstCandidate).fingerprint,
+      }),
+    });
+    const configuration = createConfiguration(10, 1_000_000, 10);
+    const dependencies = {
+      cache,
+      execute,
+      executedAt: () => fixedExecutedAt,
+    };
+
+    const first = await runAiAnalyses([firstCandidate], configuration, dependencies);
+    const second = await runAiAnalyses([secondCandidate], configuration, dependencies);
+
+    expect(prepareAiAnalysisCandidate(secondCandidate).fingerprint.inputHash).toBe(
+      prepareAiAnalysisCandidate(firstCandidate).fingerprint.inputHash,
+    );
+    expect(first.results[0]?.origin).toBe("executed");
+    expect(second.results[0]?.origin).toBe("cache");
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 
   it("同一入力はcacheから再利用し、本文1文字の変更後は旧結果を使わない", async () => {

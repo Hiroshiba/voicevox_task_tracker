@@ -91,6 +91,13 @@ function validateCandidateId(id: string): void {
   }
 }
 
+/** run開始時刻を除いたinput hash値を生成する。 */
+function createInputHashValue(input: CodexAnalysisInput): unknown {
+  const { now: excludedRunStartTime, ...inputHashValue } = input;
+  void excludedRunStartTime;
+  return Object.freeze(inputHashValue);
+}
+
 /** Codex分析候補の正規化入力、source、グラフ隣接hashを生成する。 */
 export function prepareAiAnalysisCandidate(
   candidate: AiAnalysisCandidate,
@@ -102,7 +109,7 @@ export function prepareAiAnalysisCandidate(
     sourceHash: hashCanonicalJson(candidate.input.sources),
     inputHash: hashCanonicalJson({
       graphNeighborhood: candidate.graphNeighborhood,
-      input: candidate.input,
+      input: createInputHashValue(candidate.input),
     }),
     graphNeighborhoodHash,
   });

@@ -26,10 +26,12 @@ import {
   StateBranchCommitError,
   StatePersistenceSession,
   StatePublicSafetyError,
+  StateSnapshotSchemaError,
   createEmptyStateNotificationLedger,
   createStateNotificationLedger,
   createStateRunReport,
   createStateSnapshot,
+  parseStateSnapshot,
   serializeCanonicalJson,
   serializeStateSnapshot,
   type StateNotificationLedger,
@@ -441,6 +443,85 @@ describe("state canonical JSON", () => {
     expect(serializeCanonicalJson(snapshotWithoutVolatileFields(first))).toBe(
       serializeCanonicalJson(snapshotWithoutVolatileFields(second)),
     );
+  });
+
+  it("AI分析fingerprintを収集項目へ保存し、欠落した形式を拒否する", () => {
+    const base = createSnapshot({
+      runId: "run-ai-fingerprint",
+      generatedAt: "2026-07-31T00:00:00.000Z",
+      repositoryIds: [publicRepositoryId],
+      responsibility: {
+        status: "new_untriaged",
+        kind: "role",
+        candidateId: "role:maintainer",
+        role: "maintainer",
+      },
+      severity: "watch",
+      edge: {
+        status: "absent",
+      },
+    });
+    const itemFingerprint = hashCanonicalJson({
+      item: itemNodeId,
+    });
+    const fingerprint = {
+      sourceHash: hashCanonicalJson({ source: itemNodeId }),
+      inputHash: hashCanonicalJson({ input: itemNodeId }),
+      graphNeighborhoodHash: hashCanonicalJson({ graph: itemNodeId }),
+    };
+    const collectionRepository = {
+      repositoryId: publicRepositoryId,
+      successfulAt: fixedItemAt,
+      items: [
+        {
+          freshness: "fresh",
+          nodeId: itemNodeId,
+          repositoryId: publicRepositoryId,
+          itemFingerprint,
+          aiAnalysisFingerprint: {
+            status: "available",
+            fingerprint,
+          },
+          observedAt: fixedItemAt,
+          state: "open",
+          terminalAt: null,
+        },
+      ],
+    };
+    const snapshot = createStateSnapshot({
+      ...base,
+      collection: {
+        repositories: [collectionRepository],
+      },
+    });
+
+    expect(
+      parseStateSnapshot(serializeStateSnapshot(snapshot)).collection.repositories[0]?.items,
+    ).toEqual(collectionRepository.items);
+    expect(() =>
+      createStateSnapshot({
+        ...base,
+        collection: {
+          repositories: [
+            {
+              repositoryId: publicRepositoryId,
+              successfulAt: fixedItemAt,
+              items: [
+                {
+                  freshness: "fresh",
+                  nodeId: itemNodeId,
+                  repositoryId: publicRepositoryId,
+                  itemFingerprint,
+                  observedAt: fixedItemAt,
+                  state: "open",
+                  terminalAt: null,
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    ).toThrow(StateSnapshotSchemaError);
   });
 });
 

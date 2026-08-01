@@ -462,6 +462,19 @@ function requireDryRunSnapshot(artifacts: readonly unknown[]): StateSnapshot {
   return createStateSnapshot(result.snapshot);
 }
 
+function requireCollectionItem(
+  snapshot: StateSnapshot,
+  nodeId: GitHubNodeId,
+): StateSnapshot["collection"]["repositories"][number]["items"][number] {
+  const item = snapshot.collection.repositories
+    .flatMap((repository) => repository.items)
+    .find((candidate) => candidate.nodeId === nodeId);
+  if (item == null) {
+    throw new TypeError(`snapshotの収集項目がありません。対象: ${nodeId}`);
+  }
+  return item;
+}
+
 function createCodexOutput(
   input: CodexAnalysisInput,
   options: Readonly<{
@@ -1617,6 +1630,13 @@ describe("本番判定入力の接続", () => {
       throw new TypeError("inferred edge作成後のsnapshotがありません");
     }
     const firstSnapshot = parseStateSnapshot(new TextDecoder().decode(firstSnapshotSource));
+    const firstAiFingerprint = requireCollectionItem(
+      firstSnapshot,
+      blocked.nodeId,
+    ).aiAnalysisFingerprint;
+    if (firstAiFingerprint.status !== "available") {
+      throw new TypeError("初回Codex分析fingerprintが保存されていません");
+    }
     expect(firstSnapshot.items.find((item) => item.nodeId === blocked.nodeId)?.status).toBe(
       "blocked",
     );
@@ -1629,31 +1649,97 @@ describe("本番判定入力の接続", () => {
       }),
     );
 
+    const firstCodexExecutionCount = harness.codexExecutionCount();
+    harness.artifacts.length = 0;
+    const unchangedResult = await harness.runDry(SECOND_RUN_AT);
+    const unchangedSnapshot = requireDryRunSnapshot(harness.artifacts);
+    const secondAiFingerprint = requireCollectionItem(
+      unchangedSnapshot,
+      blocked.nodeId,
+    ).aiAnalysisFingerprint;
+    const unchangedMetrics = z
+      .object({
+        metrics: z.object({
+          aiCallCount: z.number(),
+          aiCacheHitCount: z.number(),
+        }),
+      })
+      .parse(harness.artifacts.at(-1)).metrics;
+
+    expect(unchangedResult.exitCode).toBe(0);
+    expect(harness.codexExecutionCount()).toBe(firstCodexExecutionCount);
+    expect(unchangedMetrics.aiCallCount).toBe(0);
+    expect(unchangedMetrics.aiCacheHitCount).toBeGreaterThan(0);
+    expect(unchangedSnapshot.items.find((item) => item.nodeId === blocked.nodeId)?.status).toBe(
+      "blocked",
+    );
+    expect(unchangedSnapshot.relations).toContainEqual(
+      expect.objectContaining({
+        fromNodeId: blocker.nodeId,
+        toNodeId: blocked.nodeId,
+        active: true,
+      }),
+    );
+    const blockedInputsBeforeChange = harness.codexInputs.filter(
+      (input) => input.item.nodeId === blocked.nodeId,
+    );
+    expect(blockedInputsBeforeChange).toHaveLength(1);
+    expect(secondAiFingerprint).toEqual(firstAiFingerprint);
+
     relationExists = false;
+    const thirdObservedAt = createUtcIsoDateTime(THIRD_RUN_AT);
+    const changedBlocked = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "blocked-changed",
+      updatedAt: thirdObservedAt,
+      observedAt: thirdObservedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    fixture.openItems = [changedBlocked, blocker];
+    fixture.details.set(
+      changedBlocked.nodeId,
+      createIssueDetail({
+        item: changedBlocked,
+        body: unchangedBody,
+        observedAt: thirdObservedAt,
+        nativeDependencies: Object.freeze([]),
+        duplicateComments: true,
+      }),
+    );
 
-    const result = await harness.runDaily(SECOND_RUN_AT);
-    const files = await harness.stateAdapter.readBranchFiles("tracker-state");
-    const snapshotSource = files.get("state/snapshot.json");
-    if (snapshotSource == null) {
-      throw new TypeError("依存解消後のsnapshotがありません");
+    expect((await harness.runDaily(THIRD_RUN_AT)).exitCode).toBe(0);
+    const thirdFiles = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const thirdSnapshotSource = thirdFiles.get("state/snapshot.json");
+    if (thirdSnapshotSource == null) {
+      throw new TypeError("入力変更後のsnapshotがありません");
     }
-    const snapshot = parseStateSnapshot(new TextDecoder().decode(snapshotSource));
-    const reclassified = snapshot.items.find((item) => item.nodeId === blocked.nodeId);
+    const thirdSnapshot = parseStateSnapshot(new TextDecoder().decode(thirdSnapshotSource));
+    const thirdAiFingerprint = requireCollectionItem(
+      thirdSnapshot,
+      blocked.nodeId,
+    ).aiAnalysisFingerprint;
+    if (thirdAiFingerprint.status !== "available") {
+      throw new TypeError("入力変更後のCodex分析fingerprintが保存されていません");
+    }
+    const reclassified = thirdSnapshot.items.find((item) => item.nodeId === blocked.nodeId);
 
-    expect(result.exitCode).toBe(0);
+    const blockedInputs = harness.codexInputs.filter(
+      (input) => input.item.nodeId === blocked.nodeId,
+    );
     expect(reclassified?.status).not.toBe("blocked");
-    expect(reclassified?.lastProgressAt).toBe(SECOND_RUN_AT);
-    expect(snapshot.relations).toContainEqual(
+    expect(reclassified?.lastProgressAt).toBe(THIRD_RUN_AT);
+    expect(thirdSnapshot.relations).toContainEqual(
       expect.objectContaining({
         fromNodeId: blocker.nodeId,
         toNodeId: blocked.nodeId,
         active: false,
       }),
     );
-    const blockedInputs = harness.codexInputs.filter(
-      (input) => input.item.nodeId === blocked.nodeId,
-    );
     expect(blockedInputs).toHaveLength(2);
+    expect(thirdAiFingerprint.fingerprint.inputHash).not.toBe(
+      firstAiFingerprint.fingerprint.inputHash,
+    );
     expect(
       blockedInputs.map(
         (input) => input.sources.find((source) => source.kind === "body")?.["content"],
@@ -1805,6 +1891,69 @@ describe("本番判定入力の接続", () => {
     expect((await harness.runDaily(FIRST_RUN_AT)).exitCode).toBe(0);
 
     executedNodeIds.length = 0;
+    const secondObservedAt = createUtcIsoDateTime(SECOND_RUN_AT);
+    const secondItems = items.map((item) =>
+      createIssueItem({
+        repository: publicRepository,
+        number: item.number,
+        fingerprint:
+          item.number <= 2
+            ? `priority-${item.number.toString()}-second`
+            : `priority-${item.number.toString()}`,
+        updatedAt: item.number <= 2 ? secondObservedAt : firstObservedAt,
+        observedAt: secondObservedAt,
+        state: Object.freeze({ state: "open" }),
+      }),
+    );
+    fixture.openItems = [...secondItems];
+    setIssueDetails(fixture, secondItems, secondObservedAt);
+    const secondByNumber = new Map(secondItems.map((item) => [item.number, item]));
+    const secondHighImpact = secondByNumber.get(1);
+    const secondChangedTarget = secondByNumber.get(2);
+    const secondDownstream = secondByNumber.get(3);
+    const secondLeaf = secondByNumber.get(4);
+    if (
+      secondHighImpact == null ||
+      secondChangedTarget == null ||
+      secondDownstream == null ||
+      secondLeaf == null
+    ) {
+      throw new TypeError("2回目のAI優先順位fixtureがありません");
+    }
+    for (const item of [secondHighImpact, secondChangedTarget]) {
+      fixture.details.set(
+        item.nodeId,
+        createIssueDetail({
+          item,
+          body: "自然言語判定を必要とします。入力を更新しました",
+          observedAt: secondObservedAt,
+          nativeDependencies: Object.freeze([]),
+          duplicateComments: true,
+        }),
+      );
+    }
+    fixture.details.set(
+      secondDownstream.nodeId,
+      createIssueDetail({
+        item: secondDownstream,
+        body: "downstream項目です",
+        observedAt: secondObservedAt,
+        nativeDependencies: Object.freeze([
+          createNativeBlocker(secondDownstream, secondHighImpact),
+        ]),
+        duplicateComments: false,
+      }),
+    );
+    fixture.details.set(
+      secondLeaf.nodeId,
+      createIssueDetail({
+        item: secondLeaf,
+        body: "downstream末端です",
+        observedAt: secondObservedAt,
+        nativeDependencies: Object.freeze([createNativeBlocker(secondLeaf, secondDownstream)]),
+        duplicateComments: false,
+      }),
+    );
     harness.setConfig(configWithBudget(baseConfig, 1, 10));
     expect((await harness.runDaily(SECOND_RUN_AT)).exitCode).toBe(0);
     expect(executedNodeIds).toEqual([highImpact.nodeId]);

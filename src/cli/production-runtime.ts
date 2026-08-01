@@ -597,6 +597,9 @@ function createSnapshotCollectionItem(item: EnumeratedGitHubItem): SnapshotColle
       nodeId: item.nodeId,
       repositoryId: item.repositoryId,
       itemFingerprint: item.itemFingerprint,
+      aiAnalysisFingerprint: Object.freeze({
+        status: "unavailable",
+      }),
       observedAt: item.observedAt,
       state: "open",
       terminalAt: null,
@@ -607,6 +610,9 @@ function createSnapshotCollectionItem(item: EnumeratedGitHubItem): SnapshotColle
     nodeId: item.nodeId,
     repositoryId: item.repositoryId,
     itemFingerprint: item.itemFingerprint,
+    aiAnalysisFingerprint: Object.freeze({
+      status: "unavailable",
+    }),
     observedAt: item.observedAt,
     state: "closed",
     terminalAt: item.closedAt,
@@ -1515,6 +1521,11 @@ function createAiCandidates(
     (previousGraphAnalysis?.downstreamImpacts ?? []).map((impact) => [impact.nodeId, impact]),
   );
   const previousRelations = previousSnapshot(state)?.relations ?? [];
+  const previousAiFingerprintByNodeId = new Map(
+    (previousSnapshot(state)?.collection.repositories ?? []).flatMap((repository) =>
+      repository.items.map((item) => [item.nodeId, item.aiAnalysisFingerprint] as const),
+    ),
+  );
   const candidates = deterministicAnalysis.items.map((analysis) => {
     const input = createCodexInput(invocation, analysis);
     inputByNodeId.set(analysis.item.nodeId, input);
@@ -1570,9 +1581,11 @@ function createAiCandidates(
       graphNeighborhood: Object.freeze(
         analysis.relationCandidates.map((candidate) => candidate.id),
       ),
-      previousFingerprint: Object.freeze({
-        status: "unavailable",
-      }),
+      previousFingerprint:
+        previousAiFingerprintByNodeId.get(analysis.item.nodeId) ??
+        Object.freeze({
+          status: "unavailable",
+        }),
       priority: Object.freeze({
         severityCandidate: analysis.decision.determination === "codex_candidate",
         ownerUnknown: analysis.decision.waitingOn.some((waitingOn) => waitingOn.kind === "unknown"),
@@ -2800,6 +2813,7 @@ function validateRunCompleteness(
   state: RuntimeState,
   inventory: RepositoryInventory,
   collection: CollectedItems,
+  codexAnalysis: CodexAnalysis,
   reduction: ReducedAnalysis,
   graph: GraphResult,
 ): ValidatedRun {
@@ -2809,12 +2823,43 @@ function validateRunCompleteness(
   const previousSeverityByNodeId = new Map(
     (previousSnapshot(state)?.items ?? []).map((item) => [item.nodeId, item.severity]),
   );
+  const previousCollectionItems = previousCollectionItemsByNodeId(state);
+  const aiFingerprintByNodeId = new Map(
+    (codexAnalysis.run?.results ?? []).map((result) => [
+      result.candidateId,
+      Object.freeze({
+        status: "available",
+        fingerprint: result.fingerprint,
+      }),
+    ]),
+  );
+  const persistedAiFingerprintNodeIds = new Set<string>();
   const snapshot = createStateSnapshot({
     schemaVersion: "1",
     generatedAt: invocation.startedAt,
     trackingStartAt: trackingStartAt(configuration, state, invocation),
     collection: {
-      repositories: collection.collectionRepositories,
+      repositories: collection.collectionRepositories.map((repository) => ({
+        ...repository,
+        items: repository.items.map((item) => {
+          const currentFingerprint = aiFingerprintByNodeId.get(item.nodeId);
+          if (currentFingerprint != null) {
+            persistedAiFingerprintNodeIds.add(item.nodeId);
+            return {
+              ...item,
+              aiAnalysisFingerprint: currentFingerprint,
+            };
+          }
+          const previousItem = previousCollectionItems.get(item.nodeId);
+          return {
+            ...item,
+            aiAnalysisFingerprint:
+              previousItem == null
+                ? item.aiAnalysisFingerprint
+                : previousItem.aiAnalysisFingerprint,
+          };
+        }),
+      })),
     },
     repositories: snapshotRepositories(collection),
     items: reduction.items.map((item) => {
@@ -2834,6 +2879,11 @@ function validateRunCompleteness(
       complete: true,
     },
   });
+  for (const nodeId of aiFingerprintByNodeId.keys()) {
+    if (!persistedAiFingerprintNodeIds.has(nodeId)) {
+      throw new TypeError(`AI分析fingerprintの保存対象項目がありません。対象: ${nodeId}`);
+    }
+  }
   const notificationSelection = selectDiscordNotifications({
     evaluatedAt: invocation.startedAt,
     items: reduction.currentItems.map((item) =>
@@ -3566,6 +3616,7 @@ function createDailyDependencies(
       state,
       repositoryInventory,
       collection,
+      codexAnalysis,
       reduction,
       graph,
     }) =>
@@ -3578,6 +3629,7 @@ function createDailyDependencies(
             state,
             repositoryInventory,
             collection,
+            codexAnalysis,
             reduction,
             graph,
           ),

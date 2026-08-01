@@ -98,9 +98,13 @@ Pages guardを含むPages stageのエラーでは、通常digestの代わりにD
 
 ## Codexの隔離
 
-本番経路はGitHubの確定情報で高信頼に解決した項目を除外しますが、残る候補には前回fingerprintを渡さず、すべて選択します。
-未変更項目のCodex process実行はcontent-addressed cacheのhitで抑止します。
+本番経路は前回成功したCodex分析のfingerprintをsnapshotの収集項目へ保存し、次回の候補選別へ渡します。
+GitHubの確定情報で高信頼に解決した項目に加え、入力hashと隣接graph hashが前回と一致する項目も除外します。
+未変更候補はcontent-addressed cacheの検証済み結果をreducerへ渡し、変更候補も同じ判定入力が保存済みならcacheから再利用します。
+どちらの場合もcache hitではCodex processを実行しません。
 model、reasoning effort、backend version、prompt version、schema version、入力hashからcache keyを作り、同一入力だけを再利用します。
+Codex入力の判定時刻は未来のsource参照を拒否するsemantic検証にだけ使い、時間依存の状態と停滞時間は決定論的処理で算出します。
+判定時刻を入力hashから除外するため、run開始時刻だけが異なる入力は同じcache keyになります。
 call数、入力文字数、推定費用の上限を超えた候補を優先順位に従って延期できる設計です。
 本番経路は実入力から推定費用を算出し、blocker変化と前回graphのdownstream impactを予算不足時の優先順位へ反映します。
 

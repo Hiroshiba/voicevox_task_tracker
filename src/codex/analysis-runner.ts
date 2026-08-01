@@ -170,6 +170,18 @@ function findCacheMiss(
   return cacheMiss;
 }
 
+function assertUnchangedCandidatesAreCached(
+  cacheMisses: readonly CacheMissCandidate[],
+  selectedCandidateIds: ReadonlySet<string>,
+): void {
+  const missing = cacheMisses.find((value) => !selectedCandidateIds.has(value.candidate.id));
+  if (missing != null) {
+    throw new TypeError(
+      `未変更のCodex分析候補に対応するcacheがありません。対象: ${missing.candidate.id}`,
+    );
+  }
+}
+
 async function executeSelectedCandidates(
   selected: readonly PreparedAiAnalysisCandidate[],
   cacheMisses: readonly CacheMissCandidate[],
@@ -230,14 +242,26 @@ export async function runAiAnalyses(
   dependencies: AiAnalysisRunDependencies,
 ): Promise<AiAnalysisRunResult> {
   const selection = selectAiAnalysisCandidates(candidates);
-  const cached = await resolveCacheEntries(selection.selected, configuration, dependencies.cache);
+  const unchangedCandidates = selection.skipped.flatMap((value) =>
+    value.reason === "unchanged" ? [value.candidate] : [],
+  );
+  const cached = await resolveCacheEntries(
+    [...selection.selected, ...unchangedCandidates],
+    configuration,
+    dependencies.cache,
+  );
+  const selectedCandidateIds = new Set(selection.selected.map((candidate) => candidate.id));
+  assertUnchangedCandidatesAreCached(cached.misses, selectedCandidateIds);
+  const selectedCacheMisses = cached.misses.filter((value) =>
+    selectedCandidateIds.has(value.candidate.id),
+  );
   const budgetPlan = planAiAnalysisBudget(
-    cached.misses.map((value) => value.candidate),
+    selectedCacheMisses.map((value) => value.candidate),
     configuration.budget,
   );
   const executed = await executeSelectedCandidates(
     budgetPlan.selected,
-    cached.misses,
+    selectedCacheMisses,
     configuration,
     dependencies,
   );

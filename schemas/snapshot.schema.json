@@ -115,6 +115,7 @@
         "nodeId",
         "repositoryId",
         "itemFingerprint",
+        "aiAnalysisFingerprint",
         "observedAt",
         "state",
         "terminalAt"
@@ -131,6 +132,9 @@
         },
         "itemFingerprint": {
           "$ref": "#/$defs/fingerprint"
+        },
+        "aiAnalysisFingerprint": {
+          "$ref": "#/$defs/aiAnalysisFingerprint"
         },
         "observedAt": {
           "$ref": "#/$defs/dateTime"
@@ -170,6 +174,46 @@
             "properties": {
               "terminalAt": {
                 "$ref": "#/$defs/dateTime"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "aiAnalysisFingerprint": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": {
+              "const": "unavailable"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "fingerprint"],
+          "properties": {
+            "status": {
+              "const": "available"
+            },
+            "fingerprint": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["sourceHash", "inputHash", "graphNeighborhoodHash"],
+              "properties": {
+                "sourceHash": {
+                  "$ref": "#/$defs/fingerprint"
+                },
+                "inputHash": {
+                  "$ref": "#/$defs/fingerprint"
+                },
+                "graphNeighborhoodHash": {
+                  "$ref": "#/$defs/fingerprint"
+                }
               }
             }
           }

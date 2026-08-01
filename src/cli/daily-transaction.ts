@@ -180,6 +180,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       state: Types["state"];
       repositoryInventory: Types["repositoryInventory"];
       collection: Types["collection"];
+      codexAnalysis: Types["codexAnalysis"];
       reduction: Types["reduction"];
       graph: Types["graph"];
     }>,
@@ -610,6 +611,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         state,
         repositoryInventory: repositoryInventory.value,
         collection: collection.value,
+        codexAnalysis: codexAnalysis.value,
         reduction,
         graph: graph.value,
       });

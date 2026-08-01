@@ -1,7 +1,7 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 
 import snapshotSchema from "../../schemas/snapshot.schema.json" with { type: "json" };
-import { serializeCanonicalJsonLine } from "./canonical-json.js";
+import { serializeCanonicalJsonLine, type Sha256Hash } from "./canonical-json.js";
 import {
   StateFormatError,
   StateSnapshotSchemaError,
@@ -44,12 +44,27 @@ export type SnapshotTrackedItem = TrackedItem &
     severity: Severity;
   }>;
 
-/** 次回の増分計画とterminal保持判定へ渡す軽量なGitHub項目観測値。 */
+/** snapshotへ保存する前回Codex分析fingerprint。 */
+export type SnapshotAiAnalysisFingerprint =
+  | Readonly<{
+      status: "unavailable";
+    }>
+  | Readonly<{
+      status: "available";
+      fingerprint: Readonly<{
+        sourceHash: Sha256Hash;
+        inputHash: Sha256Hash;
+        graphNeighborhoodHash: Sha256Hash;
+      }>;
+    }>;
+
+/** 次回の増分計画、terminal保持判定、Codex未変更判定へ渡す軽量な項目観測値。 */
 export type SnapshotCollectionItem = Readonly<{
   freshness: "fresh";
   nodeId: GitHubNodeId;
   repositoryId: PublicRepositoryId;
   itemFingerprint: Sha256Fingerprint;
+  aiAnalysisFingerprint: SnapshotAiAnalysisFingerprint;
   observedAt: UtcIsoDateTime;
 }> &
   (
@@ -279,9 +294,24 @@ function normalizeSnapshot(snapshot: StateSnapshot): StateSnapshot {
             Object.freeze({
               ...repository,
               items: Object.freeze(
-                [...repository.items].sort((left, right) =>
-                  compareStrings(left.nodeId, right.nodeId),
-                ),
+                [...repository.items]
+                  .sort((left, right) => compareStrings(left.nodeId, right.nodeId))
+                  .map((item) =>
+                    Object.freeze({
+                      ...item,
+                      aiAnalysisFingerprint:
+                        item.aiAnalysisFingerprint.status === "unavailable"
+                          ? Object.freeze({
+                              status: "unavailable",
+                            })
+                          : Object.freeze({
+                              status: "available",
+                              fingerprint: Object.freeze({
+                                ...item.aiAnalysisFingerprint.fingerprint,
+                              }),
+                            }),
+                    }),
+                  ),
               ),
             }),
           ),
