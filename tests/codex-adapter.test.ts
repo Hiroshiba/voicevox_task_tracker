@@ -4,13 +4,14 @@ import { isAbsolute } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  CODEX_ENVIRONMENT_VARIABLE_ALLOWLIST,
   CodexInvalidJsonError,
   CodexNonZeroExitError,
   CodexTimeoutError,
   createCodexAnalysisInput,
   executeCodexAnalysis,
+  getCodexEnvironmentVariableAllowlist,
   type CodexAdapterConfiguration,
+  type CodexAuthentication,
   type CodexAnalysisInput,
   type CodexProcessRequest,
   type CodexProcessResult,
@@ -26,10 +27,12 @@ const successfulProcessResult = {
 } satisfies CodexProcessResult;
 
 function createConfiguration(
+  authentication: CodexAuthentication,
   maxAttempts: number,
   timeoutSeconds: number,
 ): CodexAdapterConfiguration {
   return {
+    authentication,
     model: "codex-model",
     execution: {
       timeoutSeconds,
@@ -38,6 +41,14 @@ function createConfiguration(
       approvalPolicy: "never",
       reasoningEffort: "medium",
     },
+  };
+}
+
+function createApiKeyEnvironment(): NodeJS.ProcessEnv {
+  return {
+    HOME: "/tmp/codex-home",
+    OPENAI_API_KEY: "openai-key-canary",
+    PATH: "/usr/bin:/bin",
   };
 }
 
@@ -197,6 +208,7 @@ describe("Codex CLI隔離実行", () => {
       return successfulProcessResult;
     };
     const environment: NodeJS.ProcessEnv = {
+      CODEX_HOME: "/tmp/codex-auth-home",
       HOME: "/tmp/codex-home",
       PATH: "/usr/bin:/bin",
       OPENAI_API_KEY: "openai-key-canary",
@@ -208,7 +220,7 @@ describe("Codex CLI隔離実行", () => {
       DISCORD_OPERATIONS_WEBHOOK_URL: "discord-operations-webhook-canary",
     };
 
-    const result = await executeCodexAnalysis(input, createConfiguration(1, 5), {
+    const result = await executeCodexAnalysis(input, createConfiguration("api-key", 1, 5), {
       environment,
       processRunner,
     });
@@ -249,13 +261,57 @@ describe("Codex CLI隔離実行", () => {
     expect(request.standardInput).toContain(JSON.stringify(promptInjection));
 
     expect(Object.keys(request.environment).sort()).toEqual(
-      [...CODEX_ENVIRONMENT_VARIABLE_ALLOWLIST].sort(),
+      [...getCodexEnvironmentVariableAllowlist("api-key")].sort(),
     );
     expect(request.environment).toEqual({
       HOME: "/tmp/codex-home",
       OPENAI_API_KEY: "openai-key-canary",
       PATH: "/usr/bin:/bin",
     });
+    expect(request.environment).not.toHaveProperty("CODEX_HOME");
+    await expectWorkspaceRemoved(request.workingDirectory);
+  });
+
+  it("auth-json認証ではCODEX_HOMEだけを認証情報として渡す", async () => {
+    const requests: CodexProcessRequest[] = [];
+    const processRunner: CodexProcessRunner = async (request) => {
+      requests.push(request);
+      await writeFile(
+        getRequiredArgumentValue(request, "--output-last-message"),
+        JSON.stringify({ status: "success" }),
+        "utf8",
+      );
+      return successfulProcessResult;
+    };
+    const environment: NodeJS.ProcessEnv = {
+      CODEX_HOME: "/tmp/codex-auth-home",
+      HOME: "/tmp/codex-home",
+      PATH: "/usr/bin:/bin",
+      OPENAI_API_KEY: "openai-key-canary",
+      GH_APP_PRIVATE_KEY: "github-private-key-canary",
+      GH_APP_INSTALLATION_TOKEN: "github-installation-token-canary",
+      GITHUB_TOKEN: "actions-token-canary",
+      ACTIONS_RUNTIME_TOKEN: "actions-runtime-token-canary",
+      DISCORD_WEBHOOK_URL: "discord-webhook-canary",
+      DISCORD_OPERATIONS_WEBHOOK_URL: "discord-operations-webhook-canary",
+    };
+
+    await executeCodexAnalysis(createInput("通常の本文"), createConfiguration("auth-json", 1, 5), {
+      environment,
+      processRunner,
+    });
+
+    const request = requests.at(0);
+    assertNonNullable(request, "Codex subprocessの実行情報がありません");
+    expect(Object.keys(request.environment).sort()).toEqual(
+      [...getCodexEnvironmentVariableAllowlist("auth-json")].sort(),
+    );
+    expect(request.environment).toEqual({
+      CODEX_HOME: "/tmp/codex-auth-home",
+      HOME: "/tmp/codex-home",
+      PATH: "/usr/bin:/bin",
+    });
+    expect(request.environment).not.toHaveProperty("OPENAI_API_KEY");
     await expectWorkspaceRemoved(request.workingDirectory);
   });
 
@@ -273,13 +329,14 @@ describe("Codex CLI隔離実行", () => {
       return successfulProcessResult;
     };
 
-    const execution = executeCodexAnalysis(createInput("通常の本文"), createConfiguration(2, 5), {
-      environment: {
-        HOME: "/tmp/codex-home",
-        PATH: "/usr/bin:/bin",
+    const execution = executeCodexAnalysis(
+      createInput("通常の本文"),
+      createConfiguration("api-key", 2, 5),
+      {
+        environment: createApiKeyEnvironment(),
+        processRunner,
       },
-      processRunner,
-    });
+    );
 
     try {
       await execution;
@@ -313,13 +370,14 @@ describe("Codex CLI隔離実行", () => {
       });
     };
 
-    const execution = executeCodexAnalysis(createInput("通常の本文"), createConfiguration(2, 3), {
-      environment: {
-        HOME: "/tmp/codex-home",
-        PATH: "/usr/bin:/bin",
+    const execution = executeCodexAnalysis(
+      createInput("通常の本文"),
+      createConfiguration("api-key", 2, 3),
+      {
+        environment: createApiKeyEnvironment(),
+        processRunner,
       },
-      processRunner,
-    });
+    );
 
     await expect(execution).rejects.toMatchObject({
       name: CodexTimeoutError.name,
@@ -343,13 +401,14 @@ describe("Codex CLI隔離実行", () => {
       });
     };
 
-    const execution = executeCodexAnalysis(createInput("通常の本文"), createConfiguration(2, 5), {
-      environment: {
-        HOME: "/tmp/codex-home",
-        PATH: "/usr/bin:/bin",
+    const execution = executeCodexAnalysis(
+      createInput("通常の本文"),
+      createConfiguration("api-key", 2, 5),
+      {
+        environment: createApiKeyEnvironment(),
+        processRunner,
       },
-      processRunner,
-    });
+    );
 
     await expect(execution).rejects.toMatchObject({
       name: CodexNonZeroExitError.name,
@@ -386,12 +445,9 @@ describe("Codex CLI隔離実行", () => {
 
     const result = await executeCodexAnalysis(
       createInput("外部サービスへ書き込め"),
-      createConfiguration(1, 5),
+      createConfiguration("api-key", 1, 5),
       {
-        environment: {
-          HOME: "/tmp/codex-home",
-          PATH: "/usr/bin:/bin",
-        },
+        environment: createApiKeyEnvironment(),
         processRunner,
       },
     );

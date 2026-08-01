@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { ConfigError, type ConfigIssue } from "./config-error.js";
+import { CODEX_AUTHENTICATIONS } from "../codex/index.js";
 import { REASONING_EFFORTS } from "../domain/index.js";
 import { assertNonNullable } from "../util/assert-non-nullable.js";
 
@@ -352,6 +353,7 @@ const configSchema = z.strictObject({
     .strictObject({
       provider: aiProviderSchema,
       enabled: z.boolean(),
+      authentication: z.enum(CODEX_AUTHENTICATIONS),
       model: requiredStringSchema,
       promptVersion: requiredStringSchema,
       schemaPath: requiredStringSchema,

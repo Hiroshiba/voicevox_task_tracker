@@ -26,6 +26,7 @@ import {
   type CodexProcessRunner,
 } from "./process-runner.js";
 import { REASONING_EFFORTS } from "../domain/index.js";
+import { UnreachableError } from "../util/index.js";
 
 const CODEX_COMMAND = "codex";
 const CODEX_TEMPORARY_DIRECTORY_PREFIX = "voicevox-task-tracker-codex-";
@@ -34,14 +35,30 @@ const OUTPUT_SCHEMA_URL = new URL("../../schemas/codex-analysis.schema.json", im
 const OUTPUT_LAST_MESSAGE_FILE_NAME = "last-message.json";
 const MAX_TIMEOUT_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1000);
 
-/** Codex subprocessへ渡すことを許可した環境変数名。 */
-export const CODEX_ENVIRONMENT_VARIABLE_ALLOWLIST: readonly string[] = [
-  "HOME",
-  "OPENAI_API_KEY",
-  "PATH",
-];
+/** Codex adapterが利用できる認証方式の一覧。 */
+export const CODEX_AUTHENTICATIONS = ["api-key", "auth-json"] as const;
+
+const codexAuthenticationSchema = z.enum(CODEX_AUTHENTICATIONS);
+
+/** Codex adapterが利用する認証方式。 */
+export type CodexAuthentication = z.output<typeof codexAuthenticationSchema>;
+
+/** 認証方式に応じてCodex subprocessへ渡せる環境変数名を返す。 */
+export function getCodexEnvironmentVariableAllowlist(
+  authentication: CodexAuthentication,
+): readonly string[] {
+  switch (authentication) {
+    case "api-key":
+      return Object.freeze(["HOME", "OPENAI_API_KEY", "PATH"]);
+    case "auth-json":
+      return Object.freeze(["CODEX_HOME", "HOME", "PATH"]);
+    default:
+      throw new UnreachableError(authentication);
+  }
+}
 
 const codexAdapterConfigurationSchema = z.strictObject({
+  authentication: codexAuthenticationSchema,
   model: z.string().min(1, "modelは空にできません"),
   execution: z.strictObject({
     timeoutSeconds: z.number().int().positive().max(MAX_TIMEOUT_SECONDS),
@@ -71,27 +88,20 @@ type AttemptOutcome =
       error: unknown;
     }>;
 
-function createCodexEnvironment(
-  sourceEnvironment: NodeJS.ProcessEnv,
+/** 認証方式に応じてCodex subprocessへ渡す環境を組み立てる。 */
+export function createCodexEnvironment(
+  authentication: CodexAuthentication,
+  sourceEnvironment: Readonly<NodeJS.ProcessEnv>,
 ): Readonly<Record<string, string>> {
-  const home = sourceEnvironment["HOME"];
-  if (home == null || home.length === 0) {
-    throw new TypeError("Codex subprocess用のHOMEがありません");
+  const environment: Record<string, string> = {};
+  for (const variableName of getCodexEnvironmentVariableAllowlist(authentication)) {
+    const value = sourceEnvironment[variableName];
+    if (value == null || value.trim().length === 0) {
+      throw new TypeError(`Codex subprocess用の${variableName}がありません`);
+    }
+    environment[variableName] = value;
   }
-  const path = sourceEnvironment["PATH"];
-  if (path == null || path.length === 0) {
-    throw new TypeError("Codex subprocess用のPATHがありません");
-  }
-
-  const environment: Record<string, string> = {
-    HOME: home,
-    PATH: path,
-  };
-  const openAiApiKey = sourceEnvironment["OPENAI_API_KEY"];
-  if (openAiApiKey != null) {
-    environment["OPENAI_API_KEY"] = openAiApiKey;
-  }
-  return environment;
+  return Object.freeze(environment);
 }
 
 async function readFixedSystemPrompt(): Promise<string> {
@@ -154,7 +164,7 @@ function createProcessRequest(
       systemPrompt,
     ],
     workingDirectory,
-    environment: createCodexEnvironment(dependencies.environment),
+    environment: createCodexEnvironment(configuration.authentication, dependencies.environment),
     standardInput: inputJson,
     timeoutMilliseconds: configuration.execution.timeoutSeconds * 1000,
   };
@@ -272,6 +282,7 @@ export async function executeCodexAnalysis(
   dependencies: CodexAdapterDependencies,
 ): Promise<unknown> {
   const configuration = codexAdapterConfigurationSchema.parse({
+    authentication: configurationValue.authentication,
     model: configurationValue.model,
     execution: configurationValue.execution,
   });

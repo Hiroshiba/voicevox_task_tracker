@@ -99,7 +99,9 @@ call数、入力文字数、推定費用の上限を超えた候補を優先順�
 - 固定system prompt
 - repository内JSON Schemaによる最終出力の拘束
 
-subprocessへ渡す環境変数は`HOME`、`PATH`、`OPENAI_API_KEY`だけです。
+`ai.authentication: api-key`ではsubprocessへ`HOME`、`OPENAI_API_KEY`、`PATH`だけを渡します。
+`ai.authentication: auth-json`では`CODEX_HOME`、`HOME`、`PATH`だけを渡し、起動前に`CODEX_HOME`直下の`auth.json`がファイルとして存在することを確認します。
+`auth.json`の内容は読みません。
 GitHub App private key、installation token、Discord Webhook URLは渡しません。
 Issue本文、コメント、ラベル、loginはID付きの信頼できない入力データとして渡し、命令として扱いません。
 

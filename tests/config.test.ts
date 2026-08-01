@@ -44,6 +44,7 @@ describe("設定の読み込みと検証", () => {
       "voicevox-reviewers",
     );
     expect(config.ai.provider).toBe("codex");
+    expect(config.ai.authentication).toBe("api-key");
     expect(config.ai.budget.maxEstimatedCostUsdPerRun).toBe(10);
     expect(config.ai.budget.estimatedInputCostUsdPerMillionTokens).toBe(1.25);
     expect(config.ai.execution.reasoningEffort).toBe("medium");
@@ -112,6 +113,28 @@ describe("設定の読み込みと検証", () => {
 
     expect(error.message).toContain("ai.provider");
     expect(error.message).toContain("otherは未対応です");
+  });
+
+  it.each(["api-key", "auth-json"])("AI認証方式%sを受け入れる", (authentication) => {
+    const source = replaceRequired(
+      validConfigSource,
+      "  authentication: api-key",
+      `  authentication: "${authentication}"`,
+    );
+    const config = parseConfig(source);
+
+    expect(config.ai.authentication).toBe(authentication);
+  });
+
+  it("未対応のAI認証方式を拒否する", () => {
+    const source = replaceRequired(
+      validConfigSource,
+      "  authentication: api-key",
+      "  authentication: unsupported",
+    );
+    const error = captureConfigError(source);
+
+    expect(error.message).toContain("ai.authentication");
   });
 
   it("AIが有効な場合はplaceholderのmodelを拒否する", () => {

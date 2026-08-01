@@ -6,6 +6,7 @@ import { type CliExecutionResult } from "./application.js";
 import { parseCliArguments } from "./command.js";
 import { createDefaultCliApplication } from "./composition-root.js";
 import {
+  CliCodexAuthenticationError,
   CliCredentialsError,
   CliExecutableError,
   CliUsageError,
@@ -148,6 +149,7 @@ function writeFailureDiagnostics(result: CliExecutionResult): void {
 
 function safeTopLevelMessage(error: unknown): string {
   if (
+    error instanceof CliCodexAuthenticationError ||
     error instanceof CliUsageError ||
     error instanceof CliCredentialsError ||
     error instanceof CliExecutableError ||

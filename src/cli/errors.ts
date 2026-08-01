@@ -34,6 +34,16 @@ export class CliCredentialsError extends TaskTrackerError {
   }
 }
 
+/** Codexのauth.jsonが認証に利用できないことを表す。 */
+export class CliCodexAuthenticationError extends TaskTrackerError {
+  public constructor(options: ErrorOptions) {
+    super(
+      "Codex認証ファイルを確認できません。CODEX_HOME直下にauth.jsonが存在することを確認してください",
+      options,
+    );
+  }
+}
+
 /** workflowの前段成果物が存在しないか検証できないことを表す。 */
 export class CliWorkflowArtifactError extends TaskTrackerError {
   public constructor(path: string, reason: "missing" | "invalid", options: ErrorOptions) {

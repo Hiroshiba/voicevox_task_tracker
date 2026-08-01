@@ -40,6 +40,7 @@ export {
   type RepositoryInventoryStageResult,
 } from "./daily-transaction.js";
 export {
+  CliCodexAuthenticationError,
   CliCredentialsError,
   CliExecutableError,
   CliFixtureError,

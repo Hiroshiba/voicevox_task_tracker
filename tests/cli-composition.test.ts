@@ -1,3 +1,5 @@
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -28,6 +30,7 @@ const PRIVATE_KEY = [
   "-----END PRIVATE KEY-----",
 ].join("\n");
 const OPENAI_SECRET = "canary-openai-secret";
+const validConfigUrl = new URL("./fixtures/config.valid.yml", import.meta.url);
 
 type Harness = Readonly<{
   adapters: CliCompositionAdapters;
@@ -71,6 +74,27 @@ function createHarness(environment: Readonly<NodeJS.ProcessEnv>): Harness {
     }),
     reportSources,
     externalAdapterCalls,
+  });
+}
+
+async function createTemporaryAuthJsonConfiguration(
+  authJsonExists: boolean,
+): Promise<Readonly<{ configPath: string; codexHome: string }>> {
+  const directory = await mkdtemp(join(tmpdir(), "voicevox-task-tracker-auth-json-test-"));
+  const source = await readFile(validConfigUrl, "utf8");
+  const authJsonSource = source.replace("  authentication: api-key", "  authentication: auth-json");
+  if (authJsonSource === source) {
+    await rm(directory, { recursive: true, force: true });
+    throw new Error("認証方式を置換できませんでした");
+  }
+  const configPath = join(directory, "config.yml");
+  await writeFile(configPath, authJsonSource, "utf8");
+  if (authJsonExists) {
+    await writeFile(join(directory, "auth.json"), "", "utf8");
+  }
+  return Object.freeze({
+    configPath,
+    codexHome: directory,
   });
 }
 
@@ -276,6 +300,108 @@ describe("CLI合成root", () => {
     expect(result.result.report.diagnostics.join("\n")).toContain("GH_APP_ID");
   });
 
+  it("api-key認証でOPENAI_API_KEYが無い場合は失敗する", async () => {
+    const harness = createHarness({
+      GH_APP_ID: "123",
+      GH_APP_PRIVATE_KEY: PRIVATE_KEY,
+      HOME: "/tmp",
+      PATH: "/usr/bin",
+    });
+    const application = createCliApplication(harness.adapters);
+
+    const result = await application.run([
+      "dry-run",
+      "--config",
+      "tests/fixtures/config.valid.yml",
+      "--artifact",
+      "unused-artifact.json",
+      "--report",
+      "unused-report.json",
+    ]);
+
+    expect(result.exitCode).toBe(1);
+    expect(harness.externalAdapterCalls.count).toBe(0);
+    expect(harness.reportSources.join("\n")).toContain("OPENAI_API_KEY");
+  });
+
+  it("auth-json認証ではOPENAI_API_KEY無しでCodex CLIの事前確認へ進む", async () => {
+    const temporaryConfiguration = await createTemporaryAuthJsonConfiguration(true);
+    try {
+      const versionEnvironments: Readonly<NodeJS.ProcessEnv>[] = [];
+      const harness = createHarness({
+        GH_APP_ID: "123",
+        GH_APP_PRIVATE_KEY: PRIVATE_KEY,
+        CODEX_HOME: temporaryConfiguration.codexHome,
+        HOME: "/tmp",
+        PATH: "/usr/bin",
+      });
+      const application = createCliApplication({
+        ...harness.adapters,
+        codexProcessRunner: (request) => {
+          versionEnvironments.push(request.environment);
+          return Promise.resolve({
+            exitCode: 0,
+            signal: null,
+            timedOut: false,
+          });
+        },
+      });
+
+      const result = await application.run([
+        "dry-run",
+        "--config",
+        temporaryConfiguration.configPath,
+        "--artifact",
+        "unused-artifact.json",
+        "--report",
+        "unused-report.json",
+      ]);
+
+      expect(result.exitCode).toBe(1);
+      expect(versionEnvironments).toEqual([
+        {
+          CODEX_HOME: temporaryConfiguration.codexHome,
+          HOME: "/tmp",
+          PATH: "/usr/bin",
+        },
+      ]);
+      expect(versionEnvironments[0]).not.toHaveProperty("OPENAI_API_KEY");
+      expect(harness.externalAdapterCalls.count).toBe(1);
+    } finally {
+      await rm(temporaryConfiguration.codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it("auth-json認証でauth.jsonが無い場合は起動前に失敗する", async () => {
+    const temporaryConfiguration = await createTemporaryAuthJsonConfiguration(false);
+    try {
+      const harness = createHarness({
+        GH_APP_ID: "123",
+        GH_APP_PRIVATE_KEY: PRIVATE_KEY,
+        CODEX_HOME: temporaryConfiguration.codexHome,
+        HOME: "/tmp",
+        PATH: "/usr/bin",
+      });
+      const application = createCliApplication(harness.adapters);
+
+      const result = await application.run([
+        "dry-run",
+        "--config",
+        temporaryConfiguration.configPath,
+        "--artifact",
+        "unused-artifact.json",
+        "--report",
+        "unused-report.json",
+      ]);
+
+      expect(result.exitCode).toBe(1);
+      expect(harness.externalAdapterCalls.count).toBe(0);
+      expect(harness.reportSources.join("\n")).toContain("CODEX_HOME直下にauth.json");
+    } finally {
+      await rm(temporaryConfiguration.codexHome, { recursive: true, force: true });
+    }
+  });
+
   it("指定済みsecretを診断やreportへ出さない", async () => {
     const harness = createHarness({
       GH_APP_ID: "123",
@@ -381,6 +507,11 @@ describe("CLI合成root", () => {
         }),
       codexProcessRunner: (request) => {
         if (request.arguments.length === 1 && request.arguments[0] === "--version") {
+          expect(request.environment).toEqual({
+            HOME: "/tmp",
+            OPENAI_API_KEY: OPENAI_SECRET,
+            PATH: "/usr/bin",
+          });
           return Promise.resolve({
             exitCode: 0,
             signal: null,

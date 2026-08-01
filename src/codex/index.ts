@@ -1,8 +1,11 @@
 export {
-  CODEX_ENVIRONMENT_VARIABLE_ALLOWLIST,
+  CODEX_AUTHENTICATIONS,
+  createCodexEnvironment,
   executeCodexAnalysis,
+  getCodexEnvironmentVariableAllowlist,
   type CodexAdapterConfiguration,
   type CodexAdapterDependencies,
+  type CodexAuthentication,
 } from "./adapter.js";
 export {
   runAiAnalyses,

@@ -1,8 +1,11 @@
-import { resolve } from "node:path";
+import { stat } from "node:fs/promises";
+import { join, resolve } from "node:path";
 
 import {
+  createCodexEnvironment,
   createCodexAnalysisInput,
   estimateAiInputCost,
+  getCodexEnvironmentVariableAllowlist,
   reduceCodexAnalysis,
   runAiAnalyses,
   serializeCanonicalJson,
@@ -137,7 +140,7 @@ import {
   type StateSnapshot,
   type StateSnapshotReadResult,
 } from "../persistence/index.js";
-import { assertNonNullable } from "../util/index.js";
+import { assertNonNullable, UnreachableError } from "../util/index.js";
 import { CliApplication } from "./application.js";
 import { createTrackingBackfillRequest } from "./backfill.js";
 import {
@@ -153,7 +156,7 @@ import {
   type DailyTransactionTypeMap,
   type DailyRunInvocation,
 } from "./daily-transaction.js";
-import { CliCredentialsError, CliExecutableError } from "./errors.js";
+import { CliCodexAuthenticationError, CliCredentialsError, CliExecutableError } from "./errors.js";
 import {
   OfflineRunRunner,
   type readGoldenFixtureFiles,
@@ -181,9 +184,21 @@ const INCREMENTAL_COLLECTION_OVERLAP_MILLISECONDS = 5 * 60 * 1000;
 const GITHUB_MENTION_PATTERN =
   /(?<![A-Za-z0-9-])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))(?:\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,99})))?/gu;
 
+type EnabledCodexCredentials = Readonly<{
+  enabled: true;
+  authentication: Config["ai"]["authentication"];
+  environment: Readonly<Record<string, string>>;
+}>;
+
+type RuntimeCodexCredentials =
+  | Readonly<{
+      enabled: false;
+    }>
+  | EnabledCodexCredentials;
+
 type RuntimeCredentials = Readonly<{
   github: GitHubAppCredentials;
-  openAiApiKey: string;
+  codex: RuntimeCodexCredentials;
   knownSecrets: readonly string[];
 }>;
 
@@ -383,6 +398,41 @@ function requireEnvironmentVariables(
   }
 }
 
+function readCodexCredentials(
+  environment: Readonly<NodeJS.ProcessEnv>,
+  config: Config,
+): RuntimeCodexCredentials {
+  if (!config.ai.enabled) {
+    return Object.freeze({
+      enabled: false,
+    });
+  }
+  const authentication = config.ai.authentication;
+  requireEnvironmentVariables(environment, getCodexEnvironmentVariableAllowlist(authentication));
+  return Object.freeze({
+    enabled: true,
+    authentication,
+    environment: createCodexEnvironment(authentication, environment),
+  });
+}
+
+function codexKnownSecrets(credentials: RuntimeCodexCredentials): readonly string[] {
+  if (!credentials.enabled) {
+    return Object.freeze([]);
+  }
+  switch (credentials.authentication) {
+    case "api-key": {
+      const openAiApiKey = credentials.environment["OPENAI_API_KEY"];
+      assertNonNullable(openAiApiKey, "組み立て済みCodex環境にOPENAI_API_KEYがありません");
+      return Object.freeze([openAiApiKey]);
+    }
+    case "auth-json":
+      return Object.freeze([]);
+    default:
+      throw new UnreachableError(credentials.authentication);
+  }
+}
+
 function readRuntimeCredentials(
   environment: Readonly<NodeJS.ProcessEnv>,
   config: Config,
@@ -402,13 +452,8 @@ function readRuntimeCredentials(
         : ["GH_APP_ID", "GH_APP_PRIVATE_KEY"];
     throw new CliCredentialsError(variableNames, { cause: error });
   }
-  const openAiApiKey = config.ai.enabled
-    ? requireEnvironmentValue(environment, "OPENAI_API_KEY")
-    : "";
-  const knownSecrets = [github.privateKey];
-  if (openAiApiKey.length > 0) {
-    knownSecrets.push(openAiApiKey);
-  }
+  const codex = readCodexCredentials(environment, config);
+  const knownSecrets = [github.privateKey, ...codexKnownSecrets(codex)];
   if (
     command.kind !== "dry-run" &&
     command.kind !== "collect-analyze" &&
@@ -424,7 +469,7 @@ function readRuntimeCredentials(
   }
   return Object.freeze({
     github,
-    openAiApiKey,
+    codex,
     knownSecrets: Object.freeze(knownSecrets),
   });
 }
@@ -463,20 +508,33 @@ function normalizeLabelRules(config: Config): readonly LabelRule[] {
   );
 }
 
-function isolatedCodexEnvironment(
-  environment: Readonly<NodeJS.ProcessEnv>,
-  openAiApiKey: string,
-): NodeJS.ProcessEnv {
-  return {
-    HOME: requireEnvironmentValue(environment, "HOME"),
-    OPENAI_API_KEY: openAiApiKey,
-    PATH: requireEnvironmentValue(environment, "PATH"),
-  };
+async function assertCodexAuthenticationAvailable(
+  credentials: EnabledCodexCredentials,
+): Promise<void> {
+  switch (credentials.authentication) {
+    case "api-key":
+      return;
+    case "auth-json": {
+      const codexHome = credentials.environment["CODEX_HOME"];
+      assertNonNullable(codexHome, "組み立て済みCodex環境にCODEX_HOMEがありません");
+      try {
+        const authJsonStat = await stat(join(codexHome, "auth.json"));
+        if (!authJsonStat.isFile()) {
+          throw new TypeError("CODEX_HOME直下のauth.jsonがファイルではありません");
+        }
+      } catch (error: unknown) {
+        throw new CliCodexAuthenticationError({ cause: error });
+      }
+      return;
+    }
+    default:
+      throw new UnreachableError(credentials.authentication);
+  }
 }
 
 async function assertCodexCliAvailable(
   adapters: ProductionRuntimeAdapters,
-  openAiApiKey: string,
+  environment: Readonly<Record<string, string>>,
 ): Promise<void> {
   let result: Awaited<ReturnType<CodexProcessRunner>>;
   try {
@@ -484,11 +542,7 @@ async function assertCodexCliAvailable(
       command: "codex",
       arguments: ["--version"],
       workingDirectory: adapters.repositoryPath,
-      environment: {
-        HOME: requireEnvironmentValue(adapters.environment, "HOME"),
-        OPENAI_API_KEY: openAiApiKey,
-        PATH: requireEnvironmentValue(adapters.environment, "PATH"),
-      },
+      environment,
       standardInput: "",
       timeoutMilliseconds: 10_000,
     });
@@ -1574,6 +1628,10 @@ async function analyzeCodex(
       diagnostics: Object.freeze([]),
     });
   }
+  const codexCredentials = configuration.credentials.codex;
+  if (!codexCredentials.enabled) {
+    throw new TypeError("AIが有効ですがCodex認証情報がありません");
+  }
   const run = await runAiAnalyses(
     prepared.candidates,
     {
@@ -1593,14 +1651,12 @@ async function analyzeCodex(
         adapters.executeCodexAnalysis(
           input,
           {
+            authentication: configuration.config.ai.authentication,
             model: configuration.config.ai.model,
             execution: configuration.config.ai.execution,
           },
           {
-            environment: isolatedCodexEnvironment(
-              adapters.environment,
-              configuration.credentials.openAiApiKey,
-            ),
+            environment: codexCredentials.environment,
             processRunner: adapters.codexProcessRunner,
           },
         ),
@@ -3362,8 +3418,9 @@ function createDailyDependencies(
       requireEnvironmentVariables(adapters.environment, ["GH_APP_ID", "GH_APP_PRIVATE_KEY"]);
       const config = await adapters.loadConfig(resolve(adapters.repositoryPath, configPath));
       const credentials = readRuntimeCredentials(adapters.environment, config, invocation.command);
-      if (config.ai.enabled) {
-        await assertCodexCliAvailable(adapters, credentials.openAiApiKey);
+      if (credentials.codex.enabled) {
+        await assertCodexAuthenticationAvailable(credentials.codex);
+        await assertCodexCliAvailable(adapters, credentials.codex.environment);
       }
       return Object.freeze({
         config,

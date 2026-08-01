@@ -44,14 +44,17 @@ installation IDは実行時にOrganizationから自動発見するため、現�
 
 repositoryのSettingsからActions variableとActions secretを登録します。
 
-| 名前                  | 種別     | 必要になる条件                        | 値                                    |
-| --------------------- | -------- | ------------------------------------- | ------------------------------------- |
-| `GH_APP_ID`           | Variable | 常時                                  | GitHub Appの数値ID                    |
-| `GH_APP_PRIVATE_KEY`  | Secret   | 常時                                  | GitHub Appから発行したPEM private key |
-| `OPENAI_API_KEY`      | Secret   | `ai.enabled: true`                    | Codexの非対話実行に使うAPI key        |
-| `DISCORD_WEBHOOK_URL` | Secret   | `notifications.discord.enabled: true` | 公開channelのIncoming Webhook URL     |
+| 名前                  | 種別     | 必要になる条件                                       | 値                                    |
+| --------------------- | -------- | ---------------------------------------------------- | ------------------------------------- |
+| `GH_APP_ID`           | Variable | 常時                                                 | GitHub Appの数値ID                    |
+| `GH_APP_PRIVATE_KEY`  | Secret   | 常時                                                 | GitHub Appから発行したPEM private key |
+| `OPENAI_API_KEY`      | Secret   | `ai.enabled: true`かつ`ai.authentication: api-key`   | Codexの非対話実行に使うAPI key        |
+| `CODEX_HOME`          | Variable | `ai.enabled: true`かつ`ai.authentication: auth-json` | `auth.json`を直下に置いたdirectory    |
+| `DISCORD_WEBHOOK_URL` | Secret   | `notifications.discord.enabled: true`                | 公開channelのIncoming Webhook URL     |
 
 PEM private keyは改行を保持したままsecretへ登録します。
+Codex認証には`OPENAI_API_KEY`と`CODEX_HOME`のどちらか一方だけを設定します。
+GitHub Actionsでは`auth.json`に含まれるtokenが更新されるため、`ai.authentication: api-key`を使う想定です。
 認証情報を`config.yml`、branch、artifact、run logへ書きません。
 
 ActionsのWorkflow permissionsは、`persist-state` jobが`tracker-state`へpushできるようにread and writeを許可します。
@@ -59,7 +62,7 @@ workflow側では各jobが必要な権限だけを再指定しています。
 `tracker-state`へrulesetを設定する場合はGitHub Actionsによるstate更新を許可し、人間の通常作業branchとして使わないでください。
 
 `collect-analyze`は`artifacts/workflow/validated-run.json`へ検証済みsnapshot、通知候補、notification ledger、run report、AI cache、公開設定だけを書きます。
-GitHub App key、installation token、OpenAI key、Discord webhookはartifactへ含めません。
+GitHub App key、installation token、OpenAI認証情報、Discord webhookはartifactへ含めません。
 後続jobは同じartifactを再検証してから利用します。
 権限なしの`notify-discord`でCLIを動かすため、公開sourceから作った自己完結bundleも同じActions artifactへ保存します。
 
@@ -91,6 +94,7 @@ Zodのstrict schemaで未知のfieldも拒否するため、設定名は`config.
 | `labels.rules`                                      | repository glob、label名の正規表現、判定と通知への効果        |
 | `staleness`                                         | 進捗猶予時間とwait class別のwatch、urgent、critical閾値       |
 | `ai.enabled`                                        | Codexを呼び出すかどうか                                       |
+| `ai.authentication`                                 | `api-key`または`auth-json`                                    |
 | `ai.model`                                          | workflowのCodex CLIで利用できる固定model ID                   |
 | `ai.confidence`                                     | highとmediumの境界                                            |
 | `ai.budget`                                         | call数、入力文字数、推定費用のrun上限                         |
@@ -169,7 +173,10 @@ process.exitCode = result.exitCode;
 ### 2. Codexのdry-run
 
 lockfileで固定したCodex CLI `0.145.0`が`codex`として`PATH`にあり、実装が使う`codex exec` optionへ対応することを確認します。
-`OPENAI_API_KEY`をsecretとして渡し、`ai.model`のplaceholderを利用可能なmodel IDへ置き換えてから`ai.enabled`を`true`にします。
+`ai.authentication: api-key`では`OPENAI_API_KEY`を渡します。
+`ai.authentication: auth-json`では`auth.json`が直下にあるdirectoryを`CODEX_HOME`へ指定します。
+選択しなかった方式の環境変数は渡しません。
+`ai.model`のplaceholderを利用可能なmodel IDへ置き換えてから`ai.enabled`を`true`にします。
 
 同じdry-runを実行し、`aiCallCount`、`aiCacheHitCount`、`estimatedInputTokens`、`diagnostics`を確認します。
 model、prompt、schemaを変更した場合は`pnpm eval:golden`も実行します。
