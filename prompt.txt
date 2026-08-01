@@ -7,13 +7,14 @@
 - codexについて、reasoning effortも設定可能にしてください
 - OPENAI_API_KEYではなくcodex auth jsonも設定可能にしてください
 - `docs/DEPLOYMENT.md`が現状と合っているか確認してください、特に「read and writeを許可します」は本当に必要かでしょうか
+- `docs/UNIMPLEMENTED_REQUIREMENTS.md`を解決していってください
 
 ---
 
 以上が以前のタスクです。
 今回は以下のタスクをお願いします。
 
-- `docs/UNIMPLEMENTED_REQUIREMENTS.md`を解決していってください
+- 
 
 まず調査や実装のタスクを切り分けてください。
 タスクの分割粒度は任せます。
@@ -38,11 +39,19 @@
 
 以下はトークン数をなるべく減らすコツを、別セッションのClaudeに聞いたときのメモです。参考にしてください。
 - codex exec をバックグラウンドで走らせるとプロセスごと落ちて何も出力しないことがある。前面で実行すればタイムアウト時に自動でバックグラウンドへ移るので取りこぼさない
-- 落ちたCodexは codex exec resume --last で同じセッションの続きから再開できる。壊れた変更を捨てて投げ直すより安い
+- 落ちたCodexは codex exec resume --last あるいはセッションID指定で同じセッションの続きから再開できる。壊れた変更を捨てて投げ直すより安いので、確認を取らずresumeしてよい
+- codex exec resume は -s を受け付けない。-c sandbox_mode="workspace-write" を使う
+- Codexの報告は -o で受け取り、実行ごとに別パスにする。使い回すと前回の報告が残って誤判定する
+- codex exec の標準出力は全く役に立たないので必ず /dev/null へ捨てる。tailなどパイプに通すと終了コードが化けてしまう。詳細が要るときは ~/.codex/sessions のrolloutを見る
+- Codexの報告が正常なら再チェックは無駄。-o で指定したファイルが無い、終了コードが非ゼロ、報告が途中経過の文面、などの場合だけpnpm testなどをチェックし、resumeする
 - codex exec の --dangerously-bypass-approvals-and-sandbox と -c sandbox_workspace_write.network_access=true は権限分類器に弾かれる。-s workspace-write 単体なら通るし外部ネットワークも使える
+- pnpm perf:profile、pnpm eval:golden は全タスク完了後に1回だけ回す
 - Codexは放っておくと内蔵ブラウザ iab を使おうとして必ず失敗する。playwright MCPを名指しする必要がある
 - Codexのサンドボックスシェルは localhost に到達できない。curl での生存確認は必ず失敗するが、playwright MCPはサンドボックス外なので到達できる
 - Codexが起動したサーバーはプロセスグループごと即死する。アプリはClaudeで常駐起動して接続だけさせる必要がある
+- 常駐起動したサーバーのポートは埋まっているとずれる。起動ログのURLをそのままCodexへの指示書へ書き写す
+- playwright MCPがプロファイル使用中で失敗したら、以前のCodexが残したMCPサーバープロセスを落とせば直る。確認を取らず落としてよい
+- Codexはスクリーンショットをリポジトリ直下へ残すことがある。コミット前に消す
 - 完了を待つ間にバックグラウンド処理の待機中は進捗確認をすると何往復もしてしまう、完了通知が来るまで何もしない
 - コードを読む必要が出たら、自分で読む前にCodexへ調査を投げる
 - 大きい調査は観点ごとに分割して並列に投げる。1つに詰め込むと完走しない
