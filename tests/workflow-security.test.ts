@@ -9,6 +9,7 @@ const WORKFLOW_DIRECTORY = join(import.meta.dirname, "..", ".github", "workflows
 const DAILY_WORKFLOW_PATH = join(WORKFLOW_DIRECTORY, "daily.yml");
 const CI_WORKFLOW_PATH = join(WORKFLOW_DIRECTORY, "ci.yml");
 const PERFORMANCE_WORKFLOW_PATH = join(WORKFLOW_DIRECTORY, "performance.yml");
+const CONFIG_PATH = join(import.meta.dirname, "..", "config.yml");
 const PACKAGE_PATH = join(import.meta.dirname, "..", "package.json");
 const FULL_COMMIT_ACTION_PATTERN = /^[^@\s]+@[0-9a-f]{40}$/u;
 const VERSIONED_USES_LINE_PATTERN =
@@ -18,6 +19,7 @@ const permissionSchema = z.enum(["read", "write", "none"]);
 const permissionsSchema = z.record(z.string(), permissionSchema);
 const stepSchema = z
   .object({
+    env: z.record(z.string(), z.string()).optional(),
     uses: z.string().optional(),
     run: z.string().optional(),
   })
@@ -75,6 +77,20 @@ const dailyWorkflowSchema = workflowSchema.extend({
     })
     .loose(),
 });
+const configSchema = z
+  .object({
+    notifications: z
+      .object({
+        discord: z
+          .object({
+            webhookSecretName: z.string(),
+            operationsWebhookSecretName: z.string(),
+          })
+          .loose(),
+      })
+      .loose(),
+  })
+  .loose();
 
 type Workflow = z.output<typeof workflowSchema>;
 type WorkflowJob = z.output<typeof jobSchema>;
@@ -124,6 +140,10 @@ function secretJobNames(workflow: Workflow): readonly string[] {
 
 function runCommands(job: WorkflowJob): readonly string[] {
   return job.steps.flatMap((step) => (step.run == null ? [] : [step.run]));
+}
+
+function environmentVariableNames(job: WorkflowJob): readonly string[] {
+  return job.steps.flatMap((step) => (step.env == null ? [] : Object.keys(step.env)));
 }
 
 describe("日次workflow", () => {
@@ -275,6 +295,21 @@ describe("日次workflow", () => {
     expect(operationsSource).toContain("DISCORD_OPERATIONS_WEBHOOK_URL");
     expect(operationsSource).not.toContain("GH_APP_PRIVATE_KEY");
     expect(operationsSource).not.toContain("OPENAI_API_KEY");
+  });
+
+  it("Discord secretの設定名を対応する通知jobの環境変数へ公開する", async () => {
+    const workflow = await readDailyWorkflow();
+    const config = configSchema.parse(parse(await readFile(CONFIG_PATH, "utf8")));
+    const discordConfig = config.notifications.discord;
+
+    expect(
+      environmentVariableNames(workflow.jobs["notify-discord"] ?? { permissions: {}, steps: [] }),
+    ).toContain(discordConfig.webhookSecretName);
+    expect(
+      environmentVariableNames(
+        workflow.jobs["notify-operations"] ?? { permissions: {}, steps: [] },
+      ),
+    ).toContain(discordConfig.operationsWebhookSecretName);
   });
 });
 

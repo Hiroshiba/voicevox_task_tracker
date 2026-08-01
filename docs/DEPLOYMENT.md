@@ -44,13 +44,14 @@ installation IDは実行時にOrganizationから自動発見するため、現�
 
 repositoryのSettingsからActions variableとActions secretを登録します。
 
-| 名前                  | 種別     | 必要になる条件                                       | 値                                    |
-| --------------------- | -------- | ---------------------------------------------------- | ------------------------------------- |
-| `GH_APP_ID`           | Variable | 常時                                                 | GitHub Appの数値ID                    |
-| `GH_APP_PRIVATE_KEY`  | Secret   | 常時                                                 | GitHub Appから発行したPEM private key |
-| `OPENAI_API_KEY`      | Secret   | `ai.enabled: true`かつ`ai.authentication: api-key`   | Codexの非対話実行に使うAPI key        |
-| `CODEX_HOME`          | Variable | `ai.enabled: true`かつ`ai.authentication: auth-json` | `auth.json`を直下に置いたdirectory    |
-| `DISCORD_WEBHOOK_URL` | Secret   | `notifications.discord.enabled: true`                | 公開channelのIncoming Webhook URL     |
+| 名前                             | 種別     | 必要になる条件                                       | 値                                    |
+| -------------------------------- | -------- | ---------------------------------------------------- | ------------------------------------- |
+| `GH_APP_ID`                      | Variable | 常時                                                 | GitHub Appの数値ID                    |
+| `GH_APP_PRIVATE_KEY`             | Secret   | 常時                                                 | GitHub Appから発行したPEM private key |
+| `OPENAI_API_KEY`                 | Secret   | `ai.enabled: true`かつ`ai.authentication: api-key`   | Codexの非対話実行に使うAPI key        |
+| `CODEX_HOME`                     | Variable | `ai.enabled: true`かつ`ai.authentication: auth-json` | `auth.json`を直下に置いたdirectory    |
+| `DISCORD_WEBHOOK_URL`            | Secret   | `notifications.discord.enabled: true`                | 通常digest用のIncoming Webhook URL    |
+| `DISCORD_OPERATIONS_WEBHOOK_URL` | Secret   | `notifications.discord.enabled: true`                | 運用障害通知用のIncoming Webhook URL  |
 
 PEM private keyは改行を保持したままsecretへ登録します。
 Codex認証には`OPENAI_API_KEY`と`CODEX_HOME`のどちらか一方だけを設定します。
@@ -129,7 +130,8 @@ operations:
 ```
 
 `ai`と`notifications.discord`の残りの必須fieldは削除せず、既存の形を保ちます。
-現行workflowが公開するDiscord secretは`DISCORD_WEBHOOK_URL`だけなので、`webhookSecretName`と`operationsWebhookSecretName`はどちらもこの名前にします。
+`webhookSecretName`には`DISCORD_WEBHOOK_URL`、`operationsWebhookSecretName`には`DISCORD_OPERATIONS_WEBHOOK_URL`を指定します。
+通常digestと運用障害通知を同じchannelへ送る場合は、2つのsecretへ同じIncoming Webhook URLを登録します。
 
 ## 段階的な導入
 
@@ -200,7 +202,8 @@ Pagesとdry-runの判定を少なくとも2週間確認し、必要なteam、lab
 
 ### 4. Discord
 
-公開channel用のIncoming Webhookを作成し、`DISCORD_WEBHOOK_URL`へ登録します。
+通常digest用のIncoming Webhookを作成し、`DISCORD_WEBHOOK_URL`へ登録します。
+運用障害通知用のIncoming Webhookを作成し、`DISCORD_OPERATIONS_WEBHOOK_URL`へ登録します。
 最初は`mentions.enabled: false`のまま`notifications.discord.enabled: true`へ変更します。
 
 手動runでPages deploy後にだけ通知されること、候補0件なら送信されないこと、再実行でcooldownが効くことを確認します。

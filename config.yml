@@ -102,7 +102,7 @@ notifications:
   discord:
     enabled: true
     webhookSecretName: DISCORD_WEBHOOK_URL
-    operationsWebhookSecretName: DISCORD_WEBHOOK_URL
+    operationsWebhookSecretName: DISCORD_OPERATIONS_WEBHOOK_URL
     mentions:
       enabled: false
       users: {}
