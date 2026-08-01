@@ -149,7 +149,7 @@
             "authorCandidateId": "release-planner"
           },
           "candidates": {
-            "waitingOn": [{ "id": "maintainer" }],
+            "waitingOn": [{ "id": "VOICEVOX/fixture-maintainers" }],
             "relations": [
               {
                 "id": "rel:checklist-release-core",
@@ -178,8 +178,8 @@
           "status": "new_untriaged",
           "waitingOn": [
             {
-              "kind": "role",
-              "candidateId": "maintainer",
+              "kind": "team",
+              "candidateId": "VOICEVOX/fixture-maintainers",
               "role": "maintainer",
               "reasonSummary": "未アサインのためtriage待ちです",
               "sourceIds": ["body:release"],
@@ -231,7 +231,7 @@
             "authorCandidateId": "release-worker-one"
           },
           "candidates": {
-            "waitingOn": [{ "id": "maintainer" }],
+            "waitingOn": [{ "id": "VOICEVOX/fixture-maintainers" }],
             "relations": [
               {
                 "id": "rel:checklist-core-engine",
@@ -260,8 +260,8 @@
           "status": "new_untriaged",
           "waitingOn": [
             {
-              "kind": "role",
-              "candidateId": "maintainer",
+              "kind": "team",
+              "candidateId": "VOICEVOX/fixture-maintainers",
               "role": "maintainer",
               "reasonSummary": "未アサインのためtriage待ちです",
               "sourceIds": ["body:core-task"],

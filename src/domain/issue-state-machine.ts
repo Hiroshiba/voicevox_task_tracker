@@ -3,7 +3,11 @@ import { z } from "zod";
 import { type FreshObservedGitHubIssue } from "./github-item-observation.js";
 import { type SourceId } from "./source-id.js";
 import { isTerminalStatus } from "./status.js";
-import { type ResolvedRepositoryTeams } from "./team-resolution.js";
+import {
+  resolveRepositoryActorTeamRoles,
+  resolveRepositoryRoleWaitingOn,
+  type ResolvedRepositoryTeams,
+} from "./team-resolution.js";
 import {
   type Evidence,
   type EvidenceSupport,
@@ -148,6 +152,9 @@ function validateSourceIds(sourceIds: readonly SourceId[], context: string): voi
 }
 
 function validateTeamNodeIdList(teams: ResolvedRepositoryTeams["maintainers"], role: string): void {
+  if (teams.length === 0) {
+    throw new TypeError(`解決済み${role} teamは1件以上必要です`);
+  }
   const nodeIds = teams.map((team) => team.nodeId);
   if (new Set(nodeIds).size !== nodeIds.length) {
     throw new TypeError(`解決済み${role} teamのnode IDが重複しています`);
@@ -417,12 +424,14 @@ function finalizeDecision(
   const uncertainties = Object.freeze([...new Set(context.uncertainties)].sort());
   const confidence = Math.min(draft.confidence, context.confidenceCap);
   const waitingOn = Object.freeze(
-    draft.waitingOn.map((value) =>
-      Object.freeze({
-        ...value,
-        confidence: Math.min(value.confidence, context.confidenceCap),
-      }),
-    ),
+    draft.waitingOn
+      .flatMap((value) => resolveRepositoryRoleWaitingOn(input.teams, value))
+      .map((value) =>
+        Object.freeze({
+          ...value,
+          confidence: Math.min(value.confidence, context.confidenceCap),
+        }),
+      ),
   );
   const primaryWaitingOn =
     waitingOn.length === 0
@@ -828,33 +837,58 @@ function createAssigneeDecision(
   });
 }
 
-function createMaintainerDecision(
+function createUnassignedMaintainerWaitingOn(
+  input: IssueStateMachineInput,
+  basis: IssueTransitionBasis,
+): WaitingOn {
+  const author = input.issue.author;
+  if (author.status === "identified" && author.actor.type === "human") {
+    const roles = resolveRepositoryActorTeamRoles(input.teams, author.actor.login);
+    if (roles.isMaintainer) {
+      return createWaitingOn({
+        kind: "user",
+        candidateId: author.actor.login,
+        role: "maintainer",
+        reasonSummary: "maintainer teamに所属するauthorがtriageします",
+        sourceIds: basis.sourceIds,
+        confidence: 1,
+      });
+    }
+  }
+
+  return createWaitingOn({
+    kind: "role",
+    candidateId: "maintainer",
+    role: "maintainer",
+    reasonSummary: "未アサインIssueのtriageが必要です",
+    sourceIds: basis.sourceIds,
+    confidence: 1,
+  });
+}
+
+function createUnassignedDecision(
   input: IssueStateMachineInput,
   context: DecisionContext,
 ): IssueStateDecision {
   const basis = createBasis([input.issue.sourceId], input.issue.observedAt, "observation");
+  const waitingOn = createUnassignedMaintainerWaitingOn(input, basis);
+  const responsibleCandidate = waitingOn.kind === "user" ? waitingOn.candidateId : "maintainer";
   return finalizeDecision(input, context, {
     status: "new_untriaged",
-    waitingOn: [
-      createWaitingOn({
-        kind: "role",
-        candidateId: "maintainer",
-        role: "maintainer",
-        reasonSummary: "未アサインIssueのtriageが必要です",
-        sourceIds: [input.issue.sourceId],
-        confidence: 1,
-      }),
-    ],
-    primarySelectionReason: "未アサインIssueの既定責務としてmaintainerを選定しました",
+    waitingOn: [waitingOn],
+    primarySelectionReason:
+      waitingOn.kind === "user"
+        ? "authorのmaintainer team membershipから個人を選定しました"
+        : "未アサインIssueの既定責務としてmaintainerを選定しました",
     nextAction:
       context.uncertainties.length === 0
-        ? "maintainerがIssueをtriageする"
-        : "maintainerが不確実な点を確認してIssueをtriageする",
+        ? `${responsibleCandidate}がIssueをtriageする`
+        : `${responsibleCandidate}が不確実な点を確認してIssueをtriageする`,
     confidence: 1,
     evidence: [
       ...createEvidence([input.issue.sourceId], "status", "Issueにassigneeが設定されていません"),
       ...createEvidence(
-        [input.issue.sourceId],
+        basis.sourceIds,
         "waiting_on",
         "未アサインIssueのtriageはmaintainerの責務です",
       ),
@@ -893,5 +927,5 @@ export function determineIssueState(input: IssueStateMachineInput): IssueStateDe
     return assigneeDecision;
   }
 
-  return createMaintainerDecision(input, context);
+  return createUnassignedDecision(input, context);
 }

@@ -6,9 +6,11 @@ import {
   createUtcIsoDateTime,
   determineIssueState,
   ISSUE_DETERMINISTIC_RULES_VERSION,
+  resolveRepositoryTeams,
   type Actor,
   type FreshObservedGitHubIssue,
   type GitHubAccountActor,
+  type GitHubTeamDirectory,
   type IssueBlocker,
   type IssueExplicitRequestCandidate,
   type IssueStateDecision,
@@ -16,6 +18,7 @@ import {
   type NormalizedEvent,
   type PullRequestStateDecision,
   type ResolvedRepositoryTeams,
+  type TeamResolutionSettings,
 } from "../src/domain/index.js";
 
 const observedAt = createUtcIsoDateTime("2026-07-31T08:00:00Z");
@@ -34,6 +37,11 @@ const maintainer = {
   type: "human",
   nodeId: createGitHubNodeId("U_maintainer"),
   login: "maintainer-user",
+} satisfies GitHubAccountActor;
+const reviewer = {
+  type: "human",
+  nodeId: createGitHubNodeId("U_reviewer"),
+  login: "reviewer-user",
 } satisfies GitHubAccountActor;
 const firstAssignee = {
   type: "human",
@@ -75,7 +83,12 @@ const teams = {
       nodeId: createGitHubNodeId("T_reviewers"),
       org: "VOICEVOX",
       slug: "reviewers",
-      members: [],
+      members: [
+        {
+          nodeId: reviewer.nodeId,
+          login: reviewer.login,
+        },
+      ],
     },
   ],
 } satisfies ResolvedRepositoryTeams;
@@ -220,8 +233,8 @@ describe("Issueの既定責務", () => {
     expect(decision.status).toBe("new_untriaged");
     expect(decision.waitingOn).toEqual([
       expect.objectContaining({
-        kind: "role",
-        candidateId: "maintainer",
+        kind: "team",
+        candidateId: "VOICEVOX/maintainers",
         role: "maintainer",
       }),
     ]);
@@ -261,7 +274,7 @@ describe("Issueの既定責務", () => {
     );
   });
 
-  it("maintainerが作成した未アサインIssueをauthor任せにしない", () => {
+  it("maintainerが作成した未アサインIssueをauthor個人のmaintainer責務にする", () => {
     const decision = determineIssueState(
       createInput({
         ...createOpenIssue(),
@@ -273,11 +286,144 @@ describe("Issueの既定責務", () => {
     );
 
     expect(decision.waitingOn[0]).toMatchObject({
-      kind: "role",
-      candidateId: "maintainer",
+      kind: "user",
+      candidateId: maintainer.login,
       role: "maintainer",
     });
     expect(decision.waitingOn.some((value) => value.role === "author")).toBe(false);
+  });
+
+  it("直近のhuman actorがreviewerでもtriageをmaintainer teamの責務にする", () => {
+    const reviewerActivity = createCommentEvent(
+      "reviewer-activity",
+      reviewer,
+      createUtcIsoDateTime("2026-07-31T07:00:00Z"),
+    );
+    const decision = determineIssueState(
+      createInput({
+        ...createOpenIssue(),
+        events: [reviewerActivity],
+      }),
+    );
+
+    expect(decision.waitingOn[0]).toMatchObject({
+      kind: "team",
+      candidateId: "VOICEVOX/maintainers",
+      role: "maintainer",
+    });
+    expect(decision.responsibilityBasis).toEqual({
+      sourceIds: [createOpenIssue().sourceId],
+      occurredAt: observedAt,
+      precision: "observation",
+    });
+  });
+
+  it("2 repositoryでmaintainer authorを個人へ、それ以外を設定済みteamへ解決する", () => {
+    const defaultMaintainer = {
+      type: "human",
+      nodeId: createGitHubNodeId("U_default_maintainer"),
+      login: "default-maintainer",
+    } satisfies GitHubAccountActor;
+    const defaultReviewer = {
+      type: "human",
+      nodeId: createGitHubNodeId("U_default_reviewer"),
+      login: "default-reviewer",
+    } satisfies GitHubAccountActor;
+    const overrideMaintainer = {
+      type: "human",
+      nodeId: createGitHubNodeId("U_override_maintainer"),
+      login: "override-maintainer",
+    } satisfies GitHubAccountActor;
+    const overrideReviewer = {
+      type: "human",
+      nodeId: createGitHubNodeId("U_override_reviewer"),
+      login: "override-reviewer",
+    } satisfies GitHubAccountActor;
+    const settings = {
+      defaults: {
+        maintainers: [{ org: "VOICEVOX", slug: "default-maintainers" }],
+        reviewers: [{ org: "VOICEVOX", slug: "default-reviewers" }],
+      },
+      repositories: {
+        "VOICEVOX/override": {
+          maintainers: [{ org: "VOICEVOX", slug: "override-maintainers" }],
+          reviewers: [{ org: "VOICEVOX", slug: "override-reviewers" }],
+        },
+      },
+    } satisfies TeamResolutionSettings;
+    const directory = [
+      {
+        nodeId: createGitHubNodeId("T_default_maintainers"),
+        org: "VOICEVOX",
+        slug: "default-maintainers",
+        members: [defaultMaintainer],
+      },
+      {
+        nodeId: createGitHubNodeId("T_default_reviewers"),
+        org: "VOICEVOX",
+        slug: "default-reviewers",
+        members: [defaultReviewer],
+      },
+      {
+        nodeId: createGitHubNodeId("T_override_maintainers"),
+        org: "VOICEVOX",
+        slug: "override-maintainers",
+        members: [overrideMaintainer],
+      },
+      {
+        nodeId: createGitHubNodeId("T_override_reviewers"),
+        org: "VOICEVOX",
+        slug: "override-reviewers",
+        members: [overrideReviewer],
+      },
+    ] satisfies GitHubTeamDirectory;
+    const defaultTeams = resolveRepositoryTeams("VOICEVOX/default", settings, directory);
+    const overrideTeams = resolveRepositoryTeams("VOICEVOX/override", settings, directory);
+    const decisions = [
+      determineIssueState({
+        ...createInput({
+          ...createOpenIssue(),
+          author: { status: "identified", actor: defaultMaintainer },
+        }),
+        teams: defaultTeams,
+      }),
+      determineIssueState({
+        ...createInput({
+          ...createOpenIssue(),
+          author: { status: "identified", actor: defaultReviewer },
+        }),
+        teams: defaultTeams,
+      }),
+      determineIssueState({
+        ...createInput({
+          ...createOpenIssue(),
+          author: { status: "identified", actor: overrideMaintainer },
+        }),
+        teams: overrideTeams,
+      }),
+      determineIssueState({
+        ...createInput({
+          ...createOpenIssue(),
+          author: { status: "identified", actor: overrideReviewer },
+        }),
+        teams: overrideTeams,
+      }),
+    ];
+
+    expect(
+      decisions.map((decision) =>
+        decision.waitingOn.map((waitingOn) => [
+          waitingOn.kind,
+          waitingOn.candidateId,
+          waitingOn.role,
+        ]),
+      ),
+    ).toEqual([
+      [["user", "default-maintainer", "maintainer"]],
+      [["team", "VOICEVOX/default-maintainers", "maintainer"]],
+      [["user", "override-maintainer", "maintainer"]],
+      [["team", "VOICEVOX/override-maintainers", "maintainer"]],
+    ]);
   });
 
   it("botが作成したことだけを理由に既定責務を変えない", () => {

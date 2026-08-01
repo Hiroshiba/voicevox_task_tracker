@@ -1,4 +1,4 @@
-import { type GitHubNodeId } from "./types.js";
+import { type GitHubNodeId, type WaitingOn } from "./types.js";
 import { assertNonNullable } from "../util/assert-non-nullable.js";
 
 /** 設定で参照するOrganization team。 */
@@ -183,4 +183,51 @@ export function resolveRepositoryActorTeamRoles(
     isMaintainer: hasMember(teams.maintainers, login),
     isReviewer: hasMember(teams.reviewers, login),
   });
+}
+
+function teamCandidateId(team: ResolvedGitHubTeam): string {
+  return `${team.org}/${team.slug}`;
+}
+
+function resolveWaitingOnRoleTeams(
+  teams: ResolvedRepositoryTeams,
+  waitingOn: WaitingOn,
+): readonly ResolvedGitHubTeam[] | undefined {
+  if (waitingOn.kind !== "role") {
+    return undefined;
+  }
+  if (waitingOn.role === "maintainer") {
+    return teams.maintainers;
+  }
+  if (waitingOn.role === "reviewer") {
+    return teams.reviewers;
+  }
+  if (waitingOn.role === "merge_decider" && waitingOn.candidateId === "maintainer") {
+    return teams.maintainers;
+  }
+  return undefined;
+}
+
+/** 抽象的なmaintainerとreviewerのwaitingOnをリポジトリの設定済みteamへ解決する。 */
+export function resolveRepositoryRoleWaitingOn(
+  teams: ResolvedRepositoryTeams,
+  waitingOn: WaitingOn,
+): readonly WaitingOn[] {
+  const resolvedTeams = resolveWaitingOnRoleTeams(teams, waitingOn);
+  if (resolvedTeams == null) {
+    return Object.freeze([waitingOn]);
+  }
+  if (resolvedTeams.length === 0) {
+    throw new TypeError(`解決済み${waitingOn.role} teamは1件以上必要です`);
+  }
+
+  return Object.freeze(
+    resolvedTeams.map((team) =>
+      Object.freeze({
+        ...waitingOn,
+        kind: "team",
+        candidateId: teamCandidateId(team),
+      } satisfies WaitingOn),
+    ),
+  );
 }

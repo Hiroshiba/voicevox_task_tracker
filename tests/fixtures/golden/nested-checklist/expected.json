@@ -7,8 +7,8 @@
       "status": "new_untriaged",
       "waitingOn": [
         {
-          "kind": "role",
-          "candidateId": "maintainer",
+          "kind": "team",
+          "candidateId": "VOICEVOX/fixture-maintainers",
           "role": "maintainer"
         }
       ],
@@ -20,8 +20,8 @@
       "status": "new_untriaged",
       "waitingOn": [
         {
-          "kind": "role",
-          "candidateId": "maintainer",
+          "kind": "team",
+          "candidateId": "VOICEVOX/fixture-maintainers",
           "role": "maintainer"
         }
       ],
@@ -33,8 +33,8 @@
       "status": "new_untriaged",
       "waitingOn": [
         {
-          "kind": "role",
-          "candidateId": "maintainer",
+          "kind": "team",
+          "candidateId": "VOICEVOX/fixture-maintainers",
           "role": "maintainer"
         }
       ],

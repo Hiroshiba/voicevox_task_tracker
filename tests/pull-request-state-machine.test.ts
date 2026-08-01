@@ -456,9 +456,9 @@ describe("Pull Request判定の優先順位", () => {
 
     expect(decision.status).toBe("needs_maintainer_decision");
     expect(decision.waitingOn[0]).toMatchObject({
-      kind: "role",
+      kind: "team",
       role: "maintainer",
-      candidateId: "maintainer",
+      candidateId: "VOICEVOX/maintainers",
     });
   });
 });
@@ -688,9 +688,9 @@ describe("merge readinessと失敗時の判定", () => {
 
     expect(decision.status).toBe("ready_to_merge");
     expect(decision.waitingOn[0]).toMatchObject({
-      kind: "role",
+      kind: "team",
       role: "merge_decider",
-      candidateId: "maintainer",
+      candidateId: "VOICEVOX/maintainers",
     });
   });
 
@@ -699,9 +699,9 @@ describe("merge readinessと失敗時の判定", () => {
 
     expect(decision.status).toBe("needs_maintainer_decision");
     expect(decision.waitingOn[0]).toMatchObject({
-      kind: "role",
+      kind: "team",
       role: "maintainer",
-      candidateId: "maintainer",
+      candidateId: "VOICEVOX/maintainers",
     });
   });
 

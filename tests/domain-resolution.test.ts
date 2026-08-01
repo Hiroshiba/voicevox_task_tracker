@@ -7,11 +7,13 @@ import {
   createLabelEffectsResolver,
   listConfiguredTeamReferences,
   resolveRepositoryActorTeamRoles,
+  resolveRepositoryRoleWaitingOn,
   resolveRepositoryTeamReferences,
   resolveRepositoryTeams,
   type GitHubTeamDirectory,
   type ResolvedGitHubTeam,
   type TeamResolutionSettings,
+  type WaitingOn,
 } from "../src/domain/index.js";
 import {
   normalizeGitHubActor,
@@ -270,6 +272,50 @@ describe("team解決", () => {
       isMaintainer: false,
       isReviewer: false,
     });
+  });
+
+  it("抽象roleを既定と上書きのteamへ解決しGitHub由来の実体は維持する", () => {
+    const sourceId = buildSourceId("github_item_detail", "I_team_role");
+    const maintainer = {
+      kind: "role",
+      candidateId: "maintainer",
+      role: "maintainer",
+      reasonSummary: "maintainerの対応待ちです",
+      sourceIds: [sourceId],
+      confidence: 1,
+    } satisfies WaitingOn;
+    const reviewer = {
+      kind: "role",
+      candidateId: "reviewer",
+      role: "reviewer",
+      reasonSummary: "reviewerの対応待ちです",
+      sourceIds: [sourceId],
+      confidence: 1,
+    } satisfies WaitingOn;
+    const requestedUser = {
+      ...reviewer,
+      kind: "user",
+      candidateId: "requested-reviewer",
+    } satisfies WaitingOn;
+    const defaultTeams = resolveRepositoryTeams("VOICEVOX/other", teamSettings, teamDirectory);
+    const overrideTeams = resolveRepositoryTeams("VOICEVOX/voicevox", teamSettings, teamDirectory);
+
+    expect(
+      [
+        resolveRepositoryRoleWaitingOn(defaultTeams, maintainer),
+        resolveRepositoryRoleWaitingOn(defaultTeams, reviewer),
+        resolveRepositoryRoleWaitingOn(overrideTeams, maintainer),
+        resolveRepositoryRoleWaitingOn(overrideTeams, reviewer),
+      ].map((waitingOnValues) =>
+        waitingOnValues.map((waitingOn) => [waitingOn.kind, waitingOn.candidateId]),
+      ),
+    ).toEqual([
+      [["team", "VOICEVOX/default-maintainers"]],
+      [["team", "VOICEVOX/default-reviewers"]],
+      [["team", "VOICEVOX/voicevox-maintainers"]],
+      [["team", "VOICEVOX/voicevox-reviewers"]],
+    ]);
+    expect(resolveRepositoryRoleWaitingOn(defaultTeams, requestedUser)).toEqual([requestedUser]);
   });
 
   it("既定値と上書きで重複するteamを一度だけ列挙する", () => {

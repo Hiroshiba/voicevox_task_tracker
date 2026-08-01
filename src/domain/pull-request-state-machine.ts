@@ -6,7 +6,7 @@ import {
 } from "./github-item-observation.js";
 import { type ResolvedLabelEffects } from "./label-resolution.js";
 import { type SourceId } from "./source-id.js";
-import { type ResolvedRepositoryTeams } from "./team-resolution.js";
+import { resolveRepositoryRoleWaitingOn, type ResolvedRepositoryTeams } from "./team-resolution.js";
 import {
   type Evidence,
   type EvidenceSupport,
@@ -304,12 +304,14 @@ function finalizeDecision(
   const uncertainties = Object.freeze([...new Set(context.uncertainties)].sort());
   const confidence = Math.min(draft.confidence, context.confidenceCap);
   const waitingOn = Object.freeze(
-    draft.waitingOn.map((value) =>
-      Object.freeze({
-        ...value,
-        confidence: Math.min(value.confidence, context.confidenceCap),
-      }),
-    ),
+    draft.waitingOn
+      .flatMap((value) => resolveRepositoryRoleWaitingOn(input.teams, value))
+      .map((value) =>
+        Object.freeze({
+          ...value,
+          confidence: Math.min(value.confidence, context.confidenceCap),
+        }),
+      ),
   );
   const primaryWaitingOn =
     waitingOn.length === 0

@@ -140,6 +140,7 @@ export {
 export {
   listConfiguredTeamReferences,
   resolveRepositoryActorTeamRoles,
+  resolveRepositoryRoleWaitingOn,
   resolveRepositoryTeamReferences,
   resolveRepositoryTeams,
   type GitHubTeamDirectory,
