@@ -184,7 +184,6 @@ describe("日次workflow", () => {
         contents: "read",
       },
       "deploy-pages": {
-        contents: "read",
         pages: "write",
         "id-token": "write",
       },

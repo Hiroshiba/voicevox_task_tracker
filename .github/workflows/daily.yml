@@ -200,7 +200,6 @@ jobs:
     needs: build-pages
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
       pages: write
       id-token: write
     environment:

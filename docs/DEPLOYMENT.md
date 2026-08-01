@@ -1,7 +1,8 @@
 # デプロイ手順
 
 デプロイ先は`VOICEVOX/voicevox_task_tracker`のGitHub Actions、GitHub Pages、`tracker-state` branchです。
-追跡対象のrepositoryへは読み取り専用GitHub Appで接続し、このrepositoryのstate更新とPages公開だけを`GITHUB_TOKEN`で行います。
+追跡対象のrepositoryへは読み取り専用GitHub Appで接続します。
+このrepositoryのstate更新とPages公開には、GitHub Actionsがjobごとに自動発行する`GITHUB_TOKEN`を使います。
 
 ## GitHub App
 
@@ -44,28 +45,34 @@ installation IDは実行時にOrganizationから自動発見するため、現�
 
 repositoryのSettingsからActions variableとActions secretを登録します。
 
-| 名前                             | 種別     | 必要になる条件                                       | 値                                    |
-| -------------------------------- | -------- | ---------------------------------------------------- | ------------------------------------- |
-| `GH_APP_ID`                      | Variable | 常時                                                 | GitHub Appの数値ID                    |
-| `GH_APP_PRIVATE_KEY`             | Secret   | 常時                                                 | GitHub Appから発行したPEM private key |
-| `OPENAI_API_KEY`                 | Secret   | `ai.enabled: true`かつ`ai.authentication: api-key`   | Codexの非対話実行に使うAPI key        |
-| `CODEX_HOME`                     | Variable | `ai.enabled: true`かつ`ai.authentication: auth-json` | `auth.json`を直下に置いたdirectory    |
-| `DISCORD_WEBHOOK_URL`            | Secret   | `notifications.discord.enabled: true`                | 通常digest用のIncoming Webhook URL    |
-| `DISCORD_OPERATIONS_WEBHOOK_URL` | Secret   | `notifications.discord.enabled: true`                | 運用障害通知用のIncoming Webhook URL  |
+| 名前                             | 種別     | 値                                    |
+| -------------------------------- | -------- | ------------------------------------- |
+| `GH_APP_ID`                      | Variable | GitHub Appの数値ID                    |
+| `GH_APP_PRIVATE_KEY`             | Secret   | GitHub Appから発行したPEM private key |
+| `OPENAI_API_KEY`                 | Secret   | Codexの非対話実行に使うAPI key        |
+| `DISCORD_WEBHOOK_URL`            | Secret   | 通常digest用のIncoming Webhook URL    |
+| `DISCORD_OPERATIONS_WEBHOOK_URL` | Secret   | 運用障害通知用のIncoming Webhook URL  |
 
 PEM private keyは改行を保持したままsecretへ登録します。
-Codex認証には`OPENAI_API_KEY`と`CODEX_HOME`のどちらか一方だけを設定します。
-GitHub Actionsでは`auth.json`に含まれるtokenが更新されるため、`ai.authentication: api-key`を使う想定です。
+現行の`config.yml`は`ai.authentication: api-key`を指定し、`collect-analyze` jobは`OPENAI_API_KEY`だけをCodexへ渡します。
+`ai.authentication: auth-json`はCodexの`auth.json`で認証する方式で、含まれるtokenが更新されるためActionsでは使いません。
 認証情報を`config.yml`、branch、artifact、run logへ書きません。
 
-ActionsのWorkflow permissionsは、`persist-state` jobが`tracker-state`へpushできるようにread and writeを許可します。
-workflow側では各jobが必要な権限だけを再指定しています。
+repositoryのWorkflow permissionsは既定の読み取り専用にします。
+read and writeへ変更する必要はありません。
+全workflowはtop-levelの`permissions`を空にし、各jobで必要な権限だけを指定しています。
+`persist-state`、`notify-discord`、`notify-operations`は`tracker-state`へpushするため、それぞれ`contents: write`を指定します。
+これらのjobにはGitHub Actionsが`GITHUB_TOKEN`を自動発行するため、独自の`GITHUB_TOKEN` secretは登録しません。
+
+CLIはremote repositoryへpushしません。
+`src/persistence/git-state-branch-adapter.ts`が`hash-object`、`commit-tree`、`update-ref`などを使い、localの`refs/heads/tracker-state`へcommitを作ります。
+workflowはCLIの実行前にremoteの`tracker-state`をlocal refへfetchし、CLIの実行後に明示的な`git push`でremoteへ反映します。
 `tracker-state`へrulesetを設定する場合はGitHub Actionsによるstate更新を許可し、人間の通常作業branchとして使わないでください。
 
-`collect-analyze`は`artifacts/workflow/validated-run.json`へ検証済みsnapshot、通知候補、notification ledger、run report、AI cache、公開設定だけを書きます。
+`collect-analyze`は`artifacts/workflow/validated-run.json`へ検証済みsnapshot、通知候補、notification ledger、run report、AI cache、Pages URL、Discord送信設定だけを書きます。
 GitHub App key、installation token、OpenAI認証情報、Discord webhookはartifactへ含めません。
-後続jobは同じartifactを再検証してから利用します。
-権限なしの`notify-discord`でCLIを動かすため、公開sourceから作った自己完結bundleも同じActions artifactへ保存します。
+artifactを利用する後続jobは同じartifactを再検証してから利用します。
+依存関係を再インストールせず`notify-discord`でCLIを動かすため、公開sourceから作った自己完結bundleも同じActions artifactへ保存します。
 
 ## Pagesの設定
 
@@ -73,11 +80,13 @@ repositoryをpublicにした後、SettingsのPagesでSourceを`GitHub Actions`�
 branchをPages sourceへ指定しません。
 
 現行構成では`config.yml`の`web.basePath`を`/voicevox_task_tracker/`にし、公開URLを`https://voicevox.github.io/voicevox_task_tracker/`とします。
-workflowの`deploy-pages` jobは`github-pages` environmentへdeployし、`pages: write`と`id-token: write`だけを使用します。
+workflowの`deploy-pages` jobはrepositoryをcheckoutせず、`build-pages`が保存したPages artifactを`github-pages` environmentへdeployするだけです。
+このため`pages: write`と`id-token: write`だけを使用します。
 
 ## config.yml
 
-初回runより前に`YOUR_`で始まるplaceholderを解消します。
+現行の`config.yml`には実運用値が入っています。
+初回runより前に、設定済みのorganization、team slug、model ID、公開URL、secret名がデプロイ先と一致することを確認します。
 Zodのstrict schemaで未知のfieldも拒否するため、設定名は`config.yml`にあるものだけを使います。
 
 | 設定                                                | 指定内容                                                      |
@@ -95,8 +104,8 @@ Zodのstrict schemaで未知のfieldも拒否するため、設定名は`config.
 | `labels.rules`                                      | repository glob、label名の正規表現、判定と通知への効果        |
 | `staleness`                                         | 進捗猶予時間とwait class別のwatch、urgent、critical閾値       |
 | `ai.enabled`                                        | Codexを呼び出すかどうか                                       |
-| `ai.authentication`                                 | `api-key`または`auth-json`                                    |
-| `ai.model`                                          | workflowのCodex CLIで利用できる固定model ID                   |
+| `ai.authentication`                                 | workflowでは`api-key`、ローカル実行では`api-key`か`auth-json` |
+| `ai.model`                                          | 固定したCodex CLIと認証情報で利用できる設定済みmodel ID       |
 | `ai.confidence`                                     | highとmediumの境界                                            |
 | `ai.budget`                                         | call数、入力文字数、推定費用のrun上限                         |
 | `notifications.discord.enabled`                     | Discord通知を送るかどうか                                     |
@@ -111,25 +120,9 @@ Zodのstrict schemaで未知のfieldも拒否するため、設定名は`config.
 | `operations.githubApiBudgetRatio`                   | 1 runで使ってよいGitHub API予算の比率                         |
 | `operations.retry`                                  | GitHubとDiscordの一時失敗に対するretry設定                    |
 
-初期導入では次の値にします。
-
-```yaml
-ai:
-  enabled: false
-
-notifications:
-  discord:
-    enabled: false
-    mentions:
-      enabled: false
-      users: {}
-
-operations:
-  failOnPrivateDataGuard: true
-  publishPartialData: false
-```
-
-`ai`と`notifications.discord`の残りの必須fieldは削除せず、既存の形を保ちます。
+現行設定ではCodexとDiscord通知が有効です。
+`ai.model`の利用可否は、lockfileで固定したCodex CLIと`OPENAI_API_KEY`を使うdry-runで確認します。
+`operations.failOnPrivateDataGuard`は`true`、`operations.publishPartialData`は`false`のまま運用します。
 `webhookSecretName`には`DISCORD_WEBHOOK_URL`、`operationsWebhookSecretName`には`DISCORD_OPERATIONS_WEBHOOK_URL`を指定します。
 通常digestと運用障害通知を同じchannelへ送る場合は、2つのsecretへ同じIncoming Webhook URLを登録します。
 
@@ -137,8 +130,18 @@ operations:
 
 ### 1. ローカルdry-run
 
-実在するteam slugを設定し、GitHub Appの環境変数を安全な方法でshellへ渡します。
-`ai.enabled`と`notifications.discord.enabled`は`false`のままにします。
+`.node-version`に記載されたNode.jsをversion managerで有効にします。
+Node.jsのversionを確認した後にCorepackを有効にし、`package.json`で固定されたpnpmを使います。
+
+```console
+node --version
+corepack enable
+pnpm --version
+```
+
+設定済みのteam slugがOrganizationに存在することを確認します。
+GitHub Appの`GH_APP_ID`と`GH_APP_PRIVATE_KEY`、Codexの`OPENAI_API_KEY`を安全な方法でshellへ渡します。
+`dry-run`はDiscord webhookを読み取らず、state、Pages、Discordを変更しません。
 
 依存関係を検証してCLIをビルドします。
 
@@ -151,7 +154,7 @@ pnpm format:check
 pnpm build
 ```
 
-公開副作用を起こさない`dry-run`を実行します。
+現在の`config.yml`を変更せずに`dry-run`を実行します。
 
 ```console
 node --input-type=module --eval '
@@ -174,26 +177,36 @@ process.exitCode = result.exitCode;
 
 ### 2. Codexのdry-run
 
-lockfileで固定したCodex CLI `0.145.0`が`codex`として`PATH`にあり、実装が使う`codex exec` optionへ対応することを確認します。
-`ai.authentication: api-key`では`OPENAI_API_KEY`を渡します。
-`ai.authentication: auth-json`では`auth.json`が直下にあるdirectoryを`CODEX_HOME`へ指定します。
-選択しなかった方式の環境変数は渡しません。
-`ai.model`のplaceholderを利用可能なmodel IDへ置き換えてから`ai.enabled`を`true`にします。
+lockfileで固定したCodex CLI `0.145.0`を確認します。
 
-同じdry-runを実行し、`aiCallCount`、`aiCacheHitCount`、`estimatedInputTokens`、`diagnostics`を確認します。
+```console
+pnpm exec codex --version
+```
+
+現行の`config.yml`は`ai.enabled: true`と`ai.authentication: api-key`を設定済みです。
+ローカルでAPI keyを使わずCodexの`auth.json`で認証する場合は、`ai.authentication`を`auth-json`にし、`auth.json`を直下に置いたdirectoryを`CODEX_HOME`へ指定します。
+どちらの方式でも、選択しなかった方式の環境変数はCodexへ渡りません。
+
+`OPENAI_API_KEY`を渡して同じ`dry-run`を実行し、`ai.model`に設定されたmodel IDでCodex呼び出しが成功することを確認します。
+`aiCallCount`が1以上で`status`が`success`となり、`diagnostics`にmodelの利用不可を示す内容がなければ、設定済みmodel IDを利用できています。
+`aiCallCount`が0ならmodelを呼び出していないため、利用可否を確認できていません。
+その場合は設定済みmodel IDを`--model`へ指定した最小の`pnpm exec codex exec`を同じ認証情報で実行します。
+
+`aiCacheHitCount`、`estimatedInputTokens`、`diagnostics`も確認します。
 model、prompt、schemaを変更した場合は`pnpm eval:golden`も実行します。
 Actionsの`collect-analyze` jobはlockfileから同じCodex CLIをインストールし、収集前にversion確認を行います。
 
 ### 3. stateとPages
 
-PagesのSourceを`GitHub Actions`にして日次workflowを手動実行します。
+PagesのSourceを`GitHub Actions`にして、repositoryのdefault branchから日次workflowを手動実行します。
+workflowはdefault branchからのscheduleまたは手動実行だけを許可します。
 入力は`backfill: none`とし、repository filterは空にします。
-`notifications.discord.enabled`は`false`のままにします。
 
 成功後に次を確認します。
 
-- `tracker-state`がmainと別の履歴を持つこと
-- snapshot、当日履歴、通知ledger、run reportが同じstate commitにあること
+- `tracker-state`がdefault branchと別の履歴を持つこと
+- `persist-state`のcommitにsnapshot、当日履歴、新しいAI cache、通知ledger、run reportがまとまっていること
+- 通知を送った場合は後続の通知jobが通知ledgerだけのcommitを追加していること
 - Pagesの生成時刻、repository数、item数、stale表示がrun reportと一致すること
 - private repositoryのID、名前、URL、secret、不要な本文がstateとPagesにないこと
 
@@ -204,10 +217,10 @@ Pagesとdry-runの判定を少なくとも2週間確認し、必要なteam、lab
 
 通常digest用のIncoming Webhookを作成し、`DISCORD_WEBHOOK_URL`へ登録します。
 運用障害通知用のIncoming Webhookを作成し、`DISCORD_OPERATIONS_WEBHOOK_URL`へ登録します。
-最初は`mentions.enabled: false`のまま`notifications.discord.enabled: true`へ変更します。
+現行設定は`notifications.discord.enabled: true`と`mentions.enabled: false`です。
 
-手動runでPages deploy後にだけ通知されること、候補0件なら送信されないこと、再実行でcooldownが効くことを確認します。
-確認後にscheduleを運用へ移します。
+手動runで通常digestがPages deploy後にだけ通知されること、候補0件なら送信されないこと、再実行でcooldownが効くことを確認します。
+収集またはPagesの処理が失敗した場合は、運用障害通知が送られることも確認します。
 GitHub Actionsのscheduleは遅延し得るため、08:00 JSTは起動予定時刻として扱います。
 
 mentionが必要になった場合だけ、GitHub loginと17桁から20桁のDiscord user IDを`mentions.users`へ登録します。
