@@ -9,7 +9,7 @@ import {
   type DailyCliCommand,
   type DryRunCliCommand,
 } from "./command.js";
-import { CliCodexAuthenticationError, CliCredentialsError, CliExecutableError } from "./errors.js";
+import { safeErrorDiagnostic } from "./error-diagnostic.js";
 import { RunCoordinator, type CoordinatedRunResult } from "./run-coordinator.js";
 import {
   createEmptyRunMetrics,
@@ -360,18 +360,6 @@ function updateMetrics(metrics: RunMetrics, values: Partial<RunMetrics>): RunMet
     }
   }
   return Object.freeze(updated);
-}
-
-function safeErrorDiagnostic(stage: RunStage, error: unknown): string {
-  if (
-    error instanceof CliCodexAuthenticationError ||
-    error instanceof CliCredentialsError ||
-    error instanceof CliExecutableError
-  ) {
-    return `stage=${stage} message=${error.message}`;
-  }
-  const errorType = error instanceof Error ? error.name : typeof error;
-  return `stage=${stage} errorType=${errorType}`;
 }
 
 function createDryRunArtifact<Value>(
