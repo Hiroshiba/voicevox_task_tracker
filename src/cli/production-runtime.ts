@@ -32,6 +32,7 @@ import {
   determineTerminalRetention,
   determineTrackedItemWork,
   isTerminalStatus,
+  resolveTrackingStartAt,
   resolveRepositoryTeams,
   selectTrackingItems,
   type LabelRule,
@@ -61,6 +62,8 @@ import {
   type ExternalGhostNode,
   type TrackedItem,
   type TrackingConnection,
+  type TrackingRunCompletion,
+  type TrackingStartAtState,
   type TrackedItemWorkDecision,
   type UtcIsoDateTime,
 } from "../domain/index.js";
@@ -892,16 +895,84 @@ function createTrackingConnections(
   return Object.freeze(connections);
 }
 
-function trackingStartAt(
+function resolveProductionTrackingStartAt(
+  config: Config,
+  previousState: TrackingStartAtState,
+  run: TrackingRunCompletion,
+): TrackingStartAtState {
+  const configured = config.tracking.startAt;
+  return resolveTrackingStartAt({
+    configuredStartAt:
+      configured == null
+        ? Object.freeze({
+            status: "not_configured",
+          })
+        : Object.freeze({
+            status: "configured",
+            value: createUtcIsoDateTime(configured),
+          }),
+    previousState,
+    run,
+  });
+}
+
+function trackingSelectionStartAt(
   configuration: RuntimeConfiguration,
   state: RuntimeState,
   invocation: DailyRunInvocation,
 ): UtcIsoDateTime {
-  const configured = configuration.config.tracking.startAt;
-  if (configured != null) {
-    return createUtcIsoDateTime(configured);
+  const resolved = resolveProductionTrackingStartAt(
+    configuration.config,
+    previousSnapshot(state)?.trackingStartAt ??
+      Object.freeze({
+        status: "not_fixed",
+      }),
+    Object.freeze({
+      outcome: "incomplete",
+      finishedAt: invocation.startedAt,
+    }),
+  );
+  if (resolved.status === "not_fixed") {
+    return invocation.startedAt;
   }
-  return previousSnapshot(state)?.trackingStartAt ?? invocation.startedAt;
+  return resolved.value;
+}
+
+function pendingSnapshotTrackingStartAt(
+  configuration: RuntimeConfiguration,
+  state: RuntimeState,
+  invocation: DailyRunInvocation,
+): TrackingStartAtState {
+  return resolveProductionTrackingStartAt(
+    configuration.config,
+    previousSnapshot(state)?.trackingStartAt ??
+      Object.freeze({
+        status: "not_fixed",
+      }),
+    Object.freeze({
+      outcome: "incomplete",
+      finishedAt: invocation.startedAt,
+    }),
+  );
+}
+
+function completedSnapshotTrackingStartAt(
+  config: Config,
+  snapshot: StateSnapshot,
+  completedAt: UtcIsoDateTime,
+): TrackingStartAtState {
+  const resolved = resolveProductionTrackingStartAt(
+    config,
+    snapshot.trackingStartAt,
+    Object.freeze({
+      outcome: "complete_success",
+      finishedAt: completedAt,
+    }),
+  );
+  if (resolved.status !== "fixed") {
+    throw new TypeError("完全成功したrunでtracking.startAtを確定できませんでした");
+  }
+  return resolved;
 }
 
 function authorType(item: FreshObservedGitHubItem): "human" | "bot" | "unknown" {
@@ -1034,7 +1105,7 @@ function collectTrackingCandidates(
     ...externalCandidates,
   ]);
   const result = selectTrackingItems({
-    startAt: trackingStartAt(configuration, state, invocation),
+    startAt: trackingSelectionStartAt(configuration, state, invocation),
     evaluatedAt: invocation.startedAt,
     candidates,
     connections: createTrackingConnections(relationCandidates),
@@ -2876,7 +2947,7 @@ function validateRunCompleteness(
   const snapshot = createStateSnapshot({
     schemaVersion: "1",
     generatedAt: invocation.startedAt,
-    trackingStartAt: trackingStartAt(configuration, state, invocation),
+    trackingStartAt: pendingSnapshotTrackingStartAt(configuration, state, invocation),
     ai: snapshotAiState(configuration.config, codexAnalysis),
     collection: {
       repositories: collection.collectionRepositories.map((repository) => ({
@@ -3178,6 +3249,38 @@ async function deliverDiscord(
     notificationCount: sentNotificationEntries.length,
     discordSentAt: sentAt,
   });
+}
+
+async function persistSuccessfulRunCompletion(
+  adapters: ProductionRuntimeAdapters,
+  config: Config,
+  state: RuntimeState,
+  validated: ValidatedRun,
+  delivery: Awaited<ReturnType<typeof deliverDiscord>>,
+  knownSecrets: readonly string[],
+): Promise<void> {
+  const completedAt = createUtcIsoDateTime(adapters.now().toISOString());
+  const trackingStartAt = completedSnapshotTrackingStartAt(config, validated.snapshot, completedAt);
+  if (validated.snapshot.trackingStartAt.status === "not_fixed") {
+    await state.session.persistRunCompletion({
+      snapshot: createStateSnapshot({
+        ...validated.snapshot,
+        trackingStartAt,
+      }),
+      notificationLedger: delivery.notificationLedger,
+      completedAt,
+      knownSecrets,
+    });
+    return;
+  }
+  if (delivery.notificationCount > 0) {
+    assertNonNullable(delivery.discordSentAt, "Discord通知の送信時刻がありません");
+    await state.session.persistNotificationLedger({
+      notificationLedger: delivery.notificationLedger,
+      committedAt: delivery.discordSentAt,
+      knownSecrets,
+    });
+  }
 }
 
 async function deliverOperationsAlert(
@@ -3721,14 +3824,14 @@ function createDailyDependencies(
         validated,
         pages.pagesUrl,
       );
-      if (result.notificationCount > 0) {
-        assertNonNullable(result.discordSentAt, "Discord通知の送信時刻がありません");
-        await state.session.persistNotificationLedger({
-          notificationLedger: result.notificationLedger,
-          committedAt: result.discordSentAt,
-          knownSecrets: configuration.credentials.knownSecrets,
-        });
-      }
+      await persistSuccessfulRunCompletion(
+        adapters,
+        configuration.config,
+        state,
+        validated,
+        result,
+        configuration.credentials.knownSecrets,
+      );
       return Object.freeze({
         value: result.value,
         notificationCount: result.notificationCount,
@@ -3873,14 +3976,14 @@ async function notifyWorkflowDiscord(
     }),
     command.pagesUrl,
   );
-  if (result.notificationCount > 0) {
-    assertNonNullable(result.discordSentAt, "Discord通知の送信時刻がありません");
-    await state.session.persistNotificationLedger({
-      notificationLedger: result.notificationLedger,
-      committedAt: result.discordSentAt,
-      knownSecrets: [],
-    });
-  }
+  await persistSuccessfulRunCompletion(
+    adapters,
+    config,
+    state,
+    validatedRunFromArtifact(artifact),
+    result,
+    [],
+  );
 }
 
 async function notifyWorkflowOperations(

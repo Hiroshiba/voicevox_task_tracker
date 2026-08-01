@@ -42,7 +42,11 @@ function createEmptyWorkflowArtifact(): WorkflowArtifact {
     snapshot: {
       schemaVersion: "1",
       generatedAt: NOW,
-      trackingStartAt: NOW,
+      trackingStartAt: {
+        status: "fixed",
+        value: NOW,
+        source: "first_complete_run",
+      },
       ai: {
         enabled: false,
         available: false,

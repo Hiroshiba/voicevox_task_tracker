@@ -814,7 +814,10 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
     runId: snapshot.run.id,
     generatedAt: snapshot.generatedAt,
     observedAt: latestRepositoryObservedAt(snapshot.repositories),
-    trackingStartAt: snapshot.trackingStartAt,
+    trackingStartAt:
+      snapshot.trackingStartAt.status === "fixed"
+        ? snapshot.trackingStartAt.value
+        : snapshot.generatedAt,
     ai: {
       ...snapshot.ai,
     },

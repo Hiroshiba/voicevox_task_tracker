@@ -72,6 +72,7 @@ export {
 export {
   StatePersistenceSession,
   type PersistNotificationLedgerInput,
+  type PersistRunCompletionInput,
   type PersistStateTransactionInput,
   type PersistStateTransactionResult,
   type StateSnapshotReadResult,

@@ -80,7 +80,7 @@ ai:
   enabled: true
   authentication: api-key
   model: gpt-5.6-luna
-  promptVersion: v1
+  promptVersion: v2
   confidence:
     high: 0.85
     medium: 0.65

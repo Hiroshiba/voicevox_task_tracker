@@ -212,7 +212,11 @@ function createSnapshot(options: SnapshotFixtureOptions): StateSnapshot {
   return createStateSnapshot({
     schemaVersion: "1",
     generatedAt: options.generatedAt,
-    trackingStartAt: TRACKING_START_AT,
+    trackingStartAt: {
+      status: "fixed",
+      value: TRACKING_START_AT,
+      source: "first_complete_run",
+    },
     ai: options.ai,
     collection: {
       repositories: [],

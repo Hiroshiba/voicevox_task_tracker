@@ -146,7 +146,11 @@ function createSnapshot(options: SnapshotFixtureOptions): StateSnapshot {
   return createStateSnapshot({
     schemaVersion: "1",
     generatedAt: options.generatedAt,
-    trackingStartAt: fixedTrackingStartAt,
+    trackingStartAt: {
+      status: "fixed",
+      value: fixedTrackingStartAt,
+      source: "first_complete_run",
+    },
     ai: {
       enabled: false,
       available: false,

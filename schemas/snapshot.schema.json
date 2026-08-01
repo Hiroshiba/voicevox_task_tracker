@@ -24,7 +24,7 @@
       "$ref": "#/$defs/dateTime"
     },
     "trackingStartAt": {
-      "$ref": "#/$defs/dateTime"
+      "$ref": "#/$defs/trackingStartAt"
     },
     "ai": {
       "$ref": "#/$defs/ai"
@@ -74,6 +74,36 @@
     "dateTime": {
       "type": "string",
       "format": "date-time"
+    },
+    "trackingStartAt": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": {
+              "const": "not_fixed"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "value", "source"],
+          "properties": {
+            "status": {
+              "const": "fixed"
+            },
+            "value": {
+              "$ref": "#/$defs/dateTime"
+            },
+            "source": {
+              "enum": ["configuration", "first_complete_run"]
+            }
+          }
+        }
+      ]
     },
     "fingerprint": {
       "type": "string",

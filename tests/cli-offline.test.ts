@@ -33,7 +33,11 @@ function emptySnapshot(): StateSnapshot {
   return createStateSnapshot({
     schemaVersion: "1",
     generatedAt: NOW,
-    trackingStartAt: SCHEDULED_FOR,
+    trackingStartAt: {
+      status: "fixed",
+      value: SCHEDULED_FOR,
+      source: "first_complete_run",
+    },
     ai: {
       enabled: false,
       available: false,

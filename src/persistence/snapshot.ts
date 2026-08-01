@@ -14,6 +14,7 @@ import {
   type Relation,
   type Repository,
   type Severity,
+  type TrackingStartAtState,
   type TrackedItem,
   type UtcIsoDateTime,
 } from "../domain/index.js";
@@ -119,7 +120,7 @@ export type SnapshotRun = Readonly<{
 export type StateSnapshot = Readonly<{
   schemaVersion: "1";
   generatedAt: UtcIsoDateTime;
-  trackingStartAt: UtcIsoDateTime;
+  trackingStartAt: TrackingStartAtState;
   ai: SnapshotAiState;
   collection: SnapshotCollectionState;
   repositories: readonly SnapshotRepository[];
@@ -171,7 +172,9 @@ function assertUtcDateTime(value: string, description: string): void {
 
 function assertSnapshotSemantics(snapshot: StateSnapshot): void {
   assertUtcDateTime(snapshot.generatedAt, "generatedAt");
-  assertUtcDateTime(snapshot.trackingStartAt, "trackingStartAt");
+  if (snapshot.trackingStartAt.status === "fixed") {
+    assertUtcDateTime(snapshot.trackingStartAt.value, "trackingStartAt");
+  }
   assertUnique(
     snapshot.repositories.map((repository) => repository.id),
     "repository ID",
@@ -305,6 +308,9 @@ function assertSnapshotSemantics(snapshot: StateSnapshot): void {
 function normalizeSnapshot(snapshot: StateSnapshot): StateSnapshot {
   return Object.freeze({
     ...snapshot,
+    trackingStartAt: Object.freeze({
+      ...snapshot.trackingStartAt,
+    }),
     ai: Object.freeze({
       ...snapshot.ai,
     }),

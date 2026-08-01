@@ -79,6 +79,14 @@ export type PersistNotificationLedgerInput = Readonly<{
   knownSecrets: readonly string[];
 }>;
 
+/** 完全成功したrunの追跡開始時刻と通知ledgerを保存する入力。 */
+export type PersistRunCompletionInput = Readonly<{
+  snapshot: StateSnapshot;
+  notificationLedger: StateNotificationLedger;
+  completedAt: UtcIsoDateTime;
+  knownSecrets: readonly string[];
+}>;
+
 function compareStrings(left: string, right: string): number {
   if (left < right) {
     return -1;
@@ -374,6 +382,69 @@ export class StatePersistenceSession {
     return Object.freeze({
       ...result,
       updatedPaths: Object.freeze([update.path]),
+    });
+  }
+
+  /** 完全成功したrunの追跡開始時刻と通知ledgerをatomic commitする。 */
+  public async persistRunCompletion(
+    input: PersistRunCompletionInput,
+  ): Promise<PersistStateTransactionResult> {
+    if (this.#head.status === "missing") {
+      throw new StateFormatError("run completion", {
+        cause: new TypeError("state branch作成前にrun完了を保存できません"),
+      });
+    }
+    const snapshot = createStateSnapshot(input.snapshot);
+    if (snapshot.trackingStartAt.status !== "fixed") {
+      throw new StateSnapshotSemanticError("完全成功したrunのtracking.startAtが確定していません");
+    }
+    const currentResult = await this.loadSnapshot();
+    if (currentResult.status === "missing_branch") {
+      throw new StateFormatError("run completion", {
+        cause: new TypeError("state branchのsnapshotを読み取れません"),
+      });
+    }
+    if (currentResult.snapshot.trackingStartAt.status !== "not_fixed") {
+      throw new StateSnapshotSemanticError("tracking.startAtがすでに確定しています");
+    }
+    const expectedCurrentSnapshot = createStateSnapshot({
+      ...snapshot,
+      trackingStartAt: currentResult.snapshot.trackingStartAt,
+    });
+    if (
+      serializeStateSnapshot(expectedCurrentSnapshot) !==
+      serializeStateSnapshot(currentResult.snapshot)
+    ) {
+      throw new StateSnapshotSemanticError(
+        "run完了時にtracking.startAt以外のsnapshot内容が変化しています",
+      );
+    }
+    const notificationLedger = createStateNotificationLedger(input.notificationLedger);
+    assertStateValuesPublicSafety([snapshot, notificationLedger], input.knownSecrets);
+    const updates = Object.freeze([
+      Object.freeze({
+        path: this.#configuration.snapshotPath,
+        bytes: encodeStateFile(serializeStateSnapshot(snapshot)),
+      } satisfies StateFileUpdate),
+      Object.freeze({
+        path: this.#configuration.notificationLedgerPath,
+        bytes: encodeStateFile(serializeStateNotificationLedger(notificationLedger)),
+      } satisfies StateFileUpdate),
+    ]);
+    const result = await this.#adapter.commit({
+      branch: this.#configuration.branch,
+      expectedHead: this.#head,
+      updates,
+      message: `tracker run completion ${snapshot.run.id}`,
+      committedAt: input.completedAt,
+    });
+    this.#head = Object.freeze({
+      status: "present",
+      revision: result.revision,
+    });
+    return Object.freeze({
+      ...result,
+      updatedPaths: Object.freeze(updates.map((update) => update.path)),
     });
   }
 

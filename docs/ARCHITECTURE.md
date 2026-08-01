@@ -70,7 +70,7 @@ option形式の引数は`--backfill`に従って`daily`または`backfill`へ変
 8. 高信頼で確定しない項目をCodexで分析し、出力を検証します。
 9. reducerの第1 pass、暫定graphのreconcileと解析、graphを反映したreducerの第2 pass、最終graphのreconcileと解析の順に実行し、停滞時間、cycle、frontier、downstream impactを確定します。
 10. snapshotと通知候補を作り、完全性と公開安全性を検証します。
-11. `daily`と`backfill`ではstate branch用run reportを含むstateをatomic commitし、Pages用DTOを書き出してDiscord送信を実行し、通知した場合は送信結果を反映したledgerだけを追加commitします。
+11. `daily`と`backfill`ではstate branch用run reportを含むstateをatomic commitし、Pages用DTOを書き出してDiscord送信を実行します。`tracking.startAt`が未確定なら完全成功時刻と送信結果を反映したledgerを追加commitし、確定済みで通知した場合はledgerだけを追加commitします。
 12. 成功、Codex縮退、失敗のいずれでもCLIのreport pathへrun reportを書き出します。
 
 `dry-run`は手順10まで実行し、state、Pages、Discordを変更せずに検証済みartifactとrun reportだけを書き出します。
@@ -147,7 +147,7 @@ Codex出力はJSON Schema検証の後にsemantic validationを通します。
 
 | 既定パス                            | 内容                                                            |
 | ----------------------------------- | --------------------------------------------------------------- |
-| `state/snapshot.json`               | AI状態を含むschema version付きの最新snapshot                    |
+| `state/snapshot.json`               | AI状態とtracking.startAtの確定状態を含む最新snapshot            |
 | `state/history/YYYY-MM-DD.jsonl`    | 前回snapshotとの差分を持つ日次履歴                              |
 | `state/ai-cache/<sha256>.json`      | Codexのcontent-addressed cache                                  |
 | `state/notification-ledger.json`    | 予約期限、送信結果、cooldownを持つ通知ledger                    |
@@ -159,6 +159,9 @@ Codex出力はJSON Schema検証の後にsemantic validationを通します。
 期限内の予約は重複送信を抑え、期限切れの予約は次回の候補選別で抑制しません。
 cooldownと同日抑制は送信済みentryだけへ適用します。
 run reportはPages生成とDiscord送信より前に保存します。
-Discord通知を送信した場合は、送信結果を反映したledgerだけを2回目のGit commitで保存します。
+初回の通常state commitでは、未指定の`tracking.startAt`を`not_fixed`のまま保存します。
+PagesとDiscordが完了した場合だけ、`resolveTrackingStartAt`で完全成功時刻を確定します。
+この確定値と送信結果を反映したledgerは2回目のGit commitで一緒に保存します。
+`tracking.startAt`が確定済みのrunでDiscord通知を送信した場合は、送信結果を反映したledgerだけを2回目のGit commitで保存します。
 各commitの前にheadが変わった場合は競合として失敗し、不完全なcommitへ切り替えません。
 GitHub Pagesはbranchを公開元にせず、ActionsのPages artifactからdeployします。

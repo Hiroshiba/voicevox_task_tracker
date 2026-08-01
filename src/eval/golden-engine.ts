@@ -977,13 +977,17 @@ function createSnapshot(
   return createStateSnapshot({
     schemaVersion: "1",
     generatedAt,
-    trackingStartAt: createUtcIsoDateTime(
-      analyses.reduce(
-        (earliest, analysis) =>
-          analysis.input.createdAt < earliest ? analysis.input.createdAt : earliest,
-        analyses[0]?.input.createdAt ?? input.evaluatedAt,
+    trackingStartAt: {
+      status: "fixed",
+      value: createUtcIsoDateTime(
+        analyses.reduce(
+          (earliest, analysis) =>
+            analysis.input.createdAt < earliest ? analysis.input.createdAt : earliest,
+          analyses[0]?.input.createdAt ?? input.evaluatedAt,
+        ),
       ),
-    ),
+      source: "first_complete_run",
+    },
     ai: {
       enabled: true,
       available: true,
@@ -1444,7 +1448,11 @@ function analyzeLargeFixture(
   const snapshot = createStateSnapshot({
     schemaVersion: "1",
     generatedAt: evaluatedAt,
-    trackingStartAt: "2026-01-01T00:00:00.000Z",
+    trackingStartAt: {
+      status: "fixed",
+      value: "2026-01-01T00:00:00.000Z",
+      source: "first_complete_run",
+    },
     ai: {
       enabled: false,
       available: false,

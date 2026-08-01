@@ -210,7 +210,9 @@ function createEmptyWorkflowArtifact(runId: string): WorkflowArtifact {
     snapshot: {
       schemaVersion: "1",
       generatedAt: NOW,
-      trackingStartAt: NOW,
+      trackingStartAt: {
+        status: "not_fixed",
+      },
       ai: {
         enabled: false,
         available: false,
@@ -575,10 +577,11 @@ describe("CLI合成root", () => {
     expect(codexProcessCount).toBe(0);
   });
 
-  it("後続の各stageが同じrunの公開artifactを消費し、異なるrunのDiscord通知を拒否する", async () => {
+  it("初回runはDiscord失敗時にstartAtを確定せず、成功時だけ確定する", async () => {
     let stateCommitCount = 0;
     let pagesWriteCount = 0;
     let discordSendCount = 0;
+    let discordFails = true;
     let artifact = createEmptyWorkflowArtifact("tracker-run:composition-workflow-stage");
     const harness = createHarness({});
     const stateAdapter = createMutableStateAdapter(() => {
@@ -613,6 +616,9 @@ describe("CLI合成root", () => {
       },
       sendDiscord: () => {
         discordSendCount += 1;
+        if (discordFails) {
+          return Promise.reject(new TypeError("Discord送信fixtureが失敗しました"));
+        }
         return Promise.resolve(
           Object.freeze({
             status: "skipped",
@@ -635,6 +641,28 @@ describe("CLI合成root", () => {
       "--output",
       "unused-pages",
     ]);
+    await expect(
+      application.run([
+        "notify-discord",
+        "--config",
+        "tests/fixtures/config.valid.yml",
+        "--pages-url",
+        "https://voicevox.github.io/voicevox_task_tracker/",
+      ]),
+    ).rejects.toThrow("Discord送信fixtureが失敗しました");
+    const failedRunSession = await StatePersistenceSession.open(
+      stateAdapter,
+      (await loadConfig(join(import.meta.dirname, "fixtures/config.valid.yml"))).state,
+    );
+    const failedRunSnapshot = await failedRunSession.loadSnapshot();
+    if (failedRunSnapshot.status === "missing_branch") {
+      throw new TypeError("失敗runのsnapshotがありません");
+    }
+    expect(failedRunSnapshot.snapshot.trackingStartAt).toEqual({
+      status: "not_fixed",
+    });
+
+    discordFails = false;
     const notifyResult = await application.run([
       "notify-discord",
       "--config",
@@ -642,13 +670,26 @@ describe("CLI合成root", () => {
       "--pages-url",
       "https://voicevox.github.io/voicevox_task_tracker/",
     ]);
+    const successfulRunSession = await StatePersistenceSession.open(
+      stateAdapter,
+      (await loadConfig(join(import.meta.dirname, "fixtures/config.valid.yml"))).state,
+    );
+    const successfulRunSnapshot = await successfulRunSession.loadSnapshot();
+    if (successfulRunSnapshot.status === "missing_branch") {
+      throw new TypeError("成功runのsnapshotがありません");
+    }
 
     expect([persistResult.exitCode, pagesResult.exitCode, notifyResult.exitCode]).toEqual([
       0, 0, 0,
     ]);
-    expect(stateCommitCount).toBe(1);
+    expect(successfulRunSnapshot.snapshot.trackingStartAt).toEqual({
+      status: "fixed",
+      value: NOW,
+      source: "first_complete_run",
+    });
+    expect(stateCommitCount).toBe(2);
     expect(pagesWriteCount).toBe(1);
-    expect(discordSendCount).toBe(1);
+    expect(discordSendCount).toBe(2);
 
     artifact = createEmptyWorkflowArtifact("tracker-run:different-workflow-stage");
     await expect(
@@ -662,7 +703,7 @@ describe("CLI合成root", () => {
     ).rejects.toThrow(
       "Discord通知対象のworkflow artifactとtracker-state branchでrunが一致しません",
     );
-    expect(discordSendCount).toBe(1);
+    expect(discordSendCount).toBe(2);
     expect(harness.externalAdapterCalls.count).toBe(0);
   });
 
