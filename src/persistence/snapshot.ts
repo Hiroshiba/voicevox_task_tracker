@@ -1,4 +1,5 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
+import { z } from "zod";
 
 import snapshotSchema from "../../schemas/snapshot.schema.json" with { type: "json" };
 import { serializeCanonicalJsonLine, type Sha256Hash } from "./canonical-json.js";
@@ -118,9 +119,10 @@ export type SnapshotRun = Readonly<{
   complete: true;
 }>;
 
-/** tracker-stateへ保存するschema version 1のcurrent snapshot。 */
-export type StateSnapshot = Readonly<{
-  schemaVersion: "1";
+const SNAPSHOT_SCHEMA_VERSION_1 = "1";
+
+type StateSnapshotVersion1 = Readonly<{
+  schemaVersion: typeof SNAPSHOT_SCHEMA_VERSION_1;
   generatedAt: UtcIsoDateTime;
   trackingStartAt: TrackingStartAtState;
   ai: SnapshotAiState;
@@ -131,6 +133,15 @@ export type StateSnapshot = Readonly<{
   relations: readonly Relation[];
   run: SnapshotRun;
 }>;
+
+type StateSnapshotVersionParser = (value: unknown) => StateSnapshot;
+
+/** tracker-stateへ保存するschema version 1のcurrent snapshot。 */
+export type StateSnapshot = StateSnapshotVersion1;
+
+const snapshotSchemaVersionSchema = z.object({
+  schemaVersion: z.string().min(1),
+});
 
 const ajv = new Ajv2020({
   allErrors: true,
@@ -148,7 +159,7 @@ ajv.addFormat("date-time", {
     return !Number.isNaN(Date.parse(value));
   },
 });
-const validateSnapshotSchema = ajv.compile<StateSnapshot>(snapshotSchema);
+const validateSnapshotVersion1Schema = ajv.compile<StateSnapshotVersion1>(snapshotSchema);
 
 function compareStrings(left: string, right: string): number {
   if (left < right) {
@@ -412,14 +423,54 @@ function normalizeSnapshot(snapshot: StateSnapshot): StateSnapshot {
   });
 }
 
-/** 未検証の値をschema検証済みかつ決定論的順序のsnapshotへ変換する。 */
-export function createStateSnapshot(value: unknown): StateSnapshot {
-  if (!validateSnapshotSchema(value)) {
-    const issueCount = validateSnapshotSchema.errors?.length ?? 1;
+function parseStateSnapshotVersion1(value: unknown): StateSnapshotVersion1 {
+  if (!validateSnapshotVersion1Schema(value)) {
+    const issueCount = validateSnapshotVersion1Schema.errors?.length ?? 1;
     throw new StateSnapshotSchemaError(issueCount);
   }
   assertSnapshotSemantics(value);
-  return normalizeSnapshot(value);
+  return value;
+}
+
+function migrateStateSnapshotVersion1(snapshot: StateSnapshotVersion1): StateSnapshot {
+  return normalizeSnapshot(snapshot);
+}
+
+function createStateSnapshotVersionParser<TVersion>(
+  parser: (value: unknown) => TVersion,
+  migration: (snapshot: TVersion) => StateSnapshot,
+): StateSnapshotVersionParser {
+  return (value) => migration(parser(value));
+}
+
+const stateSnapshotVersionParsers: ReadonlyMap<string, StateSnapshotVersionParser> = new Map([
+  [
+    SNAPSHOT_SCHEMA_VERSION_1,
+    createStateSnapshotVersionParser(parseStateSnapshotVersion1, migrateStateSnapshotVersion1),
+  ],
+]);
+
+function parseVersionedStateSnapshot(value: unknown): StateSnapshot {
+  const versionResult = snapshotSchemaVersionSchema.safeParse(value);
+  if (!versionResult.success) {
+    throw new StateFormatError("snapshot", {
+      cause: new TypeError("snapshotからschemaVersionを読み取れません", {
+        cause: versionResult.error,
+      }),
+    });
+  }
+  const parser = stateSnapshotVersionParsers.get(versionResult.data.schemaVersion);
+  if (parser == null) {
+    throw new StateFormatError("snapshot", {
+      cause: new TypeError("snapshotのschemaVersionは未対応です"),
+    });
+  }
+  return parser(value);
+}
+
+/** 未検証の値をschema検証済みかつ決定論的順序のsnapshotへ変換する。 */
+export function createStateSnapshot(value: unknown): StateSnapshot {
+  return migrateStateSnapshotVersion1(parseStateSnapshotVersion1(value));
 }
 
 /** snapshotを末尾改行付きcanonical JSONへ変換する。 */
@@ -442,9 +493,13 @@ export function parseStateSnapshot(source: string): StateSnapshot {
   }
 
   try {
-    return createStateSnapshot(value);
+    return parseVersionedStateSnapshot(value);
   } catch (error: unknown) {
-    if (error instanceof StateSnapshotSchemaError || error instanceof StateSnapshotSemanticError) {
+    if (
+      error instanceof StateFormatError ||
+      error instanceof StateSnapshotSchemaError ||
+      error instanceof StateSnapshotSemanticError
+    ) {
       throw error;
     }
     throw new StateFormatError("snapshot", {

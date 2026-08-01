@@ -5,6 +5,11 @@ import { StateFormatError, StateHistoryError } from "./errors.js";
 import { type StateSnapshot } from "./snapshot.js";
 import { type Repository } from "../domain/index.js";
 
+const STATE_HISTORY_SCHEMA_VERSION_1 = "1";
+
+const historySchemaVersionSchema = z.object({
+  schemaVersion: z.string().min(1),
+});
 const identifierSchema = z.string().min(1).max(512).regex(/^\S+$/u);
 const dateTimeSchema = z.iso
   .datetime({
@@ -160,9 +165,9 @@ const historyEventSchema = z.discriminatedUnion("kind", [
     reason: z.literal("archived"),
   }),
 ]);
-const historyRecordSchema = z
+const historyRecordVersion1Schema = z
   .strictObject({
-    schemaVersion: z.literal("1"),
+    schemaVersion: z.literal(STATE_HISTORY_SCHEMA_VERSION_1),
     date: dateSchema,
     runId: identifierSchema,
     recordedAt: dateTimeSchema,
@@ -192,8 +197,11 @@ export type StateHistoryEvent = z.output<typeof historyEventSchema>;
 /** 日次履歴へ保存する一つの正規化入力イベント。 */
 export type StateHistoryInputEvent = z.output<typeof inputEventSchema>;
 
+type StateHistoryRecordVersion1 = z.output<typeof historyRecordVersion1Schema>;
+type StateHistoryRecordVersionParser = (value: unknown) => StateHistoryRecord;
+
 /** 一つの完全runが生成した日次履歴record。 */
-export type StateHistoryRecord = z.output<typeof historyRecordSchema>;
+export type StateHistoryRecord = StateHistoryRecordVersion1;
 
 /** 履歴を指定時点まで再生した責務・edge・severity状態。 */
 export type ReplayedStateHistory = Readonly<{
@@ -244,6 +252,13 @@ function compareStrings(left: string, right: string): number {
   return 0;
 }
 
+function compareInputEvents(left: StateHistoryInputEvent, right: StateHistoryInputEvent): number {
+  const occurredAtComparison = compareStrings(left.occurredAt, right.occurredAt);
+  return occurredAtComparison === 0
+    ? compareStrings(left.sourceId, right.sourceId)
+    : occurredAtComparison;
+}
+
 /** 未検証の値を検証済みかつ決定論的順序の正規化入力イベントへ変換する。 */
 export function createStateHistoryInputEvents(value: unknown): readonly StateHistoryInputEvent[] {
   const result = inputEventsSchema.safeParse(value);
@@ -253,14 +268,12 @@ export function createStateHistoryInputEvents(value: unknown): readonly StateHis
     });
   }
   return Object.freeze(
-    [...result.data]
-      .sort((left, right) => compareStrings(left.sourceId, right.sourceId))
-      .map((event) =>
-        Object.freeze({
-          ...event,
-          actor: Object.freeze({ ...event.actor }),
-        }),
-      ),
+    [...result.data].sort(compareInputEvents).map((event) =>
+      Object.freeze({
+        ...event,
+        actor: Object.freeze({ ...event.actor }),
+      }),
+    ),
   );
 }
 
@@ -330,18 +343,18 @@ function snapshotInputEventItems(snapshot: StateSnapshot): ReadonlyMap<string, s
 function createNewInputEvents(
   previousSnapshot: StateSnapshot | undefined,
   currentSnapshot: StateSnapshot,
-  value: unknown,
+  value: readonly StateHistoryInputEvent[],
 ): readonly StateHistoryInputEvent[] {
   const inputEvents = createStateHistoryInputEvents(value);
   const previousItemNodeIds =
-    previousSnapshot == null ? new Map<string, string>() : snapshotInputEventItems(previousSnapshot);
+    previousSnapshot == null
+      ? new Map<string, string>()
+      : snapshotInputEventItems(previousSnapshot);
   const currentItemNodeIds = snapshotInputEventItems(currentSnapshot);
   const events: StateHistoryInputEvent[] = [];
   for (const event of inputEvents) {
     if (currentItemNodeIds.get(event.sourceId) !== event.itemNodeId) {
-      throw new StateHistoryError(
-        "正規化イベントがcurrent snapshotの対象項目に存在しません",
-      );
+      throw new StateHistoryError("正規化イベントが現在のsnapshotの対象項目に存在しません");
     }
     const previousItemNodeId = previousItemNodeIds.get(event.sourceId);
     if (previousItemNodeId != null && previousItemNodeId !== event.itemNodeId) {
@@ -483,14 +496,58 @@ function createEmptyProjection(): StateHistoryProjection {
   };
 }
 
-function validateHistoryRecord(value: unknown): StateHistoryRecord {
-  const result = historyRecordSchema.safeParse(value);
+function parseStateHistoryRecordVersion1(value: unknown): StateHistoryRecordVersion1 {
+  const result = historyRecordVersion1Schema.safeParse(value);
   if (!result.success) {
     throw new StateFormatError("state history", {
       cause: new TypeError("state historyのschema検証に失敗しました"),
     });
   }
-  return Object.freeze(result.data);
+  return result.data;
+}
+
+function migrateStateHistoryRecordVersion1(record: StateHistoryRecordVersion1): StateHistoryRecord {
+  return Object.freeze(record);
+}
+
+function createStateHistoryRecordVersionParser<TVersion>(
+  parser: (value: unknown) => TVersion,
+  migration: (record: TVersion) => StateHistoryRecord,
+): StateHistoryRecordVersionParser {
+  return (value) => migration(parser(value));
+}
+
+const stateHistoryRecordVersionParsers: ReadonlyMap<string, StateHistoryRecordVersionParser> =
+  new Map([
+    [
+      STATE_HISTORY_SCHEMA_VERSION_1,
+      createStateHistoryRecordVersionParser(
+        parseStateHistoryRecordVersion1,
+        migrateStateHistoryRecordVersion1,
+      ),
+    ],
+  ]);
+
+function parseVersionedStateHistoryRecord(value: unknown): StateHistoryRecord {
+  const versionResult = historySchemaVersionSchema.safeParse(value);
+  if (!versionResult.success) {
+    throw new StateFormatError("state history", {
+      cause: new TypeError("state historyからschemaVersionを読み取れません", {
+        cause: versionResult.error,
+      }),
+    });
+  }
+  const parser = stateHistoryRecordVersionParsers.get(versionResult.data.schemaVersion);
+  if (parser == null) {
+    throw new StateFormatError("state history", {
+      cause: new TypeError("state historyのschemaVersionは未対応です"),
+    });
+  }
+  return parser(value);
+}
+
+function validateHistoryRecord(value: unknown): StateHistoryRecord {
+  return migrateStateHistoryRecordVersion1(parseStateHistoryRecordVersion1(value));
 }
 
 /** previous snapshotからcurrent snapshotへの日次履歴recordを生成する。 */
@@ -519,7 +576,7 @@ export function createStateHistoryRecord(
   ].sort((left, right) => compareStrings(historyEventKey(left), historyEventKey(right)));
 
   return validateHistoryRecord({
-    schemaVersion: "1",
+    schemaVersion: STATE_HISTORY_SCHEMA_VERSION_1,
     date,
     runId: currentSnapshot.run.id,
     recordedAt: currentSnapshot.generatedAt,
@@ -558,7 +615,7 @@ export function parseStateHistoryRecords(source: string): readonly StateHistoryR
           }),
         });
       }
-      return validateHistoryRecord(value);
+      return parseVersionedStateHistoryRecord(value);
     }),
   );
 }

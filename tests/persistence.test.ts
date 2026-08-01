@@ -33,6 +33,7 @@ import {
   createStateNotificationLedger,
   createStateRunReport,
   createStateSnapshot,
+  parseStateHistoryRecords,
   parseStateSnapshot,
   serializeCanonicalJson,
   serializeStateNotificationLedger,
@@ -402,6 +403,18 @@ async function captureError(promise: Promise<unknown>): Promise<Error> {
   throw new Error("期待したエラーが発生しませんでした");
 }
 
+function captureSynchronousError(operation: () => unknown): Error {
+  try {
+    operation();
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      return error;
+    }
+    throw error;
+  }
+  throw new Error("期待したエラーが発生しませんでした");
+}
+
 async function readGitOutput(
   repositoryPath: string,
   arguments_: readonly string[],
@@ -411,6 +424,111 @@ async function readGitOutput(
   });
   return result.stdout.trim();
 }
+
+describe("state schema version", () => {
+  it("version 1のsnapshotを登録済みparserで読み取り現行形式へmigrationする", () => {
+    const snapshot = createSnapshot({
+      runId: "run-schema-version-1",
+      generatedAt: "2026-08-01T00:00:00.000Z",
+      repositoryIds: [publicRepositoryId, "R_SECOND"],
+      responsibility: {
+        status: "new_untriaged",
+        kind: "role",
+        candidateId: "role:maintainer",
+        role: "maintainer",
+      },
+      severity: "watch",
+      edge: {
+        status: "absent",
+      },
+    });
+    const source = serializeCanonicalJson({
+      ...snapshot,
+      repositories: [...snapshot.repositories].reverse(),
+    });
+
+    const migrated = parseStateSnapshot(source);
+
+    expect(migrated.schemaVersion).toBe("1");
+    expect(migrated.repositories.map((repository) => repository.id)).toEqual([
+      publicRepositoryId,
+      "R_SECOND",
+    ]);
+  });
+
+  it("version 1のhistoryを登録済みparserで読み取り現行形式へmigrationする", () => {
+    const source = `${serializeCanonicalJson({
+      schemaVersion: "1",
+      date: "2026-08-01",
+      runId: "run-history-schema-version-1",
+      recordedAt: "2026-08-01T09:00:00+09:00",
+      inputEvents: [],
+      events: [],
+    })}\n`;
+
+    const records = parseStateHistoryRecords(source);
+    const record = records[0];
+    assertNonNullable(record, "version 1のhistory recordを取得できませんでした");
+
+    expect(record).toEqual({
+      schemaVersion: "1",
+      date: "2026-08-01",
+      runId: "run-history-schema-version-1",
+      recordedAt: "2026-08-01T00:00:00.000Z",
+      inputEvents: [],
+      events: [],
+    });
+    expect(Object.isFrozen(record)).toBe(true);
+  });
+
+  it("未知のsnapshot schema versionを拒否する", () => {
+    const snapshot = createSnapshot({
+      runId: "run-unknown-schema-version",
+      generatedAt: "2026-08-01T00:00:00.000Z",
+      repositoryIds: [publicRepositoryId],
+      responsibility: {
+        status: "new_untriaged",
+        kind: "role",
+        candidateId: "role:maintainer",
+        role: "maintainer",
+      },
+      severity: "watch",
+      edge: {
+        status: "absent",
+      },
+    });
+    const error = captureSynchronousError(() =>
+      parseStateSnapshot(
+        serializeCanonicalJson({
+          ...snapshot,
+          schemaVersion: "999",
+        }),
+      ),
+    );
+
+    expect(error).toBeInstanceOf(StateFormatError);
+    expect(error.cause).toMatchObject({
+      message: "snapshotのschemaVersionは未対応です",
+    });
+  });
+
+  it("未知のhistory schema versionを拒否する", () => {
+    const source = `${serializeCanonicalJson({
+      schemaVersion: "999",
+      date: "2026-08-01",
+      runId: "run-history-unknown-schema-version",
+      recordedAt: "2026-08-01T00:00:00.000Z",
+      inputEvents: [],
+      events: [],
+    })}\n`;
+    const error = captureSynchronousError(() => parseStateHistoryRecords(source));
+
+    expect(error).toBeInstanceOf(StateFormatError);
+    expect(error.cause).toMatchObject({
+      message: "state historyのschemaVersionは未対応です",
+    });
+  });
+});
 
 describe("state canonical JSON", () => {
   it("キーと集合配列の入力順に依存せず同じbyte列を生成する", () => {
