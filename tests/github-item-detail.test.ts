@@ -871,7 +871,6 @@ describe("Pull Request詳細収集", () => {
         mergeable: "MERGEABLE",
         mergeStateStatus: "BLOCKED",
         autoMergeRequest: {
-          id: "AMR_enabled",
           enabledAt: "2026-07-31T15:00:00Z",
           enabledBy: createActor(8),
           mergeMethod: "SQUASH",
@@ -1087,6 +1086,7 @@ describe("Pull Request詳細収集", () => {
       mergeState: "blocked",
       autoMerge: {
         status: "enabled",
+        sourceId: "github_auto_merge_request:PR_target",
         mergeMethod: "squash",
       },
       mergeQueue: {
@@ -1115,6 +1115,7 @@ describe("Pull Request詳細収集", () => {
         ],
       },
     });
+    expect(detail.mergeState.autoMerge).not.toHaveProperty("nodeId");
     expect(detail.timeline.map((event) => event.kind)).toEqual([
       "review_requested",
       "review_request_removed",
@@ -1127,6 +1128,7 @@ describe("Pull Request詳細収集", () => {
       "auto_merge_enabled",
       "auto_merge_disabled",
     ]);
+    expect(mock.requests[1]?.query).not.toMatch(/autoMergeRequest\s*\{\s*id\b/u);
     expect(mock.requests).toHaveLength(2);
   });
 

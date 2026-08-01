@@ -110,7 +110,6 @@ export type ObservedGitHubAutoMerge =
   | Readonly<{
       status: "enabled";
       sourceId: SourceId;
-      nodeId: GitHubNodeId;
       enabledAt: UtcIsoDateTime;
       enabledBy: Actor;
       mergeMethod: "merge" | "rebase" | "squash";

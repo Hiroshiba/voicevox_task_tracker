@@ -275,7 +275,14 @@ function createDetail(): Extract<GitHubItemDetail, { type: "pull_request" }> {
       mergeability: "mergeable",
       mergeState: "clean",
       autoMerge: {
-        status: "not_enabled",
+        status: "enabled",
+        sourceId: buildSourceId(
+          "github_auto_merge_request",
+          createGitHubNodeId("PR_normalization"),
+        ),
+        enabledAt: occurredAt,
+        enabledBy: createAccountActor("U_auto_merge", "auto-merge-enabler", "User"),
+        mergeMethod: "squash",
       },
       mergeQueue: {
         status: "not_queued",
@@ -444,6 +451,17 @@ describe("GitHub項目観測値", () => {
       throw new Error("user review request観測値がありません");
     }
     expect(target.actor.type).toBe("bot");
+    expect(observation.mergeState.autoMerge).toEqual({
+      status: "enabled",
+      sourceId: "github_auto_merge_request:PR_normalization",
+      enabledAt: "2026-07-31T12:00:00.000Z",
+      enabledBy: {
+        type: "human",
+        nodeId: "U_auto_merge",
+        login: "auto-merge-enabler",
+      },
+      mergeMethod: "squash",
+    });
     expect(JSON.stringify(observation)).not.toContain("公開結果へ残してはいけない");
     expect(observation).not.toHaveProperty("status");
     expect(observation).not.toHaveProperty("waitingOn");

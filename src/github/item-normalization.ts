@@ -683,7 +683,6 @@ function normalizeAutoMerge(
   return Object.freeze({
     status: "enabled",
     sourceId: autoMerge.sourceId,
-    nodeId: autoMerge.nodeId,
     enabledAt: autoMerge.enabledAt,
     enabledBy: normalizeGitHubActor(autoMerge.enabledBy, isBot),
     mergeMethod: autoMerge.mergeMethod,

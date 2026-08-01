@@ -631,7 +631,6 @@ function createItemDetailQuery(
           mergeable
           mergeStateStatus
           autoMergeRequest {
-            id
             enabledAt
             enabledBy {
               ...DetailActorFields
@@ -1294,7 +1293,6 @@ const autoMergeDisabledEventSchema = timelineEventBaseSchema.extend({
   __typename: z.literal("AutoMergeDisabledEvent"),
 });
 const autoMergeRequestSchema = z.object({
-  id: opaqueIdSchema,
   enabledAt: utcIsoDateTimeSchema,
   enabledBy: actorSchema,
   mergeMethod: z.enum(["MERGE", "REBASE", "SQUASH"]),
@@ -2816,17 +2814,16 @@ function normalizeMergeMethod(
 
 function normalizeAutoMerge(
   autoMergeRequest: z.output<typeof autoMergeRequestSchema> | null,
+  pullRequestNodeId: GitHubNodeId,
 ): GitHubAutoMerge {
   if (autoMergeRequest == null) {
     return Object.freeze({
       status: "not_enabled",
     });
   }
-  const nodeId = createGitHubNodeId(autoMergeRequest.id);
   return Object.freeze({
     status: "enabled",
-    sourceId: buildSourceId("github_auto_merge_request", nodeId),
-    nodeId,
+    sourceId: buildSourceId("github_auto_merge_request", pullRequestNodeId),
     enabledAt: autoMergeRequest.enabledAt,
     enabledBy: normalizeActor(autoMergeRequest.enabledBy),
     mergeMethod: normalizeMergeMethod(autoMergeRequest.mergeMethod),
@@ -2857,7 +2854,7 @@ async function normalizePullRequestMergeState(
   return Object.freeze({
     mergeability: normalizeMergeability(pullRequest.mergeable),
     mergeState: normalizeMergeState(pullRequest.mergeStateStatus),
-    autoMerge: normalizeAutoMerge(pullRequest.autoMergeRequest),
+    autoMerge: normalizeAutoMerge(pullRequest.autoMergeRequest, createGitHubNodeId(pullRequest.id)),
     mergeQueue: normalizeMergeQueue(pullRequest.mergeQueueEntry),
     checks: await normalizeHeadChecks(headCommit, graphql),
   });

@@ -316,8 +316,7 @@ describe("Pull Request判定の優先順位", () => {
           ...pullRequest.mergeState,
           autoMerge: {
             status: "enabled",
-            sourceId: buildSourceId("github_auto_merge", "enabled"),
-            nodeId: createGitHubNodeId("AM_enabled"),
+            sourceId: buildSourceId("github_auto_merge_request", pullRequestNodeId),
             enabledAt: createUtcIsoDateTime("2026-07-31T05:00:00Z"),
             enabledBy: reviewer,
             mergeMethod: "squash",
@@ -368,8 +367,7 @@ describe("Pull Request判定の優先順位", () => {
           },
           autoMerge: {
             status: "enabled",
-            sourceId: buildSourceId("github_auto_merge", "enabled"),
-            nodeId: createGitHubNodeId("AM_enabled"),
+            sourceId: buildSourceId("github_auto_merge_request", pullRequestNodeId),
             enabledAt: createUtcIsoDateTime("2026-07-31T04:00:00Z"),
             enabledBy: reviewer,
             mergeMethod: "squash",
