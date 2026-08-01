@@ -3482,7 +3482,7 @@ async function deliverOperationsAlert(
   config: Config,
   knownSecrets: readonly string[],
   state: RuntimeState,
-  incident: DiscordOperationsIncident & Readonly<{ kind: "collection" | "pages" }>,
+  incident: DiscordOperationsIncident,
 ): Promise<
   Readonly<{
     value: DiscordResult;

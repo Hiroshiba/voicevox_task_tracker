@@ -116,6 +116,24 @@ describe("CLI引数解析", () => {
       occurredAt: "2026-08-01T00:00:00.000Z",
       retryAttempts: 1,
     });
+    expect(
+      parseCliArguments([
+        "notify-operations",
+        "--kind",
+        "discord",
+        "--incident-id",
+        "discord-run-1",
+        "--occurred-at",
+        "2026-08-01T00:00:00.000Z",
+      ]),
+    ).toEqual({
+      kind: "notify-operations",
+      configPath: "config.yml",
+      incidentKind: "discord",
+      incidentId: "discord-run-1",
+      occurredAt: "2026-08-01T00:00:00.000Z",
+      retryAttempts: 1,
+    });
   });
 
   it("replayのfixtureとstateを区別する", () => {

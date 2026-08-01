@@ -255,13 +255,15 @@ jobs:
       - collect-analyze
       - build-pages
       - deploy-pages
+      - notify-discord
     if: >-
       always() &&
       github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
       (needs.collect-analyze.result == 'failure' ||
       needs.build-pages.result == 'failure' ||
-      needs.deploy-pages.result == 'failure')
+      needs.deploy-pages.result == 'failure' ||
+      needs.notify-discord.result == 'failure')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -286,11 +288,20 @@ jobs:
         env:
           DISCORD_OPERATIONS_WEBHOOK_URL: ${{ secrets.DISCORD_OPERATIONS_WEBHOOK_URL }}
           INCIDENT_ID: ${{ github.run_id }}
-          COLLECTION_RESULT: ${{ needs.collect-analyze.result }}
+          BUILD_PAGES_RESULT: ${{ needs.build-pages.result }}
+          COLLECT_ANALYZE_RESULT: ${{ needs.collect-analyze.result }}
+          DEPLOY_PAGES_RESULT: ${{ needs.deploy-pages.result }}
+          NOTIFY_DISCORD_RESULT: ${{ needs.notify-discord.result }}
         run: |
-          incident_kind=pages
-          if [[ "$COLLECTION_RESULT" == "failure" ]]; then
+          if [[ "$COLLECT_ANALYZE_RESULT" == "failure" ]]; then
             incident_kind=collection
+          elif [[ "$BUILD_PAGES_RESULT" == "failure" || "$DEPLOY_PAGES_RESULT" == "failure" ]]; then
+            incident_kind=pages
+          elif [[ "$NOTIFY_DISCORD_RESULT" == "failure" ]]; then
+            incident_kind=discord
+          else
+            echo "監視対象jobに失敗がありません" >&2
+            exit 1
           fi
           occurred_at="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
           pnpm tracker:run notify-operations \

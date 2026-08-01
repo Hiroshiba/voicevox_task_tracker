@@ -1,4 +1,8 @@
-import { createUtcIsoDateTime, type UtcIsoDateTime } from "../domain/index.js";
+import {
+  createUtcIsoDateTime,
+  type OperationsAlertKind,
+  type UtcIsoDateTime,
+} from "../domain/index.js";
 import { assertNonNullable } from "../util/index.js";
 import { CliUsageError } from "./errors.js";
 
@@ -82,7 +86,7 @@ export type NotifyDiscordCliCommand = Readonly<{
 export type NotifyOperationsCliCommand = Readonly<{
   kind: "notify-operations";
   configPath: string;
-  incidentKind: "collection" | "pages";
+  incidentKind: OperationsAlertKind;
   incidentId: string;
   occurredAt: UtcIsoDateTime;
   retryAttempts: number;
@@ -376,8 +380,8 @@ function parseNotifyOperations(args: readonly string[]): NotifyOperationsCliComm
     new Set(["--config", "--incident-id", "--kind", "--occurred-at", "--retry-attempts"]),
   );
   const incidentKind = optionalSingleOption(options, "--kind");
-  if (incidentKind !== "collection" && incidentKind !== "pages") {
-    throw usageError("--kindにはcollectionまたはpagesを指定してください");
+  if (incidentKind !== "collection" && incidentKind !== "pages" && incidentKind !== "discord") {
+    throw usageError("--kindにはcollection、pages、discordのいずれかを指定してください");
   }
   const incidentId = optionalSingleOption(options, "--incident-id");
   if (incidentId == null) {
@@ -529,7 +533,7 @@ export function formatCliUsage(): string {
     "  voicevox-task-tracker persist-state [--config PATH] [--artifact PATH]",
     "  voicevox-task-tracker build-pages [--config PATH] [--artifact PATH] [--output PATH]",
     "  voicevox-task-tracker notify-discord --pages-url URL [--artifact PATH]",
-    "  voicevox-task-tracker notify-operations --kind collection|pages --incident-id ID --occurred-at ISO",
+    "  voicevox-task-tracker notify-operations --kind collection|pages|discord --incident-id ID --occurred-at ISO",
     "  voicevox-task-tracker replay (--fixture PATH | --state PATH) [--artifact PATH]",
     "  voicevox-task-tracker eval --fixtures PATH [--artifact PATH]",
   ].join("\n");

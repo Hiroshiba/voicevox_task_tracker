@@ -707,89 +707,111 @@ describe("CLI合成root", () => {
     expect(harness.externalAdapterCalls.count).toBe(0);
   });
 
-  it("運用障害stageが通常digestと別の1件を送りledgerで重複を抑止する", async () => {
-    let stateCommitCount = 0;
-    const payloads: DiscordWebhookPayload[] = [];
-    const artifact = createEmptyWorkflowArtifact("tracker-run:composition-workflow-stage");
-    const operationsWebhookUrl =
-      "https://discord.com/api/webhooks/123456789012345678/operations-fixture-token";
-    const harness = createHarness({
-      DISCORD_OPERATIONS_WEBHOOK_URL: operationsWebhookUrl,
-    });
-    const stateAdapter = createMutableStateAdapter(() => {
-      stateCommitCount += 1;
-    });
-    const runtimeAdapters: ProductionRuntimeAdapters = Object.freeze({
-      ...harness.adapters,
-      loadConfig,
-      openStateSession: (adapter, configuration) =>
-        StatePersistenceSession.open(adapter, configuration),
-      discoverRepositoryInventory: () =>
-        Promise.reject(new TypeError("GitHub inventoryは呼びません")),
-      collectGitHubTeamDirectory: () => Promise.reject(new TypeError("teamは収集しません")),
-      enumerateGitHubItemsByIdentifiers: () =>
-        Promise.reject(new TypeError("個別項目は収集しません")),
-      enumerateOpenGitHubItems: () => Promise.reject(new TypeError("項目は収集しません")),
-      collectGitHubItemDetails: () => Promise.reject(new TypeError("詳細は収集しません")),
-      executeCodexAnalysis: () => Promise.reject(new TypeError("Codexは実行しません")),
-      readReplayFixture: () => Promise.reject(new TypeError("replay fixtureは読みません")),
-      readReplayState: () => Promise.reject(new TypeError("replay stateは読みません")),
-      readGoldenFixtures: () => Promise.reject(new TypeError("golden fixtureは読みません")),
-      readWorkflowArtifact: () => Promise.resolve(artifact),
-      createStateBranchAdapter: () => stateAdapter,
-      discordHttpClient: Object.freeze({
-        execute: (request: DiscordWebhookHttpRequest) => {
-          payloads.push(request.payload);
-          return Promise.resolve(
-            Object.freeze({
-              status: 200,
-              retryAfter: undefined,
-              body: Object.freeze({
-                id: "123456789012345678",
+  it.each([
+    {
+      incidentKind: "collection",
+      incidentId: "workflow-run-123:collection",
+      processName: "GitHub収集",
+      summary: "GitHub収集がretry上限に達したため、公開処理を停止しました",
+    },
+    {
+      incidentKind: "discord",
+      incidentId: "workflow-run-123:discord",
+      processName: "Discord通知",
+      summary: "通常digestのDiscord送信がretry上限に達しました",
+    },
+  ])(
+    "$incidentKind運用障害stageが通常digestと別の1件を送りledgerで重複を抑止する",
+    async ({ incidentKind, incidentId, processName, summary }) => {
+      let stateCommitCount = 0;
+      const payloads: DiscordWebhookPayload[] = [];
+      const artifact = createEmptyWorkflowArtifact("tracker-run:composition-workflow-stage");
+      const operationsWebhookUrl =
+        "https://discord.com/api/webhooks/123456789012345678/operations-fixture-token";
+      const harness = createHarness({
+        DISCORD_OPERATIONS_WEBHOOK_URL: operationsWebhookUrl,
+      });
+      const stateAdapter = createMutableStateAdapter(() => {
+        stateCommitCount += 1;
+      });
+      const runtimeAdapters: ProductionRuntimeAdapters = Object.freeze({
+        ...harness.adapters,
+        loadConfig,
+        openStateSession: (adapter, configuration) =>
+          StatePersistenceSession.open(adapter, configuration),
+        discoverRepositoryInventory: () =>
+          Promise.reject(new TypeError("GitHub inventoryは呼びません")),
+        collectGitHubTeamDirectory: () => Promise.reject(new TypeError("teamは収集しません")),
+        enumerateGitHubItemsByIdentifiers: () =>
+          Promise.reject(new TypeError("個別項目は収集しません")),
+        enumerateOpenGitHubItems: () => Promise.reject(new TypeError("項目は収集しません")),
+        collectGitHubItemDetails: () => Promise.reject(new TypeError("詳細は収集しません")),
+        executeCodexAnalysis: () => Promise.reject(new TypeError("Codexは実行しません")),
+        readReplayFixture: () => Promise.reject(new TypeError("replay fixtureは読みません")),
+        readReplayState: () => Promise.reject(new TypeError("replay stateは読みません")),
+        readGoldenFixtures: () => Promise.reject(new TypeError("golden fixtureは読みません")),
+        readWorkflowArtifact: () => Promise.resolve(artifact),
+        createStateBranchAdapter: () => stateAdapter,
+        discordHttpClient: Object.freeze({
+          execute: (request: DiscordWebhookHttpRequest) => {
+            payloads.push(request.payload);
+            return Promise.resolve(
+              Object.freeze({
+                status: 200,
+                retryAfter: undefined,
+                body: Object.freeze({
+                  id: "123456789012345678",
+                }),
               }),
-            }),
-          );
-        },
-      }),
-      sendDiscord: sendDiscordDigest,
-    });
-    const application = createProductionCliApplication(runtimeAdapters);
+            );
+          },
+        }),
+        sendDiscord: sendDiscordDigest,
+      });
+      const application = createProductionCliApplication(runtimeAdapters);
 
-    await application.run(["persist-state", "--config", "tests/fixtures/config.valid.yml"]);
-    const command = [
-      "notify-operations",
-      "--config",
-      "tests/fixtures/config.valid.yml",
-      "--kind",
-      "collection",
-      "--incident-id",
-      "workflow-run-123:collection",
-      "--occurred-at",
-      NOW,
-      "--retry-attempts",
-      "3",
-    ];
-    const first = await application.run(command);
-    const second = await application.run(command);
-    const config = await loadConfig(join(import.meta.dirname, "fixtures/config.valid.yml"));
-    const session = await StatePersistenceSession.open(stateAdapter, config.state);
-    const ledger = await session.loadNotificationLedger();
+      await application.run(["persist-state", "--config", "tests/fixtures/config.valid.yml"]);
+      const command = [
+        "notify-operations",
+        "--config",
+        "tests/fixtures/config.valid.yml",
+        "--kind",
+        incidentKind,
+        "--incident-id",
+        incidentId,
+        "--occurred-at",
+        NOW,
+        "--retry-attempts",
+        "3",
+      ];
+      const first = await application.run(command);
+      const second = await application.run(command);
+      const config = await loadConfig(join(import.meta.dirname, "fixtures/config.valid.yml"));
+      const session = await StatePersistenceSession.open(stateAdapter, config.state);
+      const ledger = await session.loadNotificationLedger();
 
-    expect([first.exitCode, second.exitCode]).toEqual([0, 0]);
-    expect(payloads).toHaveLength(1);
-    expect(payloads[0]?.content).toContain("VOICEVOX Task Tracker 運用障害");
-    expect(payloads[0]?.embeds[0]?.fields).toContainEqual(
-      expect.objectContaining({
-        name: "処理",
-        value: "GitHub収集",
-      }),
-    );
-    expect(ledger.operationsAlerts).toEqual([
-      expect.objectContaining({
-        incidentId: "workflow-run-123:collection",
-        kind: "collection",
-      }),
-    ]);
-    expect(stateCommitCount).toBe(2);
-  });
+      expect([first.exitCode, second.exitCode]).toEqual([0, 0]);
+      expect(payloads).toHaveLength(1);
+      expect(payloads[0]?.content).toContain("VOICEVOX Task Tracker 運用障害");
+      expect(payloads[0]?.embeds[0]?.fields).toContainEqual(
+        expect.objectContaining({
+          name: "処理",
+          value: processName,
+        }),
+      );
+      expect(payloads[0]?.embeds[0]?.fields).toContainEqual(
+        expect.objectContaining({
+          name: "概要",
+          value: summary,
+        }),
+      );
+      expect(ledger.operationsAlerts).toEqual([
+        expect.objectContaining({
+          incidentId,
+          kind: incidentKind,
+        }),
+      ]);
+      expect(stateCommitCount).toBe(2);
+    },
+  );
 });

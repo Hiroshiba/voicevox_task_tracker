@@ -54,7 +54,7 @@ export type DiscordPagesDeployment =
   | Readonly<{
       status: "failed";
       incidentId: string;
-      kind: Extract<DiscordOperationsIncident["kind"], "collection" | "pages">;
+      kind: DiscordOperationsIncident["kind"];
       failedAt: UtcIsoDateTime;
       retryAttempts: number;
     }>;

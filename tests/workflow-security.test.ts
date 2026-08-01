@@ -246,6 +246,8 @@ describe("日次workflow", () => {
     expect(notifyCommands).not.toContain("curl");
     expect(operationsCommands).toContain("tracker:run notify-operations");
     expect(operationsCommands).toContain("incident_kind=collection");
+    expect(operationsCommands).toContain("incident_kind=pages");
+    expect(operationsCommands).toContain("incident_kind=discord");
     expect(operationsCommands).not.toContain("curl");
     for (const jobName of ["persist-state", "build-pages", "notify-discord"] as const) {
       expect(JSON.stringify(workflow.jobs[jobName])).toContain("actions/download-artifact@");
@@ -385,9 +387,14 @@ describe("workflow security", () => {
     expect(needs(operationsJob ?? { permissions: {}, steps: [] })).toContain("collect-analyze");
     expect(needs(operationsJob ?? { permissions: {}, steps: [] })).toContain("build-pages");
     expect(needs(operationsJob ?? { permissions: {}, steps: [] })).toContain("deploy-pages");
+    expect(needs(operationsJob ?? { permissions: {}, steps: [] })).toContain("notify-discord");
     expect(operationsJob?.if).toContain("needs.collect-analyze.result == 'failure'");
     expect(operationsJob?.if).toContain("needs.build-pages.result == 'failure'");
     expect(operationsJob?.if).toContain("needs.deploy-pages.result == 'failure'");
+    expect(operationsJob?.if).toContain("needs.notify-discord.result == 'failure'");
+    expect(JSON.stringify(operationsJob)).toContain(
+      '"NOTIFY_DISCORD_RESULT":"${{ needs.notify-discord.result }}"',
+    );
   });
 
   it("CIを外部APIへ接続せず全検証とgolden evalに割り当てる", async () => {
