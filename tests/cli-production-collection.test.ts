@@ -905,6 +905,20 @@ function createCollectionHarness(
         "unused-report.json",
       ]);
     },
+    runAllOpenBackfill: (at: string, repositoryFullName: string) => {
+      currentTime = at;
+      return application.run([
+        "backfill",
+        "--mode",
+        "all-open",
+        "--repository",
+        repositoryFullName,
+        "--config",
+        "unused-config.yml",
+        "--report",
+        "unused-report.json",
+      ]);
+    },
     runDry: (at: string) => {
       currentTime = at;
       return application.run([
@@ -2128,6 +2142,263 @@ describe("本番収集の接続", () => {
     for (const identifier of result.identifierCanaries) {
       expect(diagnostic).not.toContain(identifier);
     }
+  });
+
+  it("未変更かつ前回未追跡で詳細未取得の項目を診断付きで追跡候補から除外する", async () => {
+    const repository = createRepository(
+      "R_untracked_unchanged",
+      "untracked-unchanged",
+      FIRST_RUN_AT,
+    );
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const firstObservedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const item = createOldIssueItem(publicRepository, 1, "untracked-unchanged", firstObservedAt);
+    fixture.openItems = [item];
+    setIssueDetails(fixture, [item], firstObservedAt);
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: false,
+    });
+    const harness = createCollectionHarness({ repositories: [fixture], config });
+    const diagnosticPrefix = "詳細未取得かつ前回未追跡の項目を追跡候補から";
+
+    const firstResult = await harness.runDaily(FIRST_RUN_AT);
+    if (firstResult.command !== "daily") {
+      throw new TypeError("初回fixtureがdaily結果ではありません");
+    }
+    expect(firstResult.exitCode).toBe(0);
+    expect(
+      firstResult.result.report.diagnostics.some((diagnostic) =>
+        diagnostic.startsWith(diagnosticPrefix),
+      ),
+    ).toBe(false);
+
+    const secondObservedAt = createUtcIsoDateTime(SECOND_RUN_AT);
+    fixture.openItems = [
+      createOldIssueItem(publicRepository, 1, "untracked-unchanged", secondObservedAt),
+    ];
+    harness.detailCalls.length = 0;
+
+    const secondResult = await harness.runDaily(SECOND_RUN_AT);
+    if (secondResult.command !== "daily") {
+      throw new TypeError("増分fixtureがdaily結果ではありません");
+    }
+    const diagnostic = secondResult.result.report.diagnostics.find((candidate) =>
+      candidate.startsWith(diagnosticPrefix),
+    );
+    const files = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const snapshotSource = files.get("state/snapshot.json");
+    if (diagnostic == null || snapshotSource == null) {
+      throw new TypeError("増分fixtureのdiagnosticまたはsnapshotがありません");
+    }
+    const snapshot = parseStateSnapshot(new TextDecoder().decode(snapshotSource));
+
+    expect(secondResult.exitCode).toBe(0);
+    expect(harness.detailCalls).toHaveLength(0);
+    expect(diagnostic).toBe("詳細未取得かつ前回未追跡の項目を追跡候補から1件除外しました");
+    expect(diagnostic).not.toContain(item.nodeId);
+    expect(diagnostic).not.toContain(item.url);
+    expect(snapshot.items.map((candidate) => candidate.nodeId)).not.toContain(item.nodeId);
+    expect(requireCollectionItem(snapshot, item.nodeId).nodeId).toBe(item.nodeId);
+  });
+
+  it("追跡項目が参照する未変更の未追跡項目だけを同じrunで詳細取得する", async () => {
+    const repository = createRepository(
+      "R_enumerated_relation_expansion",
+      "enumerated-relation-expansion",
+      FIRST_RUN_AT,
+    );
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const firstObservedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const firstTracked = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "tracked-v1",
+      updatedAt: firstObservedAt,
+      observedAt: firstObservedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const firstReferenced = createOldIssueItem(
+      publicRepository,
+      2,
+      "referenced-unchanged",
+      firstObservedAt,
+    );
+    const firstUnrelated = createOldIssueItem(
+      publicRepository,
+      3,
+      "unrelated-unchanged",
+      firstObservedAt,
+    );
+    fixture.openItems = [firstTracked, firstReferenced, firstUnrelated];
+    setIssueDetails(fixture, fixture.openItems, firstObservedAt);
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: false,
+    });
+    const harness = createCollectionHarness({ repositories: [fixture], config });
+
+    expect((await harness.runDaily(FIRST_RUN_AT)).exitCode).toBe(0);
+    harness.detailCalls.length = 0;
+    harness.individualCalls.length = 0;
+
+    const secondObservedAt = createUtcIsoDateTime(SECOND_RUN_AT);
+    const secondTracked = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "tracked-v2",
+      updatedAt: secondObservedAt,
+      observedAt: secondObservedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const secondReferenced = createOldIssueItem(
+      publicRepository,
+      2,
+      "referenced-unchanged",
+      secondObservedAt,
+    );
+    const secondUnrelated = createOldIssueItem(
+      publicRepository,
+      3,
+      "unrelated-unchanged",
+      secondObservedAt,
+    );
+    fixture.openItems = [secondTracked, secondReferenced, secondUnrelated];
+    setIssueDetails(fixture, fixture.openItems, secondObservedAt);
+    fixture.details.set(
+      secondTracked.nodeId,
+      createIssueDetail({
+        item: secondTracked,
+        body: "本文",
+        observedAt: secondObservedAt,
+        nativeDependencies: Object.freeze([createNativeBlocker(secondTracked, secondReferenced)]),
+        duplicateComments: false,
+      }),
+    );
+
+    const result = await harness.runDaily(SECOND_RUN_AT);
+    if (result.command !== "daily") {
+      throw new TypeError("列挙済み関係端点fixtureがdaily結果ではありません");
+    }
+    const files = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const snapshotSource = files.get("state/snapshot.json");
+    if (snapshotSource == null) {
+      throw new TypeError("列挙済み関係端点fixtureのsnapshotがありません");
+    }
+    const snapshot = parseStateSnapshot(new TextDecoder().decode(snapshotSource));
+
+    expect(result.exitCode).toBe(0);
+    expect(harness.individualCalls).toEqual([]);
+    expect(harness.detailCalls.map((call) => call.nodeIds)).toEqual([
+      [secondTracked.nodeId],
+      [secondReferenced.nodeId],
+    ]);
+    expect(snapshot.items.map((item) => item.nodeId)).toEqual(
+      expect.arrayContaining([secondTracked.nodeId, secondReferenced.nodeId]),
+    );
+    expect(snapshot.items.map((item) => item.nodeId)).not.toContain(secondUnrelated.nodeId);
+    expect(result.result.report.diagnostics).toContain(
+      "詳細未取得かつ前回未追跡の項目を追跡候補から1件除外しました",
+    );
+    expect(result.result.report.diagnostics).not.toContain(
+      "端点を取得できなかった関係候補を1件除外しました",
+    );
+  });
+
+  it("詳細取得済み項目の活動時刻を作れないrunは失敗する", async () => {
+    const repository = createRepository("R_invalid_activity", "invalid-activity", FIRST_RUN_AT);
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const item = replaceCreatedAt(
+      createIssueItem({
+        repository: publicRepository,
+        number: 1,
+        fingerprint: "invalid-activity",
+        updatedAt: observedAt,
+        observedAt,
+        state: Object.freeze({ state: "open" }),
+      }),
+      createUtcIsoDateTime(SECOND_RUN_AT),
+    );
+    fixture.openItems = [item];
+    setIssueDetails(fixture, [item], observedAt);
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: false,
+    });
+    const harness = createCollectionHarness({ repositories: [fixture], config });
+
+    const result = await harness.runDaily(FIRST_RUN_AT);
+    if (result.command !== "daily") {
+      throw new TypeError("活動時刻fixtureがdaily結果ではありません");
+    }
+
+    expect(result.exitCode).toBe(1);
+    expect(harness.detailCalls).toHaveLength(1);
+    expect(result.result.report).toMatchObject({
+      status: "failure",
+      failedStage: "incremental_collection",
+    });
+  });
+
+  it("all-open backfillで未変更かつ前回未追跡の項目を詳細取得して追加する", async () => {
+    const repository = createRepository("R_all_open_unchanged", "all-open-unchanged", FIRST_RUN_AT);
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const firstObservedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const item = createOldIssueItem(publicRepository, 1, "all-open-unchanged", firstObservedAt);
+    fixture.openItems = [item];
+    setIssueDetails(fixture, [item], firstObservedAt);
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: false,
+    });
+    const harness = createCollectionHarness({ repositories: [fixture], config });
+
+    expect((await harness.runDaily(FIRST_RUN_AT)).exitCode).toBe(0);
+    const secondObservedAt = createUtcIsoDateTime(SECOND_RUN_AT);
+    const secondItem = createOldIssueItem(
+      publicRepository,
+      1,
+      "all-open-unchanged",
+      secondObservedAt,
+    );
+    fixture.openItems = [secondItem];
+    setIssueDetails(fixture, [secondItem], secondObservedAt);
+    harness.detailCalls.length = 0;
+
+    const result = await harness.runAllOpenBackfill(
+      SECOND_RUN_AT,
+      `${publicRepository.owner}/${publicRepository.name}`,
+    );
+    if (result.command !== "backfill") {
+      throw new TypeError("all-open fixtureがbackfill結果ではありません");
+    }
+    const files = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const snapshotSource = files.get("state/snapshot.json");
+    if (snapshotSource == null) {
+      throw new TypeError("all-open fixtureのsnapshotがありません");
+    }
+    const snapshot = parseStateSnapshot(new TextDecoder().decode(snapshotSource));
+
+    expect(result.exitCode).toBe(0);
+    expect(harness.detailCalls).toEqual([
+      {
+        nodeIds: [item.nodeId],
+        eventWindow: {
+          mode: "incremental",
+          since: "2026-07-31T23:55:00.000Z",
+        },
+      },
+    ]);
+    expect(snapshot.items.map((candidate) => candidate.nodeId)).toContain(item.nodeId);
   });
 
   it("fingerprint変更項目とgraph隣接nodeだけをoverlap起点で詳細取得する", async () => {

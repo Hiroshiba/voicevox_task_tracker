@@ -292,6 +292,7 @@ type RelationExpandedRuntimeCollection = FreshRuntimeCollectionAggregate &
 type RuntimeTrackingSelection = Readonly<{
   result: ReturnType<typeof selectTrackingItems>;
   workByNodeId: ReadonlyMap<GitHubNodeId, TrackedItemWorkDecision>;
+  excludedCandidateCount: number;
 }>;
 
 type MentionedWaitingOnCandidate = Readonly<{
@@ -827,6 +828,37 @@ function repositoryFullName(repository: PublicRepository): string {
   return `${repository.owner}/${repository.name}`;
 }
 
+function requiredTrackingDetailNodeIds(
+  invocation: DailyRunInvocation,
+  configuration: RuntimeConfiguration,
+  state: RuntimeState,
+  repository: PublicRepository,
+  enumeratedItems: readonly EnumeratedGitHubItem[],
+): readonly GitHubNodeId[] {
+  const backfill = createTrackingBackfillRequest(
+    invocation.command,
+    Object.freeze({ status: "start" }),
+  );
+  const includesAllOpenBackfill =
+    backfill.mode === "all-open"
+      ? backfill.repositoryFilter.length === 0 ||
+        backfill.repositoryFilter.includes(repositoryFullName(repository))
+      : false;
+  const previouslyTrackedNodeIds = new Set(
+    (previousSnapshot(state)?.items ?? []).map((item) => item.nodeId),
+  );
+  return Object.freeze(
+    enumeratedItems
+      .filter(
+        (item) =>
+          !previouslyTrackedNodeIds.has(item.nodeId) &&
+          (explicitIdentifierMatchesItem(configuration.config.tracking.include, item) ||
+            (includesAllOpenBackfill && item.state === "open")),
+      )
+      .map((item) => item.nodeId),
+  );
+}
+
 function findRepository(
   inventory: RepositoryInventory,
   repositoryId: GitHubRepositoryId,
@@ -1000,14 +1032,14 @@ function createTrackingConnections(
 
 function completeRelationCandidates(
   candidates: readonly RelationCandidate[],
-  collectedNodeIds: ReadonlySet<GitHubNodeId>,
+  collectedCandidateNodeIds: ReadonlySet<GitHubNodeId>,
 ): Readonly<{
   candidates: readonly RelationCandidate[];
   droppedCount: number;
 }> {
   const completeCandidates = candidates.filter((candidate) =>
     relationNodes(candidate.relation).every(
-      (node) => node.scope === "external_public" || collectedNodeIds.has(node.nodeId),
+      (node) => node.scope === "external_public" || collectedCandidateNodeIds.has(node.nodeId),
     ),
   );
   return Object.freeze({
@@ -1129,87 +1161,94 @@ function collectTrackingCandidates(
   const observedItemsByNodeId = new Map(observedItems.map((item) => [item.nodeId, item]));
   const currentNodeIds = new Set(enumeratedItems.map((item) => item.nodeId));
   const isBot = createGitHubBotPredicate(configuration.config.actors.bots);
-  const organizationCandidates: OrganizationTrackingCandidate[] = enumeratedItems.map((item) => {
-    const repository = findRepository(inventory, item.repositoryId);
-    const fullName = repositoryFullName(repository);
-    const previous = previousItems.get(item.nodeId);
-    const observed = observedItemsByNodeId.get(item.nodeId);
-    const activity =
-      observed == null
-        ? previous == null
-          ? undefined
-          : Object.freeze({
-              lastHumanActivityAt: previous.lastHumanActivityAt,
-              lastProgressAt: previous.lastProgressAt,
-            })
-        : determineMeaningfulProgress({
-            createdAt: observed.createdAt,
-            evaluatedAt: invocation.startedAt,
-            events: observed.events,
-            dependencyResolutions: [],
-            naturalLanguageAssessments: [],
-            minimumAiConfidence: configuration.config.ai.confidence.medium,
-            previousActivity:
-              previous == null
-                ? {
-                    status: "not_available",
-                  }
-                : {
-                    status: "available",
-                    lastProgressAt: previous.lastProgressAt,
-                    lastHumanActivityAt: previous.lastHumanActivityAt,
-                  },
-            repositoryFullName: fullName,
-            resolveLabelEffects,
-          });
-    assertNonNullable(
-      activity,
-      `詳細未取得の新規項目を追跡候補へ変換できません。対象: ${item.nodeId}`,
-    );
-    const itemAuthorType = enumeratedAuthorType(item, isBot);
-    const notificationClass = classifyTrackingNotification({
-      authorType: itemAuthorType,
-      title: item.title,
-      automationNoiseTitles: configuration.config.notifications.automationNoiseTitles,
-      notificationsSuppressedByLabel: resolveLabelEffects(fullName, item.labels)
-        .suppressNotifications,
-    });
-    if (item.state === "open") {
-      return Object.freeze({
-        scope: "organization",
-        nodeId: item.nodeId,
-        repositoryFullName: fullName,
-        number: item.number,
-        url: item.url,
-        title: item.title,
-        createdAt: item.createdAt,
-        activity: Object.freeze({
-          lastHumanActivityAt: activity.lastHumanActivityAt,
-          lastProgressAt: activity.lastProgressAt,
-        }),
+  let excludedCandidateCount = 0;
+  const organizationCandidates: OrganizationTrackingCandidate[] = enumeratedItems.flatMap(
+    (item): OrganizationTrackingCandidate[] => {
+      const repository = findRepository(inventory, item.repositoryId);
+      const fullName = repositoryFullName(repository);
+      const previous = previousItems.get(item.nodeId);
+      const observed = observedItemsByNodeId.get(item.nodeId);
+      const activity =
+        observed == null
+          ? previous == null
+            ? undefined
+            : Object.freeze({
+                lastHumanActivityAt: previous.lastHumanActivityAt,
+                lastProgressAt: previous.lastProgressAt,
+              })
+          : determineMeaningfulProgress({
+              createdAt: observed.createdAt,
+              evaluatedAt: invocation.startedAt,
+              events: observed.events,
+              dependencyResolutions: [],
+              naturalLanguageAssessments: [],
+              minimumAiConfidence: configuration.config.ai.confidence.medium,
+              previousActivity:
+                previous == null
+                  ? {
+                      status: "not_available",
+                    }
+                  : {
+                      status: "available",
+                      lastProgressAt: previous.lastProgressAt,
+                      lastHumanActivityAt: previous.lastHumanActivityAt,
+                    },
+              repositoryFullName: fullName,
+              resolveLabelEffects,
+            });
+      if (activity == null) {
+        excludedCandidateCount += 1;
+        return [];
+      }
+      const itemAuthorType = enumeratedAuthorType(item, isBot);
+      const notificationClass = classifyTrackingNotification({
         authorType: itemAuthorType,
-        notificationClass,
-        state: "open",
+        title: item.title,
+        automationNoiseTitles: configuration.config.notifications.automationNoiseTitles,
+        notificationsSuppressedByLabel: resolveLabelEffects(fullName, item.labels)
+          .suppressNotifications,
       });
-    }
-    return Object.freeze({
-      scope: "organization",
-      nodeId: item.nodeId,
-      repositoryFullName: fullName,
-      number: item.number,
-      url: item.url,
-      title: item.title,
-      createdAt: item.createdAt,
-      activity: Object.freeze({
-        lastHumanActivityAt: activity.lastHumanActivityAt,
-        lastProgressAt: activity.lastProgressAt,
-      }),
-      authorType: itemAuthorType,
-      notificationClass,
-      state: "closed",
-      terminalAt: item.closedAt,
-    });
-  });
+      if (item.state === "open") {
+        return [
+          Object.freeze({
+            scope: "organization",
+            nodeId: item.nodeId,
+            repositoryFullName: fullName,
+            number: item.number,
+            url: item.url,
+            title: item.title,
+            createdAt: item.createdAt,
+            activity: Object.freeze({
+              lastHumanActivityAt: activity.lastHumanActivityAt,
+              lastProgressAt: activity.lastProgressAt,
+            }),
+            authorType: itemAuthorType,
+            notificationClass,
+            state: "open",
+          }),
+        ];
+      }
+      return [
+        Object.freeze({
+          scope: "organization",
+          nodeId: item.nodeId,
+          repositoryFullName: fullName,
+          number: item.number,
+          url: item.url,
+          title: item.title,
+          createdAt: item.createdAt,
+          activity: Object.freeze({
+            lastHumanActivityAt: activity.lastHumanActivityAt,
+            lastProgressAt: activity.lastProgressAt,
+          }),
+          authorType: itemAuthorType,
+          notificationClass,
+          state: "closed",
+          terminalAt: item.closedAt,
+        }),
+      ];
+    },
+  );
   const externalCandidates = deduplicateByStableId(
     relationCandidates.flatMap((candidate) =>
       relationNodes(candidate.relation).flatMap((node) =>
@@ -1284,6 +1323,7 @@ function collectTrackingCandidates(
   return Object.freeze({
     result,
     workByNodeId,
+    excludedCandidateCount,
   });
 }
 
@@ -3944,7 +3984,10 @@ async function collectFreshRepositoryItemObservations(
     ),
     overlapMilliseconds: INCREMENTAL_COLLECTION_OVERLAP_MILLISECONDS,
   });
-  const detailNodeIds = new Set(plan.detailItemNodeIds);
+  const detailNodeIds = new Set([
+    ...plan.detailItemNodeIds,
+    ...requiredTrackingDetailNodeIds(invocation, configuration, state, repository, enumeratedItems),
+  ]);
   const detailTargets = enumeratedItems.filter((item) => detailNodeIds.has(item.nodeId));
   const details =
     detailTargets.length === 0
@@ -4054,14 +4097,29 @@ async function collectAdditionalRelationItems(
   requestedNodeIds: readonly GitHubNodeId[],
   current: FreshRepositoryRuntimeCollection,
 ): Promise<FreshRepositoryRuntimeCollection> {
-  const enumeratedItems = await adapters.enumerateGitHubItemsByIdentifiers({
-    allowlist: createPublicRepositoryAllowlist([repository]),
-    identifiers: requestedNodeIds,
-    observedAt: invocation.startedAt,
-    request: authentication.request,
-    graphql: authentication.graphql,
+  const currentItemsByNodeId = new Map(current.enumeratedItems.map((item) => [item.nodeId, item]));
+  const missingNodeIds = requestedNodeIds.filter((nodeId) => !currentItemsByNodeId.has(nodeId));
+  const individuallyEnumeratedItems =
+    missingNodeIds.length === 0
+      ? Object.freeze([])
+      : await adapters.enumerateGitHubItemsByIdentifiers({
+          allowlist: createPublicRepositoryAllowlist([repository]),
+          identifiers: missingNodeIds,
+          observedAt: invocation.startedAt,
+          request: authentication.request,
+          graphql: authentication.graphql,
+        });
+  validateRelationExpansionEnumeration(repository, missingNodeIds, individuallyEnumeratedItems);
+  const individuallyEnumeratedItemsByNodeId = new Map(
+    individuallyEnumeratedItems.map((item) => [item.nodeId, item]),
+  );
+  const detailTargets = requestedNodeIds.map((nodeId) => {
+    const item =
+      currentItemsByNodeId.get(nodeId) ?? individuallyEnumeratedItemsByNodeId.get(nodeId);
+    assertNonNullable(item, `関係先追加取得対象の列挙値がありません。対象: ${nodeId}`);
+    return item;
   });
-  validateRelationExpansionEnumeration(repository, requestedNodeIds, enumeratedItems);
+  validateRelationExpansionEnumeration(repository, requestedNodeIds, detailTargets);
   const additions = await collectFreshRepositoryItemObservations(
     adapters,
     invocation,
@@ -4069,7 +4127,7 @@ async function collectAdditionalRelationItems(
     state,
     authentication,
     repository,
-    enumeratedItems,
+    detailTargets,
     new Set(requestedNodeIds),
   );
   const mergedEnumeratedItems = deduplicateByStableId(
@@ -4124,6 +4182,20 @@ function aggregateFreshRepositoryCollections(
     observedItems: deduplicateByStableId(observedItems, (item) => item.nodeId),
     changedNodeIds,
   });
+}
+
+function collectedTrackingCandidateNodeIds(
+  state: RuntimeState,
+  aggregate: FreshRuntimeCollectionAggregate,
+): ReadonlySet<GitHubNodeId> {
+  const enumeratedNodeIds = new Set(aggregate.enumeratedItems.map((item) => item.nodeId));
+  const candidateNodeIds = new Set(aggregate.details.map((detail) => detail.nodeId));
+  for (const item of previousSnapshot(state)?.items ?? []) {
+    if (enumeratedNodeIds.has(item.nodeId)) {
+      candidateNodeIds.add(item.nodeId);
+    }
+  }
+  return candidateNodeIds;
 }
 
 function relationExpansionRepositoriesByNodeId(
@@ -4224,7 +4296,7 @@ async function collectRelationExpandedItems(
   >,
 ): Promise<RelationExpandedRuntimeCollection> {
   const requestedNodeIds = new Set<GitHubNodeId>();
-  const individuallyEnumeratedNodeIds = new Set<GitHubNodeId>();
+  const expandedNodeIds = new Set<GitHubNodeId>();
   for (;;) {
     const aggregate = aggregateFreshRepositoryCollections(
       repositoryInventory.allowlist,
@@ -4236,10 +4308,10 @@ async function collectRelationExpandedItems(
       aggregate.enumeratedItems,
       aggregate.details,
     );
-    const collectedNodeIds = new Set(aggregate.enumeratedItems.map((item) => item.nodeId));
+    const collectedCandidateNodeIds = collectedTrackingCandidateNodeIds(state, aggregate);
     const completedRelationCandidates = completeRelationCandidates(
       discoveredRelationCandidates,
-      collectedNodeIds,
+      collectedCandidateNodeIds,
     );
     const tracking = collectTrackingCandidates(
       invocation,
@@ -4252,7 +4324,7 @@ async function collectRelationExpandedItems(
     );
     const trackingState = relationExpansionTrackingState(tracking);
     const nextRequests = planRelationExpansion({
-      collectedCandidateNodeIds: collectedNodeIds,
+      collectedCandidateNodeIds,
       trackingRootNodeIds: trackingState.trackingRootNodeIds,
       relationCandidates: discoveredRelationCandidates,
       nativeDepthByNodeId: trackingState.nativeDepthByNodeId,
@@ -4294,16 +4366,16 @@ async function collectRelationExpandedItems(
     }
     const targetNodeIds = [...targetNodeIdsByRepositoryId.values()].flat();
     const maximumItemCount = configuration.config.tracking.relationExpansion.maxItemsPerRun;
-    if (individuallyEnumeratedNodeIds.size + targetNodeIds.length > maximumItemCount) {
+    if (expandedNodeIds.size + targetNodeIds.length > maximumItemCount) {
       throw new CliRelationExpansionLimitError(
         maximumItemCount,
-        individuallyEnumeratedNodeIds.size,
+        expandedNodeIds.size,
         targetNodeIds.length,
         {},
       );
     }
     for (const nodeId of targetNodeIds) {
-      individuallyEnumeratedNodeIds.add(nodeId);
+      expandedNodeIds.add(nodeId);
     }
     if (targetNodeIds.length === 0) {
       continue;
@@ -4416,6 +4488,11 @@ async function collectProductionItems(
   if (expanded.droppedRelationCandidateCount > 0) {
     diagnostics.push(
       `端点を取得できなかった関係候補を${expanded.droppedRelationCandidateCount.toString()}件除外しました`,
+    );
+  }
+  if (expanded.tracking.excludedCandidateCount > 0) {
+    diagnostics.push(
+      `詳細未取得かつ前回未追跡の項目を追跡候補から${expanded.tracking.excludedCandidateCount.toString()}件除外しました`,
     );
   }
 
