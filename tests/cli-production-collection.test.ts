@@ -939,6 +939,92 @@ function setIssueDetails(
   );
 }
 
+async function collectRelationCandidateDiagnostics(
+  endpointAvailability: "resolved" | "unavailable",
+): Promise<
+  Readonly<{
+    diagnostics: readonly string[];
+    identifierCanaries: readonly string[];
+  }>
+> {
+  const repository = createRepository(
+    "R_relation_candidate_diagnostic",
+    "relation-candidate-diagnostic",
+    FIRST_RUN_AT,
+  );
+  const publicRepository = requirePublicRepository(repository);
+  const unavailableRepository = requirePublicRepository(
+    createRepository(
+      "R_relation_candidate_unavailable",
+      "relation-repository-identifier-canary",
+      FIRST_RUN_AT,
+    ),
+  );
+  const targetRepository =
+    endpointAvailability === "resolved" ? publicRepository : unavailableRepository;
+  const fixture = createRepositoryFixture(repository);
+  const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+  const tracked = createIssueItem({
+    repository: publicRepository,
+    number: 1,
+    fingerprint: "relation-diagnostic-root",
+    updatedAt: observedAt,
+    observedAt,
+    state: Object.freeze({ state: "open" }),
+  });
+  const target = Object.freeze({
+    ...createOldIssueItem(targetRepository, 2, "relation-diagnostic-target", observedAt),
+    title: "relation-title-identifier-canary",
+  });
+  const body = "relation-body-identifier-canary";
+  fixture.openItems = [tracked];
+  fixture.details.set(
+    tracked.nodeId,
+    createIssueDetail({
+      item: tracked,
+      body,
+      observedAt,
+      nativeDependencies: Object.freeze([createNativeBlocker(tracked, target)]),
+      duplicateComments: false,
+    }),
+  );
+  if (endpointAvailability === "resolved") {
+    fixture.individualItems.set(target.nodeId, target);
+    fixture.details.set(
+      target.nodeId,
+      createIssueDetail({
+        item: target,
+        body: "本文",
+        observedAt,
+        nativeDependencies: Object.freeze([]),
+        duplicateComments: false,
+      }),
+    );
+  }
+  const config = await createTestConfig({
+    explicitIncludes: [],
+    retentionDays: 180,
+    aiEnabled: false,
+  });
+  const harness = createCollectionHarness({ repositories: [fixture], config });
+
+  const result = await harness.runDry(FIRST_RUN_AT);
+  if (result.command !== "dry-run" || result.exitCode !== 0) {
+    throw new TypeError("関係候補diagnostic fixtureのrunが成功しませんでした");
+  }
+  return Object.freeze({
+    diagnostics: result.result.report.diagnostics,
+    identifierCanaries: Object.freeze([
+      target.nodeId,
+      target.url,
+      target.title,
+      targetRepository.name,
+      publicRepository.name,
+      body,
+    ]),
+  });
+}
+
 function createHistoryInputDetail(
   item: EnumeratedGitHubItem,
   occurredAt: UtcIsoDateTime,
@@ -2012,6 +2098,36 @@ describe("本番収集の接続", () => {
     expect(harness.publicData).toHaveLength(publicDataCountBefore);
     expect(harness.normalDiscordCallCount()).toBe(normalDiscordCallCountBefore);
     expect(harness.operationsDiscordCallCount()).toBe(1);
+  });
+
+  it("最終状態で未取得端点を持つ関係候補の件数をdiagnosticへ出す", async () => {
+    const result = await collectRelationCandidateDiagnostics("unavailable");
+
+    expect(result.diagnostics).toContain("端点を取得できなかった関係候補を1件除外しました");
+  });
+
+  it("反復中に未完成だった関係候補が解決されればdiagnosticを出さない", async () => {
+    const result = await collectRelationCandidateDiagnostics("resolved");
+
+    expect(
+      result.diagnostics.filter((diagnostic) =>
+        diagnostic.startsWith("端点を取得できなかった関係候補を"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("落とした関係候補のdiagnosticへ識別子や入力内容を出さない", async () => {
+    const result = await collectRelationCandidateDiagnostics("unavailable");
+    const diagnostic = result.diagnostics.find((candidate) =>
+      candidate.startsWith("端点を取得できなかった関係候補を"),
+    );
+    if (diagnostic == null) {
+      throw new TypeError("落とした関係候補のdiagnosticがありません");
+    }
+
+    for (const identifier of result.identifierCanaries) {
+      expect(diagnostic).not.toContain(identifier);
+    }
   });
 
   it("fingerprint変更項目とgraph隣接nodeだけをoverlap起点で詳細取得する", async () => {

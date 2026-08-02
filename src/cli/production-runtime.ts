@@ -285,6 +285,7 @@ type FreshRuntimeCollectionAggregate = Readonly<{
 type RelationExpandedRuntimeCollection = FreshRuntimeCollectionAggregate &
   Readonly<{
     relationCandidates: readonly RelationCandidate[];
+    droppedRelationCandidateCount: number;
     tracking: RuntimeTrackingSelection;
   }>;
 
@@ -1000,14 +1001,19 @@ function createTrackingConnections(
 function completeRelationCandidates(
   candidates: readonly RelationCandidate[],
   collectedNodeIds: ReadonlySet<GitHubNodeId>,
-): readonly RelationCandidate[] {
-  return Object.freeze(
-    candidates.filter((candidate) =>
-      relationNodes(candidate.relation).every(
-        (node) => node.scope === "external_public" || collectedNodeIds.has(node.nodeId),
-      ),
+): Readonly<{
+  candidates: readonly RelationCandidate[];
+  droppedCount: number;
+}> {
+  const completeCandidates = candidates.filter((candidate) =>
+    relationNodes(candidate.relation).every(
+      (node) => node.scope === "external_public" || collectedNodeIds.has(node.nodeId),
     ),
   );
+  return Object.freeze({
+    candidates: Object.freeze(completeCandidates),
+    droppedCount: candidates.length - completeCandidates.length,
+  });
 }
 
 function resolveProductionTrackingStartAt(
@@ -4231,7 +4237,7 @@ async function collectRelationExpandedItems(
       aggregate.details,
     );
     const collectedNodeIds = new Set(aggregate.enumeratedItems.map((item) => item.nodeId));
-    const relationCandidates = completeRelationCandidates(
+    const completedRelationCandidates = completeRelationCandidates(
       discoveredRelationCandidates,
       collectedNodeIds,
     );
@@ -4242,7 +4248,7 @@ async function collectRelationExpandedItems(
       repositoryInventory,
       aggregate.enumeratedItems,
       aggregate.observedItems,
-      relationCandidates,
+      completedRelationCandidates.candidates,
     );
     const trackingState = relationExpansionTrackingState(tracking);
     const nextRequests = planRelationExpansion({
@@ -4258,7 +4264,8 @@ async function collectRelationExpandedItems(
     if (nextRequests.length === 0) {
       return Object.freeze({
         ...aggregate,
-        relationCandidates,
+        relationCandidates: completedRelationCandidates.candidates,
+        droppedRelationCandidateCount: completedRelationCandidates.droppedCount,
         tracking,
       });
     }
@@ -4405,6 +4412,11 @@ async function collectProductionItems(
       }),
     );
     diagnostics.push(result.diagnostic.message);
+  }
+  if (expanded.droppedRelationCandidateCount > 0) {
+    diagnostics.push(
+      `端点を取得できなかった関係候補を${expanded.droppedRelationCandidateCount.toString()}件除外しました`,
+    );
   }
 
   const uniqueEnumeratedItems = expanded.enumeratedItems;

@@ -112,6 +112,7 @@ Zodのstrict schemaで未知のfieldも拒否するため、設定名は`config.
 | `organization`                                      | 固定値`VOICEVOX`                                              |
 | `tracking.startAt`                                  | 追跡開始日時か`null`                                          |
 | `tracking.autoInclude`                              | 作成日時、活動、参照、native relationによる自動追加規則       |
+| `tracking.relationExpansion.maxItemsPerRun`         | 1 runで関係先として個別列挙する一意なnode IDの上限            |
 | `tracking.include`                                  | 常に追跡するIssueかPRのHTTPS URL、またはGitHub node ID        |
 | `tracking.retentionDaysAfterTerminal`               | terminal項目を保持する日数                                    |
 | `tracking.backfill.maxItemsPerRun`                  | 1回のbackfillで追加する上限                                   |
@@ -136,6 +137,9 @@ Zodのstrict schemaで未知のfieldも拒否するため、設定名は`config.
 | `web`                                               | base path、画面名、locale、初期graph上限                      |
 | `operations.githubApiBudgetRatio`                   | 1 runで使ってよいGitHub API予算の比率                         |
 | `operations.retry`                                  | GitHubとDiscordの一時失敗に対するretry設定                    |
+
+`tracking.relationExpansion.maxItemsPerRun`を増やすと、識別子指定の列挙とdetail取得によるGitHub API消費が増えます。
+変更時は`operations.githubApiBudgetRatio`とdry-runのAPI残量を合わせて確認します。
 
 現行設定ではCodexとDiscord通知が有効です。
 `ai.model`の利用可否は、lockfileで固定したCodex CLIと`CODEX_HOME`直下の`auth.json`を使うdry-runで確認します。

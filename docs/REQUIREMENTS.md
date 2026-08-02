@@ -264,18 +264,18 @@ flowchart LR
 
 ### 13.3 設定
 
-| ID        | 規範 | 要求                                                                                                                                | 受入要約                                                                                  |
-| --------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `CFG-001` | MUST | 設定schema version — 設定ファイルにschemaVersionを持ち、未知のmajor versionを拒否しなければならない。                               | `AT-CFG-001`: 未対応majorの設定で明示的エラーとなり処理を開始しない。                     |
-| `CFG-002` | MUST | 既定メンテナーチーム — Organization共通の既定メンテナーチームをteam slugで設定できなければならない。                                | `AT-CFG-002`: 既定値のみのrepoでメンテナーロールが当該teamへ解決される。                  |
-| `CFG-003` | MUST | 既定レビュワーチーム — Organization共通の既定レビュワーチームをteam slugで設定できなければならない。                                | `AT-CFG-003`: 既定値のみのrepoでレビュワーロールが当該teamへ解決される。                  |
-| `CFG-004` | MUST | リポジトリ別上書き — 例外リポジトリだけメンテナー・レビュワーチームを上書きできなければならない。                                   | `AT-CFG-004`: 2 repo fixtureで一方は既定、一方はoverrideが適用される。                    |
-| `CFG-005` | MUST | 未設定チームの安全停止 — 必須team slugがplaceholder・空・取得不能の場合、誤った個人推定をせず設定エラーとして扱わなければならない。 | `AT-CFG-005`: 存在しないslugで公開・通知が行われず、診断が出る。                          |
-| `CFG-006` | MUST | 既存ラベル意味付け — 既存ラベルを優先度・要議論・通知抑制等へ読み替えるルールをrepo glob付きで設定できなければならない。            | `AT-CFG-006`: 同名ラベルをrepo別に異なる意味へ割り当てられる。                            |
-| `CFG-007` | MUST | bot識別設定 — bot login、末尾パターン、明示allow/denyを設定できなければならない。                                                   | `AT-CFG-007`: 既知bot・未知human・例外bot fixtureが期待通り分類される。                   |
-| `CFG-008` | MUST | 追跡開始日時 — tracking.startAtをISO 8601で設定・永続化できなければならない。                                                       | `AT-CFG-008`: timezone付き日時がUTC正規化され、再実行で変化しない。                       |
-| `CFG-009` | MUST | 手動includeとbackfill設定 — 古い項目の明示include、repo filter、backfill上限を設定できなければならない。                            | `AT-CFG-009`: 開始日前の指定URLだけをincludeできる。                                      |
-| `CFG-010` | MUST | Discordメンション設定 — GitHub loginとDiscord user IDの対応、mentions.enabled、許可対象を設定でき、既定は無効でなければならない。   | `AT-CFG-010`: 既定payloadのallowed_mentionsが空で、enabled時も許可ID以外をmentionしない。 |
+| ID        | 規範 | 要求                                                                                                                                                  | 受入要約                                                                                      |
+| --------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `CFG-001` | MUST | 設定schema version — 設定ファイルにschemaVersionを持ち、未知のmajor versionを拒否しなければならない。                                                 | `AT-CFG-001`: 未対応majorの設定で明示的エラーとなり処理を開始しない。                         |
+| `CFG-002` | MUST | 既定メンテナーチーム — Organization共通の既定メンテナーチームをteam slugで設定できなければならない。                                                  | `AT-CFG-002`: 既定値のみのrepoでメンテナーロールが当該teamへ解決される。                      |
+| `CFG-003` | MUST | 既定レビュワーチーム — Organization共通の既定レビュワーチームをteam slugで設定できなければならない。                                                  | `AT-CFG-003`: 既定値のみのrepoでレビュワーロールが当該teamへ解決される。                      |
+| `CFG-004` | MUST | リポジトリ別上書き — 例外リポジトリだけメンテナー・レビュワーチームを上書きできなければならない。                                                     | `AT-CFG-004`: 2 repo fixtureで一方は既定、一方はoverrideが適用される。                        |
+| `CFG-005` | MUST | 未設定チームの安全停止 — 必須team slugがplaceholder・空・取得不能の場合、誤った個人推定をせず設定エラーとして扱わなければならない。                   | `AT-CFG-005`: 存在しないslugで公開・通知が行われず、診断が出る。                              |
+| `CFG-006` | MUST | 既存ラベル意味付け — 既存ラベルを優先度・要議論・通知抑制等へ読み替えるルールをrepo glob付きで設定できなければならない。                              | `AT-CFG-006`: 同名ラベルをrepo別に異なる意味へ割り当てられる。                                |
+| `CFG-007` | MUST | bot識別設定 — bot login、末尾パターン、明示allow/denyを設定できなければならない。                                                                     | `AT-CFG-007`: 既知bot・未知human・例外bot fixtureが期待通り分類される。                       |
+| `CFG-008` | MUST | 追跡開始日時 — tracking.startAtをISO 8601で設定・永続化できなければならない。                                                                         | `AT-CFG-008`: timezone付き日時がUTC正規化され、再実行で変化しない。                           |
+| `CFG-009` | MUST | 手動includeと追跡追加上限 — 古い項目の明示include、repo filter、backfill上限、`tracking.relationExpansion.maxItemsPerRun`を設定できなければならない。 | `AT-CFG-009`: 開始日前の指定URLだけをincludeでき、関係先展開上限がAPI呼び出し前に適用される。 |
+| `CFG-010` | MUST | Discordメンション設定 — GitHub loginとDiscord user IDの対応、mentions.enabled、許可対象を設定でき、既定は無効でなければならない。                     | `AT-CFG-010`: 既定payloadのallowed_mentionsが空で、enabled時も許可ID以外をmentionしない。     |
 
 ### 13.4 GitHub収集
 

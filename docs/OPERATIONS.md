@@ -243,6 +243,14 @@ mentionは通知量の調整に使わず、運用上必要なuserだけをallowl
 | `deploy-pages`                  | Pages Source、`github-pages` environment、`pages: write`と`id-token: write`を確認する                                                                                             |
 | `discord`または`notify-discord` | enabled設定、Webhook secret、channel、Webhook失効、429と503を確認する                                                                                                             |
 
+`incremental_collection`が`errorType=CliRelationExpansionLimitError`で失敗した場合は、同じ診断行の`relationExpansionLimit`、`relationExpansionFetchedCount`、`relationExpansionUnfetchedCount`を確認します。
+件数が想定より多いときは、GitHub上の誤ったnative relationや参照を直します。
+妥当な件数なら、GitHub API残量と`operations.githubApiBudgetRatio`を確認したうえで`tracking.relationExpansion.maxItemsPerRun`を引き上げ、`backfill: none`で再実行します。
+この失敗ではstate、Pages、通常のDiscord通知を更新しません。
+
+収集の診断に「端点を取得できなかった関係候補を除外しました」が出る場合は、archive済みrepositoryやOrganization外の参照先など、公開境界の外にある関係先が残っています。
+run自体は成功し、除外した関係候補は依存グラフへ載りません。
+
 Actions上でCodexの認証エラーが起きた場合は、ローカルのCodexへログインし直し、[デプロイ手順](DEPLOYMENT.md)のコマンドで`CODEX_AUTH_JSON`を登録し直します。
 
 `fallback`はCodexを利用できなかった項目を決定論的判定へ縮退した完全runです。
