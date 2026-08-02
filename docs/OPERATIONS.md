@@ -48,6 +48,22 @@ run reportの主な確認項目は次のとおりです。
 `tracker-state`は自動更新専用です。
 人間がsnapshot、履歴、AI cache、通知ledgerを直接編集すると履歴とcooldownの整合を壊すため、修正はGitHub上の正本か`config.yml`で行います。
 
+## GitHub GraphQL schemaの更新
+
+`schemas/github-graphql.schema.graphql`はGitHubが公開しているGraphQL schemaの写しです。
+送信しうる全クエリをこのschemaで検証し、存在しないフィールドの要求や応答名の衝突を実行前に検出します。
+テストはこのファイルだけを読み、ネットワークへ出ません。
+
+GitHub側のschema変更へ追従するときは、次の手順で更新します。
+
+```console
+curl -L --fail-with-body https://docs.github.com/public/fpt/schema.docs.graphql --output schemas/github-graphql.schema.graphql
+pnpm test
+```
+
+更新後にクエリ検証が失敗した場合は、失敗したクエリをschemaへ合わせて修正します。
+schemaの写しを古いまま据え置くと検証が形骸化するため、退避や巻き戻しはしません。
+
 ## 性能profile
 
 OPS-004は通常のCIから分離したend-to-end性能profileで確認します。

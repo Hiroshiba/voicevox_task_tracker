@@ -14,6 +14,7 @@ import {
 import { type GitHubApiAccountType } from "./account-types.js";
 import { type GitHubClient, type GitHubRestRequest } from "./client.js";
 import { GitHubPublicBoundaryViolationError, GitHubResponseValidationError } from "./errors.js";
+import { ITEM_IDENTIFIER_QUERY } from "./item-enumeration-queries.js";
 import {
   type PublicRepository,
   type PublicRepositoryAllowlist,
@@ -162,22 +163,6 @@ const itemIdentifierNodeSchema = z
 const itemIdentifierResponseSchema = z.object({
   node: itemIdentifierNodeSchema.nullable(),
 });
-
-const ITEM_IDENTIFIER_QUERY = `
-  query GitHubItemIdentifier($itemId: ID!) {
-    node(id: $itemId) {
-      __typename
-      ... on Issue {
-        id
-        url
-      }
-      ... on PullRequest {
-        id
-        url
-      }
-    }
-  }
-`;
 
 /** SHA-256で生成した内容fingerprint。 */
 export type Sha256Fingerprint = `sha256:${string}`;
