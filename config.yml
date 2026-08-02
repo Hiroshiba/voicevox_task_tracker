@@ -2,8 +2,7 @@ schemaVersion: 1
 organization: VOICEVOX
 
 tracking:
-  # nullなら最初の「完全成功run」の時刻をstateへ固定する。
-  startAt: null
+  startAt: "2026-07-01T00:00:00+09:00"
   autoInclude:
     createdAfterStart: true
     changedAfterStart: true
