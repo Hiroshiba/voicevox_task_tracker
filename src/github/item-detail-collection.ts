@@ -1,3 +1,4 @@
+import { parse, visit } from "graphql";
 import { z } from "zod";
 
 import {
@@ -57,17 +58,7 @@ import {
 
 const CONNECTION_PAGE_SIZE = 100;
 
-const ITEM_DETAIL_CAPABILITIES_QUERY = `
-  query GitHubItemDetailCapabilities {
-    issueType: __type(name: "Issue") {
-      fields(includeDeprecated: true) {
-        name
-      }
-    }
-  }
-`;
-
-const GRAPHQL_FRAGMENTS = `
+const DETAIL_ACTOR_FIELDS_FRAGMENT = `
   fragment DetailActorFields on Actor {
     __typename
     login
@@ -75,7 +66,9 @@ const GRAPHQL_FRAGMENTS = `
       id
     }
   }
+`;
 
+const DETAIL_REVIEW_REQUEST_TARGET_FIELDS_FRAGMENT = `
   fragment DetailReviewRequestTargetFields on RequestedReviewer {
     __typename
     ... on Bot {
@@ -99,7 +92,9 @@ const GRAPHQL_FRAGMENTS = `
       }
     }
   }
+`;
 
+const DETAIL_ASSIGNEE_FIELDS_FRAGMENT = `
   fragment DetailAssigneeFields on Assignee {
     __typename
     ... on Actor {
@@ -109,7 +104,9 @@ const GRAPHQL_FRAGMENTS = `
       }
     }
   }
+`;
 
+const DETAIL_REFERENCED_ITEM_FIELDS_FRAGMENT = `
   fragment DetailReferencedItemFields on Node {
     __typename
     ... on Issue {
@@ -145,7 +142,9 @@ const GRAPHQL_FRAGMENTS = `
       }
     }
   }
+`;
 
+const DETAIL_ISSUE_COMMENT_FIELDS_FRAGMENT = `
   fragment DetailIssueCommentFields on IssueComment {
     id
     author {
@@ -156,7 +155,9 @@ const GRAPHQL_FRAGMENTS = `
     updatedAt
     url
   }
+`;
 
+const DETAIL_REVIEW_FIELDS_FRAGMENT = `
   fragment DetailReviewFields on PullRequestReview {
     id
     url
@@ -171,7 +172,9 @@ const GRAPHQL_FRAGMENTS = `
       oid
     }
   }
+`;
 
+const DETAIL_REVIEW_COMMENT_FIELDS_FRAGMENT = `
   fragment DetailReviewCommentFields on PullRequestReviewComment {
     id
     author {
@@ -182,7 +185,9 @@ const GRAPHQL_FRAGMENTS = `
     updatedAt
     url
   }
+`;
 
+const DETAIL_REVIEW_THREAD_FIELDS_FRAGMENT = `
   fragment DetailReviewThreadFields on PullRequestReviewThread {
     id
     isResolved
@@ -201,7 +206,9 @@ const GRAPHQL_FRAGMENTS = `
       }
     }
   }
+`;
 
+const DETAIL_CHECK_CONTEXT_FIELDS_FRAGMENT = `
   fragment DetailCheckContextFields on Node {
     __typename
     ... on CheckRun {
@@ -217,7 +224,9 @@ const GRAPHQL_FRAGMENTS = `
       createdAt
     }
   }
+`;
 
+const DETAIL_ISSUE_TIMELINE_FIELDS_FRAGMENT = `
   fragment DetailIssueTimelineFields on IssueTimelineItems {
     __typename
     ... on ClosedEvent {
@@ -308,7 +317,9 @@ const GRAPHQL_FRAGMENTS = `
       }
     }
   }
+`;
 
+const DETAIL_PULL_REQUEST_TIMELINE_FIELDS_FRAGMENT = `
   fragment DetailPullRequestTimelineFields on PullRequestTimelineItems {
     __typename
     ... on ClosedEvent {
@@ -492,6 +503,84 @@ const GRAPHQL_FRAGMENTS = `
   }
 `;
 
+const GRAPHQL_FRAGMENT_SOURCES: ReadonlyMap<string, string> = new Map([
+  ["DetailActorFields", DETAIL_ACTOR_FIELDS_FRAGMENT],
+  ["DetailReviewRequestTargetFields", DETAIL_REVIEW_REQUEST_TARGET_FIELDS_FRAGMENT],
+  ["DetailAssigneeFields", DETAIL_ASSIGNEE_FIELDS_FRAGMENT],
+  ["DetailReferencedItemFields", DETAIL_REFERENCED_ITEM_FIELDS_FRAGMENT],
+  ["DetailIssueCommentFields", DETAIL_ISSUE_COMMENT_FIELDS_FRAGMENT],
+  ["DetailReviewFields", DETAIL_REVIEW_FIELDS_FRAGMENT],
+  ["DetailReviewCommentFields", DETAIL_REVIEW_COMMENT_FIELDS_FRAGMENT],
+  ["DetailReviewThreadFields", DETAIL_REVIEW_THREAD_FIELDS_FRAGMENT],
+  ["DetailCheckContextFields", DETAIL_CHECK_CONTEXT_FIELDS_FRAGMENT],
+  ["DetailIssueTimelineFields", DETAIL_ISSUE_TIMELINE_FIELDS_FRAGMENT],
+  ["DetailPullRequestTimelineFields", DETAIL_PULL_REQUEST_TIMELINE_FIELDS_FRAGMENT],
+]);
+
+function collectFragmentSpreadNames(source: string): readonly string[] {
+  const fragmentNames = new Set<string>();
+  visit(parse(source), {
+    FragmentSpread(node): void {
+      fragmentNames.add(node.name.value);
+    },
+  });
+  return Object.freeze([...fragmentNames]);
+}
+
+const GRAPHQL_FRAGMENT_DEPENDENCIES: ReadonlyMap<string, readonly string[]> = new Map(
+  [...GRAPHQL_FRAGMENT_SOURCES].map(
+    ([fragmentName, fragmentSource]) =>
+      [fragmentName, collectFragmentSpreadNames(fragmentSource)] as const,
+  ),
+);
+const GRAPHQL_QUERY_CACHE = new Map<string, string>();
+
+function collectRequiredFragmentSources(
+  fragmentNames: readonly string[],
+  resolvedFragmentNames: Set<string>,
+  fragmentSources: string[],
+): void {
+  for (const fragmentName of fragmentNames) {
+    if (resolvedFragmentNames.has(fragmentName)) {
+      continue;
+    }
+    const fragmentSource = GRAPHQL_FRAGMENT_SOURCES.get(fragmentName);
+    const dependencies = GRAPHQL_FRAGMENT_DEPENDENCIES.get(fragmentName);
+    if (fragmentSource == null || dependencies == null) {
+      throw new Error(`未定義のGraphQLフラグメントを参照しています: ${fragmentName}`);
+    }
+    resolvedFragmentNames.add(fragmentName);
+    fragmentSources.push(fragmentSource);
+    collectRequiredFragmentSources(dependencies, resolvedFragmentNames, fragmentSources);
+  }
+}
+
+function appendRequiredFragments(querySource: string): string {
+  const cachedQuery = GRAPHQL_QUERY_CACHE.get(querySource);
+  if (cachedQuery != null) {
+    return cachedQuery;
+  }
+  const fragmentSources: string[] = [];
+  collectRequiredFragmentSources(
+    collectFragmentSpreadNames(querySource),
+    new Set<string>(),
+    fragmentSources,
+  );
+  const query = [querySource, ...fragmentSources].join("\n");
+  GRAPHQL_QUERY_CACHE.set(querySource, query);
+  return query;
+}
+
+const ITEM_DETAIL_CAPABILITIES_QUERY = appendRequiredFragments(`
+  query GitHubItemDetailCapabilities {
+    issueType: __type(name: "Issue") {
+      fields(includeDeprecated: true) {
+        name
+      }
+    }
+  }
+`);
+
 const ISSUE_TIMELINE_ITEM_TYPES = `
   [
     CLOSED_EVENT
@@ -600,7 +689,7 @@ function createItemDetailQuery(
       `
       : "";
 
-  return `
+  return appendRequiredFragments(`
     query GitHubItemDetail($itemId: ID!${timelineSinceVariableDeclaration(eventWindow)}) {
       item: node(id: $itemId) {
         __typename
@@ -721,11 +810,10 @@ function createItemDetailQuery(
         }
       }
     }
-    ${GRAPHQL_FRAGMENTS}
-  `;
+  `);
 }
 
-const COMMENT_PAGE_QUERY = `
+const COMMENT_PAGE_QUERY = appendRequiredFragments(`
   query GitHubItemCommentPage($itemId: ID!, $after: String!) {
     item: node(id: $itemId) {
       __typename
@@ -755,15 +843,14 @@ const COMMENT_PAGE_QUERY = `
       }
     }
   }
-  ${GRAPHQL_FRAGMENTS}
-`;
+`);
 
 function createTimelinePageQuery(
   itemType: "issue" | "pull_request",
   eventWindow: GitHubItemDetailEventWindow,
 ): string {
   if (itemType === "issue") {
-    return `
+    return appendRequiredFragments(`
       query GitHubIssueTimelinePage($itemId: ID!, $after: String!${timelineSinceVariableDeclaration(eventWindow)}) {
         item: node(id: $itemId) {
           __typename
@@ -786,10 +873,9 @@ function createTimelinePageQuery(
           }
         }
       }
-      ${GRAPHQL_FRAGMENTS}
-    `;
+    `);
   }
-  return `
+  return appendRequiredFragments(`
     query GitHubPullRequestTimelinePage($itemId: ID!, $after: String!${timelineSinceVariableDeclaration(eventWindow)}) {
       item: node(id: $itemId) {
         __typename
@@ -812,11 +898,10 @@ function createTimelinePageQuery(
         }
       }
     }
-    ${GRAPHQL_FRAGMENTS}
-  `;
+  `);
 }
 
-const REVIEW_PAGE_QUERY = `
+const REVIEW_PAGE_QUERY = appendRequiredFragments(`
   query GitHubPullRequestReviewPage($itemId: ID!, $after: String!) {
     item: node(id: $itemId) {
       __typename
@@ -838,10 +923,9 @@ const REVIEW_PAGE_QUERY = `
       }
     }
   }
-  ${GRAPHQL_FRAGMENTS}
-`;
+`);
 
-const REVIEW_THREAD_PAGE_QUERY = `
+const REVIEW_THREAD_PAGE_QUERY = appendRequiredFragments(`
   query GitHubPullRequestReviewThreadPage($itemId: ID!, $after: String!) {
     item: node(id: $itemId) {
       __typename
@@ -859,10 +943,9 @@ const REVIEW_THREAD_PAGE_QUERY = `
       }
     }
   }
-  ${GRAPHQL_FRAGMENTS}
-`;
+`);
 
-const REVIEW_THREAD_COMMENT_PAGE_QUERY = `
+const REVIEW_THREAD_COMMENT_PAGE_QUERY = appendRequiredFragments(`
   query GitHubPullRequestReviewThreadCommentPage($threadId: ID!, $after: String!) {
     thread: node(id: $threadId) {
       __typename
@@ -880,10 +963,9 @@ const REVIEW_THREAD_COMMENT_PAGE_QUERY = `
       }
     }
   }
-  ${GRAPHQL_FRAGMENTS}
-`;
+`);
 
-const REVIEW_REQUEST_PAGE_QUERY = `
+const REVIEW_REQUEST_PAGE_QUERY = appendRequiredFragments(`
   query GitHubPullRequestReviewRequestPage($itemId: ID!, $after: String!) {
     item: node(id: $itemId) {
       __typename
@@ -904,11 +986,10 @@ const REVIEW_REQUEST_PAGE_QUERY = `
       }
     }
   }
-  ${GRAPHQL_FRAGMENTS}
-`;
+`);
 
 function createNativeDependencyPageQuery(direction: "blockedBy" | "blocking"): string {
-  return `
+  return appendRequiredFragments(`
     query GitHubNativeDependencyPage($itemId: ID!, $after: String!) {
       item: node(id: $itemId) {
         __typename
@@ -926,11 +1007,10 @@ function createNativeDependencyPageQuery(direction: "blockedBy" | "blocking"): s
         }
       }
     }
-    ${GRAPHQL_FRAGMENTS}
-  `;
+  `);
 }
 
-const SUB_ISSUE_PAGE_QUERY = `
+const SUB_ISSUE_PAGE_QUERY = appendRequiredFragments(`
   query GitHubSubIssuePage($itemId: ID!, $after: String!) {
     item: node(id: $itemId) {
       __typename
@@ -948,10 +1028,9 @@ const SUB_ISSUE_PAGE_QUERY = `
       }
     }
   }
-  ${GRAPHQL_FRAGMENTS}
-`;
+`);
 
-const CHECK_CONTEXT_PAGE_QUERY = `
+const CHECK_CONTEXT_PAGE_QUERY = appendRequiredFragments(`
   query GitHubCheckContextPage($commitId: ID!, $after: String!) {
     commit: node(id: $commitId) {
       __typename
@@ -973,8 +1052,7 @@ const CHECK_CONTEXT_PAGE_QUERY = `
       }
     }
   }
-  ${GRAPHQL_FRAGMENTS}
-`;
+`);
 
 const opaqueIdSchema = z.string().min(1).regex(/^\S+$/u);
 const shaSchema = z.string().min(1).regex(/^\S+$/u);

@@ -150,6 +150,22 @@ function getOperationName(query: string): string {
   return operation;
 }
 
+function getFragmentDefinitionNames(query: string): readonly string[] {
+  return parse(query)
+    .definitions.flatMap((definition) =>
+      definition.kind === "FragmentDefinition" ? [definition.name.value] : [],
+    )
+    .sort();
+}
+
+function getRequestQuery(requests: readonly GraphqlRequest[], index: number): string {
+  const request = requests[index];
+  if (request == null) {
+    throw new Error(`GraphQL request fixtureがありません。index: ${index.toString()}`);
+  }
+  return request.query;
+}
+
 function createGraphqlHttpMock(resolver: GraphqlResolver): Readonly<{
   graphql: Graphql;
   requests: GraphqlRequest[];
@@ -682,6 +698,23 @@ describe("Issue詳細収集", () => {
     expect(mock.requests[1]?.query).toContain("comments(first: 100)");
     expect(mock.requests[1]?.query).toContain("timelineItems(first: 100");
     expect(mock.requests[1]?.query).toContain("blockedBy(first: 100)");
+    expect(getFragmentDefinitionNames(getRequestQuery(mock.requests, 1))).toEqual([
+      "DetailActorFields",
+      "DetailAssigneeFields",
+      "DetailCheckContextFields",
+      "DetailIssueCommentFields",
+      "DetailIssueTimelineFields",
+      "DetailPullRequestTimelineFields",
+      "DetailReferencedItemFields",
+      "DetailReviewCommentFields",
+      "DetailReviewFields",
+      "DetailReviewRequestTargetFields",
+      "DetailReviewThreadFields",
+    ]);
+    expect(getFragmentDefinitionNames(getRequestQuery(mock.requests, 2))).toEqual([
+      "DetailActorFields",
+      "DetailIssueCommentFields",
+    ]);
   });
 
   it("native APIがschemaにない場合は空配列ではなく利用不可を明示する", async () => {
@@ -1007,17 +1040,30 @@ describe("Pull Request詳細収集", () => {
           ],
         },
         timelineItems: {
-          nodes: timelineNodes,
-          pageInfo: createPageInfo(false, null),
+          nodes: timelineNodes.slice(0, -1),
+          pageInfo: createPageInfo(true, "timeline-next"),
         },
       },
     };
-    const mock = createGraphqlHttpMock((operation) => {
+    const mock = createGraphqlHttpMock((operation, variables) => {
       if (operation === "GitHubItemDetailCapabilities") {
         return createCapabilitiesResponse("available");
       }
       if (operation === "GitHubItemDetail") {
         return baseResponse;
+      }
+      if (operation === "GitHubPullRequestTimelinePage") {
+        expect(getStringVariable(variables, "after")).toBe("timeline-next");
+        return {
+          item: {
+            __typename: "PullRequest",
+            id: "PR_target",
+            timelineItems: {
+              nodes: timelineNodes.slice(-1),
+              pageInfo: createPageInfo(false, null),
+            },
+          },
+        };
       }
       throw new Error(`未定義のGraphQL operationです。対象: ${operation}`);
     });
@@ -1188,7 +1234,18 @@ describe("Pull Request詳細収集", () => {
       "auto_merge_disabled",
     ]);
     expect(mock.requests[1]?.query).not.toMatch(/autoMergeRequest\s*\{\s*id\b/u);
-    expect(mock.requests).toHaveLength(2);
+    expect(mock.requests.map((request) => request.operation)).toEqual([
+      "GitHubItemDetailCapabilities",
+      "GitHubItemDetail",
+      "GitHubPullRequestTimelinePage",
+    ]);
+    expect(getFragmentDefinitionNames(getRequestQuery(mock.requests, 2))).toEqual([
+      "DetailActorFields",
+      "DetailAssigneeFields",
+      "DetailPullRequestTimelineFields",
+      "DetailReferencedItemFields",
+      "DetailReviewRequestTargetFields",
+    ]);
   });
 
   it("ready、running、failing、conflictを構成するmergeとcheck信号を保持する", async () => {
