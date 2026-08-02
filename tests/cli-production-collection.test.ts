@@ -3031,6 +3031,96 @@ describe("本番収集の接続", () => {
     });
   });
 
+  it("stale edgeの反対側端点が保持期限を超えたらrelationを履歴付きで除外する", async () => {
+    const freshRepository = createRepository(
+      "R_retired_endpoint",
+      "retired-endpoint",
+      FIRST_RUN_AT,
+    );
+    const staleRepository = createRepository("R_stale_edge", "stale-edge", FIRST_RUN_AT);
+    const freshFixture = createRepositoryFixture(freshRepository);
+    const staleFixture = createRepositoryFixture(staleRepository);
+    const firstObservedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const retiredEndpoint = createIssueItem({
+      repository: requirePublicRepository(freshRepository),
+      number: 1,
+      fingerprint: "retired-endpoint",
+      updatedAt: firstObservedAt,
+      observedAt: firstObservedAt,
+      state: Object.freeze({
+        state: "closed",
+        closedAt: firstObservedAt,
+      }),
+    });
+    const staleItem = createIssueItem({
+      repository: requirePublicRepository(staleRepository),
+      number: 1,
+      fingerprint: "stale-edge",
+      updatedAt: firstObservedAt,
+      observedAt: firstObservedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    freshFixture.individualItems.set(retiredEndpoint.nodeId, retiredEndpoint);
+    staleFixture.openItems = [staleItem];
+    setIssueDetails(freshFixture, [retiredEndpoint], firstObservedAt);
+    setIssueDetails(staleFixture, [staleItem], firstObservedAt);
+    staleFixture.details.set(
+      staleItem.nodeId,
+      createIssueDetail({
+        item: staleItem,
+        body: "本文",
+        observedAt: firstObservedAt,
+        nativeDependencies: Object.freeze([createNativeBlocker(staleItem, retiredEndpoint)]),
+        duplicateComments: false,
+      }),
+    );
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 1,
+      aiEnabled: false,
+    });
+    const harness = createCollectionHarness({
+      repositories: [freshFixture, staleFixture],
+      config,
+    });
+
+    expect((await harness.runDaily(FIRST_RUN_AT)).exitCode).toBe(0);
+    const firstFiles = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const firstSnapshotSource = firstFiles.get("state/snapshot.json");
+    if (firstSnapshotSource == null) {
+      throw new TypeError("端点保持期限切れ前のsnapshotがありません");
+    }
+    const firstSnapshot = parseStateSnapshot(new TextDecoder().decode(firstSnapshotSource));
+    const relation = firstSnapshot.relations.find(
+      (candidate) =>
+        candidate.fromNodeId === retiredEndpoint.nodeId &&
+        candidate.toNodeId === staleItem.nodeId &&
+        candidate.active,
+    );
+    if (relation == null) {
+      throw new TypeError("端点保持期限切れ前のactive relationがありません");
+    }
+
+    staleFixture.enumerationFailsWith503 = true;
+    const result = await harness.runDaily(THIRD_RUN_AT);
+    const files = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const snapshotSource = files.get("state/snapshot.json");
+    const historySource = files.get("state/history/2026-08-04.jsonl");
+    if (snapshotSource == null || historySource == null) {
+      throw new TypeError("端点保持期限切れ後のstateがありません");
+    }
+    const snapshot = parseStateSnapshot(new TextDecoder().decode(snapshotSource));
+    const historyRecords = parseStateHistoryRecords(new TextDecoder().decode(historySource));
+
+    expect(result.exitCode).toBe(0);
+    expect(snapshot.items.map((item) => item.nodeId)).toEqual([staleItem.nodeId]);
+    expect(snapshot.relations).toEqual([]);
+    expect(historyRecords.flatMap((record) => record.events)).toContainEqual({
+      kind: "edge_removed",
+      relationId: relation.id,
+    });
+  });
+
   it("open列挙にないclosed項目を明示includeから個別取得する", async () => {
     const repository = createRepository("R_explicit", "explicit", FIRST_RUN_AT);
     const publicRepository = requirePublicRepository(repository);
@@ -3126,6 +3216,83 @@ describe("本番収集の接続", () => {
     expect((await harness.runDry(THIRD_RUN_AT)).exitCode).toBe(0);
     expect(harness.individualCalls).toHaveLength(0);
     expect(requireDryRunSnapshot(harness.artifacts).items).toHaveLength(0);
+  });
+
+  it("保持期間を超えて追跡から外れた項目を端点に持つrelationもsnapshotから外す", async () => {
+    const repository = createRepository("R_retired_relation", "retired-relation", FIRST_RUN_AT);
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const firstObservedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const tracked = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "tracked-v1",
+      updatedAt: firstObservedAt,
+      observedAt: firstObservedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const retiredEndpoint = createIssueItem({
+      repository: publicRepository,
+      number: 2,
+      fingerprint: "retired-endpoint",
+      updatedAt: firstObservedAt,
+      observedAt: firstObservedAt,
+      state: Object.freeze({
+        state: "closed",
+        closedAt: firstObservedAt,
+      }),
+    });
+    fixture.openItems = [tracked];
+    fixture.individualItems.set(retiredEndpoint.nodeId, retiredEndpoint);
+    setIssueDetails(fixture, [tracked, retiredEndpoint], firstObservedAt);
+    fixture.details.set(
+      tracked.nodeId,
+      createIssueDetail({
+        item: tracked,
+        body: "本文",
+        observedAt: firstObservedAt,
+        nativeDependencies: Object.freeze([createNativeBlocker(tracked, retiredEndpoint)]),
+        duplicateComments: false,
+      }),
+    );
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 1,
+      aiEnabled: false,
+    });
+    const harness = createCollectionHarness({ repositories: [fixture], config });
+
+    expect((await harness.runDaily(FIRST_RUN_AT)).exitCode).toBe(0);
+    const firstFiles = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const firstSnapshotSource = firstFiles.get("state/snapshot.json");
+    if (firstSnapshotSource == null) {
+      throw new TypeError("relation端点退避前のsnapshotがありません");
+    }
+    const firstSnapshot = parseStateSnapshot(new TextDecoder().decode(firstSnapshotSource));
+    expect(firstSnapshot.items.map((item) => item.nodeId)).toEqual(
+      expect.arrayContaining([tracked.nodeId, retiredEndpoint.nodeId]),
+    );
+    expect(firstSnapshot.relations).toHaveLength(1);
+
+    const thirdObservedAt = createUtcIsoDateTime(THIRD_RUN_AT);
+    const updatedTracked = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "tracked-v2",
+      updatedAt: thirdObservedAt,
+      observedAt: thirdObservedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    fixture.openItems = [updatedTracked];
+    setIssueDetails(fixture, [updatedTracked], thirdObservedAt);
+    harness.artifacts.length = 0;
+
+    const result = await harness.runDry(THIRD_RUN_AT);
+    expect(result.exitCode).toBe(0);
+    const snapshot = requireDryRunSnapshot(harness.artifacts);
+    expect(snapshot.items.map((item) => item.nodeId)).toEqual([updatedTracked.nodeId]);
+    expect(snapshot.externalReferences).toEqual([]);
+    expect(snapshot.relations).toEqual([]);
   });
 
   it("未更新項目をrun時刻でwatchへ進めて通知候補にする", async () => {

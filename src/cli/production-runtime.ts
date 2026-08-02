@@ -3031,6 +3031,21 @@ function preserveStaleGraphEdges(
   return Object.freeze(result);
 }
 
+function retainGraphEdgesForAvailableNodes(
+  edges: readonly ReconciledGraphEdge[],
+  availableNodeIds: ReadonlySet<string>,
+): readonly ReconciledGraphEdge[] {
+  const retainedEdges: ReconciledGraphEdge[] = [];
+  for (const edge of edges) {
+    const endpointsAvailable =
+      availableNodeIds.has(edge.fromNodeId) && availableNodeIds.has(edge.toNodeId);
+    if (endpointsAvailable) {
+      retainedEdges.push(edge);
+    }
+  }
+  return Object.freeze(retainedEdges);
+}
+
 function reconcileCurrentGraph(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
@@ -3060,8 +3075,11 @@ function reconcileCurrentGraph(
     minimumInferredConfidence: configuration.config.ai.confidence.medium,
     reconciledAt: invocation.startedAt,
   });
-  const edges = preserveStaleGraphEdges(collection, previous?.edges ?? [], reconciled.edges);
-  const referencedNodeIds = new Set(edges.flatMap((edge) => [edge.fromNodeId, edge.toNodeId]));
+  const reconciledEdges = preserveStaleGraphEdges(
+    collection,
+    previous?.edges ?? [],
+    reconciled.edges,
+  );
   const externalReferencesByNodeId = new Map(
     [
       ...(previousSnapshot(state)?.externalReferences ?? []),
@@ -3087,6 +3105,12 @@ function reconcileCurrentGraph(
       ),
     ].map((reference) => [reference.nodeId, reference]),
   );
+  const availableNodeIds = new Set<string>([
+    ...reduction.items.map((item) => item.nodeId),
+    ...externalReferencesByNodeId.keys(),
+  ]);
+  const edges = retainGraphEdgesForAvailableNodes(reconciledEdges, availableNodeIds);
+  const referencedNodeIds = new Set(edges.flatMap((edge) => [edge.fromNodeId, edge.toNodeId]));
   const externalReferences = Object.freeze(
     [...externalReferencesByNodeId.values()]
       .filter((reference) => referencedNodeIds.has(reference.nodeId))
