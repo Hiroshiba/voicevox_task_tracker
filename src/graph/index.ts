@@ -1,6 +1,7 @@
 export { analyzeGraph } from "./analyze-graph.js";
 export { RelationReferenceConflictError } from "./errors.js";
 export { extractRelationCandidates } from "./extract-relation-candidates.js";
+export { normalizeRelationCandidates } from "./normalize-relation-candidates.js";
 export { deriveBlockedBy, reconcileGraph } from "./reconcile-graph.js";
 export { buildRelationCandidateId } from "./relation-candidate-id.js";
 export { planRelationExpansion } from "./relation-expansion.js";

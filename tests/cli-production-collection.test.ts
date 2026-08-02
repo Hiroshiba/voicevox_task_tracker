@@ -455,6 +455,19 @@ function createReferencedItem(item: EnumeratedGitHubItem): GitHubReferencedItem 
   });
 }
 
+function createNativeBlocking(
+  blocker: EnumeratedGitHubItem,
+  blocked: EnumeratedGitHubItem,
+): GitHubNativeDependency {
+  return Object.freeze({
+    sourceId: buildSourceId("github_native_dependency", `${blocker.nodeId}:${blocked.nodeId}`),
+    authoritative: true,
+    provenance: "native",
+    direction: "blocking",
+    relatedItem: createReferencedItem(blocked),
+  });
+}
+
 function createInboundCrossReference(
   target: EnumeratedGitHubItem,
   source: EnumeratedGitHubItem,
@@ -1190,6 +1203,83 @@ describe("本番収集の接続", () => {
       available: false,
       degraded: false,
     });
+  });
+
+  it("両側detailの同じnative依存を1候補へ統合してIssue状態を判定する", async () => {
+    const repository = createRepository(
+      "R_bidirectional_native_dependency",
+      "bidirectional-native-dependency",
+      FIRST_RUN_AT,
+    );
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const blocked = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "bidirectional-native-blocked",
+      updatedAt: observedAt,
+      observedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const blocker = createIssueItem({
+      repository: publicRepository,
+      number: 2,
+      fingerprint: "bidirectional-native-blocker",
+      updatedAt: observedAt,
+      observedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const blockedBy = createNativeBlocker(blocked, blocker);
+    const blocking = createNativeBlocking(blocker, blocked);
+    fixture.openItems = [blocked, blocker];
+    fixture.details.set(
+      blocked.nodeId,
+      createIssueDetail({
+        item: blocked,
+        body: "blocker側にも同じnative依存があります",
+        observedAt,
+        nativeDependencies: Object.freeze([blockedBy]),
+        duplicateComments: false,
+      }),
+    );
+    fixture.details.set(
+      blocker.nodeId,
+      createIssueDetail({
+        item: blocker,
+        body: "blocked側にも同じnative依存があります",
+        observedAt,
+        nativeDependencies: Object.freeze([blocking]),
+        duplicateComments: false,
+      }),
+    );
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: false,
+    });
+    const harness = createCollectionHarness({ repositories: [fixture], config });
+
+    const result = await harness.runDry(FIRST_RUN_AT);
+    const snapshot = requireDryRunSnapshot(harness.artifacts);
+    const trackedItem = snapshot.items.find((item) => item.nodeId === blocked.nodeId);
+    const relations = snapshot.relations.filter(
+      (relation) => relation.fromNodeId === blocker.nodeId && relation.toNodeId === blocked.nodeId,
+    );
+    const sourceIds = [blockedBy.sourceId, blocking.sourceId].sort();
+
+    expect(result.exitCode).toBe(0);
+    expect(trackedItem).toMatchObject({
+      status: "blocked",
+      waitingOn: [
+        {
+          candidateId: blocker.nodeId,
+          sourceIds,
+        },
+      ],
+    });
+    expect(relations).toHaveLength(1);
+    expect(relations[0]?.evidence.map((evidence) => evidence.sourceId).sort()).toEqual(sourceIds);
   });
 
   it("native edgeに反するAI判定を維持したedgeの矛盾として永続化する", async () => {

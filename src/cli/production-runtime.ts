@@ -119,6 +119,7 @@ import {
 import {
   analyzeGraph,
   extractRelationCandidates,
+  normalizeRelationCandidates,
   planRelationExpansion,
   reconcileGraph,
   type AnalyzeGraphResult,
@@ -935,7 +936,7 @@ function extractAllRelationCandidates(
       }),
     );
   }
-  return Object.freeze(candidates);
+  return normalizeRelationCandidates(candidates);
 }
 
 function relationNodes(

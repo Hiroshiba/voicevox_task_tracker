@@ -8,12 +8,12 @@ import {
 } from "../domain/index.js";
 import { assertNonNullable, UnreachableError } from "../util/index.js";
 import { RelationReferenceConflictError, type RelationReferenceMismatch } from "./errors.js";
+import { normalizeRelationCandidates } from "./normalize-relation-candidates.js";
 import { buildRelationCandidateId } from "./relation-candidate-id.js";
 import {
   type CandidateBlocksRelation,
   type CandidateImplementsRelation,
   type CandidateParentRelation,
-  type CandidateRelation,
   type CandidateUnclassifiedRelation,
   type ChecklistRelationCandidate,
   type ClosingKeywordRelationCandidate,
@@ -68,11 +68,6 @@ type CandidateTemplate =
   | Omit<ClosingKeywordRelationCandidate, "sourceIds">
   | Omit<ChecklistRelationCandidate, "sourceIds">
   | Omit<CrossReferenceRelationCandidate, "sourceIds">;
-
-type CandidateDraft = Readonly<{
-  template: CandidateTemplate;
-  sourceIds: Set<SourceId>;
-}>;
 
 function parseCanonicalGitHubItemUrl(value: string): ParsedGitHubItemUrl | null {
   const match = CANONICAL_GITHUB_ITEM_URL_PATTERN.exec(value);
@@ -498,32 +493,6 @@ function isClosingReference(value: string, reference: MarkdownReference): boolea
   return CLOSING_KEYWORD_PATTERN.test(value.slice(prefixStart, reference.start));
 }
 
-function relationNodeIds(relation: CandidateRelation): readonly string[] {
-  switch (relation.type) {
-    case "blocks":
-      return [relation.blocker.nodeId, relation.blocked.nodeId];
-    case "parent_of":
-      return [relation.parent.nodeId, relation.subtask.nodeId];
-    case "implements":
-      return [relation.implementation.nodeId, relation.target.nodeId];
-    case "unclassified":
-      return [relation.referencing.nodeId, relation.referenced.nodeId];
-  }
-}
-
-function sameCandidateTemplate(left: CandidateTemplate, right: CandidateTemplate): boolean {
-  const leftIds = relationNodeIds(left.relation);
-  const rightIds = relationNodeIds(right.relation);
-  return (
-    left.id === right.id &&
-    left.authority === right.authority &&
-    left.provenance === right.provenance &&
-    left.relation.type === right.relation.type &&
-    leftIds.length === rightIds.length &&
-    leftIds.every((nodeId, index) => nodeId === rightIds[index])
-  );
-}
-
 function replaceCandidateSourceIds(
   template: CandidateTemplate,
   sourceIds: readonly [SourceId, ...SourceId[]],
@@ -543,38 +512,14 @@ function replaceCandidateSourceIds(
 }
 
 class CandidateAccumulator {
-  readonly #drafts = new Map<string, CandidateDraft>();
+  readonly #candidates: RelationCandidate[] = [];
 
   public add(template: CandidateTemplate, sourceId: SourceId): void {
-    const existing = this.#drafts.get(template.id);
-    if (existing == null) {
-      this.#drafts.set(
-        template.id,
-        Object.freeze({
-          template,
-          sourceIds: new Set([sourceId]),
-        }),
-      );
-      return;
-    }
-    if (!sameCandidateTemplate(existing.template, template)) {
-      throw new TypeError("同じ候補IDに異なる関係候補が生成されました");
-    }
-    existing.sourceIds.add(sourceId);
+    this.#candidates.push(replaceCandidateSourceIds(template, Object.freeze([sourceId])));
   }
 
   public values(): readonly RelationCandidate[] {
-    const candidates = [...this.#drafts.values()].map((draft) => {
-      const sortedSourceIds = [...draft.sourceIds].sort();
-      const firstSourceId = sortedSourceIds[0];
-      assertNonNullable(firstSourceId, "関係候補には1件以上のsource IDが必要です");
-      const sourceIds = Object.freeze([
-        firstSourceId,
-        ...sortedSourceIds.slice(1),
-      ]) satisfies readonly [SourceId, ...SourceId[]];
-      return replaceCandidateSourceIds(draft.template, sourceIds);
-    });
-    return Object.freeze(candidates.sort((left, right) => left.id.localeCompare(right.id)));
+    return normalizeRelationCandidates(this.#candidates);
   }
 }
 
