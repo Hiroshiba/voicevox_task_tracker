@@ -1282,6 +1282,177 @@ describe("本番収集の接続", () => {
     expect(relations[0]?.evidence.map((evidence) => evidence.sourceId).sort()).toEqual(sourceIds);
   });
 
+  it("同じ2 node間の複数active blocks edgeを統合してIssue状態を判定する", async () => {
+    const repository = createRepository(
+      "R_multiple_block_edges",
+      "multiple-block-edges",
+      FIRST_RUN_AT,
+    );
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const firstObservedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const blocked = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "multiple-block-edges-first",
+      updatedAt: firstObservedAt,
+      observedAt: firstObservedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const otherBlocker = createIssueItem({
+      repository: publicRepository,
+      number: 2,
+      fingerprint: "multiple-block-edges-other-blocker",
+      updatedAt: firstObservedAt,
+      observedAt: firstObservedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const blocker = createIssueItem({
+      repository: publicRepository,
+      number: 3,
+      fingerprint: "multiple-block-edges-blocker",
+      updatedAt: firstObservedAt,
+      observedAt: firstObservedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const body = `推定依存候補は ${blocker.url} です`;
+    fixture.openItems = [blocked, otherBlocker, blocker];
+    setIssueDetails(fixture, [blocked, otherBlocker, blocker], firstObservedAt);
+    fixture.details.set(
+      blocked.nodeId,
+      createIssueDetail({
+        item: blocked,
+        body,
+        observedAt: firstObservedAt,
+        nativeDependencies: Object.freeze([]),
+        duplicateComments: false,
+      }),
+    );
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: true,
+    });
+    const harness = createCollectionHarness({
+      repositories: [fixture],
+      config,
+      executeCodexAnalysis: (input) => {
+        const source = input.sources[0];
+        if (source == null) {
+          throw new TypeError("複数blocks edge fixtureのsourceがありません");
+        }
+        return Promise.resolve(
+          createCodexOutput(input, {
+            status: "in_progress",
+            waitingOn: {
+              candidateId: input.item.authorCandidateId,
+              kind: "user",
+              role: "assignee",
+              sourceId: source.id,
+            },
+            latestMeaningfulSourceId: null,
+            confidence: 0.7,
+            relationVerdict: "current_is_blocked_by_target",
+            notification: {
+              recommended: false,
+              reasonCode: "none",
+              reasonSummary: "通知しません",
+            },
+          }),
+        );
+      },
+    });
+
+    expect((await harness.runDaily(FIRST_RUN_AT)).exitCode).toBe(0);
+    const firstFiles = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const firstSnapshotSource = firstFiles.get("state/snapshot.json");
+    if (firstSnapshotSource == null) {
+      throw new TypeError("推定blocks edge作成後のsnapshotがありません");
+    }
+    const firstSnapshot = parseStateSnapshot(new TextDecoder().decode(firstSnapshotSource));
+    expect(firstSnapshot.items.find((item) => item.nodeId === blocked.nodeId)?.status).not.toBe(
+      "blocked",
+    );
+
+    const secondObservedAt = createUtcIsoDateTime(SECOND_RUN_AT);
+    const changedBlocked = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "multiple-block-edges-second",
+      updatedAt: secondObservedAt,
+      observedAt: secondObservedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const nativeDependency = createNativeBlocker(changedBlocked, blocker);
+    const otherNativeDependency = createNativeBlocker(changedBlocked, otherBlocker);
+    fixture.openItems = [changedBlocked, otherBlocker, blocker];
+    fixture.details.set(
+      changedBlocked.nodeId,
+      createIssueDetail({
+        item: changedBlocked,
+        body,
+        observedAt: secondObservedAt,
+        nativeDependencies: Object.freeze([nativeDependency, otherNativeDependency]),
+        duplicateComments: false,
+      }),
+    );
+    harness.artifacts.length = 0;
+
+    const result = await harness.runDry(SECOND_RUN_AT);
+    const snapshot = requireDryRunSnapshot(harness.artifacts);
+    const trackedItem = snapshot.items.find((item) => item.nodeId === blocked.nodeId);
+    const relations = snapshot.relations
+      .filter(
+        (relation) =>
+          relation.active &&
+          relation.type === "blocks" &&
+          relation.fromNodeId === blocker.nodeId &&
+          relation.toNodeId === blocked.nodeId,
+      )
+      .sort((left, right) => left.provenance.localeCompare(right.provenance));
+    const sourceIds = [
+      buildSourceId("github_item_body", blocked.nodeId),
+      buildSourceId("github_item_detail", blocked.nodeId),
+      nativeDependency.sourceId,
+    ].sort();
+
+    expect(result.exitCode).toBe(0);
+    expect(relations).toHaveLength(2);
+    expect(relations).toMatchObject([
+      {
+        provenance: "explicit_text",
+        confidence: 0.7,
+        firstSeenAt: FIRST_RUN_AT,
+      },
+      {
+        provenance: "native",
+        confidence: 1,
+        firstSeenAt: SECOND_RUN_AT,
+      },
+    ]);
+    expect(trackedItem).toMatchObject({
+      status: "blocked",
+      statusSince: FIRST_RUN_AT,
+      primaryWaitingOn: {
+        index: 0,
+      },
+      waitingOn: [
+        {
+          candidateId: blocker.nodeId,
+          role: "dependency",
+          confidence: 1,
+          sourceIds,
+        },
+        {
+          candidateId: otherBlocker.nodeId,
+          role: "dependency",
+          confidence: 1,
+          sourceIds: [otherNativeDependency.sourceId],
+        },
+      ],
+    });
+  });
+
   it("native edgeに反するAI判定を維持したedgeの矛盾として永続化する", async () => {
     const repository = createRepository(
       "R_native_contradiction",

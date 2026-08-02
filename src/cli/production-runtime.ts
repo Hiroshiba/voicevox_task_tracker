@@ -2319,22 +2319,52 @@ function graphBlockers(
   graph: GraphResult,
   nodeId: GitHubNodeId,
 ): readonly IssueBlocker[] {
-  return Object.freeze(
-    graph.edges
-      .filter((edge) => edge.active && edge.type === "blocks" && edge.toNodeId === nodeId)
-      .map((edge) =>
+  const blockersByCandidateId = new Map<GraphNodeId, IssueBlocker>();
+  for (const edge of graph.edges) {
+    if (!edge.active || edge.type !== "blocks" || edge.toNodeId !== nodeId) {
+      continue;
+    }
+    const edgeSourceIds = nonEmptySourceIds(
+      edge.evidence.map((evidence) => evidence.sourceId),
+      `blocker edge ${edge.id}`,
+    );
+    const existing = blockersByCandidateId.get(edge.fromNodeId);
+    if (existing == null) {
+      blockersByCandidateId.set(
+        edge.fromNodeId,
         Object.freeze({
           candidateId: edge.fromNodeId,
           state: graphNodeState(state, deterministicAnalysis, graph, edge.fromNodeId),
           authority: edge.authoritative ? "authoritative" : "inferred",
           confidence: edge.confidence,
-          sourceIds: nonEmptySourceIds(
-            edge.evidence.map((evidence) => evidence.sourceId),
-            `blocker edge ${edge.id}`,
-          ),
+          sourceIds: edgeSourceIds,
           becameBlockingAt: edge.firstSeenAt,
         }),
-      ),
+      );
+      continue;
+    }
+    const authority =
+      existing.authority === "authoritative" || edge.authoritative ? "authoritative" : "inferred";
+    const becameBlockingAt =
+      existing.becameBlockingAt < edge.firstSeenAt ? existing.becameBlockingAt : edge.firstSeenAt;
+    blockersByCandidateId.set(
+      edge.fromNodeId,
+      Object.freeze({
+        ...existing,
+        authority,
+        confidence: Math.max(existing.confidence, edge.confidence),
+        sourceIds: nonEmptySourceIds(
+          [...existing.sourceIds, ...edgeSourceIds],
+          `blocker ${edge.fromNodeId}`,
+        ),
+        becameBlockingAt,
+      }),
+    );
+  }
+  return Object.freeze(
+    [...blockersByCandidateId.values()].sort((left, right) =>
+      left.candidateId.localeCompare(right.candidateId),
+    ),
   );
 }
 
