@@ -352,13 +352,17 @@ function createComment(index: number): unknown {
   };
 }
 
-function createReferencedIssue(nodeId: string, number: number, state: "OPEN" | "CLOSED"): unknown {
+function createReferencedIssue(
+  nodeId: string,
+  number: number,
+  issueState: "OPEN" | "CLOSED",
+): unknown {
   return {
     __typename: "Issue",
     id: nodeId,
     number,
     url: `https://github.com/VOICEVOX/example/issues/${number.toString()}`,
-    state,
+    issueState,
     repository: {
       id: "R_example",
       name: "example",
@@ -698,6 +702,8 @@ describe("Issue詳細収集", () => {
     expect(mock.requests[1]?.query).toContain("comments(first: 100)");
     expect(mock.requests[1]?.query).toContain("timelineItems(first: 100");
     expect(mock.requests[1]?.query).toContain("blockedBy(first: 100)");
+    expect(mock.requests[1]?.query).toContain("issueState: state");
+    expect(mock.requests[1]?.query).toContain("pullRequestState: state");
     expect(getFragmentDefinitionNames(getRequestQuery(mock.requests, 1))).toEqual([
       "DetailActorFields",
       "DetailAssigneeFields",

@@ -113,7 +113,7 @@ const DETAIL_REFERENCED_ITEM_FIELDS_FRAGMENT = `
       id
       number
       url
-      state
+      issueState: state
       repository {
         id
         name
@@ -129,7 +129,7 @@ const DETAIL_REFERENCED_ITEM_FIELDS_FRAGMENT = `
       id
       number
       url
-      state
+      pullRequestState: state
       repository {
         id
         name
@@ -1152,7 +1152,7 @@ const referencedItemSchema = z.discriminatedUnion("__typename", [
     id: opaqueIdSchema,
     number: z.number().int().positive(),
     url: githubItemUrlSchema,
-    state: z.enum(["OPEN", "CLOSED"]),
+    issueState: z.enum(["OPEN", "CLOSED"]),
     repository: referencedRepositorySchema,
   }),
   z.object({
@@ -1160,7 +1160,7 @@ const referencedItemSchema = z.discriminatedUnion("__typename", [
     id: opaqueIdSchema,
     number: z.number().int().positive(),
     url: githubItemUrlSchema,
-    state: z.enum(["OPEN", "CLOSED", "MERGED"]),
+    pullRequestState: z.enum(["OPEN", "CLOSED", "MERGED"]),
     repository: referencedRepositorySchema,
   }),
 ]);
@@ -1691,7 +1691,16 @@ function normalizeReferencedItem(item: RawReferencedItem): GitHubReferencedItem 
       cause: new TypeError("URLとrepository metadataが一致しません"),
     });
   }
-  const state = item.state === "OPEN" ? "open" : item.state === "MERGED" ? "merged" : "closed";
+  const state =
+    item.__typename === "Issue"
+      ? item.issueState === "OPEN"
+        ? "open"
+        : "closed"
+      : item.pullRequestState === "OPEN"
+        ? "open"
+        : item.pullRequestState === "MERGED"
+          ? "merged"
+          : "closed";
   return Object.freeze({
     sourceId: buildSourceId("github_item", nodeId),
     nodeId,
