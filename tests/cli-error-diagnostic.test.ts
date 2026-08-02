@@ -56,6 +56,73 @@ describe("safeErrorDiagnostic", () => {
     );
   });
 
+  it("自リポジトリの発生位置を上から3件まで連結して出す", () => {
+    const error = new TypeError("fixture");
+    error.stack = [
+      "TypeError: fixture",
+      "    at assertNonNullable (file:///srv/voicevox_task_tracker/dist/util/assert-non-nullable.js:4:11)",
+      "    at collectIncremental (file:///srv/voicevox_task_tracker/dist/cli/production-runtime.js:4180:17)",
+      "    at runIncremental (file:///srv/voicevox_task_tracker/dist/cli/production-runtime.js:4310:9)",
+      "    at runTracker (file:///srv/voicevox_task_tracker/dist/cli/tracker-run.js:82:5)",
+    ].join("\n");
+
+    expect(safeErrorDiagnostic("incremental_collection", error)).toBe(
+      "stage=incremental_collection errorType=TypeError errorSite0=assert-non-nullable.js:4<-production-runtime.js:4180<-production-runtime.js:4310",
+    );
+  });
+
+  it("自リポジトリの発生位置が1件なら連結記号を付けない", () => {
+    const error = new TypeError("fixture");
+    error.stack = [
+      "TypeError: fixture",
+      "    at collectIncremental (file:///srv/voicevox_task_tracker/src/cli/production-runtime.ts:4180:17)",
+    ].join("\n");
+
+    const diagnostic = safeErrorDiagnostic("incremental_collection", error);
+
+    expect(diagnostic).toBe(
+      "stage=incremental_collection errorType=TypeError errorSite0=production-runtime.ts:4180",
+    );
+    expect(diagnostic).not.toContain("<-");
+  });
+
+  it("node_modulesとnode:internalを除き自リポジトリの発生位置だけを連結して出す", () => {
+    const error = new TypeError("fixture");
+    error.stack = [
+      "TypeError: fixture",
+      "    at collectIncremental (file:///srv/voicevox_task_tracker/dist/cli/production-runtime.js:4180:17)",
+      "    at dependency (file:///srv/voicevox_task_tracker/node_modules/example/dist/index.js:12:4)",
+      "    at processTicksAndRejections (node:internal/process/task_queues:105:5)",
+      "    at buildGraph (file:///srv/voicevox_task_tracker/src/graph/task-graph.ts:41:9)",
+      "    at otherDependency (file:///srv/voicevox_task_tracker/node_modules/other/src/index.js:27:6)",
+      "    at detectProgress (file:///srv/voicevox_task_tracker/src/domain/meaningful-progress.ts:182:23)",
+    ].join("\n");
+
+    expect(safeErrorDiagnostic("incremental_collection", error)).toBe(
+      "stage=incremental_collection errorType=TypeError errorSite0=production-runtime.js:4180<-task-graph.ts:41<-meaningful-progress.ts:182",
+    );
+  });
+
+  it("連結した発生位置へディレクトリパスやユーザー名を出さない", () => {
+    const userName = "private-user-canary";
+    const directoryName = "secret-directory-canary";
+    const error = new Error("fixture");
+    error.stack = [
+      "Error: fixture",
+      `    at collect (file:///home/${userName}/${directoryName}/src/cli/collector.ts:73:9)`,
+      `    at run (file:///home/${userName}/${directoryName}/dist/cli/production-runtime.js:4180:17)`,
+      `    at build (file:///home/${userName}/${directoryName}/src/graph/task-graph.ts:41:9)`,
+    ].join("\n");
+
+    const diagnostic = safeErrorDiagnostic("incremental_collection", error);
+
+    expect(diagnostic).toBe(
+      "stage=incremental_collection errorType=Error errorSite0=collector.ts:73<-production-runtime.js:4180<-task-graph.ts:41",
+    );
+    expect(diagnostic).not.toContain(userName);
+    expect(diagnostic).not.toContain(directoryName);
+  });
+
   it("cause連鎖の順に各エラーの発生位置を出す", () => {
     const cause = new RangeError("cause");
     cause.stack = [

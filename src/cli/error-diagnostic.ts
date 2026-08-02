@@ -13,6 +13,7 @@ import {
 import { type RunStage } from "./run-report.js";
 
 const ERROR_CAUSE_DEPTH_LIMIT = 5;
+const ERROR_SITE_FRAME_LIMIT = 3;
 const GRAPHQL_ERROR_DETAIL_LIMIT = 3;
 const ZOD_ISSUE_DETAIL_LIMIT = 5;
 const DIAGNOSTIC_LENGTH_LIMIT = 1000;
@@ -107,10 +108,11 @@ function extractStackFrameLocation(frame: string): string | undefined {
   return trimmedFrame.slice(locationStart, locationEnd);
 }
 
-function extractErrorSite(error: Error): string | undefined {
+function extractErrorSites(error: Error): readonly string[] {
   if (error.stack == null) {
-    return undefined;
+    return [];
   }
+  const errorSites: string[] = [];
   for (const frame of error.stack.split("\n")) {
     const location = extractStackFrameLocation(frame);
     if (
@@ -132,17 +134,20 @@ function extractErrorSite(error: Error): string | undefined {
     }
     const errorSite = `${fileName}:${lineNumber}`;
     if (ERROR_SITE_PATTERN.test(errorSite)) {
-      return errorSite;
+      errorSites.push(errorSite);
+      if (errorSites.length >= ERROR_SITE_FRAME_LIMIT) {
+        return errorSites;
+      }
     }
   }
-  return undefined;
+  return errorSites;
 }
 
 function appendErrorSites(fields: DiagnosticField[], chain: readonly Error[]): void {
   for (const [index, error] of chain.entries()) {
-    const errorSite = extractErrorSite(error);
-    if (errorSite != null) {
-      fields.push({ key: `errorSite${index.toString()}`, value: errorSite });
+    const errorSites = extractErrorSites(error);
+    if (errorSites.length > 0) {
+      fields.push({ key: `errorSite${index.toString()}`, value: errorSites.join("<-") });
     }
   }
 }
