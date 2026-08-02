@@ -233,6 +233,37 @@ function createPullRequestItem(
     ...issue,
     type: "pull_request",
     draft: false,
+    mergeStatus: "not_merged",
+    url: `https://github.com/${options.repository.owner}/${options.repository.name}/pull/${options.number.toString()}`,
+  } satisfies EnumeratedGitHubItem);
+}
+
+function createMergedPullRequestItem(
+  options: Readonly<{
+    repository: PublicRepository;
+    number: number;
+    fingerprint: string;
+    mergedAt: UtcIsoDateTime;
+    observedAt: UtcIsoDateTime;
+  }>,
+): EnumeratedGitHubItem {
+  const issue = createIssueItem({
+    repository: options.repository,
+    number: options.number,
+    fingerprint: options.fingerprint,
+    updatedAt: options.mergedAt,
+    observedAt: options.observedAt,
+    state: Object.freeze({
+      state: "closed",
+      closedAt: options.mergedAt,
+    }),
+  });
+  return Object.freeze({
+    ...issue,
+    type: "pull_request",
+    draft: false,
+    mergeStatus: "merged",
+    mergedAt: options.mergedAt,
     url: `https://github.com/${options.repository.owner}/${options.repository.name}/pull/${options.number.toString()}`,
   } satisfies EnumeratedGitHubItem);
 }
@@ -420,7 +451,7 @@ function createReferencedItem(item: EnumeratedGitHubItem): GitHubReferencedItem 
     type: item.type,
     number: item.number,
     url: item.url,
-    state: item.state,
+    state: item.type === "pull_request" && item.mergeStatus === "merged" ? "merged" : item.state,
   });
 }
 
@@ -1785,6 +1816,79 @@ describe("本番収集の接続", () => {
     expect(requireCollectionItem(snapshot, source.nodeId)).toMatchObject({
       nodeId: source.nodeId,
     });
+  });
+
+  it("merge済みPull Requestが列挙結果とcross-reference元に現れても関係候補を抽出する", async () => {
+    const repository = createRepository(
+      "R_merged_inbound_reference",
+      "merged-inbound-reference",
+      FIRST_RUN_AT,
+    );
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const tracked = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "tracked-merged-inbound",
+      updatedAt: observedAt,
+      observedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const source = createMergedPullRequestItem({
+      repository: publicRepository,
+      number: 2,
+      fingerprint: "merged-inbound-source",
+      mergedAt: observedAt,
+      observedAt,
+    });
+    const sourceDetail = createFailedCheckPullRequestDetail(source, observedAt);
+    fixture.openItems = [tracked];
+    fixture.individualItems.set(source.nodeId, source);
+    fixture.details.set(
+      tracked.nodeId,
+      createIssueDetailWithInboundCrossReferences(tracked, [source], observedAt),
+    );
+    fixture.details.set(
+      source.nodeId,
+      Object.freeze({
+        ...sourceDetail,
+        timeline: Object.freeze([
+          Object.freeze({
+            sourceId: buildSourceId("github_timeline_event", `ME_${source.nodeId}`),
+            nodeId: createGitHubNodeId(`ME_${source.nodeId}`),
+            sequence: 0,
+            occurredAt: observedAt,
+            actor: Object.freeze({
+              status: "unavailable",
+              reason: "github_did_not_return_actor",
+            }),
+            kind: "merged",
+          } satisfies GitHubTimelineEvent),
+        ]),
+        mergeState: Object.freeze({
+          ...sourceDetail.mergeState,
+          checks: Object.freeze({
+            status: "not_configured",
+          }),
+        }),
+      }),
+    );
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: false,
+    });
+    const harness = createCollectionHarness({ repositories: [fixture], config });
+
+    const result = await harness.runDry(FIRST_RUN_AT);
+    const snapshot = requireDryRunSnapshot(harness.artifacts);
+
+    expect(result.exitCode).toBe(0);
+    expect(harness.individualCalls).toEqual([[source.nodeId]]);
+    expect(snapshot.items.map((item) => item.nodeId)).toEqual(
+      expect.arrayContaining([tracked.nodeId, source.nodeId]),
+    );
   });
 
   it("後続detailで判明するnative chainを深度3まで取得して深度4を取得しない", async () => {

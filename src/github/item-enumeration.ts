@@ -11,6 +11,7 @@ import {
   type ObservedGitHubItemState,
   type UtcIsoDateTime,
 } from "../domain/index.js";
+import { assertNonNullable } from "../util/index.js";
 import { type GitHubApiAccountType } from "./account-types.js";
 import { type GitHubClient, type GitHubRestRequest } from "./client.js";
 import { GitHubPublicBoundaryViolationError, GitHubResponseValidationError } from "./errors.js";
@@ -98,7 +99,12 @@ const itemMetadataSchema = z
     labels: z.array(labelSchema),
     assignees: z.array(accountSchema),
     milestone: milestoneSchema.nullable(),
-    pull_request: z.object({}).loose().optional(),
+    pull_request: z
+      .object({
+        merged_at: utcIsoDateTimeSchema.nullable(),
+      })
+      .loose()
+      .optional(),
     closed_at: utcIsoDateTimeSchema.nullable(),
     created_at: utcIsoDateTimeSchema,
     updated_at: utcIsoDateTimeSchema,
@@ -219,6 +225,15 @@ type EnumeratedGitHubItemFields = Readonly<{
   observedAt: UtcIsoDateTime;
 }>;
 
+type EnumeratedGitHubPullRequestMerge =
+  | Readonly<{
+      mergeStatus: "not_merged";
+    }>
+  | Readonly<{
+      mergeStatus: "merged";
+      mergedAt: UtcIsoDateTime;
+    }>;
+
 /** REST issues endpointから正規化した本文を含まないIssueまたはPull Request。 */
 export type EnumeratedGitHubItem = EnumeratedGitHubItemFields &
   ObservedGitHubItemState &
@@ -227,10 +242,11 @@ export type EnumeratedGitHubItem = EnumeratedGitHubItemFields &
         type: "issue";
         draft: "not_applicable";
       }>
-    | Readonly<{
+    | (Readonly<{
         type: "pull_request";
         draft: boolean;
-      }>
+      }> &
+        EnumeratedGitHubPullRequestMerge)
   );
 
 export type EnumerateOpenGitHubItemsOptions = Readonly<{
@@ -390,38 +406,93 @@ function createItemFingerprint(
   value: Readonly<{
     nodeId: GitHubNodeId;
     repositoryId: PublicRepositoryId;
-    type: "issue" | "pull_request";
     title: string;
     bodyFingerprint: Sha256Fingerprint;
     author: GitHubItemAuthor;
     createdAt: UtcIsoDateTime;
     updatedAt: UtcIsoDateTime;
     state: ObservedGitHubItemState;
-    draft: boolean | "not_applicable";
     assignees: readonly GitHubItemAccount[];
     labels: readonly string[];
     milestone: GitHubItemMilestone | null;
-  }>,
+  }> &
+    (
+      | Readonly<{
+          type: "issue";
+          draft: "not_applicable";
+        }>
+      | (Readonly<{
+          type: "pull_request";
+          draft: boolean;
+        }> &
+          EnumeratedGitHubPullRequestMerge)
+    ),
 ): Sha256Fingerprint {
+  const fingerprintBase = {
+    nodeId: value.nodeId,
+    repositoryId: value.repositoryId,
+    type: value.type,
+    title: value.title,
+    bodyFingerprint: value.bodyFingerprint,
+    author: value.author,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    state: value.state.state,
+    stateReason: value.state.stateReason,
+    closedAt: value.state.closedAt,
+    draft: value.draft,
+  };
+  if (value.type === "issue") {
+    return createSha256Fingerprint(
+      JSON.stringify({
+        ...fingerprintBase,
+        assignees: value.assignees,
+        labels: value.labels,
+        milestone: value.milestone,
+      }),
+    );
+  }
+  if (value.mergeStatus === "merged") {
+    return createSha256Fingerprint(
+      JSON.stringify({
+        ...fingerprintBase,
+        mergeStatus: value.mergeStatus,
+        mergedAt: value.mergedAt,
+        assignees: value.assignees,
+        labels: value.labels,
+        milestone: value.milestone,
+      }),
+    );
+  }
   return createSha256Fingerprint(
     JSON.stringify({
-      nodeId: value.nodeId,
-      repositoryId: value.repositoryId,
-      type: value.type,
-      title: value.title,
-      bodyFingerprint: value.bodyFingerprint,
-      author: value.author,
-      createdAt: value.createdAt,
-      updatedAt: value.updatedAt,
-      state: value.state.state,
-      stateReason: value.state.stateReason,
-      closedAt: value.state.closedAt,
-      draft: value.draft,
+      ...fingerprintBase,
+      mergeStatus: value.mergeStatus,
       assignees: value.assignees,
       labels: value.labels,
       milestone: value.milestone,
     }),
   );
+}
+
+function normalizePullRequestMerge(
+  pullRequest: NonNullable<ParsedItemMetadata["pull_request"]>,
+  state: ParsedItemMetadata["state"],
+): EnumeratedGitHubPullRequestMerge {
+  if (pullRequest.merged_at == null) {
+    return Object.freeze({
+      mergeStatus: "not_merged",
+    });
+  }
+  if (state === "open") {
+    throw new GitHubResponseValidationError("Pull Requestのmerge状態", {
+      cause: new TypeError("openなPull Requestをmerge済みにはできません"),
+    });
+  }
+  return Object.freeze({
+    mergeStatus: "merged",
+    mergedAt: pullRequest.merged_at,
+  });
 }
 
 function normalizeItem(
@@ -488,12 +559,15 @@ function normalizeItem(
       itemFingerprint,
     });
   }
+  const pullRequest = item.pull_request;
+  assertNonNullable(pullRequest, "Pull Request情報がありません");
   const draft = item.draft;
   if (draft == null) {
     throw new GitHubResponseValidationError("Pull Requestのdraft状態", {
       cause: new TypeError("draft状態がありません"),
     });
   }
+  const merge = normalizePullRequestMerge(pullRequest, item.state);
   const itemFingerprint = createItemFingerprint({
     nodeId,
     repositoryId: repository.id,
@@ -505,6 +579,7 @@ function normalizeItem(
     updatedAt: item.updated_at,
     state,
     draft,
+    ...merge,
     assignees,
     labels,
     milestone,
@@ -514,6 +589,7 @@ function normalizeItem(
     ...state,
     type,
     draft,
+    ...merge,
     itemFingerprint,
   });
 }

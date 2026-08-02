@@ -886,7 +886,7 @@ function createPublicRelationItem(
     type: item.type,
     number: item.number,
     url: item.url,
-    state: item.state,
+    state: item.type === "pull_request" && item.mergeStatus === "merged" ? "merged" : item.state,
   });
 }
 

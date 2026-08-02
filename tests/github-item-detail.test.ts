@@ -9,6 +9,7 @@ import {
   createGitHubRepositoryId,
   createUtcIsoDateTime,
   type GitHubItemDisplayReference,
+  type GitHubItemUrl,
   type Repository,
 } from "../src/domain/index.js";
 import {
@@ -91,15 +92,16 @@ function createItem(
   }
   const nodeId = createGitHubNodeId(nodeIdValue);
   const bodyFingerprint = createGitHubBodyFingerprint("列挙時本文");
+  const url: GitHubItemUrl =
+    type === "issue"
+      ? `https://github.com/VOICEVOX/example/issues/${number.toString()}`
+      : `https://github.com/VOICEVOX/example/pull/${number.toString()}`;
   const common = {
     nodeId,
     repositoryId: repository.id,
     displayReference: displayReferenceSchema.parse(`VOICEVOX/example#${number.toString()}`),
     number,
-    url:
-      type === "issue"
-        ? `https://github.com/VOICEVOX/example/issues/${number.toString()}`
-        : `https://github.com/VOICEVOX/example/pull/${number.toString()}`,
+    url,
     title: `項目${number.toString()}`,
     bodyFingerprint,
     bodyLocator: {
@@ -126,7 +128,7 @@ function createItem(
     milestone: null,
     itemFingerprint: bodyFingerprint,
     observedAt,
-  } satisfies Omit<EnumeratedGitHubItem, "type" | "draft">;
+  } satisfies Omit<EnumeratedGitHubItem, "type" | "draft" | "mergeStatus" | "mergedAt">;
   if (type === "issue") {
     return {
       ...common,
@@ -138,6 +140,7 @@ function createItem(
     ...common,
     type,
     draft: false,
+    mergeStatus: "not_merged",
   };
 }
 

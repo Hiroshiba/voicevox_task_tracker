@@ -33,6 +33,7 @@ type ItemMetadataOverrides = Readonly<{
   body?: string | null;
   updatedAt?: string;
   draft?: boolean;
+  mergedAt?: string;
   discussion?: boolean;
   authorType?: "Bot" | "User";
 }>;
@@ -72,6 +73,7 @@ type ItemMetadataFixture = Readonly<{
   updated_at: string;
   pull_request?: Readonly<{
     url: string;
+    merged_at: string | null;
   }>;
   draft?: boolean;
   category?: Readonly<{
@@ -164,6 +166,7 @@ function createItemMetadata(index: number, overrides: ItemMetadataOverrides): It
       : {
           pull_request: {
             url: `https://api.github.com/repos/VOICEVOX/${repositoryName}/pulls/${index.toString()}`,
+            merged_at: overrides.mergedAt ?? null,
           },
           draft: overrides.draft ?? false,
         }),
@@ -339,8 +342,48 @@ describe("GitHub項目列挙", () => {
     expect(items[1]).toMatchObject({
       type: "pull_request",
       draft: true,
+      mergeStatus: "not_merged",
     });
     expect(requestedRoutes).toEqual(["GET /repos/{owner}/{repo}/issues"]);
+  });
+
+  it("個別取得したmerge済みPull Requestの状態を正規化する", async () => {
+    const mergedAt = "2026-07-31T23:30:00Z";
+    const metadata = {
+      ...createItemMetadata(9, {
+        type: "pull_request",
+        mergedAt,
+      }),
+      state: "closed",
+      state_reason: "completed",
+      closed_at: mergedAt,
+    };
+    const items = await enumerateGitHubItemsByIdentifiers({
+      allowlist: createAllowlist("R_example", "example"),
+      identifiers: [metadata.html_url],
+      observedAt,
+      request: () => Promise.resolve(createRestResponse(metadata, "example")),
+      graphql: () => Promise.reject(new TypeError("URL指定ではGraphQLを呼びません")),
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      type: "pull_request",
+      state: "closed",
+      mergeStatus: "merged",
+      mergedAt: "2026-07-31T23:30:00.000Z",
+    });
+  });
+
+  it("openなmerge済みPull Request応答を拒否する", async () => {
+    await expect(
+      enumerateFixture("R_example", "example", [
+        createItemMetadata(10, {
+          type: "pull_request",
+          mergedAt: "2026-07-31T23:30:00Z",
+        }),
+      ]),
+    ).rejects.toBeInstanceOf(GitHubResponseValidationError);
   });
 
   it("Discussion markerが混入した応答をfail closedで拒否する", async () => {

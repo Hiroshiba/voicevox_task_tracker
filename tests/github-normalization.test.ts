@@ -112,6 +112,7 @@ function createItem(
     itemFingerprint: bodyFingerprint,
     observedAt,
     type: "pull_request",
+    mergeStatus: "not_merged",
   };
 }
 
