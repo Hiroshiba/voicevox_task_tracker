@@ -43,6 +43,68 @@ function createGraphQLResponseError(options: ErrorOptions): GitHubGraphQLRespons
 }
 
 describe("safeErrorDiagnostic", () => {
+  it("causeを持たないエラーから発生位置を出す", () => {
+    const error = new TypeError("GitHub由来メッセージ");
+    error.stack = [
+      "TypeError: GitHub由来メッセージ",
+      "    at detectProgress (file:///srv/voicevox_task_tracker/dist/domain/meaningful-progress.js:182:23)",
+    ].join("\n");
+
+    expect(safeErrorDiagnostic("incremental_collection", error)).toBe(
+      "stage=incremental_collection errorType=TypeError errorSite0=meaningful-progress.js:182",
+    );
+  });
+
+  it("cause連鎖の順に各エラーの発生位置を出す", () => {
+    const cause = new RangeError("cause");
+    cause.stack = [
+      "RangeError: cause",
+      "    at buildGraph (file:///srv/voicevox_task_tracker/src/graph/task-graph.ts:41:9)",
+    ].join("\n");
+    const error = new TypeError("error", { cause });
+    error.stack = [
+      "TypeError: error",
+      "    at runTracker (file:///srv/voicevox_task_tracker/dist/cli/tracker-run.js:230:15)",
+    ].join("\n");
+
+    expect(safeErrorDiagnostic("incremental_collection", error)).toBe(
+      "stage=incremental_collection errorType=TypeError<-RangeError errorSite0=tracker-run.js:230 errorSite1=task-graph.ts:41",
+    );
+  });
+
+  it("node_modulesやnode:internalだけのstackから発生位置を出さない", () => {
+    const error = new TypeError("fixture");
+    error.stack = [
+      "TypeError: fixture",
+      "    at dependency (file:///srv/voicevox_task_tracker/node_modules/example/dist/index.js:12:4)",
+      "    at processTicksAndRejections (node:internal/process/task_queues:105:5)",
+    ].join("\n");
+
+    expect(safeErrorDiagnostic("incremental_collection", error)).toBe(
+      "stage=incremental_collection errorType=TypeError",
+    );
+  });
+
+  it("診断文字列へディレクトリパスやユーザー名を出さない", () => {
+    const userName = "private-user-canary";
+    const directoryName = "secret-directory-canary";
+    const githubMessage = "github-message-canary";
+    const error = new Error(githubMessage);
+    error.stack = [
+      `Error: ${githubMessage}`,
+      `    at ${userName} (file:///home/${userName}/${directoryName}/src/cli/tracker-run.ts:73:9)`,
+    ].join("\n");
+
+    const diagnostic = safeErrorDiagnostic("incremental_collection", error);
+
+    expect(diagnostic).toBe(
+      "stage=incremental_collection errorType=Error errorSite0=tracker-run.ts:73",
+    );
+    expect(diagnostic).not.toContain(userName);
+    expect(diagnostic).not.toContain(directoryName);
+    expect(diagnostic).not.toContain(githubMessage);
+  });
+
   it("causeで包まれたGraphQLレスポンスエラーの型と安全な詳細を出す", () => {
     const rawMessage = "Field 'id' doesn't exist on type 'AutoMergeRequest'";
     const variables = "variables-canary";

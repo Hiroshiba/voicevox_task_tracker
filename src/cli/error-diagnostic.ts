@@ -15,6 +15,10 @@ const DIAGNOSTIC_VALUE_LENGTH_LIMIT = 300;
 const DIAGNOSTIC_TRUNCATION_MARKER = "truncated=true";
 const UNSAFE_DIAGNOSTIC_VALUE_PATTERN = /[\s\p{Cc}]/u;
 const UNSAFE_APPROVED_MESSAGE_PATTERN = /[\p{Cc}\p{Zl}\p{Zp}]/gu;
+const ERROR_SITE_PATTERN = /^[A-Za-z0-9._-]+:[1-9][0-9]*$/u;
+const STACK_FRAME_SITE_PATTERN = /[/\\]([A-Za-z0-9._-]+):([1-9][0-9]*)(?::[1-9][0-9]*)?$/u;
+const REPOSITORY_CODE_PATH_PATTERN = /(?:^|[/\\])(?:src|dist)[/\\]/u;
+const NODE_MODULES_PATH_PATTERN = /(?:^|[/\\])node_modules[/\\]/u;
 
 type DiagnosticField = Readonly<{
   key: string;
@@ -82,6 +86,60 @@ function collectErrorChain(error: unknown): readonly Error[] {
     current = cause instanceof Error ? cause : undefined;
   }
   return chain;
+}
+
+function extractStackFrameLocation(frame: string): string | undefined {
+  const trimmedFrame = frame.trim();
+  if (!trimmedFrame.startsWith("at ")) {
+    return undefined;
+  }
+  const openingParenthesisIndex = trimmedFrame.lastIndexOf("(");
+  const locationStart = openingParenthesisIndex >= 0 ? openingParenthesisIndex + 1 : 3;
+  const locationEnd = trimmedFrame.endsWith(")") ? trimmedFrame.length - 1 : trimmedFrame.length;
+  if (locationStart >= locationEnd) {
+    return undefined;
+  }
+  return trimmedFrame.slice(locationStart, locationEnd);
+}
+
+function extractErrorSite(error: Error): string | undefined {
+  if (error.stack == null) {
+    return undefined;
+  }
+  for (const frame of error.stack.split("\n")) {
+    const location = extractStackFrameLocation(frame);
+    if (
+      location == null ||
+      location.startsWith("node:internal") ||
+      NODE_MODULES_PATH_PATTERN.test(location) ||
+      !REPOSITORY_CODE_PATH_PATTERN.test(location)
+    ) {
+      continue;
+    }
+    const match = STACK_FRAME_SITE_PATTERN.exec(location);
+    if (match == null) {
+      continue;
+    }
+    const fileName = match[1];
+    const lineNumber = match[2];
+    if (fileName == null || lineNumber == null) {
+      continue;
+    }
+    const errorSite = `${fileName}:${lineNumber}`;
+    if (ERROR_SITE_PATTERN.test(errorSite)) {
+      return errorSite;
+    }
+  }
+  return undefined;
+}
+
+function appendErrorSites(fields: DiagnosticField[], chain: readonly Error[]): void {
+  for (const [index, error] of chain.entries()) {
+    const errorSite = extractErrorSite(error);
+    if (errorSite != null) {
+      fields.push({ key: `errorSite${index.toString()}`, value: errorSite });
+    }
+  }
 }
 
 function appendGraphQLDiagnostics(
@@ -194,6 +252,7 @@ export function safeErrorDiagnostic(stage: RunStage, error: unknown): string {
     key: "errorType",
     value: chain.length === 0 ? typeof error : chain.map((cause) => cause.name).join("<-"),
   });
+  appendErrorSites(fields, chain);
   for (const cause of chain) {
     appendKnownErrorDiagnostics(fields, cause);
   }
