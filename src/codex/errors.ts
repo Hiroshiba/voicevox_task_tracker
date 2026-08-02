@@ -1,4 +1,5 @@
 import { TaskTrackerError } from "../util/task-tracker-error.js";
+import { type CodexApiErrorDiagnostic } from "./process-runner.js";
 
 /** Codex adapterで発生するエラーの基底クラス。 */
 export abstract class CodexAdapterError extends TaskTrackerError {}
@@ -31,8 +32,14 @@ export class CodexTimeoutError extends CodexAttemptError {
 export class CodexNonZeroExitError extends CodexAttemptError {
   public readonly exitCode: number | null;
   public readonly signal: NodeJS.Signals | null;
+  public readonly apiError: CodexApiErrorDiagnostic | undefined;
 
-  public constructor(attempts: number, exitCode: number | null, signal: NodeJS.Signals | null) {
+  public constructor(
+    attempts: number,
+    exitCode: number | null,
+    signal: NodeJS.Signals | null,
+    apiError: CodexApiErrorDiagnostic | undefined,
+  ) {
     const exitCodeText = exitCode == null ? "なし" : exitCode.toString();
     const signalText = signal ?? "なし";
     super(
@@ -42,8 +49,15 @@ export class CodexNonZeroExitError extends CodexAttemptError {
     );
     this.exitCode = exitCode;
     this.signal = signal;
+    this.apiError = apiError;
   }
 }
+
+/** Codex CLIの非ゼロ終了から外部診断へ渡せる情報。 */
+export type CodexNonZeroExitDiagnostic = Readonly<{
+  exitCode: number | null;
+  apiError: CodexApiErrorDiagnostic | undefined;
+}>;
 
 /** Codex CLIの最終メッセージをJSONとして読み込めなかったことを表す。 */
 export class CodexInvalidJsonError extends CodexAttemptError {

@@ -214,7 +214,7 @@ function assertSuccessfulProcess(
     throw new CodexTimeoutError(attempts, request.timeoutMilliseconds);
   }
   if (result.exitCode !== 0 || result.signal != null) {
-    throw new CodexNonZeroExitError(attempts, result.exitCode, result.signal);
+    throw new CodexNonZeroExitError(attempts, result.exitCode, result.signal, result.apiError);
   }
 }
 

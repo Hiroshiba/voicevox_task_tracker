@@ -183,6 +183,7 @@ import {
   CliExecutableError,
   CliRelationExpansionLimitError,
 } from "./errors.js";
+import { safeCodexFallbackDiagnostic } from "./error-diagnostic.js";
 import {
   OfflineRunRunner,
   type readGoldenFixtureFiles,
@@ -1989,9 +1990,13 @@ async function analyzeCodex(
     aiCacheHitCount: run.results.filter((result) => result.origin === "cache").length,
     estimatedInputTokens: Math.ceil(run.usage.inputCharacters / 4),
     diagnostics: Object.freeze([
-      ...run.failures.map(
-        (failure) =>
-          `codex_fallback item=${failure.candidateId} reason=${failure.reason} errorType=${failure.errorType}`,
+      ...run.failures.map((failure) =>
+        safeCodexFallbackDiagnostic(
+          failure.candidateId,
+          failure.reason,
+          failure.errorType,
+          failure.diagnostic,
+        ),
       ),
       ...run.deferred.map(
         (deferred) => `codex_deferred item=${deferred.candidateId} reason=${deferred.reason}`,

@@ -1,4 +1,9 @@
 import {
+  CodexNonZeroExitError,
+  type CodexNonZeroExitDiagnostic,
+  type CodexUnavailableReason,
+} from "../codex/index.js";
+import {
   GitHubGraphQLResponseError,
   GitHubRequestError,
   GitHubResponseSchemaValidationError,
@@ -49,10 +54,14 @@ function encodeApprovedMessage(message: string): string {
 function formatDiagnostic(
   fields: readonly DiagnosticField[],
   approvedMessage: string | undefined,
+  prefix: string | undefined,
 ): string {
   const parts = fields
     .filter((field) => isSafeDiagnosticValue(field.value))
     .map((field) => `${field.key}=${field.value}`);
+  if (prefix != null) {
+    parts.unshift(prefix);
+  }
   if (
     approvedMessage != null &&
     approvedMessage.length > 0 &&
@@ -229,7 +238,29 @@ function appendZodDiagnostics(
   }
 }
 
+function appendCodexNonZeroExitDiagnostics(
+  fields: DiagnosticField[],
+  diagnostic: CodexNonZeroExitDiagnostic,
+): void {
+  fields.push({
+    key: "exitCode",
+    value: diagnostic.exitCode == null ? "none" : diagnostic.exitCode.toString(),
+  });
+  if (diagnostic.apiError?.type != null) {
+    fields.push({ key: "codexErrorType", value: diagnostic.apiError.type });
+  }
+  if (diagnostic.apiError?.code != null) {
+    fields.push({ key: "codexErrorCode", value: diagnostic.apiError.code });
+  }
+  if (diagnostic.apiError?.status != null) {
+    fields.push({ key: "codexErrorStatus", value: diagnostic.apiError.status });
+  }
+}
+
 function appendKnownErrorDiagnostics(fields: DiagnosticField[], error: Error): void {
+  if (error instanceof CodexNonZeroExitError) {
+    appendCodexNonZeroExitDiagnostics(fields, error);
+  }
   if (error instanceof CliRelationExpansionLimitError) {
     fields.push({ key: "relationExpansionLimit", value: error.limit.toString() });
     fields.push({
@@ -265,6 +296,24 @@ function appendFirstHttpStatus(fields: DiagnosticField[], chain: readonly Error[
   }
 }
 
+/** Codex fallbackから安全な1行の診断文字列を生成する。 */
+export function safeCodexFallbackDiagnostic(
+  item: string,
+  reason: CodexUnavailableReason,
+  errorType: string,
+  diagnostic: CodexNonZeroExitDiagnostic | undefined,
+): string {
+  const fields: DiagnosticField[] = [
+    { key: "item", value: item },
+    { key: "reason", value: reason },
+    { key: "errorType", value: errorType },
+  ];
+  if (diagnostic != null) {
+    appendCodexNonZeroExitDiagnostics(fields, diagnostic);
+  }
+  return formatDiagnostic(fields, undefined, "codex_fallback");
+}
+
 /** 実行失敗から安全な1行の診断文字列を生成する。 */
 export function safeErrorDiagnostic(stage: RunStage, error: unknown): string {
   const fields: DiagnosticField[] = [{ key: "stage", value: stage }];
@@ -284,5 +333,5 @@ export function safeErrorDiagnostic(stage: RunStage, error: unknown): string {
     error instanceof CliExecutableError
       ? encodeApprovedMessage(error.message)
       : undefined;
-  return formatDiagnostic(fields, approvedMessage);
+  return formatDiagnostic(fields, approvedMessage, undefined);
 }

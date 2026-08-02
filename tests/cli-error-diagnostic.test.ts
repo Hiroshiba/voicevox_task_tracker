@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { describe, expect, it } from "vitest";
 
-import { safeErrorDiagnostic } from "../src/cli/error-diagnostic.js";
+import { CodexNonZeroExitError } from "../src/codex/index.js";
+import { safeCodexFallbackDiagnostic, safeErrorDiagnostic } from "../src/cli/error-diagnostic.js";
 import {
   CliCodexAuthenticationError,
   CliCredentialsError,
@@ -44,6 +45,58 @@ function createGraphQLResponseError(options: ErrorOptions): GitHubGraphQLRespons
 }
 
 describe("safeErrorDiagnostic", () => {
+  it("Codex非ゼロ終了の診断へ終了コードと許可されたAPIエラー項目だけを出す", () => {
+    const standardErrorCanary = "STANDARD_ERROR_BODY_CANARY";
+    const messageCanary = "MESSAGE_FIELD_CANARY";
+    const promptCanary = "PROMPT_CANARY";
+    const standardInputCanary = "STANDARD_INPUT_CANARY";
+    const error = new CodexNonZeroExitError(1, 17, null, {
+      type: "invalid_request_error",
+      code: "invalid_json_schema",
+      status: "400",
+    });
+    delete error.stack;
+    Object.defineProperties(error, {
+      standardError: { value: standardErrorCanary },
+      apiMessage: { value: messageCanary },
+      prompt: { value: promptCanary },
+      standardInput: { value: standardInputCanary },
+    });
+
+    const diagnostic = safeErrorDiagnostic("codex_analysis", error);
+    const fallbackDiagnostic = safeCodexFallbackDiagnostic(
+      "I_fixture",
+      "execution_failed",
+      error.name,
+      {
+        exitCode: error.exitCode,
+        apiError: error.apiError,
+      },
+    );
+
+    expect(diagnostic).toBe(
+      "stage=codex_analysis errorType=CodexNonZeroExitError exitCode=17 codexErrorType=invalid_request_error codexErrorCode=invalid_json_schema codexErrorStatus=400",
+    );
+    expect(fallbackDiagnostic).toBe(
+      "codex_fallback item=I_fixture reason=execution_failed errorType=CodexNonZeroExitError exitCode=17 codexErrorType=invalid_request_error codexErrorCode=invalid_json_schema codexErrorStatus=400",
+    );
+    for (const canary of [standardErrorCanary, messageCanary, promptCanary, standardInputCanary]) {
+      expect(diagnostic).not.toContain(canary);
+      expect(fallbackDiagnostic).not.toContain(canary);
+    }
+  });
+
+  it("Codex APIエラー詳細がなくても終了コードだけを診断へ出す", () => {
+    expect(
+      safeCodexFallbackDiagnostic("I_fixture", "execution_failed", "CodexNonZeroExitError", {
+        exitCode: 19,
+        apiError: undefined,
+      }),
+    ).toBe(
+      "codex_fallback item=I_fixture reason=execution_failed errorType=CodexNonZeroExitError exitCode=19",
+    );
+  });
+
   it("causeを持たないエラーから発生位置を出す", () => {
     const error = new TypeError("GitHub由来メッセージ");
     error.stack = [

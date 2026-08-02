@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  CodexNonZeroExitError,
   CodexOutputSchemaValidationError,
   CodexOutputSemanticValidationError,
   CodexRateLimitError,
@@ -716,6 +717,28 @@ describe("Codex失敗時の縮退", () => {
         unresolvedCandidateIds: ["rel:dependency"],
       });
     }
+  });
+
+  it("Codexの非ゼロ終了をexecution_failedに分類する", async () => {
+    const result = await runCodexAnalysisWithFallback(
+      {
+        analysisInput: createInput(),
+        deterministicDecision: createDeterministicDecision("codex_candidate"),
+        confidenceThresholds: defaultConfidenceThresholds,
+      },
+      {
+        execute: () => Promise.reject(new CodexNonZeroExitError(1, 17, null, undefined)),
+      },
+    );
+
+    expect(result.ai).toEqual({
+      status: "unavailable",
+      reason: "execution_failed",
+      errorType: "CodexNonZeroExitError",
+    });
+    expect(result.decision.uncertainties).toContain(
+      "Codex分析を利用できないため決定論的判定だけを表示しています",
+    );
   });
 
   it("CodexのHTTP 500相当でもrunを壊さずAI unavailableを明示する", async () => {

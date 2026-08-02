@@ -15,6 +15,7 @@ import {
   CodexOutputSemanticValidationError,
   CodexRateLimitError,
   CodexTimeoutError,
+  type CodexNonZeroExitDiagnostic,
 } from "./errors.js";
 import {
   classifyCodexConfidence,
@@ -46,6 +47,7 @@ export type CodexAnalysisAttempt =
       status: "unavailable";
       reason: CodexUnavailableReason;
       errorType: string;
+      diagnostic?: CodexNonZeroExitDiagnostic;
     }>;
 
 /** Codexと統合する前の決定論的な状態判定。 */
@@ -165,14 +167,26 @@ export function classifyCodexUnavailableReason(error: unknown): CodexUnavailable
   if (error instanceof CodexOutputSemanticValidationError) {
     return "semantic_validation_failed";
   }
+  if (error instanceof CodexNonZeroExitError) {
+    return error.exitCode != null && error.exitCode !== 0 && error.signal == null
+      ? "execution_failed"
+      : "service_unavailable";
+  }
   const httpStatus = httpStatusFromError(error);
-  if (
-    error instanceof CodexNonZeroExitError ||
-    (httpStatus != null && httpStatus >= 500 && httpStatus <= 599)
-  ) {
+  if (httpStatus != null && httpStatus >= 500 && httpStatus <= 599) {
     return "service_unavailable";
   }
   return "execution_failed";
+}
+
+function nonZeroExitDiagnostic(error: unknown): CodexNonZeroExitDiagnostic | undefined {
+  if (!(error instanceof CodexNonZeroExitError)) {
+    return undefined;
+  }
+  return Object.freeze({
+    exitCode: error.exitCode,
+    apiError: error.apiError,
+  });
 }
 
 /** Codexを実行してschema検証とsemantic検証を行い、失敗を値として返す。 */
@@ -187,10 +201,12 @@ export async function executeValidatedCodexAnalysis(
       output: validateCodexAnalysisOutput(output, input),
     });
   } catch (error: unknown) {
+    const diagnostic = nonZeroExitDiagnostic(error);
     return Object.freeze({
       status: "unavailable",
       reason: classifyCodexUnavailableReason(error),
       errorType: errorType(error),
+      ...(diagnostic == null ? {} : { diagnostic }),
     });
   }
 }

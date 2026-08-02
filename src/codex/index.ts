@@ -77,6 +77,7 @@ export {
   CodexResourceError,
   CodexTemporaryWorkspaceError,
   CodexTimeoutError,
+  type CodexNonZeroExitDiagnostic,
   type CodexOutputValidationIssue,
 } from "./errors.js";
 export {
@@ -103,6 +104,7 @@ export {
   type CodexProcessRequest,
   type CodexProcessResult,
   type CodexProcessRunner,
+  type CodexApiErrorDiagnostic,
 } from "./process-runner.js";
 export {
   classifyCodexUnavailableReason,
