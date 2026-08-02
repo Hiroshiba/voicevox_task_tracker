@@ -10,51 +10,91 @@ import { assertNonNullable } from "../util/index.js";
 type EvidenceSourceUrlInput = TrackedItemInputEvent &
   Readonly<{
     itemNodeId: GitHubNodeId;
+    itemUrl: GitHubItemUrl;
   }>;
 
-export type EvidenceSourceUrlMap = ReadonlyMap<GitHubNodeId, ReadonlyMap<SourceId, GitHubItemUrl>>;
+type EvidenceSourceItem = Readonly<{
+  nodeId: GitHubNodeId;
+  url: GitHubItemUrl;
+}>;
+
+type EvidenceSourceOwner = Readonly<{
+  itemNodeId: GitHubNodeId;
+  itemUrl: GitHubItemUrl;
+  sourceUrl: GitHubItemUrl;
+}>;
+
+export type EvidenceSourceUrlMap = ReadonlyMap<SourceId, readonly EvidenceSourceOwner[]>;
 
 function directSourceUrl(
   sourceId: SourceId,
-  itemNodeId: GitHubNodeId,
-  itemUrl: GitHubItemUrl,
-  sourceUrlsByItemNodeId: EvidenceSourceUrlMap,
+  sourceOwnersById: EvidenceSourceUrlMap,
   fragmentPrefix: string,
 ): GitHubItemUrl {
-  const sourceUrl = sourceUrlsByItemNodeId.get(itemNodeId)?.get(sourceId);
-  assertNonNullable(
-    sourceUrl,
-    `個別sourceに対応する入力イベントが1件ではありません。対象項目: ${itemNodeId}、source: ${sourceId}`,
-  );
-  const item = new URL(itemUrl);
-  const source = new URL(sourceUrl);
+  const sourceOwners = sourceOwnersById.get(sourceId);
+  if (sourceOwners == null || sourceOwners.length === 0) {
+    throw new TypeError(`個別sourceを所有する項目がありません。source: ${sourceId}`);
+  }
+  if (sourceOwners.length !== 1) {
+    throw new TypeError(
+      `個別sourceを所有する項目が複数あります。source: ${sourceId}、所有項目: ${sourceOwners.map((owner) => owner.itemNodeId).join("、")}`,
+    );
+  }
+  const sourceOwner = sourceOwners[0];
+  assertNonNullable(sourceOwner, `個別sourceの所有項目がありません。source: ${sourceId}`);
+  const item = new URL(sourceOwner.itemUrl);
+  const source = new URL(sourceOwner.sourceUrl);
   if (source.origin !== item.origin || source.pathname !== item.pathname) {
     throw new TypeError(`個別sourceのURLが項目URLと一致しません。対象: ${sourceId}`);
   }
   if (!source.hash.startsWith(fragmentPrefix) || source.hash.length === fragmentPrefix.length) {
     throw new TypeError(`個別sourceのURLに対応するanchorがありません。対象: ${sourceId}`);
   }
-  return sourceUrl;
+  return sourceOwner.sourceUrl;
 }
 
-/** 入力イベントを項目node IDとsource IDの組で一意なURL Mapへ変換する。 */
+function itemSourceUrl(
+  sourceId: SourceId,
+  sourceItems: readonly EvidenceSourceItem[],
+  sourceOwnersById: EvidenceSourceUrlMap,
+): GitHubItemUrl {
+  const sourceOwners = sourceOwnersById.get(sourceId);
+  if (sourceOwners != null) {
+    for (const sourceItem of sourceItems) {
+      if (sourceOwners.some((owner) => owner.itemNodeId === sourceItem.nodeId)) {
+        return sourceItem.url;
+      }
+    }
+  }
+  const sourceItem = sourceItems[0];
+  assertNonNullable(
+    sourceItem,
+    `sourceに対応するOrganization内itemがありません。source: ${sourceId}`,
+  );
+  return sourceItem.url;
+}
+
+/** 入力イベントをsource IDごとの所有項目とURLのMapへ変換する。 */
 export function createEvidenceSourceUrlMap(
   inputEvents: readonly EvidenceSourceUrlInput[],
 ): EvidenceSourceUrlMap {
-  const sourceUrlsByItemNodeId = new Map<GitHubNodeId, Map<SourceId, GitHubItemUrl>>();
+  const sourceOwnersById = new Map<SourceId, EvidenceSourceOwner[]>();
   for (const event of inputEvents) {
-    let sourceUrlsById = sourceUrlsByItemNodeId.get(event.itemNodeId);
-    if (sourceUrlsById == null) {
-      sourceUrlsById = new Map<SourceId, GitHubItemUrl>();
-      sourceUrlsByItemNodeId.set(event.itemNodeId, sourceUrlsById);
+    let sourceOwners = sourceOwnersById.get(event.sourceId);
+    if (sourceOwners == null) {
+      sourceOwners = [];
+      sourceOwnersById.set(event.sourceId, sourceOwners);
     }
-    if (!sourceUrlsById.has(event.sourceId)) {
-      sourceUrlsById.set(event.sourceId, event.url);
+    const previousOwner = sourceOwners.find((owner) => owner.itemNodeId === event.itemNodeId);
+    if (previousOwner == null) {
+      sourceOwners.push({
+        itemNodeId: event.itemNodeId,
+        itemUrl: event.itemUrl,
+        sourceUrl: event.url,
+      });
       continue;
     }
-    const previousUrl = sourceUrlsById.get(event.sourceId);
-    assertNonNullable(previousUrl, `入力イベントのURLがありません。対象: ${event.sourceId}`);
-    if (previousUrl !== event.url) {
+    if (previousOwner.sourceUrl !== event.url) {
       throw new TypeError(
         `同じ項目とsource IDの組に異なるURLがあります。対象項目: ${event.itemNodeId}、source: ${event.sourceId}`,
       );
@@ -63,42 +103,23 @@ export function createEvidenceSourceUrlMap(
       `同じ項目とsource IDの入力イベントが複数あります。対象項目: ${event.itemNodeId}、source: ${event.sourceId}`,
     );
   }
-  return sourceUrlsByItemNodeId;
+  return sourceOwnersById;
 }
 
 /** source IDの種別から公開evidenceが参照するGitHub URLを解決する。 */
 export function resolveEvidenceSourceUrl(
   sourceId: SourceId,
-  itemNodeId: GitHubNodeId,
-  itemUrl: GitHubItemUrl,
-  sourceUrlsByItemNodeId: EvidenceSourceUrlMap,
+  sourceItems: readonly EvidenceSourceItem[],
+  sourceOwnersById: EvidenceSourceUrlMap,
 ): GitHubItemUrl {
   const { kind } = parseSourceId(sourceId);
   switch (kind) {
     case "github_issue_comment":
-      return directSourceUrl(
-        sourceId,
-        itemNodeId,
-        itemUrl,
-        sourceUrlsByItemNodeId,
-        "#issuecomment-",
-      );
+      return directSourceUrl(sourceId, sourceOwnersById, "#issuecomment-");
     case "github_pull_request_review":
-      return directSourceUrl(
-        sourceId,
-        itemNodeId,
-        itemUrl,
-        sourceUrlsByItemNodeId,
-        "#pullrequestreview-",
-      );
+      return directSourceUrl(sourceId, sourceOwnersById, "#pullrequestreview-");
     case "github_pull_request_review_comment":
-      return directSourceUrl(
-        sourceId,
-        itemNodeId,
-        itemUrl,
-        sourceUrlsByItemNodeId,
-        "#discussion_r",
-      );
+      return directSourceUrl(sourceId, sourceOwnersById, "#discussion_r");
     case "github_actor":
     case "github_user":
     case "github_team":
@@ -131,7 +152,7 @@ export function resolveEvidenceSourceUrl(
     case "golden_ai_source":
     case "golden_large":
     case "golden_large_edge":
-      return itemUrl;
+      return itemSourceUrl(sourceId, sourceItems, sourceOwnersById);
     default:
       throw new TypeError(`公開evidence URLへ解決できないsource ID種別です。対象: ${kind}`);
   }

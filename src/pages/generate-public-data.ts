@@ -80,6 +80,7 @@ type SeverityHistoryValue = Extract<
   Readonly<{ kind: "severity_changed" }>
 >["before"];
 type EdgeHistoryValue = PublicGraphHistoryEventDto["before"];
+type EvidenceSourceItem = Readonly<Pick<TrackedItem, "nodeId" | "url">>;
 
 type PublicHistory = Readonly<{
   itemEventsByNodeId: ReadonlyMap<string, readonly PublicItemHistoryEventDto[]>;
@@ -358,69 +359,48 @@ function createAnalysisEdge(relation: Relation, index: number): ReconciledGraphE
 
 function createPublicEvidenceEntry(
   entry: Evidence,
-  sourceItem: Readonly<Pick<TrackedItem, "nodeId" | "url">>,
-  sourceUrlsByItemNodeId: EvidenceSourceUrlMap,
+  sourceItems: readonly EvidenceSourceItem[],
+  sourceOwnersById: EvidenceSourceUrlMap,
 ): PublicGraphEdgeDto["evidence"][number] {
   return {
     sourceId: entry.sourceId,
     supports: entry.supports,
     summary: entry.summary,
-    sourceUrl: resolveEvidenceSourceUrl(
-      entry.sourceId,
-      sourceItem.nodeId,
-      sourceItem.url,
-      sourceUrlsByItemNodeId,
-    ),
+    sourceUrl: resolveEvidenceSourceUrl(entry.sourceId, sourceItems, sourceOwnersById),
   };
 }
 
 function createPublicEvidence(
   evidence: readonly Evidence[],
-  sourceItem: Readonly<Pick<TrackedItem, "nodeId" | "url">>,
-  sourceUrlsByItemNodeId: EvidenceSourceUrlMap,
+  sourceItem: EvidenceSourceItem,
+  sourceOwnersById: EvidenceSourceUrlMap,
 ): PublicGraphEdgeDto["evidence"] {
-  return evidence.map((entry) =>
-    createPublicEvidenceEntry(entry, sourceItem, sourceUrlsByItemNodeId),
-  );
-}
-
-function graphEvidenceSourceItem(
-  sourceId: Evidence["sourceId"],
-  relation: Relation,
-  itemByNodeId: ReadonlyMap<string, TrackedItem>,
-  sourceUrlsByItemNodeId: EvidenceSourceUrlMap,
-): TrackedItem {
-  const fromItem = itemByNodeId.get(relation.fromNodeId);
-  const toItem = itemByNodeId.get(relation.toNodeId);
-  if (fromItem != null && sourceUrlsByItemNodeId.get(fromItem.nodeId)?.has(sourceId) === true) {
-    return fromItem;
-  }
-  if (toItem != null && sourceUrlsByItemNodeId.get(toItem.nodeId)?.has(sourceId) === true) {
-    return toItem;
-  }
-  const sourceItem = fromItem ?? toItem;
-  assertNonNullable(sourceItem, `relation ${relation.id}にOrganization内itemがありません`);
-  return sourceItem;
+  return evidence.map((entry) => createPublicEvidenceEntry(entry, [sourceItem], sourceOwnersById));
 }
 
 function createPublicGraphEvidence(
   relation: Relation,
   itemByNodeId: ReadonlyMap<string, TrackedItem>,
-  sourceUrlsByItemNodeId: EvidenceSourceUrlMap,
+  sourceOwnersById: EvidenceSourceUrlMap,
 ): PublicGraphEdgeDto["evidence"] {
+  const sourceItems: TrackedItem[] = [];
+  const fromItem = itemByNodeId.get(relation.fromNodeId);
+  const toItem = itemByNodeId.get(relation.toNodeId);
+  if (fromItem != null) {
+    sourceItems.push(fromItem);
+  }
+  if (toItem != null) {
+    sourceItems.push(toItem);
+  }
   return relation.evidence.map((entry) =>
-    createPublicEvidenceEntry(
-      entry,
-      graphEvidenceSourceItem(entry.sourceId, relation, itemByNodeId, sourceUrlsByItemNodeId),
-      sourceUrlsByItemNodeId,
-    ),
+    createPublicEvidenceEntry(entry, sourceItems, sourceOwnersById),
   );
 }
 
 function createPublicGraphEdge(
   relation: Relation,
   itemByNodeId: ReadonlyMap<string, TrackedItem>,
-  sourceUrlsByItemNodeId: EvidenceSourceUrlMap,
+  sourceOwnersById: EvidenceSourceUrlMap,
 ): PublicGraphEdgeDto {
   const fields = {
     id: relation.id,
@@ -429,7 +409,7 @@ function createPublicGraphEdge(
     type: relation.type,
     provenance: relation.provenance,
     confidence: relation.confidence,
-    evidence: createPublicGraphEvidence(relation, itemByNodeId, sourceUrlsByItemNodeId),
+    evidence: createPublicGraphEvidence(relation, itemByNodeId, sourceOwnersById),
     contradictions: relation.contradictions.map((contradiction) => ({
       verdict: contradiction.verdict,
       confidence: contradiction.confidence,
@@ -452,7 +432,7 @@ function createPublicGraphEdge(
 
 function createPublicGraph(
   snapshot: StateSnapshot,
-  sourceUrlsByItemNodeId: EvidenceSourceUrlMap,
+  sourceOwnersById: EvidenceSourceUrlMap,
 ): PublicGraph {
   const itemByNodeId = new Map<string, TrackedItem>(
     snapshot.items.map((item) => [item.nodeId, item]),
@@ -526,7 +506,7 @@ function createPublicGraph(
     })),
   );
   const edges = snapshot.relations.map((relation) =>
-    createPublicGraphEdge(relation, itemByNodeId, sourceUrlsByItemNodeId),
+    createPublicGraphEdge(relation, itemByNodeId, sourceOwnersById),
   );
 
   return Object.freeze({
@@ -826,15 +806,16 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
   const snapshot = createStateSnapshot(input.snapshot);
   const historyRecords = validateHistoryRecords(input.historyRecords, snapshot.generatedAt);
   const history = createPublicHistory(historyRecords);
-  const sourceUrlsByItemNodeId = createEvidenceSourceUrlMap(
+  const sourceOwnersById = createEvidenceSourceUrlMap(
     snapshot.items.flatMap((item) =>
       item.inputEvents.map((event) => ({
         ...event,
         itemNodeId: item.nodeId,
+        itemUrl: item.url,
       })),
     ),
   );
-  const graph = createPublicGraph(snapshot, sourceUrlsByItemNodeId);
+  const graph = createPublicGraph(snapshot, sourceOwnersById);
   const repositoriesById = new Map(
     snapshot.repositories.map((repository) => [repository.id, repository]),
   );
@@ -1026,7 +1007,7 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
         inputEvents: item.inputEvents.map((event) => ({
           ...event,
         })),
-        evidence: createPublicEvidence(item.evidence, item, sourceUrlsByItemNodeId),
+        evidence: createPublicEvidence(item.evidence, item, sourceOwnersById),
         uncertainties: [...item.uncertainties],
         history: [...(history.itemEventsByNodeId.get(item.nodeId) ?? [])],
       };

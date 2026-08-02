@@ -501,22 +501,6 @@ describe("公開evidence URL", () => {
       expectedSourceUrl: "https://github.com/VOICEVOX/public/issues/2#issuecomment-202",
     },
     {
-      name: "両端がsourceを持つ",
-      kind: "github_issue_comment",
-      sourceKey: "shared-comment",
-      inputSources: [
-        {
-          nodeId: "I_EDGE_FROM",
-          url: "https://github.com/VOICEVOX/public/issues/1#issuecomment-303",
-        },
-        {
-          nodeId: "I_EDGE_TO",
-          url: "https://github.com/VOICEVOX/public/issues/2#issuecomment-404",
-        },
-      ],
-      expectedSourceUrl: "https://github.com/VOICEVOX/public/issues/1#issuecomment-303",
-    },
-    {
       name: "どちらの端点もsourceを持たない",
       kind: "github_item_body",
       sourceKey: "item-body",
@@ -539,11 +523,11 @@ describe("公開evidence URL", () => {
     expect(
       resolveEvidenceSourceUrl(
         sourceId,
-        itemNodeId,
-        itemUrl,
+        [{ nodeId: itemNodeId, url: itemUrl }],
         createEvidenceSourceUrlMap([
           {
             itemNodeId,
+            itemUrl,
             sourceId,
             url: sourceUrl,
           },
@@ -553,22 +537,21 @@ describe("公開evidence URL", () => {
   });
 
   it("項目単位のsourceは項目URLへ解決し未知の種別を拒否する", () => {
-    const itemUrl = "https://github.com/VOICEVOX/public/issues/1";
+    const itemUrl: GitHubItemUrl = "https://github.com/VOICEVOX/public/issues/1";
     const itemNodeId = createGitHubNodeId("I_EVIDENCE_ITEM");
+    const sourceItems = [{ nodeId: itemNodeId, url: itemUrl }];
 
     expect(
       resolveEvidenceSourceUrl(
         buildSourceId("github_item_body", "item"),
-        itemNodeId,
-        itemUrl,
+        sourceItems,
         createEvidenceSourceUrlMap([]),
       ),
     ).toBe(itemUrl);
     expect(() =>
       resolveEvidenceSourceUrl(
         buildSourceId("unexpected_source", "event"),
-        itemNodeId,
-        itemUrl,
+        sourceItems,
         createEvidenceSourceUrlMap([]),
       ),
     ).toThrow("公開evidence URLへ解決できないsource ID種別です");
@@ -577,58 +560,29 @@ describe("公開evidence URL", () => {
   it("項目とsource ID別URL Mapは同じ組のURL衝突と入力イベント重複を拒否する", () => {
     const itemNodeId = createGitHubNodeId("I_EVIDENCE_DUPLICATE");
     const sourceId = buildSourceId("github_issue_comment", "comment");
+    const itemUrl = "https://github.com/VOICEVOX/public/issues/1";
     const firstUrl = "https://github.com/VOICEVOX/public/issues/1#issuecomment-101";
     const secondUrl = "https://github.com/VOICEVOX/public/issues/1#issuecomment-102";
 
     expect(() =>
       createEvidenceSourceUrlMap([
-        { itemNodeId, sourceId, url: firstUrl },
-        { itemNodeId, sourceId, url: secondUrl },
+        { itemNodeId, itemUrl, sourceId, url: firstUrl },
+        { itemNodeId, itemUrl, sourceId, url: secondUrl },
       ]),
     ).toThrow("同じ項目とsource IDの組に異なるURLがあります");
     expect(() =>
       createEvidenceSourceUrlMap([
-        { itemNodeId, sourceId, url: firstUrl },
-        { itemNodeId, sourceId, url: firstUrl },
+        { itemNodeId, itemUrl, sourceId, url: firstUrl },
+        { itemNodeId, itemUrl, sourceId, url: firstUrl },
       ]),
     ).toThrow("同じ項目とsource IDの入力イベントが複数あります");
     expect(() =>
       resolveEvidenceSourceUrl(
         sourceId,
-        itemNodeId,
-        "https://github.com/VOICEVOX/public/issues/1",
+        [{ nodeId: itemNodeId, url: itemUrl }],
         createEvidenceSourceUrlMap([]),
       ),
-    ).toThrow("個別sourceに対応する入力イベントが1件ではありません");
-  });
-
-  it("別項目で共有するsource IDを所有項目ごとのURLへ解決する", () => {
-    const firstItemNodeId = createGitHubNodeId("I_EVIDENCE_FIRST");
-    const secondItemNodeId = createGitHubNodeId("I_EVIDENCE_SECOND");
-    const sourceId = buildSourceId("github_issue_comment", "shared-comment");
-    const firstItemUrl = "https://github.com/VOICEVOX/public/issues/1";
-    const secondItemUrl = "https://github.com/VOICEVOX/public/issues/2";
-    const firstSourceUrl = `${firstItemUrl}#issuecomment-101`;
-    const secondSourceUrl = `${secondItemUrl}#issuecomment-202`;
-    const sourceUrls = createEvidenceSourceUrlMap([
-      {
-        itemNodeId: firstItemNodeId,
-        sourceId,
-        url: firstSourceUrl,
-      },
-      {
-        itemNodeId: secondItemNodeId,
-        sourceId,
-        url: secondSourceUrl,
-      },
-    ]);
-
-    expect(resolveEvidenceSourceUrl(sourceId, firstItemNodeId, firstItemUrl, sourceUrls)).toBe(
-      firstSourceUrl,
-    );
-    expect(resolveEvidenceSourceUrl(sourceId, secondItemNodeId, secondItemUrl, sourceUrls)).toBe(
-      secondSourceUrl,
-    );
+    ).toThrow("個別sourceを所有する項目がありません");
   });
 
   it.each(graphEdgeSourceCases)(
@@ -649,24 +603,41 @@ describe("公開evidence URL", () => {
     },
   );
 
-  it("公開詳細のcomment evidenceを個別anchorへ解決する", () => {
-    const source = createSingleItemSnapshot("comment evidenceを持つ項目");
-    const item = source.items[0];
-    assertNonNullable(item, "公開詳細の項目fixtureがありません");
+  it("graph edgeの個別sourceを複数項目が所有する場合は拒否する", () => {
+    const sourceId = buildSourceId("github_issue_comment", "shared-comment");
+    const snapshot = createGraphEvidenceSnapshot(sourceId, [
+      {
+        nodeId: "I_EDGE_FROM",
+        url: "https://github.com/VOICEVOX/public/issues/1#issuecomment-303",
+      },
+      {
+        nodeId: "I_EDGE_TO",
+        url: "https://github.com/VOICEVOX/public/issues/2#issuecomment-404",
+      },
+    ]);
+
+    expect(() =>
+      generateFixture(snapshot, [], publicInventory(), [], defaultGenerationOptions),
+    ).toThrow("個別sourceを所有する項目が複数あります");
+  });
+
+  it("項目のevidenceは別項目が所有するcommentのURLへ解決する", () => {
     const sourceId = buildSourceId("github_issue_comment", "comment");
-    const sourceUrl = "https://github.com/VOICEVOX/public/issues/1#issuecomment-101";
+    const sourceUrl = "https://github.com/VOICEVOX/public/issues/2#issuecomment-101";
+    const source = createGraphEvidenceSnapshot(sourceId, [
+      {
+        nodeId: "I_EDGE_TO",
+        url: sourceUrl,
+      },
+    ]);
     const snapshot = createStateSnapshot({
       ...source,
-      items: [
-        {
+      items: source.items.map((item) => {
+        if (item.nodeId !== "I_EDGE_FROM") {
+          return item;
+        }
+        return {
           ...item,
-          inputEvents: [
-            ...item.inputEvents,
-            {
-              sourceId,
-              url: sourceUrl,
-            },
-          ],
           evidence: [
             {
               sourceId,
@@ -674,8 +645,8 @@ describe("公開evidence URL", () => {
               summary: "個別commentが判定根拠です",
             },
           ],
-        },
-      ],
+        };
+      }),
     });
 
     const generated = generateFixture(
@@ -686,7 +657,10 @@ describe("公開evidence URL", () => {
       defaultGenerationOptions,
     );
 
-    expect(generated.details.items[0]?.evidence[0]?.sourceUrl).toBe(sourceUrl);
+    const targetItem = generated.details.items.find(
+      (item) => item.summary.nodeId === "I_EDGE_FROM",
+    );
+    expect(targetItem?.evidence[0]?.sourceUrl).toBe(sourceUrl);
   });
 
   it("別項目で共有するsource IDを含む公開データを生成する", () => {
@@ -972,6 +946,115 @@ describe("公開DTO生成", () => {
       available: false,
       degraded: false,
     });
+  });
+
+  it("外部参照が非active relationからしか参照されなくても公開データを生成する", () => {
+    const itemNodeId = "I_INACTIVE_EXTERNAL_REFERENCE";
+    const externalNodeId = "I_EXTERNAL_INACTIVE_ONLY";
+    const source = createSnapshot({
+      runId: "run-inactive-external-reference",
+      runStatus: "success",
+      ai: {
+        enabled: false,
+        available: false,
+        degraded: false,
+      },
+      generatedAt: GENERATED_AT,
+      repositories: [
+        {
+          id: PUBLIC_REPOSITORY_ID,
+          name: "public",
+          observedAt: FRESH_OBSERVED_AT,
+          freshness: "fresh",
+        },
+      ],
+      items: [
+        createItem({
+          nodeId: itemNodeId,
+          repositoryId: PUBLIC_REPOSITORY_ID,
+          repositoryName: "public",
+          number: 1,
+          status: "new_untriaged",
+          severity: "watch",
+          waitingOnKind: "role",
+          waitingOnRole: "maintainer",
+          observedAt: FRESH_OBSERVED_AT,
+          title: "削除済み外部関係を持つ項目",
+        }),
+      ],
+      relations: [],
+    });
+    const snapshot = createStateSnapshot({
+      ...source,
+      externalReferences: [
+        {
+          kind: "external_reference",
+          nodeId: externalNodeId,
+          repositoryFullName: "external/example",
+          number: 2,
+          url: "https://github.com/external/example/issues/2",
+          title: "削除済み関係の外部参照",
+          state: "open",
+          recursiveTracking: "not_allowed",
+          directNotification: "not_eligible",
+        },
+      ],
+      relations: [
+        {
+          id: "rel:inactive-external-reference",
+          fromNodeId: externalNodeId,
+          toNodeId: itemNodeId,
+          type: "blocks",
+          provenance: "native",
+          confidence: 1,
+          evidence: [
+            {
+              sourceId: "github_native_dependency:inactive-external-reference",
+              supports: "relation",
+              summary: "削除済み外部関係の根拠です",
+            },
+          ],
+          contradictions: [],
+          active: false,
+          firstSeenAt: FRESH_OBSERVED_AT,
+          lastConfirmedAt: FRESH_OBSERVED_AT,
+          removedAt: GENERATED_AT,
+        },
+      ],
+    });
+
+    const generated = generateFixture(
+      snapshot,
+      [],
+      publicInventory(),
+      [],
+      defaultGenerationOptions,
+    );
+
+    expect(generated.summary.aggregates).toMatchObject({
+      activeEdgeCount: 0,
+      componentCount: 1,
+    });
+    expect(generated.details.graph.components).toMatchObject([
+      {
+        nodeIds: [itemNodeId],
+        edgeIds: [],
+      },
+    ]);
+    expect(generated.details.graph.nodes).toContainEqual(
+      expect.objectContaining({
+        nodeId: externalNodeId,
+        kind: "external_reference",
+      }),
+    );
+    expect(generated.details.graph.edges).toMatchObject([
+      {
+        id: "rel:inactive-external-reference",
+        active: false,
+        fromNodeId: externalNodeId,
+        toNodeId: itemNodeId,
+      },
+    ]);
   });
 
   it("fixtureの集計、graph、根拠、前回差分を公開DTOへ反映する", () => {

@@ -754,7 +754,15 @@ function createConnectedComponents(
   nodesById: ReadonlyMap<GraphNodeId, GraphAnalysisNode>,
   activeEdges: readonly ActiveGraphEdge[],
 ): readonly ConnectedComponent[] {
-  const nodeIds = Object.freeze([...nodesById.keys()].sort(compareStrings));
+  const activeEdgeNodeIds = new Set<GraphNodeId>(
+    activeEdges.flatMap((edge) => [edge.fromNodeId, edge.toNodeId]),
+  );
+  const nodeIds = Object.freeze(
+    [...nodesById.values()]
+      .filter((node) => isTrackedNode(node) || activeEdgeNodeIds.has(node.nodeId))
+      .map((node) => node.nodeId)
+      .sort(compareStrings),
+  );
   const adjacencyDraft = new Map<GraphNodeId, Set<GraphNodeId>>();
   for (const nodeId of nodeIds) {
     adjacencyDraft.set(nodeId, new Set());
