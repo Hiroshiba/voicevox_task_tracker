@@ -17,6 +17,7 @@ import {
 } from "../src/domain/index.js";
 
 const headPushedAt = createUtcIsoDateTime("2026-07-31T03:00:00Z");
+const pullRequestCreatedAt = createUtcIsoDateTime("2026-07-31T01:00:00Z");
 const observedAt = createUtcIsoDateTime("2026-07-31T08:00:00Z");
 const evaluatedAt = createUtcIsoDateTime("2026-07-31T09:00:00Z");
 const pullRequestNodeId = createGitHubNodeId("PR_state_machine");
@@ -164,6 +165,7 @@ function createOpenPullRequest(): FreshObservedGitHubPullRequest {
     sourceId: buildSourceId("github_item_detail", pullRequestNodeId),
     nodeId: pullRequestNodeId,
     type: "pull_request",
+    createdAt: pullRequestCreatedAt,
     state: "open",
     stateReason: null,
     closedAt: null,

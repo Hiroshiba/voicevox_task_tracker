@@ -862,6 +862,50 @@ function createHistoryInputDetail(
 }
 
 describe("本番収集の接続", () => {
+  it("Pull Request作成前のcommittedDateをincremental_collection相当の経路で処理できる", async () => {
+    const repository = createRepository(
+      "R_pre_creation_commit",
+      "pre-creation-commit",
+      FIRST_RUN_AT,
+    );
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const item = createPullRequestItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "pre-creation-commit",
+      updatedAt: observedAt,
+      observedAt,
+    });
+    const detail = createFailedCheckPullRequestDetail(item, observedAt);
+    fixture.openItems = [item];
+    fixture.details.set(
+      item.nodeId,
+      Object.freeze({
+        ...detail,
+        headCommit: Object.freeze({
+          ...detail.headCommit,
+          committedAt: createUtcIsoDateTime("2026-06-30T00:00:00.000Z"),
+          pushedAt: Object.freeze({
+            status: "unavailable",
+            reason: "github_did_not_return_pushed_at",
+          }),
+        }),
+      }),
+    );
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: false,
+    });
+    const harness = createCollectionHarness({ repositories: [fixture], config });
+
+    const result = await harness.runDaily(FIRST_RUN_AT);
+
+    expect(result.exitCode).toBe(0);
+  });
+
   it("AI無効時の有効状態と利用可否をrun成功状態から分離して保存する", async () => {
     const repository = createRepository("R_ai_disabled", "ai-disabled", FIRST_RUN_AT);
     const fixture = createRepositoryFixture(repository);

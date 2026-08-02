@@ -5,6 +5,7 @@ export {
   type BotPredicateInput,
 } from "./actor-resolution.js";
 export {
+  resolvePullRequestCommitOccurredAt,
   type FreshObservedGitHubItemBase,
   type FreshObservedGitHubIssue,
   type FreshObservedGitHubPullRequest,

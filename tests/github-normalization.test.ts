@@ -7,7 +7,9 @@ import {
   createUtcIsoDateTime,
   type GitHubItemDisplayReference,
   type GitHubItemUrl,
+  type NormalizedEvent,
   type Repository,
+  type UtcIsoDateTime,
 } from "../src/domain/index.js";
 import {
   createGitHubBodyFingerprint,
@@ -21,11 +23,15 @@ import {
   type GitHubDetailActor,
   type GitHubItemDetail,
   type GitHubIssueComment,
+  type GitHubPullRequestCommit,
   type GitHubTimelineEvent,
 } from "../src/github/index.js";
 
 const occurredAt = createUtcIsoDateTime("2026-07-31T12:00:00Z");
 const observedAt = createUtcIsoDateTime("2026-08-01T00:00:00Z");
+const pullRequestCreatedAt = createUtcIsoDateTime("2026-07-15T00:00:00Z");
+const timelineCommitSourceId = buildSourceId("github_commit", "C_timeline_commit");
+const headCommitSourceId = buildSourceId("github_commit", "C_head_commit");
 const repositoryId = createGitHubRepositoryId("R_normalization");
 const repository = {
   id: repositoryId,
@@ -294,9 +300,153 @@ function createDetail(): Extract<GitHubItemDetail, { type: "pull_request" }> {
   };
 }
 
+function createCommit(
+  id: string,
+  committedAt: UtcIsoDateTime,
+  pushedAt: GitHubPullRequestCommit["pushedAt"],
+): GitHubPullRequestCommit {
+  return {
+    sourceId: buildSourceId("github_commit", id),
+    nodeId: createGitHubNodeId(id),
+    sha: `${id}-sha`,
+    committedAt,
+    pushedAt,
+  };
+}
+
+function createCommitOnlyDetail(
+  committedAt: UtcIsoDateTime,
+  pushedAt: GitHubPullRequestCommit["pushedAt"],
+): Extract<GitHubItemDetail, { type: "pull_request" }> {
+  const detail = createDetail();
+  const timelineCommit = createCommit("C_timeline_commit", committedAt, pushedAt);
+  const headCommit = createCommit("C_head_commit", committedAt, pushedAt);
+  return {
+    ...detail,
+    comments: [],
+    timeline: [
+      {
+        sourceId: buildSourceId("github_timeline_event", "E_commit_added"),
+        nodeId: createGitHubNodeId("E_commit_added"),
+        sequence: 0,
+        kind: "commit_added",
+        commit: timelineCommit,
+      },
+    ],
+    reviews: [],
+    reviewThreads: [],
+    reviewRequests: {
+      current: [],
+      history: [],
+    },
+    headSha: headCommit.sha,
+    headCommit,
+  };
+}
+
+function normalizeCommitOnlyPullRequest(
+  committedAt: UtcIsoDateTime,
+  pushedAt: GitHubPullRequestCommit["pushedAt"],
+): readonly Extract<NormalizedEvent, { kind: "push" }>[] {
+  const item = {
+    ...createItem("VOICEVOX/example#1", "https://github.com/VOICEVOX/example/pull/1"),
+    createdAt: pullRequestCreatedAt,
+  };
+  return normalizeGitHubEvents({
+    item,
+    detail: createCommitOnlyDetail(committedAt, pushedAt),
+    isBot,
+  }).filter((event) => event.kind === "push");
+}
+
 const isBot = (account: Readonly<{ login: string }>): boolean => account.login === "configured-bot";
 
 describe("GitHubイベント正規化", () => {
+  it("Pull Request作成前のcommittedDateを作成時刻へ寄せる", () => {
+    const events = normalizeCommitOnlyPullRequest(createUtcIsoDateTime("2026-07-14T00:00:00Z"), {
+      status: "unavailable",
+      reason: "github_did_not_return_pushed_at",
+    });
+
+    expect(events).toHaveLength(2);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceId: timelineCommitSourceId,
+          occurredAt: pullRequestCreatedAt,
+        }),
+        expect.objectContaining({
+          sourceId: headCommitSourceId,
+          occurredAt: pullRequestCreatedAt,
+        }),
+      ]),
+    );
+  });
+
+  it("Pull Request作成前のpushedDateを作成時刻へ寄せる", () => {
+    const events = normalizeCommitOnlyPullRequest(createUtcIsoDateTime("2026-07-13T00:00:00Z"), {
+      status: "available",
+      value: createUtcIsoDateTime("2026-07-14T00:00:00Z"),
+    });
+
+    expect(events).toHaveLength(2);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceId: timelineCommitSourceId,
+          occurredAt: pullRequestCreatedAt,
+        }),
+        expect.objectContaining({
+          sourceId: headCommitSourceId,
+          occurredAt: pullRequestCreatedAt,
+        }),
+      ]),
+    );
+  });
+
+  it("committedDateが作成後でもPull Request作成前のpushedDateを作成時刻へ寄せる", () => {
+    const events = normalizeCommitOnlyPullRequest(createUtcIsoDateTime("2026-07-16T00:00:00Z"), {
+      status: "available",
+      value: createUtcIsoDateTime("2026-07-14T00:00:00Z"),
+    });
+
+    expect(events).toHaveLength(2);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceId: timelineCommitSourceId,
+          occurredAt: pullRequestCreatedAt,
+        }),
+        expect.objectContaining({
+          sourceId: headCommitSourceId,
+          occurredAt: pullRequestCreatedAt,
+        }),
+      ]),
+    );
+  });
+
+  it("Pull Request作成後のpushedDateをそのまま保持する", () => {
+    const pushedAt = createUtcIsoDateTime("2026-07-17T00:00:00Z");
+    const events = normalizeCommitOnlyPullRequest(createUtcIsoDateTime("2026-07-16T00:00:00Z"), {
+      status: "available",
+      value: pushedAt,
+    });
+
+    expect(events).toHaveLength(2);
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceId: timelineCommitSourceId,
+          occurredAt: pushedAt,
+        }),
+        expect.objectContaining({
+          sourceId: headCommitSourceId,
+          occurredAt: pushedAt,
+        }),
+      ]),
+    );
+  });
+
   it("8種別を保持してsource IDで重複排除し同時刻を決定論的に並べる", () => {
     const item = createItem("VOICEVOX/example#1", "https://github.com/VOICEVOX/example/pull/1");
     const detail = createDetail();

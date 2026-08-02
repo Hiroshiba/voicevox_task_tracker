@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   type FreshObservedGitHubPullRequest,
   type ObservedGitHubHeadChecks,
+  resolvePullRequestCommitOccurredAt,
 } from "./github-item-observation.js";
 import { type ResolvedLabelEffects } from "./label-resolution.js";
 import { type SourceId } from "./source-id.js";
@@ -543,18 +544,12 @@ function createBlockedDecision(
 }
 
 function getHeadBasis(pullRequest: FreshObservedGitHubPullRequest): PullRequestTransitionBasis {
-  if (pullRequest.headCommit.pushedAt.status === "available") {
-    return createBasis(
-      [pullRequest.headCommit.sourceId],
-      pullRequest.headCommit.pushedAt.value,
-      "event",
-    );
-  }
-  return createBasis(
-    [pullRequest.headCommit.sourceId],
-    pullRequest.headCommit.committedAt,
-    "inferred",
+  const occurredAt = resolvePullRequestCommitOccurredAt(
+    pullRequest.headCommit,
+    pullRequest.createdAt,
   );
+  const precision = pullRequest.headCommit.pushedAt.status === "available" ? "event" : "inferred";
+  return createBasis([pullRequest.headCommit.sourceId], occurredAt, precision);
 }
 
 function createAutomationDecision(

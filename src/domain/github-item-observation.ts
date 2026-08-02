@@ -62,6 +62,16 @@ export type ObservedGitHubPullRequestCommit = Readonly<{
   pushedAt: ObservedGitHubCommitPushedAt;
 }>;
 
+/** Pull Requestのcommit発生時刻がPull Request作成時刻より前にならないように解決する。 */
+export function resolvePullRequestCommitOccurredAt(
+  commit: ObservedGitHubPullRequestCommit,
+  itemCreatedAt: UtcIsoDateTime,
+): UtcIsoDateTime {
+  const occurredAt =
+    commit.pushedAt.status === "available" ? commit.pushedAt.value : commit.committedAt;
+  return occurredAt < itemCreatedAt ? itemCreatedAt : occurredAt;
+}
+
 /** Pull Request判定に使うreview thread観測値。 */
 export type ObservedGitHubReviewThread = Readonly<{
   sourceId: SourceId;
@@ -159,6 +169,7 @@ export type FreshObservedGitHubPullRequest = FreshObservedGitHubItemBase &
   ObservedGitHubItemState &
   Readonly<{
     type: "pull_request";
+    createdAt: UtcIsoDateTime;
     draft: boolean;
     headSha: string;
     headCommit: ObservedGitHubPullRequestCommit;

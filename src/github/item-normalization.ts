@@ -16,6 +16,7 @@ import {
   type ObservedGitHubReviewRequest,
   type ObservedGitHubReviewRequestTarget,
   type ObservedGitHubReviewThread,
+  resolvePullRequestCommitOccurredAt,
   type SourceId,
   type SystemActor,
   type UtcIsoDateTime,
@@ -257,15 +258,14 @@ function normalizeCommentEvent(
 
 function normalizePushEvent(
   itemNodeId: GitHubNodeId,
+  itemCreatedAt: UtcIsoDateTime,
   commit: GitHubPullRequestCommit,
 ): NormalizedEvent {
-  const occurredAt =
-    commit.pushedAt.status === "available" ? commit.pushedAt.value : commit.committedAt;
   return Object.freeze({
     kind: "push",
     sourceId: commit.sourceId,
     itemNodeId,
-    occurredAt,
+    occurredAt: resolvePullRequestCommitOccurredAt(commit, itemCreatedAt),
     actor: GITHUB_SYSTEM_ACTOR,
     headCommitSha: commit.sha,
     forcePush: false,
@@ -453,7 +453,7 @@ function normalizeTimelineEvent(
         }),
       ]);
     case "commit_added":
-      return Object.freeze([normalizePushEvent(detail.nodeId, event.commit)]);
+      return Object.freeze([normalizePushEvent(detail.nodeId, item.createdAt, event.commit)]);
     case "ready_for_review":
     case "converted_to_draft":
     case "added_to_merge_queue":
@@ -605,7 +605,9 @@ function normalizeEvents(options: NormalizeGitHubEventsOptions): readonly Normal
       }
     }
     events.push(...normalizeCurrentReviewRequestSnapshots(options.detail));
-    events.push(normalizePushEvent(options.detail.nodeId, options.detail.headCommit));
+    events.push(
+      normalizePushEvent(options.detail.nodeId, options.item.createdAt, options.detail.headCommit),
+    );
   }
   assertSourceIdsDoNotCrossKinds(events);
   const deduplicated = deduplicateByStableId(events, (event) => event.sourceId);

@@ -370,6 +370,7 @@ function createPullRequestObservation(
     sourceId: buildSourceId("golden_item", item.nodeId),
     nodeId,
     type: "pull_request",
+    createdAt: createUtcIsoDateTime(item.createdAt),
     ...createItemState(item),
     author: Object.freeze({
       status: "identified",

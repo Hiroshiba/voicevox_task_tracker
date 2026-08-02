@@ -65,7 +65,7 @@ option形式の引数は`--backfill`に従って`daily`または`backfill`へ変
 3. GitHub Appのinstallation tokenを発行し、期限前に更新できる読み取り専用clientを作ります。
 4. Organizationのrepository metadataを全ページ取得し、run中に不変な公開allowlistを作ります。
 5. 設定したteamを解決し、allowlist内repositoryのopen IssueとPull Requestを列挙して詳細を収集します。
-6. GitHubイベントをsource ID付きに正規化し、追跡対象と関係候補を選びます。
+6. GitHubイベントをsource ID付きに正規化し、追跡対象と関係候補を選びます。Pull Request作成前のcommitは作成時刻を下限としてpushイベント化し、項目作成前のイベントを作りません。
 7. IssueとPull Requestの状態と責務を決定論的に判定します。
 8. 高信頼で確定しない項目をCodexで分析し、出力を検証します。
 9. reducerの第1 pass、暫定graphのreconcileと解析、graphを反映したreducerの第2 pass、最終graphのreconcileと解析の順に実行し、停滞時間、cycle、frontier、downstream impactを確定します。
