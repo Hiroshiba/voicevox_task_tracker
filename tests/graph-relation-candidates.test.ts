@@ -9,6 +9,7 @@ import {
 } from "../src/domain/index.js";
 import {
   extractRelationCandidates,
+  RelationReferenceConflictError,
   type ExtractRelationCandidatesInput,
   type PublicGitHubRelationItem,
   type RelationCandidate,
@@ -79,6 +80,15 @@ function extract(
     knownItems,
   } satisfies ExtractRelationCandidatesInput;
   return extractRelationCandidates(input);
+}
+
+function captureThrownError(action: () => unknown): unknown {
+  try {
+    action();
+  } catch (error) {
+    return error;
+  }
+  throw new TypeError("期待したエラーが投げられませんでした");
 }
 
 function relationDescription(candidate: RelationCandidate): string {
@@ -766,5 +776,122 @@ describe("候補の識別と対象解決", () => {
     expect(candidates[0]?.sourceIds).toEqual(
       [bodySourceId, commentSourceId].sort() satisfies SourceId[],
     );
+  });
+});
+
+describe("公開参照項目の衝突", () => {
+  it("同じnode IDの食い違いを安全な値だけとともに保持する", () => {
+    const current = createItem({
+      nodeId: "I_current",
+      owner: "VOICEVOX",
+      repository: "tracker",
+      type: "issue",
+      number: 1,
+      state: "open",
+    });
+    const existing = {
+      ...createItem({
+        nodeId: "I_conflict",
+        owner: "owner-existing-canary",
+        repository: "repository-existing-canary",
+        type: "issue",
+        number: 2,
+        state: "closed",
+      }),
+      repositoryDisabled: true,
+    } satisfies PublicGitHubRelationItem;
+    const incoming = {
+      ...createItem({
+        nodeId: "I_conflict",
+        owner: "owner-incoming-canary",
+        repository: "repository-incoming-canary",
+        type: "pull_request",
+        number: 3,
+        state: "merged",
+      }),
+      repositoryArchived: true,
+    } satisfies PublicGitHubRelationItem;
+    const item = createExtractionItem({
+      item: current,
+      body: createTextSource("github_item_body", "I_current", ""),
+      comments: [],
+      crossReferences: [],
+      nativeDependencies: [],
+      nativeHierarchy: [],
+    });
+
+    const error = captureThrownError(() => extract(item, [existing, incoming]));
+
+    expect(error).toBeInstanceOf(RelationReferenceConflictError);
+    if (!(error instanceof RelationReferenceConflictError)) {
+      throw new TypeError("関係参照の衝突エラーではありません");
+    }
+    expect(error.conflictKind).toBe("node_id");
+    expect(error.mismatches).toEqual([
+      { field: "repositoryOwner" },
+      { field: "repositoryName" },
+      {
+        field: "repositoryArchived",
+        existingValue: false,
+        incomingValue: true,
+      },
+      {
+        field: "repositoryDisabled",
+        existingValue: true,
+        incomingValue: false,
+      },
+      {
+        field: "type",
+        existingValue: "issue",
+        incomingValue: "pull_request",
+      },
+      { field: "number" },
+      { field: "url" },
+      {
+        field: "state",
+        existingValue: "closed",
+        incomingValue: "merged",
+      },
+    ]);
+  });
+
+  it("同じrepositoryと番号の食い違いをnode IDのフィールド名だけで保持する", () => {
+    const current = createItem({
+      nodeId: "I_current",
+      owner: "VOICEVOX",
+      repository: "tracker",
+      type: "issue",
+      number: 1,
+      state: "open",
+    });
+    const existing = createItem({
+      nodeId: "I_existing_canary",
+      owner: "VOICEVOX",
+      repository: "same-repository-canary",
+      type: "issue",
+      number: 2,
+      state: "open",
+    });
+    const incoming = {
+      ...existing,
+      nodeId: createGitHubNodeId("I_incoming_canary"),
+    } satisfies PublicGitHubRelationItem;
+    const item = createExtractionItem({
+      item: current,
+      body: createTextSource("github_item_body", "I_current", ""),
+      comments: [],
+      crossReferences: [],
+      nativeDependencies: [],
+      nativeHierarchy: [],
+    });
+
+    const error = captureThrownError(() => extract(item, [existing, incoming]));
+
+    expect(error).toBeInstanceOf(RelationReferenceConflictError);
+    if (!(error instanceof RelationReferenceConflictError)) {
+      throw new TypeError("関係参照の衝突エラーではありません");
+    }
+    expect(error.conflictKind).toBe("repository_number");
+    expect(error.mismatches).toEqual([{ field: "nodeId" }]);
   });
 });

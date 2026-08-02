@@ -7,6 +7,7 @@ import {
   type SourceId,
 } from "../domain/index.js";
 import { assertNonNullable, UnreachableError } from "../util/index.js";
+import { RelationReferenceConflictError, type RelationReferenceMismatch } from "./errors.js";
 import { buildRelationCandidateId } from "./relation-candidate-id.js";
 import {
   type CandidateBlocksRelation,
@@ -143,6 +144,57 @@ function samePublicItem(left: PublicGitHubRelationItem, right: PublicGitHubRelat
   );
 }
 
+function findRelationReferenceMismatches(
+  existing: PublicGitHubRelationItem,
+  incoming: PublicGitHubRelationItem,
+): readonly RelationReferenceMismatch[] {
+  const mismatches: RelationReferenceMismatch[] = [];
+  if (existing.nodeId !== incoming.nodeId) {
+    mismatches.push({ field: "nodeId" });
+  }
+  if (existing.repositoryOwner.toLowerCase() !== incoming.repositoryOwner.toLowerCase()) {
+    mismatches.push({ field: "repositoryOwner" });
+  }
+  if (existing.repositoryName.toLowerCase() !== incoming.repositoryName.toLowerCase()) {
+    mismatches.push({ field: "repositoryName" });
+  }
+  if (existing.repositoryArchived !== incoming.repositoryArchived) {
+    mismatches.push({
+      field: "repositoryArchived",
+      existingValue: existing.repositoryArchived,
+      incomingValue: incoming.repositoryArchived,
+    });
+  }
+  if (existing.repositoryDisabled !== incoming.repositoryDisabled) {
+    mismatches.push({
+      field: "repositoryDisabled",
+      existingValue: existing.repositoryDisabled,
+      incomingValue: incoming.repositoryDisabled,
+    });
+  }
+  if (existing.type !== incoming.type) {
+    mismatches.push({
+      field: "type",
+      existingValue: existing.type,
+      incomingValue: incoming.type,
+    });
+  }
+  if (existing.number !== incoming.number) {
+    mismatches.push({ field: "number" });
+  }
+  if (existing.url !== incoming.url) {
+    mismatches.push({ field: "url" });
+  }
+  if (existing.state !== incoming.state) {
+    mismatches.push({
+      field: "state",
+      existingValue: existing.state,
+      incomingValue: incoming.state,
+    });
+  }
+  return Object.freeze(mismatches);
+}
+
 function createReferenceIndex(input: ExtractRelationCandidatesInput): ReferenceIndex {
   const byAlias = new Map<string, PublicGitHubRelationItem>();
   const byNodeId = new Map<GitHubNodeId, PublicGitHubRelationItem>();
@@ -157,12 +209,18 @@ function createReferenceIndex(input: ExtractRelationCandidatesInput): ReferenceI
     validatePublicItem(item);
     const existingByNodeId = byNodeId.get(item.nodeId);
     if (existingByNodeId != null && !samePublicItem(existingByNodeId, item)) {
-      throw new TypeError("同じGitHub node IDに異なる公開参照項目が指定されています");
+      throw new RelationReferenceConflictError(
+        "node_id",
+        findRelationReferenceMismatches(existingByNodeId, item),
+      );
     }
     const key = aliasKey(item.repositoryOwner, item.repositoryName, item.number);
     const existingByAlias = byAlias.get(key);
     if (existingByAlias != null && existingByAlias.nodeId !== item.nodeId) {
-      throw new TypeError("同じrepositoryと番号に異なる公開参照項目が指定されています");
+      throw new RelationReferenceConflictError(
+        "repository_number",
+        findRelationReferenceMismatches(existingByAlias, item),
+      );
     }
     byNodeId.set(item.nodeId, item);
     byAlias.set(key, item);

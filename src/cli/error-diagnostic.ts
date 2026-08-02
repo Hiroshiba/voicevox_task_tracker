@@ -9,6 +9,7 @@ import {
   GitHubResponseSchemaValidationError,
   GitHubRetryExhaustedError,
 } from "../github/index.js";
+import { RelationReferenceConflictError } from "../graph/index.js";
 import {
   CliCodexAuthenticationError,
   CliCredentialsError,
@@ -271,6 +272,26 @@ function appendKnownErrorDiagnostics(fields: DiagnosticField[], error: Error): v
       key: "relationExpansionUnfetchedCount",
       value: error.unfetchedCount.toString(),
     });
+  }
+  if (error instanceof RelationReferenceConflictError) {
+    fields.push({ key: "relationReferenceConflictKind", value: error.conflictKind });
+    fields.push({
+      key: "relationReferenceConflictFields",
+      value: error.mismatches.map((mismatch) => mismatch.field).join(","),
+    });
+    for (const mismatch of error.mismatches) {
+      if ("existingValue" in mismatch) {
+        const fieldName = mismatch.field.charAt(0).toUpperCase() + mismatch.field.slice(1);
+        fields.push({
+          key: `relationReferenceConflict${fieldName}Existing`,
+          value: mismatch.existingValue.toString(),
+        });
+        fields.push({
+          key: `relationReferenceConflict${fieldName}Incoming`,
+          value: mismatch.incomingValue.toString(),
+        });
+      }
+    }
   }
   if (error instanceof GitHubGraphQLResponseError) {
     appendGraphQLDiagnostics(fields, error);

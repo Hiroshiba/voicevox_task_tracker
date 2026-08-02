@@ -14,6 +14,7 @@ import {
   GitHubRequestError,
   GitHubResponseSchemaValidationError,
 } from "../src/github/index.js";
+import { RelationReferenceConflictError } from "../src/graph/index.js";
 
 class GitHubItemDetailError extends Error {
   public constructor(cause: Error) {
@@ -400,6 +401,57 @@ describe("safeErrorDiagnostic", () => {
     expect(diagnostic).not.toContain(url);
     expect(diagnostic).not.toContain(title);
     expect(diagnostic).not.toContain(body);
+  });
+
+  it("関係参照の複数の食い違いから固定語彙だけを診断へ出す", () => {
+    const nodeId = "I_node-id-canary";
+    const url = "https://github.com/owner-canary/repository-canary/issues/42";
+    const owner = "owner-canary";
+    const repository = "repository-canary";
+    const error = new RelationReferenceConflictError("node_id", [
+      { field: "nodeId" },
+      { field: "repositoryOwner" },
+      { field: "repositoryName" },
+      {
+        field: "repositoryArchived",
+        existingValue: false,
+        incomingValue: true,
+      },
+      {
+        field: "repositoryDisabled",
+        existingValue: true,
+        incomingValue: false,
+      },
+      {
+        field: "type",
+        existingValue: "issue",
+        incomingValue: "pull_request",
+      },
+      { field: "number" },
+      { field: "url" },
+      {
+        field: "state",
+        existingValue: "open",
+        incomingValue: "merged",
+      },
+    ]);
+    delete error.stack;
+    Object.defineProperties(error, {
+      nodeId: { value: nodeId },
+      url: { value: url },
+      repositoryOwner: { value: owner },
+      repositoryName: { value: repository },
+    });
+
+    const diagnostic = safeErrorDiagnostic("incremental_collection", error);
+
+    expect(diagnostic).toBe(
+      "stage=incremental_collection errorType=RelationReferenceConflictError relationReferenceConflictKind=node_id relationReferenceConflictFields=nodeId,repositoryOwner,repositoryName,repositoryArchived,repositoryDisabled,type,number,url,state relationReferenceConflictRepositoryArchivedExisting=false relationReferenceConflictRepositoryArchivedIncoming=true relationReferenceConflictRepositoryDisabledExisting=true relationReferenceConflictRepositoryDisabledIncoming=false relationReferenceConflictTypeExisting=issue relationReferenceConflictTypeIncoming=pull_request relationReferenceConflictStateExisting=open relationReferenceConflictStateIncoming=merged",
+    );
+    expect(diagnostic).not.toContain(nodeId);
+    expect(diagnostic).not.toContain(url);
+    expect(diagnostic).not.toContain(owner);
+    expect(diagnostic).not.toContain(repository);
   });
 
   it("許可済みCLIエラー3種でmessageを最後に出す", () => {
