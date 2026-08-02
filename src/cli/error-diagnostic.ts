@@ -338,7 +338,7 @@ export function safeCodexFallbackDiagnostic(
 }
 
 /** 実行失敗から安全な1行の診断文字列を生成する。 */
-export function safeErrorDiagnostic(stage: RunStage, error: unknown): string {
+export function safeErrorDiagnostic(stage: RunStage | "unknown", error: unknown): string {
   const fields: DiagnosticField[] = [{ key: "stage", value: stage }];
   const chain = collectErrorChain(error);
   fields.push({

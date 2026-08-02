@@ -5,6 +5,7 @@ import { z } from "zod";
 import { type CliExecutionResult } from "./application.js";
 import { parseCliArguments } from "./command.js";
 import { createDefaultCliApplication } from "./composition-root.js";
+import { safeErrorDiagnostic } from "./error-diagnostic.js";
 import {
   CliCodexAuthenticationError,
   CliCredentialsError,
@@ -173,6 +174,7 @@ if (isMainModule(import.meta.url, process.argv[1])) {
     process.exitCode = result.exitCode;
   } catch (error: unknown) {
     process.stderr.write(`${safeTopLevelMessage(error)}\n`);
+    process.stderr.write(`${safeErrorDiagnostic("unknown", error)}\n`);
     process.exitCode = 1;
   }
 }
