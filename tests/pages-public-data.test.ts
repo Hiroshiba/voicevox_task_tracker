@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildSourceId,
+  createGitHubNodeId,
   createGitHubRepositoryId,
   createUtcIsoDateTime,
   type GitHubItemUrl,
@@ -386,14 +387,17 @@ describe("公開evidence URL", () => {
 
   it.each(individualSourceCases)("$kindは個別anchorへ解決する", ({ kind, sourceUrl }) => {
     const itemUrl = "https://github.com/VOICEVOX/public/issues/1";
+    const itemNodeId = createGitHubNodeId("I_EVIDENCE_ANCHOR");
     const sourceId = buildSourceId(kind, "source");
 
     expect(
       resolveEvidenceSourceUrl(
         sourceId,
+        itemNodeId,
         itemUrl,
         createEvidenceSourceUrlMap([
           {
+            itemNodeId,
             sourceId,
             url: sourceUrl,
           },
@@ -404,10 +408,12 @@ describe("公開evidence URL", () => {
 
   it("項目単位のsourceは項目URLへ解決し未知の種別を拒否する", () => {
     const itemUrl = "https://github.com/VOICEVOX/public/issues/1";
+    const itemNodeId = createGitHubNodeId("I_EVIDENCE_ITEM");
 
     expect(
       resolveEvidenceSourceUrl(
         buildSourceId("github_item_body", "item"),
+        itemNodeId,
         itemUrl,
         createEvidenceSourceUrlMap([]),
       ),
@@ -415,36 +421,68 @@ describe("公開evidence URL", () => {
     expect(() =>
       resolveEvidenceSourceUrl(
         buildSourceId("unexpected_source", "event"),
+        itemNodeId,
         itemUrl,
         createEvidenceSourceUrlMap([]),
       ),
     ).toThrow("公開evidence URLへ解決できないsource ID種別です");
   });
 
-  it("source ID別URL MapはURL衝突と入力イベント重複を拒否する", () => {
+  it("項目とsource ID別URL Mapは同じ組のURL衝突と入力イベント重複を拒否する", () => {
+    const itemNodeId = createGitHubNodeId("I_EVIDENCE_DUPLICATE");
     const sourceId = buildSourceId("github_issue_comment", "comment");
     const firstUrl = "https://github.com/VOICEVOX/public/issues/1#issuecomment-101";
     const secondUrl = "https://github.com/VOICEVOX/public/issues/1#issuecomment-102";
 
     expect(() =>
       createEvidenceSourceUrlMap([
-        { sourceId, url: firstUrl },
-        { sourceId, url: secondUrl },
+        { itemNodeId, sourceId, url: firstUrl },
+        { itemNodeId, sourceId, url: secondUrl },
       ]),
-    ).toThrow("同じsource IDに異なるURLがあります");
+    ).toThrow("同じ項目とsource IDの組に異なるURLがあります");
     expect(() =>
       createEvidenceSourceUrlMap([
-        { sourceId, url: firstUrl },
-        { sourceId, url: firstUrl },
+        { itemNodeId, sourceId, url: firstUrl },
+        { itemNodeId, sourceId, url: firstUrl },
       ]),
-    ).toThrow("同じsource IDの入力イベントが複数あります");
+    ).toThrow("同じ項目とsource IDの入力イベントが複数あります");
     expect(() =>
       resolveEvidenceSourceUrl(
         sourceId,
+        itemNodeId,
         "https://github.com/VOICEVOX/public/issues/1",
         createEvidenceSourceUrlMap([]),
       ),
     ).toThrow("個別sourceに対応する入力イベントが1件ではありません");
+  });
+
+  it("別項目で共有するsource IDを所有項目ごとのURLへ解決する", () => {
+    const firstItemNodeId = createGitHubNodeId("I_EVIDENCE_FIRST");
+    const secondItemNodeId = createGitHubNodeId("I_EVIDENCE_SECOND");
+    const sourceId = buildSourceId("github_issue_comment", "shared-comment");
+    const firstItemUrl = "https://github.com/VOICEVOX/public/issues/1";
+    const secondItemUrl = "https://github.com/VOICEVOX/public/issues/2";
+    const firstSourceUrl = `${firstItemUrl}#issuecomment-101`;
+    const secondSourceUrl = `${secondItemUrl}#issuecomment-202`;
+    const sourceUrls = createEvidenceSourceUrlMap([
+      {
+        itemNodeId: firstItemNodeId,
+        sourceId,
+        url: firstSourceUrl,
+      },
+      {
+        itemNodeId: secondItemNodeId,
+        sourceId,
+        url: secondSourceUrl,
+      },
+    ]);
+
+    expect(resolveEvidenceSourceUrl(sourceId, firstItemNodeId, firstItemUrl, sourceUrls)).toBe(
+      firstSourceUrl,
+    );
+    expect(resolveEvidenceSourceUrl(sourceId, secondItemNodeId, secondItemUrl, sourceUrls)).toBe(
+      secondSourceUrl,
+    );
   });
 
   it("公開詳細のcomment evidenceを個別anchorへ解決する", () => {
@@ -485,6 +523,94 @@ describe("公開evidence URL", () => {
     );
 
     expect(generated.details.items[0]?.evidence[0]?.sourceUrl).toBe(sourceUrl);
+  });
+
+  it("別項目で共有するsource IDを含む公開データを生成する", () => {
+    const sourceId = buildSourceId("github_commit", "C_PUBLIC_SHARED");
+    const source = createSnapshot({
+      runId: "run-shared-public-source",
+      runStatus: "success",
+      ai: {
+        enabled: false,
+        available: false,
+        degraded: false,
+      },
+      generatedAt: GENERATED_AT,
+      repositories: [
+        {
+          id: PUBLIC_REPOSITORY_ID,
+          name: "public",
+          observedAt: FRESH_OBSERVED_AT,
+          freshness: "fresh",
+        },
+      ],
+      items: [
+        createItem({
+          nodeId: "I_PUBLIC_SHARED_FIRST",
+          repositoryId: PUBLIC_REPOSITORY_ID,
+          repositoryName: "public",
+          number: 2,
+          status: "new_untriaged",
+          severity: "watch",
+          waitingOnKind: "role",
+          waitingOnRole: "maintainer",
+          observedAt: FRESH_OBSERVED_AT,
+          title: "共有commitを持つ項目A",
+        }),
+        createItem({
+          nodeId: "I_PUBLIC_SHARED_SECOND",
+          repositoryId: PUBLIC_REPOSITORY_ID,
+          repositoryName: "public",
+          number: 4,
+          status: "new_untriaged",
+          severity: "watch",
+          waitingOnKind: "role",
+          waitingOnRole: "maintainer",
+          observedAt: FRESH_OBSERVED_AT,
+          title: "共有commitを持つ項目B",
+        }),
+      ],
+      relations: [],
+    });
+    const snapshot = createStateSnapshot({
+      ...source,
+      items: source.items.map((item) => ({
+        ...item,
+        inputEvents: [
+          {
+            sourceId,
+            url: item.url,
+          },
+        ],
+        evidence: [
+          {
+            sourceId,
+            supports: "status",
+            summary: "共有commitが判定根拠です",
+          },
+        ],
+      })),
+    });
+
+    const generated = generateFixture(
+      snapshot,
+      [],
+      publicInventory(),
+      [],
+      defaultGenerationOptions,
+    );
+
+    expect(
+      generated.details.items.map((item) => ({
+        nodeId: item.summary.nodeId,
+        sourceUrl: item.evidence[0]?.sourceUrl,
+      })),
+    ).toEqual(
+      snapshot.items.map((item) => ({
+        nodeId: item.nodeId,
+        sourceUrl: item.url,
+      })),
+    );
   });
 });
 

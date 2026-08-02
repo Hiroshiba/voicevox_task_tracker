@@ -1172,6 +1172,102 @@ describe("本番収集の接続", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  it("同じcommitを共有する複数Pull Requestを履歴と公開データへ保存する", async () => {
+    const repository = createRepository("R_shared_commit", "shared-commit", FIRST_RUN_AT);
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const first = createPullRequestItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "shared-commit-first",
+      updatedAt: observedAt,
+      observedAt,
+    });
+    const second = createPullRequestItem({
+      repository: publicRepository,
+      number: 2,
+      fingerprint: "shared-commit-second",
+      updatedAt: observedAt,
+      observedAt,
+    });
+    const sharedCommitNodeId = createGitHubNodeId("C_shared_commit");
+    const sharedSourceId = buildSourceId("github_commit", sharedCommitNodeId);
+    const sharedHeadSha = "shared-head-sha";
+    const firstDetail = createFailedCheckPullRequestDetail(first, observedAt);
+    const secondDetail = createFailedCheckPullRequestDetail(second, observedAt);
+    const sharedHeadCommit = Object.freeze({
+      ...firstDetail.headCommit,
+      sourceId: sharedSourceId,
+      nodeId: sharedCommitNodeId,
+      sha: sharedHeadSha,
+    });
+    fixture.openItems = [first, second];
+    fixture.details.set(
+      first.nodeId,
+      Object.freeze({
+        ...firstDetail,
+        headSha: sharedHeadSha,
+        headCommit: sharedHeadCommit,
+      }),
+    );
+    fixture.details.set(
+      second.nodeId,
+      Object.freeze({
+        ...secondDetail,
+        headSha: sharedHeadSha,
+        headCommit: sharedHeadCommit,
+      }),
+    );
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: false,
+    });
+    const harness = createCollectionHarness({ repositories: [fixture], config });
+
+    const result = await harness.runDaily(FIRST_RUN_AT);
+    const files = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const historyBytes = files.get("state/history/2026-08-01.jsonl");
+    if (historyBytes == null) {
+      throw new TypeError("共有commitの履歴がありません");
+    }
+    const historyRecords = parseStateHistoryRecords(new TextDecoder().decode(historyBytes));
+    const sharedHistoryEvents = historyRecords
+      .flatMap((record) => record.inputEvents)
+      .filter((event) => event.sourceId === sharedSourceId);
+    const publicData = harness.publicData.at(-1);
+    if (publicData == null) {
+      throw new TypeError("共有commitの公開データがありません");
+    }
+    const sharedPublicItems = publicData.details.items.filter((item) =>
+      item.inputEvents.some((event) => event.sourceId === sharedSourceId),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(sharedHistoryEvents.map((event) => event.itemNodeId)).toEqual(
+      [first.nodeId, second.nodeId].sort(),
+    );
+    expect(sharedPublicItems).toHaveLength(2);
+    expect(
+      sharedPublicItems.map((item) => ({
+        nodeId: item.summary.nodeId,
+        url: item.inputEvents.find((event) => event.sourceId === sharedSourceId)?.url,
+      })),
+    ).toEqual(
+      expect.arrayContaining([
+        {
+          nodeId: first.nodeId,
+          url: first.url,
+        },
+        {
+          nodeId: second.nodeId,
+          url: second.url,
+        },
+      ]),
+    );
+  });
+
   it("AI無効時の有効状態と利用可否をrun成功状態から分離して保存する", async () => {
     const repository = createRepository("R_ai_disabled", "ai-disabled", FIRST_RUN_AT);
     const fixture = createRepositoryFixture(repository);

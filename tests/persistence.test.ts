@@ -13,6 +13,7 @@ import {
   type AiCacheEntry,
 } from "../src/codex/index.js";
 import {
+  buildSourceId,
   createGitHubRepositoryId,
   createUtcIsoDateTime,
   type Repository,
@@ -30,18 +31,22 @@ import {
   StatePublicSafetyError,
   StateSnapshotSchemaError,
   createEmptyStateNotificationLedger,
+  createStateHistoryInputEvents,
+  createStateHistoryRecord,
   createStateNotificationLedger,
   createStateRunReport,
   createStateSnapshot,
   parseStateHistoryRecords,
   parseStateSnapshot,
   serializeCanonicalJson,
+  serializeStateHistoryRecords,
   serializeStateNotificationLedger,
   serializeStateSnapshot,
   type StateNotificationLedger,
   type StatePersistenceConfiguration,
   type StateRunReport,
   type StateSnapshot,
+  type StateHistoryInputEvent,
 } from "../src/persistence/index.js";
 import { assertNonNullable } from "../src/util/index.js";
 
@@ -294,6 +299,64 @@ function createSnapshot(options: SnapshotFixtureOptions): StateSnapshot {
   });
 }
 
+function createHistoryInputEvent(itemNodeId: string, sourceId: string): StateHistoryInputEvent {
+  return Object.freeze({
+    sourceId,
+    itemNodeId,
+    kind: "push",
+    actor: Object.freeze({
+      type: "system",
+      name: "GitHub",
+    }),
+    occurredAt: fixedItemAt,
+  });
+}
+
+function createHistoryInputSnapshot(
+  runId: string,
+  generatedAt: string,
+  itemNodeIds: readonly string[],
+  sourceId: string,
+): StateSnapshot {
+  const snapshot = createSnapshot({
+    runId,
+    generatedAt,
+    repositoryIds: [publicRepositoryId],
+    responsibility: {
+      status: "new_untriaged",
+      kind: "role",
+      candidateId: "role:maintainer",
+      role: "maintainer",
+    },
+    severity: "watch",
+    edge: {
+      status: "absent",
+    },
+  });
+  const template = snapshot.items[0];
+  assertNonNullable(template, "履歴入力イベント用の項目fixtureがありません");
+  return createStateSnapshot({
+    ...snapshot,
+    items: itemNodeIds.map((nodeId, index) => {
+      const number = index + 1;
+      const url = `https://github.com/VOICEVOX/example/issues/${number.toString()}`;
+      return {
+        ...template,
+        nodeId,
+        displayReference: `VOICEVOX/example#${number.toString()}`,
+        number,
+        url,
+        inputEvents: [
+          {
+            sourceId,
+            url,
+          },
+        ],
+      };
+    }),
+  });
+}
+
 function subtractMinutes(value: string, minutes: number): string {
   return new Date(Date.parse(value) - minutes * 60_000).toISOString();
 }
@@ -541,6 +604,80 @@ describe("state schema version", () => {
     expect(error.cause).toMatchObject({
       message: "state historyのschemaVersionは未対応です",
     });
+  });
+});
+
+describe("state履歴の入力イベント", () => {
+  it("別項目で共有するsource IDを受理し入力順に依存せず整列する", () => {
+    const sourceId = buildSourceId("github_commit", "C_SHARED");
+    const first = createHistoryInputEvent("I_FIRST", sourceId);
+    const second = createHistoryInputEvent("I_SECOND", sourceId);
+
+    const forward = createStateHistoryInputEvents([first, second]);
+    const reverse = createStateHistoryInputEvents([second, first]);
+
+    expect(forward).toEqual([first, second]);
+    expect(reverse).toEqual(forward);
+  });
+
+  it("同じ項目のsource ID重複を拒否する", () => {
+    const event = createHistoryInputEvent(
+      "I_DUPLICATE",
+      buildSourceId("github_commit", "C_DUPLICATE"),
+    );
+
+    expect(() => createStateHistoryInputEvents([event, event])).toThrow(StateFormatError);
+  });
+
+  it("前回snapshotとの新規判定に項目とsource IDの組を使う", () => {
+    const sourceId = buildSourceId("github_commit", "C_HISTORY_SHARED");
+    const first = createHistoryInputEvent("I_HISTORY_FIRST", sourceId);
+    const second = createHistoryInputEvent("I_HISTORY_SECOND", sourceId);
+    const previous = createHistoryInputSnapshot(
+      "run-history-input-previous",
+      "2026-07-31T00:00:00.000Z",
+      [first.itemNodeId],
+      sourceId,
+    );
+    const current = createHistoryInputSnapshot(
+      "run-history-input-current",
+      "2026-08-01T00:00:00.000Z",
+      [first.itemNodeId, second.itemNodeId],
+      sourceId,
+    );
+
+    const initialRecord = createStateHistoryRecord(
+      undefined,
+      current,
+      "2026-08-01",
+      current.repositories,
+      [second, first],
+    );
+    const nextRecord = createStateHistoryRecord(
+      previous,
+      current,
+      "2026-08-01",
+      current.repositories,
+      [second, first],
+    );
+    const movedCurrent = createHistoryInputSnapshot(
+      "run-history-input-moved",
+      "2026-08-01T00:00:00.000Z",
+      [second.itemNodeId],
+      sourceId,
+    );
+    const movedRecord = createStateHistoryRecord(
+      previous,
+      movedCurrent,
+      "2026-08-01",
+      movedCurrent.repositories,
+      [second],
+    );
+    const parsedRecord = parseStateHistoryRecords(serializeStateHistoryRecords([initialRecord]))[0];
+
+    expect(parsedRecord?.inputEvents).toEqual([first, second]);
+    expect(nextRecord.inputEvents).toEqual([second]);
+    expect(movedRecord.inputEvents).toEqual([second]);
   });
 });
 

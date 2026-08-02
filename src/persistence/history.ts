@@ -45,12 +45,21 @@ const inputEventSchema = z.strictObject({
   occurredAt: dateTimeSchema,
 });
 const inputEventsSchema = z.array(inputEventSchema).superRefine((events, context) => {
-  const sourceIds = events.map((event) => event.sourceId);
-  if (new Set(sourceIds).size !== sourceIds.length) {
-    context.addIssue({
-      code: "custom",
-      message: "正規化イベントのsource IDが重複しています",
-    });
+  const sourceIdsByItemNodeId = new Map<string, Set<string>>();
+  for (const event of events) {
+    const sourceIds = sourceIdsByItemNodeId.get(event.itemNodeId);
+    if (sourceIds == null) {
+      sourceIdsByItemNodeId.set(event.itemNodeId, new Set([event.sourceId]));
+      continue;
+    }
+    if (sourceIds.has(event.sourceId)) {
+      context.addIssue({
+        code: "custom",
+        message: "同じ項目の正規化イベントのsource IDが重複しています",
+      });
+      continue;
+    }
+    sourceIds.add(event.sourceId);
   }
 });
 
@@ -268,9 +277,14 @@ function compareStrings(left: string, right: string): number {
 
 function compareInputEvents(left: StateHistoryInputEvent, right: StateHistoryInputEvent): number {
   const occurredAtComparison = compareStrings(left.occurredAt, right.occurredAt);
-  return occurredAtComparison === 0
-    ? compareStrings(left.sourceId, right.sourceId)
-    : occurredAtComparison;
+  if (occurredAtComparison !== 0) {
+    return occurredAtComparison;
+  }
+  const sourceIdComparison = compareStrings(left.sourceId, right.sourceId);
+  if (sourceIdComparison !== 0) {
+    return sourceIdComparison;
+  }
+  return compareStrings(left.itemNodeId, right.itemNodeId);
 }
 
 /** 未検証の値を検証済みかつ決定論的順序の正規化入力イベントへ変換する。 */
@@ -341,14 +355,21 @@ function createRepositoryExclusionEvents(
   return Object.freeze(events);
 }
 
-function snapshotInputEventItems(snapshot: StateSnapshot): ReadonlyMap<string, string> {
-  const itemNodeIdsBySourceId = new Map<string, string>();
+function snapshotInputEventItems(
+  snapshot: StateSnapshot,
+): ReadonlyMap<string, ReadonlySet<string>> {
+  const itemNodeIdsBySourceId = new Map<string, Set<string>>();
   for (const item of snapshot.items) {
     for (const event of item.inputEvents) {
-      if (itemNodeIdsBySourceId.has(event.sourceId)) {
-        throw new StateHistoryError("snapshot内で入力イベントのsource IDが重複しています");
+      const itemNodeIds = itemNodeIdsBySourceId.get(event.sourceId);
+      if (itemNodeIds == null) {
+        itemNodeIdsBySourceId.set(event.sourceId, new Set([item.nodeId]));
+        continue;
       }
-      itemNodeIdsBySourceId.set(event.sourceId, item.nodeId);
+      if (itemNodeIds.has(item.nodeId)) {
+        throw new StateHistoryError("snapshot内で同じ項目の入力イベントsource IDが重複しています");
+      }
+      itemNodeIds.add(item.nodeId);
     }
   }
   return itemNodeIdsBySourceId;
@@ -360,21 +381,19 @@ function createNewInputEvents(
   value: readonly StateHistoryInputEvent[],
 ): readonly StateHistoryInputEvent[] {
   const inputEvents = createStateHistoryInputEvents(value);
-  const previousItemNodeIds =
+  const previousItemNodeIdsBySourceId =
     previousSnapshot == null
-      ? new Map<string, string>()
+      ? new Map<string, ReadonlySet<string>>()
       : snapshotInputEventItems(previousSnapshot);
-  const currentItemNodeIds = snapshotInputEventItems(currentSnapshot);
+  const currentItemNodeIdsBySourceId = snapshotInputEventItems(currentSnapshot);
   const events: StateHistoryInputEvent[] = [];
   for (const event of inputEvents) {
-    if (currentItemNodeIds.get(event.sourceId) !== event.itemNodeId) {
+    const currentItemNodeIds = currentItemNodeIdsBySourceId.get(event.sourceId);
+    if (currentItemNodeIds?.has(event.itemNodeId) !== true) {
       throw new StateHistoryError("正規化イベントが現在のsnapshotの対象項目に存在しません");
     }
-    const previousItemNodeId = previousItemNodeIds.get(event.sourceId);
-    if (previousItemNodeId != null && previousItemNodeId !== event.itemNodeId) {
-      throw new StateHistoryError("正規化イベントの対象項目が前回snapshotから変化しています");
-    }
-    if (previousItemNodeId == null) {
+    const previousItemNodeIds = previousItemNodeIdsBySourceId.get(event.sourceId);
+    if (previousItemNodeIds?.has(event.itemNodeId) !== true) {
       events.push(event);
     }
   }
