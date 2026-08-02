@@ -6,6 +6,7 @@ import {
   CliCodexAuthenticationError,
   CliCredentialsError,
   CliExecutableError,
+  CliRelationExpansionLimitError,
 } from "../src/cli/errors.js";
 import {
   GitHubGraphQLResponseError,
@@ -254,6 +255,31 @@ describe("safeErrorDiagnostic", () => {
     expect(diagnostic).toContain("zodIssue4Path=4");
     expect(diagnostic).not.toContain("zodIssue5Path=5");
     expect(diagnostic).toContain("zodIssueOmittedCount=1");
+  });
+
+  it("関係先展開上限から件数だけを診断へ出す", () => {
+    const nodeId = "I_identifier_canary";
+    const url = "https://github.com/VOICEVOX/private/issues/42";
+    const title = "title-canary";
+    const body = "body-canary";
+    const error = new CliRelationExpansionLimitError(500, 500, 12, {});
+    delete error.stack;
+    Object.defineProperties(error, {
+      nodeId: { value: nodeId },
+      url: { value: url },
+      title: { value: title },
+      body: { value: body },
+    });
+
+    const diagnostic = safeErrorDiagnostic("incremental_collection", error);
+
+    expect(diagnostic).toBe(
+      "stage=incremental_collection errorType=CliRelationExpansionLimitError relationExpansionLimit=500 relationExpansionFetchedCount=500 relationExpansionUnfetchedCount=12",
+    );
+    expect(diagnostic).not.toContain(nodeId);
+    expect(diagnostic).not.toContain(url);
+    expect(diagnostic).not.toContain(title);
+    expect(diagnostic).not.toContain(body);
   });
 
   it("許可済みCLIエラー3種でmessageを最後に出す", () => {

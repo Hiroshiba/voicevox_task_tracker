@@ -307,6 +307,9 @@ const configSchema = z.strictObject({
       nativeRelations: z.boolean(),
       relationDepth: nonNegativeIntegerSchema,
     }),
+    relationExpansion: z.strictObject({
+      maxItemsPerRun: positiveIntegerSchema,
+    }),
     include: z.array(trackingIncludeSchema),
     retentionDaysAfterTerminal: nonNegativeIntegerSchema,
     backfill: z.strictObject({

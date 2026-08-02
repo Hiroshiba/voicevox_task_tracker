@@ -56,6 +56,36 @@ describe("設定の読み込みと検証", () => {
     expect(config.state.runReportsDirectory).toBe("state/run-reports");
   });
 
+  it("関係先展開の1 run上限を読み込む", () => {
+    const config = parseConfig(validConfigSource);
+
+    expect(config.tracking.relationExpansion.maxItemsPerRun).toBe(500);
+  });
+
+  it("関係先展開の1 run上限に0以下を指定できない", () => {
+    for (const maxItemsPerRun of [0, -1]) {
+      const source = replaceRequired(
+        validConfigSource,
+        "  relationExpansion:\n    maxItemsPerRun: 500",
+        `  relationExpansion:\n    maxItemsPerRun: ${maxItemsPerRun.toString()}`,
+      );
+      const error = captureConfigError(source);
+
+      expect(error.message).toContain("tracking.relationExpansion.maxItemsPerRun");
+    }
+  });
+
+  it("関係先展開の1 run上限に非整数を指定できない", () => {
+    const source = replaceRequired(
+      validConfigSource,
+      "  relationExpansion:\n    maxItemsPerRun: 500",
+      "  relationExpansion:\n    maxItemsPerRun: 1.5",
+    );
+    const error = captureConfigError(source);
+
+    expect(error.message).toContain("tracking.relationExpansion.maxItemsPerRun");
+  });
+
   it("未設定値が残る開発用設定からWeb設定だけを読み込む", async () => {
     const webConfig = await loadWebConfig(developmentConfigUrl);
 

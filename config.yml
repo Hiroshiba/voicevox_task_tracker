@@ -11,6 +11,8 @@ tracking:
     referencesTracked: true
     nativeRelations: true
     relationDepth: 3
+  relationExpansion:
+    maxItemsPerRun: 500
   include: []
   retentionDaysAfterTerminal: 180
   backfill:

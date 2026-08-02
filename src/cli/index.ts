@@ -46,6 +46,7 @@ export {
   CliExecutableError,
   CliFixtureError,
   CliOutputError,
+  CliRelationExpansionLimitError,
   CliUsageError,
   CliWorkflowArtifactError,
 } from "./errors.js";

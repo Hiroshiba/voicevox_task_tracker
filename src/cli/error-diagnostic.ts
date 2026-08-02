@@ -4,7 +4,12 @@ import {
   GitHubResponseSchemaValidationError,
   GitHubRetryExhaustedError,
 } from "../github/index.js";
-import { CliCodexAuthenticationError, CliCredentialsError, CliExecutableError } from "./errors.js";
+import {
+  CliCodexAuthenticationError,
+  CliCredentialsError,
+  CliExecutableError,
+  CliRelationExpansionLimitError,
+} from "./errors.js";
 import { type RunStage } from "./run-report.js";
 
 const ERROR_CAUSE_DEPTH_LIMIT = 5;
@@ -220,6 +225,17 @@ function appendZodDiagnostics(
 }
 
 function appendKnownErrorDiagnostics(fields: DiagnosticField[], error: Error): void {
+  if (error instanceof CliRelationExpansionLimitError) {
+    fields.push({ key: "relationExpansionLimit", value: error.limit.toString() });
+    fields.push({
+      key: "relationExpansionFetchedCount",
+      value: error.fetchedCount.toString(),
+    });
+    fields.push({
+      key: "relationExpansionUnfetchedCount",
+      value: error.unfetchedCount.toString(),
+    });
+  }
   if (error instanceof GitHubGraphQLResponseError) {
     appendGraphQLDiagnostics(fields, error);
   }

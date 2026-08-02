@@ -10,6 +10,8 @@ tracking:
     referencesTracked: true
     nativeRelations: true
     relationDepth: 3
+  relationExpansion:
+    maxItemsPerRun: 500
   include:
     - https://github.com/VOICEVOX/voicevox/issues/1
   retentionDaysAfterTerminal: 180
