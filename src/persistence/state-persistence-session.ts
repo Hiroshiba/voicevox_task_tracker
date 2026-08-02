@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import {
   createAiCacheEntry,
   type AiCacheEntry,
@@ -124,6 +126,17 @@ function encodeStateFile(source: string): Uint8Array {
   return new TextEncoder().encode(source);
 }
 
+function createAiCacheStateFormatError(error: unknown): StateFormatError {
+  if (error instanceof z.ZodError) {
+    return StateFormatError.fromZodError("AI cache", error);
+  }
+  return new StateFormatError("AI cache", {
+    cause: new TypeError("AI cache entryの検証に失敗しました", {
+      cause: error,
+    }),
+  });
+}
+
 function cachePath(configuration: StatePersistenceConfiguration, cacheKey: AiCacheKey): string {
   parseSha256Hash(cacheKey);
   return joinStatePath(
@@ -232,11 +245,7 @@ export class StatePersistenceSession {
         entry,
       });
     } catch (error: unknown) {
-      throw new StateFormatError("AI cache", {
-        cause: new TypeError("AI cache entryの検証に失敗しました", {
-          cause: error,
-        }),
-      });
+      throw createAiCacheStateFormatError(error);
     }
   }
 
@@ -246,13 +255,7 @@ export class StatePersistenceSession {
       this.#pendingAiCacheEntries.set(validated.cacheKey, validated);
       return Promise.resolve();
     } catch (error: unknown) {
-      return Promise.reject(
-        new StateFormatError("AI cache", {
-          cause: new TypeError("AI cache entryの検証に失敗しました", {
-            cause: error,
-          }),
-        }),
-      );
+      return Promise.reject(createAiCacheStateFormatError(error));
     }
   }
 

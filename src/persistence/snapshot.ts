@@ -491,11 +491,7 @@ const stateSnapshotVersionParsers: ReadonlyMap<string, StateSnapshotVersionParse
 function parseVersionedStateSnapshot(value: unknown): StateSnapshot {
   const versionResult = snapshotSchemaVersionSchema.safeParse(value);
   if (!versionResult.success) {
-    throw new StateFormatError("snapshot", {
-      cause: new TypeError("snapshotからschemaVersionを読み取れません", {
-        cause: versionResult.error,
-      }),
-    });
+    throw StateFormatError.fromZodError("snapshot", versionResult.error);
   }
   const parser = stateSnapshotVersionParsers.get(versionResult.data.schemaVersion);
   if (parser == null) {

@@ -1,4 +1,11 @@
+import { type ZodError } from "zod";
+
 import { TaskTrackerError } from "../util/index.js";
+import {
+  createZodErrorDiagnostics,
+  type ZodErrorDiagnostics,
+  type ZodValidationIssue,
+} from "../util/zod-error-diagnostic.js";
 
 /** state永続化で発生するエラーの基底クラス。 */
 export abstract class StatePersistenceError extends TaskTrackerError {}
@@ -45,6 +52,30 @@ export class StatePublicSafetyError extends StatePersistenceError {
 export class StateFormatError extends StatePersistenceError {
   public constructor(kind: string, options: ErrorOptions) {
     super(`${kind}の保存形式が不正です`, options);
+  }
+
+  /** Zod schema検証失敗から安全なStateFormatErrorを生成する。 */
+  public static fromZodError(kind: string, error: ZodError): StateZodValidationError {
+    return new StateZodValidationError(kind, error);
+  }
+}
+
+/** Zod schema検証に由来するstate保存形式エラー。 */
+export class StateZodValidationError extends StateFormatError implements ZodErrorDiagnostics {
+  public readonly issueCount: number;
+  public readonly issues: readonly ZodValidationIssue[];
+  public readonly omittedIssueCount: number;
+
+  public constructor(kind: string, error: ZodError) {
+    const diagnostics = createZodErrorDiagnostics(error);
+    super(kind, {
+      cause: new TypeError(
+        `${kind}のschema検証に失敗しました。問題件数: ${diagnostics.issueCount.toString()}`,
+      ),
+    });
+    this.issueCount = diagnostics.issueCount;
+    this.issues = diagnostics.issues;
+    this.omittedIssueCount = diagnostics.omittedIssueCount;
   }
 }
 

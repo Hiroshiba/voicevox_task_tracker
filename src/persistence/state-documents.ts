@@ -197,17 +197,15 @@ export type StateRunReport = z.output<typeof runReportSchema>;
 /** 通常通知の予約と送信結果、送信済み運用障害を保持するledger。 */
 export type StateNotificationLedger = z.output<typeof notificationLedgerSchema>;
 
-function createFormatError(kind: string): StateFormatError {
-  return new StateFormatError(kind, {
-    cause: new TypeError(`${kind}のschema検証に失敗しました`),
-  });
+function createFormatError(kind: string, error: z.ZodError): StateFormatError {
+  return StateFormatError.fromZodError(kind, error);
 }
 
 /** 未検証の値を完了済みrun reportへ変換する。 */
 export function createStateRunReport(value: unknown): StateRunReport {
   const result = runReportSchema.safeParse(value);
   if (!result.success) {
-    throw createFormatError("run report");
+    throw createFormatError("run report", result.error);
   }
   return {
     ...result.data,
@@ -222,7 +220,7 @@ export function createStateRunReport(value: unknown): StateRunReport {
 export function createStateNotificationLedger(value: unknown): StateNotificationLedger {
   const result = notificationLedgerSchema.safeParse(value);
   if (!result.success) {
-    throw createFormatError("notification ledger");
+    throw createFormatError("notification ledger", result.error);
   }
   const compareNotificationKeys = (
     left: StateNotificationLedger["entries"][number],

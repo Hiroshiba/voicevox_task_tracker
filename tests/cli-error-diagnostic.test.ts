@@ -15,6 +15,7 @@ import {
   GitHubResponseSchemaValidationError,
 } from "../src/github/index.js";
 import { RelationReferenceConflictError } from "../src/graph/index.js";
+import { StateFormatError } from "../src/persistence/index.js";
 
 class GitHubItemDetailError extends Error {
   public constructor(cause: Error) {
@@ -376,6 +377,27 @@ describe("safeErrorDiagnostic", () => {
     expect(diagnostic).toContain("zodIssue4Path=4");
     expect(diagnostic).not.toContain("zodIssue5Path=5");
     expect(diagnostic).toContain("zodIssueOmittedCount=1");
+  });
+
+  it("Zod由来のStateFormatErrorから安全なissueだけを先頭5件まで出す", () => {
+    const messageCanary = "STATE_ZOD_MESSAGE_CANARY";
+    const schema = z.array(z.string().refine(() => false, messageCanary));
+    const result = schema.safeParse(["0", "1", "2", "3", "4", "5"]);
+    if (result.success) {
+      throw new TypeError("Zod検証が成功しました");
+    }
+    const error = StateFormatError.fromZodError("state history", result.error);
+
+    const diagnostic = safeErrorDiagnostic("completeness_validation", error);
+
+    expect(diagnostic).toContain("errorType=StateZodValidationError<-TypeError");
+    expect(diagnostic).toContain("zodIssueCount=6");
+    expect(diagnostic).toContain("zodIssue0Path=0");
+    expect(diagnostic).toContain("zodIssue0Code=custom");
+    expect(diagnostic).toContain("zodIssue4Path=4");
+    expect(diagnostic).not.toContain("zodIssue5Path=5");
+    expect(diagnostic).toContain("zodIssueOmittedCount=1");
+    expect(diagnostic).not.toContain(messageCanary);
   });
 
   it("関係先展開上限から件数だけを診断へ出す", () => {

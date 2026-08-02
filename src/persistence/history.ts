@@ -291,9 +291,7 @@ function compareInputEvents(left: StateHistoryInputEvent, right: StateHistoryInp
 export function createStateHistoryInputEvents(value: unknown): readonly StateHistoryInputEvent[] {
   const result = inputEventsSchema.safeParse(value);
   if (!result.success) {
-    throw new StateFormatError("state履歴の入力イベント", {
-      cause: result.error,
-    });
+    throw StateFormatError.fromZodError("state履歴の入力イベント", result.error);
   }
   return Object.freeze(
     [...result.data].sort(compareInputEvents).map((event) =>
@@ -538,9 +536,7 @@ function createEmptyProjection(): StateHistoryProjection {
 function parseStateHistoryRecordVersion1(value: unknown): StateHistoryRecordVersion1 {
   const result = historyRecordVersion1Schema.safeParse(value);
   if (!result.success) {
-    throw new StateFormatError("state history", {
-      cause: new TypeError("state historyのschema検証に失敗しました"),
-    });
+    throw StateFormatError.fromZodError("state history", result.error);
   }
   return result.data;
 }
@@ -570,11 +566,7 @@ const stateHistoryRecordVersionParsers: ReadonlyMap<string, StateHistoryRecordVe
 function parseVersionedStateHistoryRecord(value: unknown): StateHistoryRecord {
   const versionResult = historySchemaVersionSchema.safeParse(value);
   if (!versionResult.success) {
-    throw new StateFormatError("state history", {
-      cause: new TypeError("state historyからschemaVersionを読み取れません", {
-        cause: versionResult.error,
-      }),
-    });
+    throw StateFormatError.fromZodError("state history", versionResult.error);
   }
   const parser = stateHistoryRecordVersionParsers.get(versionResult.data.schemaVersion);
   if (parser == null) {

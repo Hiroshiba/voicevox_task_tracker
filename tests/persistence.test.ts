@@ -30,6 +30,7 @@ import {
   StatePersistenceSession,
   StatePublicSafetyError,
   StateSnapshotSchemaError,
+  StateZodValidationError,
   createEmptyStateNotificationLedger,
   createStateHistoryInputEvents,
   createStateHistoryRecord,
@@ -584,6 +585,7 @@ describe("state schema version", () => {
     );
 
     expect(error).toBeInstanceOf(StateFormatError);
+    expect(error).not.toBeInstanceOf(StateZodValidationError);
     expect(error.cause).toMatchObject({
       message: "snapshotのschemaVersionは未対応です",
     });
@@ -608,6 +610,37 @@ describe("state schema version", () => {
 });
 
 describe("state履歴の入力イベント", () => {
+  it("Zod検証失敗から安全化済みissueだけを保持する", () => {
+    const actualValueCanary = "STATE_HISTORY_ACTUAL_VALUE_CANARY";
+    const error = captureSynchronousError(() => createStateHistoryInputEvents([actualValueCanary]));
+
+    expect(error).toBeInstanceOf(StateFormatError);
+    if (!(error instanceof StateZodValidationError)) {
+      throw error;
+    }
+    expect(error.issueCount).toBe(1);
+    expect(error.omittedIssueCount).toBe(0);
+    expect(error.issues).toEqual([
+      {
+        path: [0],
+        code: "invalid_type",
+        expected: "object",
+      },
+    ]);
+    expect(Object.isFrozen(error.issues)).toBe(true);
+    expect(Object.isFrozen(error.issues[0]?.path)).toBe(true);
+    expect(error.cause).toMatchObject({
+      name: "TypeError",
+      message: "state履歴の入力イベントのschema検証に失敗しました。問題件数: 1",
+    });
+    expect(
+      JSON.stringify({
+        cause: error.cause instanceof Error ? error.cause.message : error.cause,
+        issues: error.issues,
+      }),
+    ).not.toContain(actualValueCanary);
+  });
+
   it("別項目で共有するsource IDを受理し入力順に依存せず整列する", () => {
     const sourceId = buildSourceId("github_commit", "C_SHARED");
     const first = createHistoryInputEvent("I_FIRST", sourceId);

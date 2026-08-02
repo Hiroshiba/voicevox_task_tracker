@@ -10,6 +10,8 @@ import {
   GitHubRetryExhaustedError,
 } from "../github/index.js";
 import { RelationReferenceConflictError } from "../graph/index.js";
+import { StateZodValidationError } from "../persistence/index.js";
+import { type ZodErrorDiagnostics } from "../util/zod-error-diagnostic.js";
 import {
   CliCodexAuthenticationError,
   CliCredentialsError,
@@ -214,10 +216,7 @@ function appendGraphQLDiagnostics(
   }
 }
 
-function appendZodDiagnostics(
-  fields: DiagnosticField[],
-  error: GitHubResponseSchemaValidationError,
-): void {
+function appendZodDiagnostics(fields: DiagnosticField[], error: ZodErrorDiagnostics): void {
   fields.push({ key: "zodIssueCount", value: error.issueCount.toString() });
   for (const [index, issue] of error.issues.slice(0, ZOD_ISSUE_DETAIL_LIMIT).entries()) {
     const keyPrefix = `zodIssue${index.toString()}`;
@@ -296,7 +295,10 @@ function appendKnownErrorDiagnostics(fields: DiagnosticField[], error: Error): v
   if (error instanceof GitHubGraphQLResponseError) {
     appendGraphQLDiagnostics(fields, error);
   }
-  if (error instanceof GitHubResponseSchemaValidationError) {
+  if (
+    error instanceof GitHubResponseSchemaValidationError ||
+    error instanceof StateZodValidationError
+  ) {
     appendZodDiagnostics(fields, error);
   }
   if (error instanceof GitHubRequestError || error instanceof GitHubRetryExhaustedError) {

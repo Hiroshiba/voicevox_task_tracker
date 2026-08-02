@@ -1,15 +1,14 @@
 import { z } from "zod";
 
 import { TaskTrackerError } from "../util/task-tracker-error.js";
+import {
+  createZodErrorDiagnostics,
+  type ZodErrorDiagnostics,
+  type ZodValidationIssue,
+} from "../util/zod-error-diagnostic.js";
 
-const RESPONSE_VALIDATION_ISSUE_LIMIT = 10;
 const graphQLIdentifierSchema = z.string().regex(/^[_A-Za-z][_0-9A-Za-z]*$/u);
 const diagnosticPathSchema = z.array(z.union([z.string(), z.number()]));
-const responseValidationIssueSchema = z.object({
-  path: diagnosticPathSchema,
-  code: z.string(),
-  expected: z.string().optional(),
-});
 const graphQLErrorLocationSchema = z.object({
   line: z.number().int().positive(),
   column: z.number().int().positive(),
@@ -30,11 +29,7 @@ const graphQLResponseDiagnosticsSchema = z.object({
   requestId: z.string().min(1).optional(),
 });
 
-export type GitHubResponseValidationIssue = Readonly<{
-  path: readonly (string | number)[];
-  code: string;
-  expected?: string;
-}>;
+export type GitHubResponseValidationIssue = ZodValidationIssue;
 
 export type GitHubGraphQLErrorDiagnostic = Readonly<{
   locations?: readonly Readonly<{
@@ -55,31 +50,6 @@ export type GitHubGraphQLResponseDiagnostics = Readonly<{
   errors: readonly GitHubGraphQLErrorDiagnostic[];
   requestId?: string;
 }>;
-
-function extractResponseValidationIssues(
-  error: z.ZodError,
-): readonly GitHubResponseValidationIssue[] {
-  const diagnostics: GitHubResponseValidationIssue[] = [];
-  for (const issue of error.issues.slice(0, RESPONSE_VALIDATION_ISSUE_LIMIT)) {
-    const result = responseValidationIssueSchema.safeParse(issue);
-    if (!result.success) {
-      continue;
-    }
-    const diagnostic =
-      result.data.expected == null
-        ? {
-            path: Object.freeze([...result.data.path]),
-            code: result.data.code,
-          }
-        : {
-            path: Object.freeze([...result.data.path]),
-            code: result.data.code,
-            expected: result.data.expected,
-          };
-    diagnostics.push(Object.freeze(diagnostic));
-  }
-  return Object.freeze(diagnostics);
-}
 
 function normalizeGraphQLErrorDiagnostic(
   diagnostic: z.output<typeof graphQLErrorDiagnosticSchema>,
@@ -199,23 +169,24 @@ export class GitHubResponseValidationError extends GitHubClientError {
 }
 
 /** GitHub APIレスポンスがZod schemaへ適合しないことを表す。 */
-export class GitHubResponseSchemaValidationError extends GitHubResponseValidationError {
+export class GitHubResponseSchemaValidationError
+  extends GitHubResponseValidationError
+  implements ZodErrorDiagnostics
+{
   public readonly issueCount: number;
   public readonly issues: readonly GitHubResponseValidationIssue[];
   public readonly omittedIssueCount: number;
 
   public constructor(context: string, error: z.ZodError) {
-    const issueCount = error.issues.length;
-    const issues = extractResponseValidationIssues(error);
-    const omittedIssueCount = issueCount - issues.length;
+    const diagnostics = createZodErrorDiagnostics(error);
     super(context, {
       cause: new TypeError(
-        `GitHub APIレスポンスのschema検証に失敗しました。問題件数: ${issueCount.toString()}`,
+        `GitHub APIレスポンスのschema検証に失敗しました。問題件数: ${diagnostics.issueCount.toString()}`,
       ),
     });
-    this.issueCount = issueCount;
-    this.issues = issues;
-    this.omittedIssueCount = omittedIssueCount;
+    this.issueCount = diagnostics.issueCount;
+    this.issues = diagnostics.issues;
+    this.omittedIssueCount = diagnostics.omittedIssueCount;
   }
 }
 

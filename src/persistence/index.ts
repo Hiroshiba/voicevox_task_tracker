@@ -28,6 +28,7 @@ export {
   StatePublicSafetyError,
   StateSnapshotSchemaError,
   StateSnapshotSemanticError,
+  StateZodValidationError,
 } from "./errors.js";
 export {
   GitStateBranchAdapter,
