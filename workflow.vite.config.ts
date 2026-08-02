@@ -13,8 +13,10 @@ export default defineConfig({
   },
   build: {
     target: "node24",
+    minify: false,
     outDir: resolve(import.meta.dirname, "artifacts/workflow/runtime"),
     emptyOutDir: true,
+    sourcemap: true,
     assetsInlineLimit: 0,
     lib: {
       entry: resolve(import.meta.dirname, "src/cli/tracker-run.ts"),
