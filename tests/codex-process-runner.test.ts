@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { runCodexProcess } from "../src/codex/index.js";
 
-describe("Codex subprocess診断", () => {
+const subprocessTestTimeoutMilliseconds = 15_000;
+
+describe("Codex subprocess診断", { timeout: subprocessTestTimeoutMilliseconds }, () => {
   it("ERROR JSONからtype、code、statusだけを抽出する", async () => {
     const messageCanary = "MESSAGE_FIELD_CANARY";
     const promptCanary = "PROMPT_CANARY";

@@ -46,6 +46,7 @@ import {
 import { assertNonNullable } from "../src/util/index.js";
 
 const execFileAsync = promisify(execFile);
+const gitTestTimeoutMilliseconds = 15_000;
 const fixedTrackingStartAt = "2026-07-30T23:00:00.000Z";
 const fixedItemAt = "2026-07-30T23:30:00.000Z";
 const publicRepositoryId = "R_PUBLIC";
@@ -1351,7 +1352,7 @@ describe("メモリstate branch transaction", () => {
   });
 });
 
-describe("Git state branch adapter", () => {
+describe("Git state branch adapter", { timeout: gitTestTimeoutMilliseconds }, () => {
   it("mainを変えず、初回orphan tracker-stateと後続commitを作成する", async () => {
     const temporaryDirectory = await mkdtemp(join(tmpdir(), "voicevox-state-git-test-"));
     try {
