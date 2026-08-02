@@ -148,6 +148,42 @@ function collectReferencedSourceIds(
   return Object.freeze(references);
 }
 
+function validateUniqueSourceIds(
+  sourceIds: readonly string[],
+  path: string,
+  issues: CodexOutputValidationIssue[],
+): void {
+  const usedSourceIds = new Set<string>();
+  for (const [index, sourceId] of sourceIds.entries()) {
+    if (usedSourceIds.has(sourceId)) {
+      issues.push(
+        createIssue(
+          `${path}/${index.toString()}`,
+          "duplicate_source_id",
+          "source IDが重複しています",
+        ),
+      );
+    }
+    usedSourceIds.add(sourceId);
+  }
+}
+
+function validateSourceIdUniqueness(
+  output: SchemaValidCodexAnalysisOutput,
+  issues: CodexOutputValidationIssue[],
+): void {
+  for (const [index, waitingOn] of output.waitingOn.entries()) {
+    validateUniqueSourceIds(
+      waitingOn.sourceIds,
+      `/waitingOn/${index.toString()}/sourceIds`,
+      issues,
+    );
+  }
+  for (const [index, relation] of output.relations.entries()) {
+    validateUniqueSourceIds(relation.sourceIds, `/relations/${index.toString()}/sourceIds`, issues);
+  }
+}
+
 function validateSourceReferences(
   output: SchemaValidCodexAnalysisOutput,
   input: CodexAnalysisInput,
@@ -574,6 +610,7 @@ export function validateCodexAnalysisSemantics(
   validateStatusAndWaitingOn(output, issues);
   validateWaitingOnCandidates(output, validatedInput, issues);
   validateRelationCandidates(output, validatedInput, issues);
+  validateSourceIdUniqueness(output, issues);
   validateSourceReferences(output, validatedInput, knownSources, issues);
   validateUrls(output, validatedInput, issues);
   validateNativeRelationReferences(validatedInput, issues);

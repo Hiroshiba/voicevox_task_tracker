@@ -310,6 +310,53 @@ describe("Codex出力のsemantic検証", () => {
     }
   });
 
+  it("waitingOnとrelationのsource ID重複をsemantic段階で拒否する", () => {
+    const input = createInput();
+    const output = createOutput(0.9);
+    const errorAction = () =>
+      validateCodexAnalysisOutput(
+        {
+          ...output,
+          waitingOn: [
+            {
+              ...output.waitingOn[0],
+              sourceIds: ["body:current", "body:current"],
+            },
+          ],
+          relations: [
+            {
+              ...output.relations[0],
+              sourceIds: ["body:current", "body:current"],
+            },
+          ],
+        },
+        input,
+      );
+
+    expect(errorAction).toThrow(CodexOutputSemanticValidationError);
+    try {
+      errorAction();
+    } catch (error: unknown) {
+      if (!(error instanceof CodexOutputSemanticValidationError)) {
+        throw error;
+      }
+      expect(error.issues).toEqual(
+        expect.arrayContaining([
+          {
+            path: "/waitingOn/0/sourceIds/1",
+            code: "duplicate_source_id",
+            message: "source IDが重複しています",
+          },
+          {
+            path: "/relations/0/sourceIds/1",
+            code: "duplicate_source_id",
+            message: "source IDが重複しています",
+          },
+        ]),
+      );
+    }
+  });
+
   it("参照sourceの未来時刻と対象外URLを拒否する", () => {
     const originalInput = createInput();
     const input = createCodexAnalysisInput({

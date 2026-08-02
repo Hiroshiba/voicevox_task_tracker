@@ -19,6 +19,7 @@
   ],
   "properties": {
     "schemaVersion": {
+      "type": "string",
       "const": "1"
     },
     "item": {
@@ -40,6 +41,7 @@
       }
     },
     "status": {
+      "type": "string",
       "enum": [
         "new_untriaged",
         "needs_maintainer_decision",
@@ -72,6 +74,7 @@
         ],
         "properties": {
           "kind": {
+            "type": "string",
             "enum": [
               "user",
               "team",
@@ -87,6 +90,7 @@
             "maxLength": 300
           },
           "role": {
+            "type": "string",
             "enum": [
               "author",
               "maintainer",
@@ -107,7 +111,6 @@
             "type": "array",
             "minItems": 1,
             "maxItems": 10,
-            "uniqueItems": true,
             "items": {
               "type": "string",
               "minLength": 1
@@ -145,6 +148,7 @@
             "minLength": 1
           },
           "verdict": {
+            "type": "string",
             "enum": [
               "current_is_blocked_by_target",
               "current_blocks_target",
@@ -165,7 +169,6 @@
             "type": "array",
             "minItems": 1,
             "maxItems": 10,
-            "uniqueItems": true,
             "items": {
               "type": "string",
               "minLength": 1
@@ -224,6 +227,7 @@
             "minLength": 1
           },
           "supports": {
+            "type": "string",
             "enum": [
               "status",
               "waiting_on",
@@ -268,6 +272,7 @@
           "type": "boolean"
         },
         "reasonCode": {
+          "type": "string",
           "enum": [
             "none",
             "triage_overdue",

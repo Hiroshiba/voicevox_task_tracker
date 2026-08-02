@@ -40,8 +40,6 @@ function schemaIssueMessage(keyword: string): string {
       return "必須プロパティがありません";
     case "type":
       return "値の型が契約と一致しません";
-    case "uniqueItems":
-      return "配列に重複があります";
     default:
       return "JSON Schemaの制約に適合しません";
   }
