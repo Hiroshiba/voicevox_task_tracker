@@ -356,17 +356,12 @@ function createAnalysisEdge(relation: Relation, index: number): ReconciledGraphE
   };
 }
 
-function createPublicEvidence(
-  evidence: readonly Evidence[],
+function createPublicEvidenceEntry(
+  entry: Evidence,
   sourceItem: Readonly<Pick<TrackedItem, "nodeId" | "url">>,
   sourceUrlsByItemNodeId: EvidenceSourceUrlMap,
-): {
-  sourceId: string;
-  supports: Evidence["supports"];
-  summary: string;
-  sourceUrl: TrackedItem["url"];
-}[] {
-  return evidence.map((entry) => ({
+): PublicGraphEdgeDto["evidence"][number] {
+  return {
     sourceId: entry.sourceId,
     supports: entry.supports,
     summary: entry.summary,
@@ -376,7 +371,50 @@ function createPublicEvidence(
       sourceItem.url,
       sourceUrlsByItemNodeId,
     ),
-  }));
+  };
+}
+
+function createPublicEvidence(
+  evidence: readonly Evidence[],
+  sourceItem: Readonly<Pick<TrackedItem, "nodeId" | "url">>,
+  sourceUrlsByItemNodeId: EvidenceSourceUrlMap,
+): PublicGraphEdgeDto["evidence"] {
+  return evidence.map((entry) =>
+    createPublicEvidenceEntry(entry, sourceItem, sourceUrlsByItemNodeId),
+  );
+}
+
+function graphEvidenceSourceItem(
+  sourceId: Evidence["sourceId"],
+  relation: Relation,
+  itemByNodeId: ReadonlyMap<string, TrackedItem>,
+  sourceUrlsByItemNodeId: EvidenceSourceUrlMap,
+): TrackedItem {
+  const fromItem = itemByNodeId.get(relation.fromNodeId);
+  const toItem = itemByNodeId.get(relation.toNodeId);
+  if (fromItem != null && sourceUrlsByItemNodeId.get(fromItem.nodeId)?.has(sourceId) === true) {
+    return fromItem;
+  }
+  if (toItem != null && sourceUrlsByItemNodeId.get(toItem.nodeId)?.has(sourceId) === true) {
+    return toItem;
+  }
+  const sourceItem = fromItem ?? toItem;
+  assertNonNullable(sourceItem, `relation ${relation.id}にOrganization内itemがありません`);
+  return sourceItem;
+}
+
+function createPublicGraphEvidence(
+  relation: Relation,
+  itemByNodeId: ReadonlyMap<string, TrackedItem>,
+  sourceUrlsByItemNodeId: EvidenceSourceUrlMap,
+): PublicGraphEdgeDto["evidence"] {
+  return relation.evidence.map((entry) =>
+    createPublicEvidenceEntry(
+      entry,
+      graphEvidenceSourceItem(entry.sourceId, relation, itemByNodeId, sourceUrlsByItemNodeId),
+      sourceUrlsByItemNodeId,
+    ),
+  );
 }
 
 function createPublicGraphEdge(
@@ -384,8 +422,6 @@ function createPublicGraphEdge(
   itemByNodeId: ReadonlyMap<string, TrackedItem>,
   sourceUrlsByItemNodeId: EvidenceSourceUrlMap,
 ): PublicGraphEdgeDto {
-  const sourceItem = itemByNodeId.get(relation.fromNodeId) ?? itemByNodeId.get(relation.toNodeId);
-  assertNonNullable(sourceItem, `relation ${relation.id}にOrganization内itemがありません`);
   const fields = {
     id: relation.id,
     fromNodeId: relation.fromNodeId,
@@ -393,7 +429,7 @@ function createPublicGraphEdge(
     type: relation.type,
     provenance: relation.provenance,
     confidence: relation.confidence,
-    evidence: createPublicEvidence(relation.evidence, sourceItem, sourceUrlsByItemNodeId),
+    evidence: createPublicGraphEvidence(relation, itemByNodeId, sourceUrlsByItemNodeId),
     contradictions: relation.contradictions.map((contradiction) => ({
       verdict: contradiction.verdict,
       confidence: contradiction.confidence,

@@ -12,6 +12,7 @@ import {
   type GitHubItemUrl,
   type Repository,
   type Severity,
+  type SourceId,
   type StalenessWaitClass,
   type Status,
   type WaitingOnKind,
@@ -88,6 +89,11 @@ type InventoryRepositoryFixture = Readonly<{
   id: string;
   name: string;
   visibility: "public" | "private" | "internal";
+}>;
+
+type GraphEvidenceSourceFixture = Readonly<{
+  nodeId: string;
+  url: GitHubItemUrl;
 }>;
 
 type ItemFixtureOptions = Readonly<{
@@ -352,6 +358,90 @@ function createSingleItemSnapshot(title: string): StateSnapshot {
   });
 }
 
+function createGraphEvidenceSnapshot(
+  sourceId: SourceId,
+  inputSources: readonly GraphEvidenceSourceFixture[],
+): StateSnapshot {
+  const source = createSnapshot({
+    runId: "run-graph-evidence",
+    runStatus: "success",
+    ai: {
+      enabled: false,
+      available: false,
+      degraded: false,
+    },
+    generatedAt: GENERATED_AT,
+    repositories: [
+      {
+        id: PUBLIC_REPOSITORY_ID,
+        name: "public",
+        observedAt: FRESH_OBSERVED_AT,
+        freshness: "fresh",
+      },
+    ],
+    items: [
+      createItem({
+        nodeId: "I_EDGE_FROM",
+        repositoryId: PUBLIC_REPOSITORY_ID,
+        repositoryName: "public",
+        number: 1,
+        status: "new_untriaged",
+        severity: "watch",
+        waitingOnKind: "role",
+        waitingOnRole: "maintainer",
+        observedAt: FRESH_OBSERVED_AT,
+        title: "根拠を持つ可能性があるfrom項目",
+      }),
+      createItem({
+        nodeId: "I_EDGE_TO",
+        repositoryId: PUBLIC_REPOSITORY_ID,
+        repositoryName: "public",
+        number: 2,
+        status: "new_untriaged",
+        severity: "watch",
+        waitingOnKind: "role",
+        waitingOnRole: "maintainer",
+        observedAt: FRESH_OBSERVED_AT,
+        title: "根拠を持つ可能性があるto項目",
+      }),
+    ],
+    relations: [createRelation("rel:edge-evidence", "I_EDGE_FROM", "I_EDGE_TO", "blocks")],
+  });
+  const relation = source.relations[0];
+  assertNonNullable(relation, "graph edge evidenceのrelation fixtureがありません");
+  return createStateSnapshot({
+    ...source,
+    items: source.items.map((item) => {
+      const inputSource = inputSources.find((candidate) => candidate.nodeId === item.nodeId);
+      if (inputSource == null) {
+        return item;
+      }
+      return {
+        ...item,
+        inputEvents: [
+          ...item.inputEvents,
+          {
+            sourceId,
+            url: inputSource.url,
+          },
+        ],
+      };
+    }),
+    relations: [
+      {
+        ...relation,
+        evidence: [
+          {
+            sourceId,
+            supports: "relation",
+            summary: "graph edgeの公開用根拠です",
+          },
+        ],
+      },
+    ],
+  });
+}
+
 function generateFixture(
   snapshot: StateSnapshot,
   historyRecords: readonly StateHistoryRecord[],
@@ -384,6 +474,62 @@ describe("公開evidence URL", () => {
       sourceUrl: "https://github.com/VOICEVOX/public/issues/1#discussion_r303",
     },
   ] satisfies readonly Readonly<{ kind: string; sourceUrl: GitHubItemUrl }>[];
+
+  const graphEdgeSourceCases = [
+    {
+      name: "fromNodeId側だけがsourceを持つ",
+      kind: "github_issue_comment",
+      sourceKey: "from-comment",
+      inputSources: [
+        {
+          nodeId: "I_EDGE_FROM",
+          url: "https://github.com/VOICEVOX/public/issues/1#issuecomment-101",
+        },
+      ],
+      expectedSourceUrl: "https://github.com/VOICEVOX/public/issues/1#issuecomment-101",
+    },
+    {
+      name: "toNodeId側だけがsourceを持つ",
+      kind: "github_issue_comment",
+      sourceKey: "to-comment",
+      inputSources: [
+        {
+          nodeId: "I_EDGE_TO",
+          url: "https://github.com/VOICEVOX/public/issues/2#issuecomment-202",
+        },
+      ],
+      expectedSourceUrl: "https://github.com/VOICEVOX/public/issues/2#issuecomment-202",
+    },
+    {
+      name: "両端がsourceを持つ",
+      kind: "github_issue_comment",
+      sourceKey: "shared-comment",
+      inputSources: [
+        {
+          nodeId: "I_EDGE_FROM",
+          url: "https://github.com/VOICEVOX/public/issues/1#issuecomment-303",
+        },
+        {
+          nodeId: "I_EDGE_TO",
+          url: "https://github.com/VOICEVOX/public/issues/2#issuecomment-404",
+        },
+      ],
+      expectedSourceUrl: "https://github.com/VOICEVOX/public/issues/1#issuecomment-303",
+    },
+    {
+      name: "どちらの端点もsourceを持たない",
+      kind: "github_item_body",
+      sourceKey: "item-body",
+      inputSources: [],
+      expectedSourceUrl: "https://github.com/VOICEVOX/public/issues/1",
+    },
+  ] satisfies readonly Readonly<{
+    name: string;
+    kind: string;
+    sourceKey: string;
+    inputSources: readonly GraphEvidenceSourceFixture[];
+    expectedSourceUrl: GitHubItemUrl;
+  }>[];
 
   it.each(individualSourceCases)("$kindは個別anchorへ解決する", ({ kind, sourceUrl }) => {
     const itemUrl = "https://github.com/VOICEVOX/public/issues/1";
@@ -484,6 +630,24 @@ describe("公開evidence URL", () => {
       secondSourceUrl,
     );
   });
+
+  it.each(graphEdgeSourceCases)(
+    "graph edgeのevidenceは$nameときに決定規則どおりURLを解決する",
+    ({ kind, sourceKey, inputSources, expectedSourceUrl }) => {
+      const sourceId = buildSourceId(kind, sourceKey);
+      const snapshot = createGraphEvidenceSnapshot(sourceId, inputSources);
+
+      const generated = generateFixture(
+        snapshot,
+        [],
+        publicInventory(),
+        [],
+        defaultGenerationOptions,
+      );
+
+      expect(generated.details.graph.edges[0]?.evidence[0]?.sourceUrl).toBe(expectedSourceUrl);
+    },
+  );
 
   it("公開詳細のcomment evidenceを個別anchorへ解決する", () => {
     const source = createSingleItemSnapshot("comment evidenceを持つ項目");
