@@ -118,7 +118,31 @@ describe("GitHub API retry", () => {
     expect(delays).toEqual([3000]);
   });
 
-  it("503が上限まで失敗したら停止する", async () => {
+  it.each([502, 504] as const)("%iを指数backoffとjitterでretryする", async (status) => {
+    const delays: number[] = [];
+    const runtime = createRetryRuntime(delays, new Date("2026-08-01T00:00:00Z"), 0);
+    let attempts = 0;
+
+    const result = await executeWithGitHubRetry(
+      async () => {
+        await Promise.resolve();
+        attempts += 1;
+        if (attempts === 1) {
+          throw createApiError(status, {}, {}, "一時的な失敗");
+        }
+        return "成功";
+      },
+      retrySettings,
+      runtime,
+      new SecretRedactor(["canary"]),
+    );
+
+    expect(result).toBe("成功");
+    expect(attempts).toBe(2);
+    expect(delays).toEqual([1000]);
+  });
+
+  it.each([502, 503, 504] as const)("%iが上限まで失敗したら停止する", async (status) => {
     const delays: number[] = [];
     const runtime = createRetryRuntime(delays, new Date("2026-08-01T00:00:00Z"), 0);
     let attempts = 0;
@@ -128,7 +152,7 @@ describe("GitHub API retry", () => {
         async () => {
           await Promise.resolve();
           attempts += 1;
-          throw createApiError(503, {}, {}, "一時的な失敗");
+          throw createApiError(status, {}, {}, "一時的な失敗");
         },
         retrySettings,
         runtime,
