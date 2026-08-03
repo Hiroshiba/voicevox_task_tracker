@@ -87,11 +87,14 @@ export type IssueStateMachineInput = Readonly<{
   evaluatedAt: UtcIsoDateTime;
 }>;
 
-/** statusまたは責務を生じさせた時刻と根拠。 */
+/**
+ * statusまたは責務を生じさせた時刻と根拠。
+ * eventはGitHubイベント時刻そのものを表し、inferredはGitHub由来の時刻から決定論的に導いた下限を表す。
+ */
 export type IssueTransitionBasis = Readonly<{
   sourceIds: readonly [SourceId, ...SourceId[]];
   occurredAt: UtcIsoDateTime;
-  precision: "event" | "inferred" | "observation";
+  precision: "event" | "inferred";
 }>;
 
 /** primary waitingOnの選定結果。 */

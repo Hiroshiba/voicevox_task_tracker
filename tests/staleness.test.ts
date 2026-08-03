@@ -66,7 +66,7 @@ type DecisionOptions = Readonly<{
   ownerAt: UtcIsoDateTime;
   statusSourceId: SourceId;
   ownerSourceId: SourceId;
-  precision: "event" | "inferred" | "observation";
+  precision: "event" | "inferred";
   confidence: number;
 }>;
 
@@ -214,6 +214,7 @@ function createBaseInput(): CalculateStalenessInput {
       precision: "event",
       confidence: 1,
     }),
+    decisionBasis: "deterministic",
     previousState: {
       availability: "not_available",
     },
@@ -525,7 +526,7 @@ type WaitClassFixture = Readonly<{
   waitingKind: WaitingOnKind;
   candidateId: string;
   waitingRole: WaitingOnRole;
-  precision: "event" | "inferred" | "observation";
+  precision: "event" | "inferred";
 }>;
 
 const waitClassFixtures = Object.freeze([
@@ -543,7 +544,7 @@ const waitClassFixtures = Object.freeze([
     waitingKind: "unknown",
     candidateId: "unknown",
     waitingRole: "unknown",
-    precision: "observation",
+    precision: "inferred",
   },
   {
     waitClass: "reviewer",
@@ -575,7 +576,7 @@ const waitClassFixtures = Object.freeze([
     waitingKind: "role",
     candidateId: "maintainer",
     waitingRole: "merge_decider",
-    precision: "observation",
+    precision: "inferred",
   },
   {
     waitClass: "automation",
@@ -583,7 +584,7 @@ const waitClassFixtures = Object.freeze([
     waitingKind: "automation",
     candidateId: "required_checks",
     waitingRole: "ci",
-    precision: "observation",
+    precision: "inferred",
   },
 ] satisfies readonly WaitClassFixture[]);
 
@@ -722,7 +723,7 @@ describe("wait classとseverity", () => {
     });
   });
 
-  it("低信頼のAI判定だけを根拠にcriticalへしない", () => {
+  it("決定論的判定は両basisがinferredでもcriticalを許可する", () => {
     const fixture = getWaitClassFixture("reviewer");
     const input = createWaitClassInput(fixture, thresholdsHours.reviewer.critical);
     const inferredDecision = createDecision({
@@ -737,9 +738,33 @@ describe("wait classとseverity", () => {
     const result = calculateStaleness({
       ...input,
       currentDecision: inferredDecision,
+      decisionBasis: "deterministic",
+    });
+
+    expect(result.severity).toBe("critical");
+    expect(result.severityContext.decisionBasis).toBe("deterministic");
+  });
+
+  it("低信頼のCodex由来判定だけを根拠にcriticalへしない", () => {
+    const fixture = getWaitClassFixture("reviewer");
+    const input = createWaitClassInput(fixture, thresholdsHours.reviewer.critical);
+    const inferredDecision = createDecision({
+      ...input.currentDecision,
+      statusAt: CREATED_AT,
+      ownerAt: CREATED_AT,
+      statusSourceId: input.currentDecision.statusBasis.sourceIds[0],
+      ownerSourceId: input.currentDecision.responsibilityBasis.sourceIds[0],
+      precision: "inferred",
+      confidence: 0.64,
+    });
+    const result = calculateStaleness({
+      ...input,
+      currentDecision: inferredDecision,
+      decisionBasis: "ai_only",
     });
 
     expect(result.severity).toBe("urgent");
+    expect(result.severityContext.decisionBasis).toBe("ai_only");
     expect(result.severityReason).toMatchObject({
       kind: "elapsed_threshold",
       baseSeverity: "critical",

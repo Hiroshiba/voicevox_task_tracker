@@ -866,6 +866,7 @@ function createStaleness(
       statusBasis: basis.statusBasis,
       responsibilityBasis: basis.responsibilityBasis,
     }),
+    decisionBasis: decision.origin === "deterministic" ? "deterministic" : "ai_only",
     previousState,
     events:
       item.type === "issue"

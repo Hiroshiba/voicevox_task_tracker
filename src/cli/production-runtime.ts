@@ -3139,6 +3139,7 @@ function reduceAnalysisPass(
         statusBasis: basis.statusBasis,
         responsibilityBasis: basis.responsibilityBasis,
       },
+      decisionBasis: decision.origin === "deterministic" ? "deterministic" : "ai_only",
       previousState: previousStalenessState(state, analysis.item.nodeId),
       events: analysis.item.events,
       dependencyResolutions: dependencyResolutions(
