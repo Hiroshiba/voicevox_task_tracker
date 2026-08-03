@@ -1,7 +1,27 @@
 import { createUtcIsoDateTime, type GitHubNodeId, type UtcIsoDateTime } from "../domain/index.js";
 import { type EnumeratedGitHubItem, type Sha256Fingerprint } from "./item-enumeration.js";
 
-/** 前回成功時点の項目fingerprint。 */
+/** 項目種別ごとの現在の判定規則fingerprint。 */
+export type CurrentAnalysisRulesFingerprints = Readonly<
+  Record<EnumeratedGitHubItem["type"], Sha256Fingerprint>
+>;
+
+/** 項目を前回判定したときの判定規則fingerprint。 */
+export type PreviousAnalysisRulesFingerprint =
+  | Readonly<{
+      status: "unavailable";
+    }>
+  | Readonly<{
+      status: "available";
+      fingerprint: Sha256Fingerprint;
+    }>;
+
+type PreviousItemCollectionValue = Readonly<{
+  itemFingerprint: Sha256Fingerprint;
+  analysisRulesFingerprint: PreviousAnalysisRulesFingerprint;
+}>;
+
+/** 前回成功時点の項目fingerprintと判定規則fingerprint。 */
 export type PreviousItemCollection =
   | Readonly<{
       status: "none";
@@ -9,7 +29,7 @@ export type PreviousItemCollection =
   | Readonly<{
       status: "successful";
       completedAt: UtcIsoDateTime;
-      itemFingerprints: ReadonlyMap<GitHubNodeId, Sha256Fingerprint>;
+      items: ReadonlyMap<GitHubNodeId, PreviousItemCollectionValue>;
     }>;
 
 type IncrementalItemCollectionPlanFields = Readonly<{
@@ -33,6 +53,8 @@ export type IncrementalItemCollectionPlan =
 export type PlanIncrementalItemCollectionOptions = Readonly<{
   items: readonly EnumeratedGitHubItem[];
   previous: PreviousItemCollection;
+  previouslyAnalyzedItemNodeIds: ReadonlySet<GitHubNodeId>;
+  currentAnalysisRulesFingerprints: CurrentAnalysisRulesFingerprints;
   adjacentItemNodeIds: ReadonlySet<GitHubNodeId>;
   overlapMilliseconds: number;
 }>;
@@ -77,6 +99,8 @@ function createCurrentFingerprints(
 function selectChangedItemNodeIds(
   items: readonly EnumeratedGitHubItem[],
   previous: PreviousItemCollection,
+  previouslyAnalyzedItemNodeIds: ReadonlySet<GitHubNodeId>,
+  currentAnalysisRulesFingerprints: CurrentAnalysisRulesFingerprints,
 ): readonly GitHubNodeId[] {
   if (previous.status === "none") {
     return Object.freeze(items.map((item) => item.nodeId));
@@ -84,7 +108,22 @@ function selectChangedItemNodeIds(
 
   return Object.freeze(
     items
-      .filter((item) => previous.itemFingerprints.get(item.nodeId) !== item.itemFingerprint)
+      .filter((item) => {
+        const previousItem = previous.items.get(item.nodeId);
+        if (previousItem?.itemFingerprint !== item.itemFingerprint) {
+          return true;
+        }
+        if (!previouslyAnalyzedItemNodeIds.has(item.nodeId)) {
+          return false;
+        }
+        if (previousItem.analysisRulesFingerprint.status === "unavailable") {
+          return true;
+        }
+        return (
+          previousItem.analysisRulesFingerprint.fingerprint !==
+          currentAnalysisRulesFingerprints[item.type]
+        );
+      })
       .map((item) => item.nodeId),
   );
 }
@@ -107,7 +146,12 @@ export function planIncrementalItemCollection(
 ): IncrementalItemCollectionPlan {
   validateOverlapMilliseconds(options.overlapMilliseconds);
   const currentItemFingerprints = createCurrentFingerprints(options.items);
-  const changedItemNodeIds = selectChangedItemNodeIds(options.items, options.previous);
+  const changedItemNodeIds = selectChangedItemNodeIds(
+    options.items,
+    options.previous,
+    options.previouslyAnalyzedItemNodeIds,
+    options.currentAnalysisRulesFingerprints,
+  );
   const detailItemNodeIds = selectDetailItemNodeIds(
     changedItemNodeIds,
     options.adjacentItemNodeIds,

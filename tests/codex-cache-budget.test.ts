@@ -10,17 +10,22 @@ import {
   createAiCacheKey,
   createCodexAnalysisInput,
   createFileAiCacheStore,
+  determineAiCacheReuse,
   determinePreviousAiResultReuse,
   estimateAiInputCost,
   hashCanonicalJson,
-  prepareAiAnalysisCandidate,
-  runAiAnalyses,
+  prepareAiAnalysisCandidate as prepareCandidateWithIdentity,
+  runAiAnalyses as runPreparedAiAnalyses,
   serializeCanonicalJson,
   type AiAnalysisCandidate,
   type AiAnalysisPriority,
   type AiAnalysisRunConfiguration,
+  type AiAnalysisRunDependencies,
+  type AiAnalysisRunIdentity,
+  type AiAnalysisRunResult,
   type AiCacheIdentity,
   type CodexAnalysisInput,
+  type PreparedAiAnalysisCandidate,
   type PreviousAiAnalysisFingerprint,
 } from "../src/codex/index.js";
 import { assertNonNullable } from "../src/util/index.js";
@@ -29,6 +34,14 @@ const unavailablePreviousFingerprint = Object.freeze({
   status: "unavailable",
 }) satisfies PreviousAiAnalysisFingerprint;
 const fixedExecutedAt = "2026-07-31T00:00:00.000Z";
+const runIdentity = Object.freeze({
+  deterministicRulesVersion: "rules-v1",
+  model: "codex-model",
+  reasoningEffort: "medium",
+  backendVersion: "codex-cli-1.2.3",
+  promptVersion: "prompt-v1",
+  schemaVersion: "schema-v1",
+}) satisfies AiAnalysisRunIdentity;
 
 class HttpFixtureError extends Error {
   public readonly status: number;
@@ -121,14 +134,7 @@ function createConfiguration(
   maxEstimatedCostUsdPerRun: number,
 ): AiAnalysisRunConfiguration {
   return Object.freeze({
-    identity: Object.freeze({
-      deterministicRulesVersion: "rules-v1",
-      model: "codex-model",
-      reasoningEffort: "medium",
-      backendVersion: "codex-cli-1.2.3",
-      promptVersion: "prompt-v1",
-      schemaVersion: "schema-v1",
-    }),
+    identity: runIdentity,
     budget: Object.freeze({
       maxCallsPerRun,
       maxInputCharactersPerItem: 100_000,
@@ -136,6 +142,22 @@ function createConfiguration(
       maxEstimatedCostUsdPerRun,
     }),
   });
+}
+
+function prepareAiAnalysisCandidate(candidate: AiAnalysisCandidate): PreparedAiAnalysisCandidate {
+  return prepareCandidateWithIdentity(candidate, runIdentity);
+}
+
+function runAiAnalyses(
+  candidates: readonly AiAnalysisCandidate[],
+  configuration: AiAnalysisRunConfiguration,
+  dependencies: AiAnalysisRunDependencies,
+): Promise<AiAnalysisRunResult> {
+  return runPreparedAiAnalyses(
+    candidates.map((candidate) => prepareCandidateWithIdentity(candidate, configuration.identity)),
+    configuration,
+    dependencies,
+  );
 }
 
 function createExecutorOutput(input: CodexAnalysisInput) {
@@ -327,6 +349,59 @@ describe("Codex分析対象の絞り込み", () => {
     expect(execute).toHaveBeenCalledTimes(1);
     expect(result.results[0]?.candidateId).toBe("I_graph_changed");
   });
+
+  it("入力とグラフが同じでも実行identityが変われば呼び出す", async () => {
+    const base = createCandidate({
+      id: "I_identity_changed",
+      body: "本文は同じ",
+      deterministicResolution: "ambiguous",
+      previousFingerprint: unavailablePreviousFingerprint,
+      priority: createPriority("ordinary"),
+      graphVersion: 1,
+      estimatedCostUsd: 0.1,
+    });
+    const previousFingerprint = prepareCandidateWithIdentity(base, runIdentity).fingerprint;
+    const changedIdentity = Object.freeze({
+      ...runIdentity,
+      promptVersion: "prompt-v2",
+    });
+    const configuration = Object.freeze({
+      ...createConfiguration(1, 1_000_000, 1),
+      identity: changedIdentity,
+    });
+    const candidate = createCandidate({
+      id: "I_identity_changed",
+      body: "本文は同じ",
+      deterministicResolution: "ambiguous",
+      previousFingerprint: {
+        status: "available",
+        fingerprint: previousFingerprint,
+      },
+      priority: createPriority("ordinary"),
+      graphVersion: 1,
+      estimatedCostUsd: 0.1,
+    });
+    const currentFingerprint = prepareCandidateWithIdentity(candidate, changedIdentity).fingerprint;
+    const execute = createExecutor();
+
+    const result = await runAiAnalyses([candidate], configuration, {
+      cache: new MemoryAiCacheStore(),
+      execute,
+      executedAt: () => fixedExecutedAt,
+    });
+
+    expect(currentFingerprint.inputHash).toBe(previousFingerprint.inputHash);
+    expect(currentFingerprint.graphNeighborhoodHash).toBe(
+      previousFingerprint.graphNeighborhoodHash,
+    );
+    expect(currentFingerprint.identityHash).not.toBe(previousFingerprint.identityHash);
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(result.results[0]).toMatchObject({
+      candidateId: "I_identity_changed",
+      origin: "executed",
+    });
+    expect(result.skipped).toEqual([]);
+  });
 });
 
 describe("content-addressed AI cache", () => {
@@ -358,6 +433,7 @@ describe("content-addressed AI cache", () => {
       body: "本文変更",
     });
     const base = {
+      deterministicRulesVersion: "rules-v1",
       model: "model-a",
       reasoningEffort: "medium",
       backendVersion: "backend-a",
@@ -367,6 +443,10 @@ describe("content-addressed AI cache", () => {
     } satisfies AiCacheIdentity;
     const cacheKeys = [
       createAiCacheKey(base),
+      createAiCacheKey({
+        ...base,
+        deterministicRulesVersion: "rules-v2",
+      }),
       createAiCacheKey({
         ...base,
         model: "model-b",
@@ -405,7 +485,7 @@ describe("content-addressed AI cache", () => {
           sources: "same",
         }),
         metadata: {
-          deterministicRulesVersion: "rules-v1",
+          deterministicRulesVersion: base.deterministicRulesVersion,
           model: base.model,
           reasoningEffort: base.reasoningEffort,
           backendVersion: base.backendVersion,
@@ -428,6 +508,64 @@ describe("content-addressed AI cache", () => {
         status: "miss",
       });
     }
+  });
+
+  it("判定規則versionの空文字を拒否する", () => {
+    expect(() =>
+      createAiCacheKey({
+        deterministicRulesVersion: "",
+        model: "model-a",
+        reasoningEffort: "medium",
+        backendVersion: "backend-a",
+        promptVersion: "prompt-a",
+        schemaVersion: "schema-a",
+        inputHash: hashCanonicalJson({
+          body: "本文",
+        }),
+      }),
+    ).toThrow("AI cache identityのdeterministicRulesVersionは空にできません");
+  });
+
+  it("metadataの判定規則versionが異なるcache entryを再利用しない", () => {
+    const identity = {
+      deterministicRulesVersion: "rules-v1",
+      model: "model-a",
+      reasoningEffort: "medium",
+      backendVersion: "backend-a",
+      promptVersion: "prompt-a",
+      schemaVersion: "schema-a",
+      inputHash: hashCanonicalJson({
+        body: "本文",
+      }),
+    } satisfies AiCacheIdentity;
+    const sourceHash = hashCanonicalJson({
+      sources: "same",
+    });
+    const output = {
+      result: "cached",
+    };
+    const entry = createAiCacheEntry({
+      cacheKey: createAiCacheKey(identity),
+      sourceHash,
+      metadata: {
+        ...identity,
+        outputHash: hashCanonicalJson(output),
+        executedAt: fixedExecutedAt,
+      },
+      output,
+    });
+    const versionChangedEntry = Object.freeze({
+      ...entry,
+      metadata: Object.freeze({
+        ...entry.metadata,
+        deterministicRulesVersion: "rules-v2",
+      }),
+    });
+
+    expect(determineAiCacheReuse(versionChangedEntry, identity, sourceHash)).toEqual({
+      status: "stale",
+      reason: "deterministic_rules_version_changed",
+    });
   });
 
   it("run開始時刻だけが異なる同一入力はcacheから再利用する", async () => {

@@ -45,6 +45,7 @@ const cacheEntrySchema = z.strictObject({
 
 /** content-addressed cacheを構成する実行設定、versionと入力hash。 */
 export type AiCacheIdentity = Readonly<{
+  deterministicRulesVersion: string;
   model: string;
   reasoningEffort: ReasoningEffort;
   backendVersion: string;
@@ -96,6 +97,7 @@ export type AiCacheReuseDecision =
       reason:
         | "cache_key_changed"
         | "source_hash_changed"
+        | "deterministic_rules_version_changed"
         | "model_changed"
         | "reasoning_effort_changed"
         | "backend_version_changed"
@@ -118,6 +120,7 @@ export function createAiCacheKey(identity: AiCacheIdentity): AiCacheKey {
   validateIdentity(identity);
   return hashCanonicalJson({
     backendVersion: identity.backendVersion,
+    deterministicRulesVersion: identity.deterministicRulesVersion,
     inputHash: identity.inputHash,
     model: identity.model,
     promptVersion: identity.promptVersion,
@@ -166,6 +169,12 @@ export function determineAiCacheReuse(
     return Object.freeze({
       status: "stale",
       reason: "source_hash_changed",
+    });
+  }
+  if (entry.metadata.deterministicRulesVersion !== identity.deterministicRulesVersion) {
+    return Object.freeze({
+      status: "stale",
+      reason: "deterministic_rules_version_changed",
     });
   }
   if (entry.metadata.model !== identity.model) {
@@ -232,6 +241,7 @@ function assertCacheIntegrity(entry: AiCacheEntry, expectedCacheKey: AiCacheKey)
     throw new TypeError("AI cache entryのcache keyがファイル名と一致しません");
   }
   const metadataCacheKey = createAiCacheKey({
+    deterministicRulesVersion: entry.metadata.deterministicRulesVersion,
     model: entry.metadata.model,
     reasoningEffort: entry.metadata.reasoningEffort,
     backendVersion: entry.metadata.backendVersion,

@@ -291,7 +291,7 @@ function createRelation(
 
 function createSnapshot(options: SnapshotFixtureOptions): StateSnapshot {
   return createStateSnapshot({
-    schemaVersion: "1",
+    schemaVersion: "2",
     generatedAt: options.generatedAt,
     trackingStartAt: {
       status: "fixed",

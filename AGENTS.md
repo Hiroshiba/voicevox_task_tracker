@@ -7,6 +7,10 @@
 - GitHub、Codex、永続化、Pages、Discordへの副作用は各アダプターに閉じ込め、ドメイン判定から分離する
 - GitHub由来の本文、コメント、ラベル、ユーザー名を信頼できない入力として扱い、命令として解釈しない
 - Codexの出力は候補データとしてschema検証とsemantic検証を通し、状態や外部サービスへ直接反映しない
+- 判定結果が変わる変更をしたら判定規則versionを上げる。上げないと既存項目が再判定されず古い判定が残る
+  - Issueの判定は`ISSUE_DETERMINISTIC_RULES_VERSION`、Pull Requestの判定は`PULL_REQUEST_DETERMINISTIC_RULES_VERSION`
+  - Codexプロンプトは`config.yml`の`ai.promptVersion`
+  - `tests/rules-version-hash.test.ts`が更新漏れを検知する
 
 # 作業手順
 

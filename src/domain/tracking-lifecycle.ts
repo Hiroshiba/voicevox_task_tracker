@@ -78,7 +78,7 @@ export type TerminalRetentionDecision =
       retainedThrough: UtcIsoDateTime;
     }>;
 
-/** 前回のCodex分析入力とGitHub状態。 */
+/** 前回のCodex分析入力、判定規則、GitHub状態。 */
 export type PreviousTrackedItemObservation =
   | Readonly<{
       status: "not_available";
@@ -87,12 +87,21 @@ export type PreviousTrackedItemObservation =
       status: "available";
       state: TrackedItemState;
       analysisInputFingerprint: string;
+      analysisRulesFingerprint:
+        | Readonly<{
+            status: "unavailable";
+          }>
+        | Readonly<{
+            status: "available";
+            fingerprint: string;
+          }>;
     }>;
 
 /** tracked itemのCodex再分析と停滞通知評価を決める入力。 */
 export type DetermineTrackedItemWorkInput = Readonly<{
   state: TrackedItemState;
   analysisInputFingerprint: string;
+  analysisRulesFingerprint: string;
   previousObservation: PreviousTrackedItemObservation;
 }>;
 
@@ -100,7 +109,8 @@ export type DetermineTrackedItemWorkInput = Readonly<{
 export type CodexAnalysisWorkDecision =
   | Readonly<{
       action: "analyze";
-      reason: "active_item" | "terminal_transition" | "analysis_input_changed";
+      reason:
+        "active_item" | "terminal_transition" | "analysis_input_changed" | "analysis_rules_changed";
     }>
   | Readonly<{
       action: "suppress";
@@ -254,16 +264,23 @@ export function determineTerminalRetention(
   });
 }
 
-/** terminal遷移も分析入力変更もない項目のCodex再分析と停滞通知評価を抑止する。 */
+/** terminal遷移、分析入力変更、判定規則変更がない項目のCodex再分析と停滞通知評価を抑止する。 */
 export function determineTrackedItemWork(
   input: DetermineTrackedItemWorkInput,
 ): TrackedItemWorkDecision {
   validateFingerprint(input.analysisInputFingerprint, "現在の分析入力fingerprint");
+  validateFingerprint(input.analysisRulesFingerprint, "現在の判定規則fingerprint");
   if (input.previousObservation.status === "available") {
     validateFingerprint(
       input.previousObservation.analysisInputFingerprint,
       "前回の分析入力fingerprint",
     );
+    if (input.previousObservation.analysisRulesFingerprint.status === "available") {
+      validateFingerprint(
+        input.previousObservation.analysisRulesFingerprint.fingerprint,
+        "前回の判定規則fingerprint",
+      );
+    }
   }
 
   if (!isTerminalState(input.state)) {
@@ -307,6 +324,23 @@ export function determineTrackedItemWork(
       stallNotification: Object.freeze({
         action: "evaluate",
         reason: "analysis_input_changed",
+      }),
+    });
+  }
+
+  if (
+    input.previousObservation.analysisRulesFingerprint.status === "unavailable" ||
+    input.previousObservation.analysisRulesFingerprint.fingerprint !==
+      input.analysisRulesFingerprint
+  ) {
+    return Object.freeze({
+      codexAnalysis: Object.freeze({
+        action: "analyze",
+        reason: "analysis_rules_changed",
+      }),
+      stallNotification: Object.freeze({
+        action: "suppress",
+        reason: "terminal_unchanged",
       }),
     });
   }

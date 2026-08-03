@@ -183,7 +183,7 @@ function createRelations(edge: EdgeFixture): readonly unknown[] {
 
 function createSnapshot(options: SnapshotFixtureOptions): StateSnapshot {
   return createStateSnapshot({
-    schemaVersion: "1",
+    schemaVersion: "2",
     generatedAt: options.generatedAt,
     trackingStartAt: {
       status: "fixed",
@@ -428,6 +428,7 @@ function createCacheEntry(): AiCacheEntry {
     input: "fixture",
   });
   const cacheKey = createAiCacheKey({
+    deterministicRulesVersion: "rules-v1",
     model: "codex-model",
     reasoningEffort: "medium",
     backendVersion: "codex-cli-1",
@@ -522,16 +523,50 @@ describe("state schema version", () => {
     });
     const source = serializeCanonicalJson({
       ...snapshot,
+      schemaVersion: "1",
+      collection: {
+        repositories: [
+          {
+            repositoryId: publicRepositoryId,
+            successfulAt: fixedItemAt,
+            items: [
+              {
+                freshness: "fresh",
+                nodeId: itemNodeId,
+                repositoryId: publicRepositoryId,
+                itemFingerprint: hashCanonicalJson({ item: itemNodeId }),
+                aiAnalysisFingerprint: {
+                  status: "available",
+                  fingerprint: {
+                    sourceHash: hashCanonicalJson({ source: itemNodeId }),
+                    inputHash: hashCanonicalJson({ input: itemNodeId }),
+                    graphNeighborhoodHash: hashCanonicalJson({ graph: itemNodeId }),
+                  },
+                },
+                observedAt: fixedItemAt,
+                state: "open",
+                terminalAt: null,
+              },
+            ],
+          },
+        ],
+      },
       repositories: [...snapshot.repositories].reverse(),
     });
 
     const migrated = parseStateSnapshot(source);
 
-    expect(migrated.schemaVersion).toBe("1");
+    expect(migrated.schemaVersion).toBe("2");
     expect(migrated.repositories.map((repository) => repository.id)).toEqual([
       publicRepositoryId,
       "R_SECOND",
     ]);
+    expect(migrated.collection.repositories[0]?.items[0]?.aiAnalysisFingerprint).toEqual({
+      status: "unavailable",
+    });
+    expect(migrated.collection.repositories[0]?.items[0]?.analysisRulesFingerprint).toEqual({
+      status: "unavailable",
+    });
   });
 
   it("version 1のhistoryを登録済みparserで読み取り現行形式へmigrationする", () => {
@@ -795,7 +830,7 @@ describe("state canonical JSON", () => {
     );
   });
 
-  it("AI分析fingerprintを収集項目へ保存し、欠落した形式を拒否する", () => {
+  it("AI分析と判定規則のfingerprintを収集項目へ保存し、欠落した形式を拒否する", () => {
     const base = createSnapshot({
       runId: "run-ai-fingerprint",
       generatedAt: "2026-07-31T00:00:00.000Z",
@@ -818,6 +853,7 @@ describe("state canonical JSON", () => {
       sourceHash: hashCanonicalJson({ source: itemNodeId }),
       inputHash: hashCanonicalJson({ input: itemNodeId }),
       graphNeighborhoodHash: hashCanonicalJson({ graph: itemNodeId }),
+      identityHash: hashCanonicalJson({ identity: itemNodeId }),
     };
     const collectionRepository = {
       repositoryId: publicRepositoryId,
@@ -831,6 +867,10 @@ describe("state canonical JSON", () => {
           aiAnalysisFingerprint: {
             status: "available",
             fingerprint,
+          },
+          analysisRulesFingerprint: {
+            status: "available",
+            fingerprint: hashCanonicalJson({ analysisRules: itemNodeId }),
           },
           observedAt: fixedItemAt,
           state: "open",
@@ -862,6 +902,10 @@ describe("state canonical JSON", () => {
                   nodeId: itemNodeId,
                   repositoryId: publicRepositoryId,
                   itemFingerprint,
+                  aiAnalysisFingerprint: {
+                    status: "available",
+                    fingerprint,
+                  },
                   observedAt: fixedItemAt,
                   state: "open",
                   terminalAt: null,
@@ -1283,6 +1327,7 @@ describe("メモリstate branch transaction", () => {
       input: "full-content",
     });
     const cacheKey = createAiCacheKey({
+      deterministicRulesVersion: "rules-v1",
       model: "codex-model",
       reasoningEffort: "medium",
       backendVersion: "codex-cli-1",

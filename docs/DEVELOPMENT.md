@@ -118,6 +118,20 @@ fixtureはネットワークへ接続しません。
 golden evalは固定AI出力を検証するもので実モデルを呼ばないため、model、reasoning effort、promptの変更を理由に期待値を更新することもありません。
 これらを変更した場合は`metrics.aiCallCount`が1以上になるdry-runで確認します。
 
+### 判定規則versionを更新する
+
+判定規則を変えたら、対応するversionを上げてください。
+上げないと、GitHub側が動いていない項目は再判定されず、古い判定が残り続けます。
+
+| 変更した対象                | 上げるversion                              |
+| --------------------------- | ------------------------------------------ |
+| Issueの判定                 | `ISSUE_DETERMINISTIC_RULES_VERSION`        |
+| Pull Requestの判定          | `PULL_REQUEST_DETERMINISTIC_RULES_VERSION` |
+| `prompts/`のCodexプロンプト | `config.yml`の`ai.promptVersion`           |
+
+`tests/rules-version-hash.test.ts`が判定に関わるファイルの内容hashを記録しており、更新漏れがあると失敗します。
+失敗したら、判定結果が変わるかを考えてversionを上げるか判断し、どちらの場合も記録hashを更新してください。
+
 ## ディレクトリ構成
 
 | パス                 | 責務                                                                                       |

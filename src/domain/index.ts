@@ -4,6 +4,7 @@ export {
   type BotPredicate,
   type BotPredicateInput,
 } from "./actor-resolution.js";
+export { DETERMINISTIC_RULES_VERSION } from "./deterministic-rules-version.js";
 export {
   resolvePullRequestCommitOccurredAt,
   type FreshObservedGitHubItemBase,

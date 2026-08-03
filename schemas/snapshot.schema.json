@@ -18,7 +18,7 @@
   ],
   "properties": {
     "schemaVersion": {
-      "const": "1"
+      "const": "2"
     },
     "generatedAt": {
       "$ref": "#/$defs/dateTime"
@@ -245,6 +245,7 @@
         "repositoryId",
         "itemFingerprint",
         "aiAnalysisFingerprint",
+        "analysisRulesFingerprint",
         "observedAt",
         "state",
         "terminalAt"
@@ -264,6 +265,9 @@
         },
         "aiAnalysisFingerprint": {
           "$ref": "#/$defs/aiAnalysisFingerprint"
+        },
+        "analysisRulesFingerprint": {
+          "$ref": "#/$defs/analysisRulesFingerprint"
         },
         "observedAt": {
           "$ref": "#/$defs/dateTime"
@@ -332,7 +336,12 @@
             "fingerprint": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["sourceHash", "inputHash", "graphNeighborhoodHash"],
+              "required": [
+                "sourceHash",
+                "inputHash",
+                "graphNeighborhoodHash",
+                "identityHash"
+              ],
               "properties": {
                 "sourceHash": {
                   "$ref": "#/$defs/fingerprint"
@@ -342,8 +351,38 @@
                 },
                 "graphNeighborhoodHash": {
                   "$ref": "#/$defs/fingerprint"
+                },
+                "identityHash": {
+                  "$ref": "#/$defs/fingerprint"
                 }
               }
+            }
+          }
+        }
+      ]
+    },
+    "analysisRulesFingerprint": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": {
+              "const": "unavailable"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "fingerprint"],
+          "properties": {
+            "status": {
+              "const": "available"
+            },
+            "fingerprint": {
+              "$ref": "#/$defs/fingerprint"
             }
           }
         }

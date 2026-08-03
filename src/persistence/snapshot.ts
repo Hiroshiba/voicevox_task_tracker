@@ -61,7 +61,18 @@ export type SnapshotAiAnalysisFingerprint =
         sourceHash: Sha256Hash;
         inputHash: Sha256Hash;
         graphNeighborhoodHash: Sha256Hash;
+        identityHash: Sha256Hash;
       }>;
+    }>;
+
+/** 項目を最後に判定したときの判定規則fingerprint。 */
+export type SnapshotAnalysisRulesFingerprint =
+  | Readonly<{
+      status: "unavailable";
+    }>
+  | Readonly<{
+      status: "available";
+      fingerprint: Sha256Hash;
     }>;
 
 /** 次回の増分計画、terminal保持判定、Codex未変更判定へ渡す軽量な項目観測値。 */
@@ -71,6 +82,7 @@ export type SnapshotCollectionItem = Readonly<{
   repositoryId: PublicRepositoryId;
   itemFingerprint: Sha256Fingerprint;
   aiAnalysisFingerprint: SnapshotAiAnalysisFingerprint;
+  analysisRulesFingerprint: SnapshotAnalysisRulesFingerprint;
   observedAt: UtcIsoDateTime;
 }> &
   (
@@ -122,9 +134,10 @@ export type SnapshotRun = Readonly<{
 }>;
 
 const SNAPSHOT_SCHEMA_VERSION_1 = "1";
+const SNAPSHOT_SCHEMA_VERSION_2 = "2";
 
-type StateSnapshotVersion1 = Readonly<{
-  schemaVersion: typeof SNAPSHOT_SCHEMA_VERSION_1;
+type StateSnapshotVersion2 = Readonly<{
+  schemaVersion: typeof SNAPSHOT_SCHEMA_VERSION_2;
   generatedAt: UtcIsoDateTime;
   trackingStartAt: TrackingStartAtState;
   ai: SnapshotAiState;
@@ -138,12 +151,42 @@ type StateSnapshotVersion1 = Readonly<{
 
 type StateSnapshotVersionParser = (value: unknown) => StateSnapshot;
 
-/** tracker-stateへ保存するschema version 1のcurrent snapshot。 */
-export type StateSnapshot = StateSnapshotVersion1;
+/** tracker-stateへ保存するschema version 2のcurrent snapshot。 */
+export type StateSnapshot = StateSnapshotVersion2;
 
 const snapshotSchemaVersionSchema = z.object({
   schemaVersion: z.string().min(1),
 });
+const snapshotVersion1HashSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
+const snapshotVersion1AiAnalysisFingerprintSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("unavailable"),
+  }),
+  z.strictObject({
+    status: z.literal("available"),
+    fingerprint: z.strictObject({
+      sourceHash: snapshotVersion1HashSchema,
+      inputHash: snapshotVersion1HashSchema,
+      graphNeighborhoodHash: snapshotVersion1HashSchema,
+    }),
+  }),
+]);
+const snapshotVersion1MigrationSchema = z.looseObject({
+  schemaVersion: z.literal(SNAPSHOT_SCHEMA_VERSION_1),
+  collection: z.looseObject({
+    repositories: z.array(
+      z.looseObject({
+        items: z.array(
+          z.looseObject({
+            aiAnalysisFingerprint: snapshotVersion1AiAnalysisFingerprintSchema,
+          }),
+        ),
+      }),
+    ),
+  }),
+});
+
+type StateSnapshotVersion1 = z.output<typeof snapshotVersion1MigrationSchema>;
 
 const ajv = new Ajv2020({
   allErrors: true,
@@ -161,7 +204,7 @@ ajv.addFormat("date-time", {
     return !Number.isNaN(Date.parse(value));
   },
 });
-const validateSnapshotVersion1Schema = ajv.compile<StateSnapshotVersion1>(snapshotSchema);
+const validateSnapshotVersion2Schema = ajv.compile<StateSnapshotVersion2>(snapshotSchema);
 
 function compareStrings(left: string, right: string): number {
   if (left < right) {
@@ -399,6 +442,9 @@ function normalizeSnapshot(snapshot: StateSnapshot): StateSnapshot {
                                 ...item.aiAnalysisFingerprint.fingerprint,
                               }),
                             }),
+                      analysisRulesFingerprint: Object.freeze({
+                        ...item.analysisRulesFingerprint,
+                      }),
                     }),
                   ),
               ),
@@ -462,15 +508,47 @@ function normalizeSnapshot(snapshot: StateSnapshot): StateSnapshot {
 }
 
 function parseStateSnapshotVersion1(value: unknown): StateSnapshotVersion1 {
-  if (!validateSnapshotVersion1Schema(value)) {
-    const issueCount = validateSnapshotVersion1Schema.errors?.length ?? 1;
+  const result = snapshotVersion1MigrationSchema.safeParse(value);
+  if (!result.success) {
+    throw new StateSnapshotSchemaError(result.error.issues.length);
+  }
+  return result.data;
+}
+
+function migrateStateSnapshotVersion1(snapshot: StateSnapshotVersion1): StateSnapshot {
+  return migrateStateSnapshotVersion2(
+    parseStateSnapshotVersion2({
+      ...snapshot,
+      schemaVersion: SNAPSHOT_SCHEMA_VERSION_2,
+      collection: {
+        ...snapshot.collection,
+        repositories: snapshot.collection.repositories.map((repository) => ({
+          ...repository,
+          items: repository.items.map((item) => ({
+            ...item,
+            aiAnalysisFingerprint: {
+              status: "unavailable",
+            },
+            analysisRulesFingerprint: {
+              status: "unavailable",
+            },
+          })),
+        })),
+      },
+    }),
+  );
+}
+
+function parseStateSnapshotVersion2(value: unknown): StateSnapshotVersion2 {
+  if (!validateSnapshotVersion2Schema(value)) {
+    const issueCount = validateSnapshotVersion2Schema.errors?.length ?? 1;
     throw new StateSnapshotSchemaError(issueCount);
   }
   assertSnapshotSemantics(value);
   return value;
 }
 
-function migrateStateSnapshotVersion1(snapshot: StateSnapshotVersion1): StateSnapshot {
+function migrateStateSnapshotVersion2(snapshot: StateSnapshotVersion2): StateSnapshot {
   return normalizeSnapshot(snapshot);
 }
 
@@ -485,6 +563,10 @@ const stateSnapshotVersionParsers: ReadonlyMap<string, StateSnapshotVersionParse
   [
     SNAPSHOT_SCHEMA_VERSION_1,
     createStateSnapshotVersionParser(parseStateSnapshotVersion1, migrateStateSnapshotVersion1),
+  ],
+  [
+    SNAPSHOT_SCHEMA_VERSION_2,
+    createStateSnapshotVersionParser(parseStateSnapshotVersion2, migrateStateSnapshotVersion2),
   ],
 ]);
 
@@ -504,7 +586,7 @@ function parseVersionedStateSnapshot(value: unknown): StateSnapshot {
 
 /** 未検証の値をschema検証済みかつ決定論的順序のsnapshotへ変換する。 */
 export function createStateSnapshot(value: unknown): StateSnapshot {
-  return migrateStateSnapshotVersion1(parseStateSnapshotVersion1(value));
+  return migrateStateSnapshotVersion2(parseStateSnapshotVersion2(value));
 }
 
 /** snapshotを末尾改行付きcanonical JSONへ変換する。 */

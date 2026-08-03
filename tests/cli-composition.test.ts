@@ -221,7 +221,7 @@ function createEmptyWorkflowArtifact(runId: string): WorkflowArtifact {
     ],
     historyInputEvents: [],
     snapshot: {
-      schemaVersion: "1",
+      schemaVersion: "2",
       generatedAt: NOW,
       trackingStartAt: {
         status: "not_fixed",

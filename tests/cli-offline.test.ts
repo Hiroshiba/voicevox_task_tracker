@@ -31,7 +31,7 @@ function emptyMetrics(): OfflineAnalysisMetrics {
 
 function emptySnapshot(): StateSnapshot {
   return createStateSnapshot({
-    schemaVersion: "1",
+    schemaVersion: "2",
     generatedAt: NOW,
     trackingStartAt: {
       status: "fixed",

@@ -12,7 +12,6 @@ export {
   type AiAnalysisRunConfiguration,
   type AiAnalysisRunDependencies,
   type AiAnalysisRunFailure,
-  type AiAnalysisRunIdentity,
   type AiAnalysisRunItemResult,
   type AiAnalysisRunResult,
 } from "./analysis-runner.js";
@@ -23,6 +22,7 @@ export {
   type AiAnalysisCandidate,
   type AiAnalysisFingerprint,
   type AiAnalysisPriority,
+  type AiAnalysisRunIdentity,
   type AiAnalysisSelection,
   type AiAnalysisSkipReason,
   type DeterministicAnalysisResolution,

@@ -87,6 +87,24 @@ repository単位の収集は、再試行後も503で失敗し、同じrepository
 `report-workflow`は収集時のCLI reportと各jobの結果をActions artifactへ保存するだけで、stateとPagesを変更しません。
 現在のActions統合上の制約は[デプロイ手順](DEPLOYMENT.md)に記載しています。
 
+## 判定規則の変更と再判定
+
+増分収集はGitHub由来の項目fingerprintが前回と一致する項目の詳細取得を省きます。
+詳細を取得しない項目は状態機械へ渡らず、前回snapshotの判定結果をそのまま引き継ぎます。
+このままでは判定規則を変えても、GitHub側が動いていない項目の判定が古いまま残ります。
+
+そのため、項目ごとに判定規則fingerprintをsnapshotへ保存し、現在値と異なる項目を詳細取得の対象へ加えます。
+判定規則fingerprintは項目種別に対応する決定論的規則versionと、Codex実行identityのhashから作ります。
+Issueの規則だけを変えた場合はIssueだけが再取得され、modelやprompt versionを変えた場合は全項目が再取得されます。
+
+判定規則fingerprintを現在値で保存するのは、そのrunで実際に再判定した項目だけです。
+再判定していない項目に現在値を書くと、古い判定のまま最新規則で判定済みと記録され、以後再判定されなくなります。
+検査するのは前回snapshotに判定結果を持つ項目だけです。追跡対象外の列挙項目には引き継ぐ判定がないため、毎回の再取得を避けます。
+
+決定論的規則versionとprompt versionは手で更新する定数です。
+`tests/rules-version-hash.test.ts`が判定に関わるファイルの内容hashを記録しており、
+判定ロジックやプロンプトを変えるとテストが失敗してversionの更新要否を判断させます。
+
 ## 公開境界の三重guard
 
 公開境界は一つのfilterへ依存せず、三つの段階で検証します。
@@ -107,10 +125,10 @@ Pages guardを含むPages stageのエラーでは、通常digestの代わりにD
 ## Codexの隔離
 
 本番経路は前回成功したCodex分析のfingerprintをsnapshotの収集項目へ保存し、次回の候補選別へ渡します。
-GitHubの確定情報で高信頼に解決した項目に加え、入力hashと隣接graph hashが前回と一致する項目も除外します。
+GitHubの確定情報で高信頼に解決した項目に加え、入力hash、隣接graph hash、実行identity hashが前回と一致する項目も除外します。
 未変更候補はcontent-addressed cacheの検証済み結果をreducerへ渡し、変更候補も同じ判定入力が保存済みならcacheから再利用します。
 どちらの場合もcache hitではCodex processを実行しません。
-model、reasoning effort、backend version、prompt version、schema version、入力hashからcache keyを作り、同一入力だけを再利用します。
+判定規則version、model、reasoning effort、backend version、prompt version、schema version、入力hashからcache keyを作り、同一入力だけを再利用します。
 Codex入力の判定時刻は未来のsource参照を拒否するsemantic検証にだけ使い、時間依存の状態と停滞時間は決定論的処理で算出します。
 判定時刻を入力hashから除外するため、run開始時刻だけが異なる入力は同じcache keyになります。
 call数、入力文字数、推定費用の上限を超えた候補を優先順位に従って延期できる設計です。

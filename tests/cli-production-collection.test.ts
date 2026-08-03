@@ -7,7 +7,11 @@ import {
   createProductionCliApplication,
   type ProductionRuntimeAdapters,
 } from "../src/cli/production-runtime.js";
-import { createAiCacheEntry, type CodexAnalysisInput } from "../src/codex/index.js";
+import {
+  createAiCacheEntry,
+  hashCanonicalJson,
+  type CodexAnalysisInput,
+} from "../src/codex/index.js";
 import { loadConfig, type Config } from "../src/config/index.js";
 import { type DiscordDigestDelivery } from "../src/discord/index.js";
 import {
@@ -15,6 +19,8 @@ import {
   createGitHubNodeId,
   createGitHubRepositoryId,
   createUtcIsoDateTime,
+  DETERMINISTIC_RULES_VERSION,
+  ISSUE_DETERMINISTIC_RULES_VERSION,
   type GitHubItemDisplayReference,
   type GitHubItemUrl,
   type GitHubNodeId,
@@ -2605,7 +2611,7 @@ describe("本番収集の接続", () => {
     }
   });
 
-  it("未変更かつ前回未追跡で詳細未取得の項目を診断付きで追跡候補から除外する", async () => {
+  it("前回未追跡で判定規則fingerprint未保存の項目を再び詳細取得しない", async () => {
     const repository = createRepository(
       "R_untracked_unchanged",
       "untracked-unchanged",
@@ -2637,35 +2643,41 @@ describe("本番収集の接続", () => {
     ).toBe(false);
 
     const secondObservedAt = createUtcIsoDateTime(SECOND_RUN_AT);
-    fixture.openItems = [
-      createOldIssueItem(publicRepository, 1, "untracked-unchanged", secondObservedAt),
-    ];
+    const secondItem = createOldIssueItem(
+      publicRepository,
+      1,
+      "untracked-unchanged",
+      secondObservedAt,
+    );
+    fixture.openItems = [secondItem];
+    setIssueDetails(fixture, [secondItem], secondObservedAt);
     harness.detailCalls.length = 0;
 
     const secondResult = await harness.runDaily(SECOND_RUN_AT);
     if (secondResult.command !== "daily") {
       throw new TypeError("増分fixtureがdaily結果ではありません");
     }
-    const diagnostic = secondResult.result.report.diagnostics.find((candidate) =>
-      candidate.startsWith(diagnosticPrefix),
-    );
     const files = await harness.stateAdapter.readBranchFiles("tracker-state");
     const snapshotSource = files.get("state/snapshot.json");
-    if (diagnostic == null || snapshotSource == null) {
-      throw new TypeError("増分fixtureのdiagnosticまたはsnapshotがありません");
+    if (snapshotSource == null) {
+      throw new TypeError("増分fixtureのsnapshotがありません");
     }
     const snapshot = parseStateSnapshot(new TextDecoder().decode(snapshotSource));
 
     expect(secondResult.exitCode).toBe(0);
-    expect(harness.detailCalls).toHaveLength(0);
-    expect(diagnostic).toBe("詳細未取得かつ前回未追跡の項目を追跡候補から1件除外しました");
-    expect(diagnostic).not.toContain(item.nodeId);
-    expect(diagnostic).not.toContain(item.url);
+    expect(harness.detailCalls).toEqual([]);
+    expect(
+      secondResult.result.report.diagnostics.some((diagnostic) =>
+        diagnostic.startsWith(diagnosticPrefix),
+      ),
+    ).toBe(true);
     expect(snapshot.items.map((candidate) => candidate.nodeId)).not.toContain(item.nodeId);
-    expect(requireCollectionItem(snapshot, item.nodeId).nodeId).toBe(item.nodeId);
+    expect(requireCollectionItem(snapshot, item.nodeId).analysisRulesFingerprint).toEqual({
+      status: "unavailable",
+    });
   });
 
-  it("追跡項目が参照する未変更の未追跡項目だけを同じrunで詳細取得する", async () => {
+  it("判定規則fingerprint未保存の未追跡項目を増分計画から除外する", async () => {
     const repository = createRepository(
       "R_enumerated_relation_expansion",
       "enumerated-relation-expansion",
@@ -3459,6 +3471,82 @@ describe("本番収集の接続", () => {
     });
   });
 
+  it("判定規則変更時に再判定したterminal項目だけを現在規則で判定済みにする", async () => {
+    const repository = createRepository("R_terminal_rules", "terminal-rules", FIRST_RUN_AT);
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const terminal = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "terminal-rules",
+      updatedAt: observedAt,
+      observedAt,
+      state: Object.freeze({
+        state: "closed",
+        closedAt: observedAt,
+      }),
+    });
+    const untracked = createOldIssueItem(publicRepository, 2, "untracked-rules", observedAt);
+    fixture.openItems = [untracked];
+    fixture.individualItems.set(terminal.url, terminal);
+    setIssueDetails(fixture, [terminal, untracked], observedAt);
+    const config = await createTestConfig({
+      explicitIncludes: [terminal.url],
+      retentionDays: 180,
+      aiEnabled: false,
+    });
+    const harness = createCollectionHarness({ repositories: [fixture], config });
+
+    expect((await harness.runDaily(FIRST_RUN_AT)).exitCode).toBe(0);
+    const firstFiles = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const firstSnapshotSource = firstFiles.get("state/snapshot.json");
+    if (firstSnapshotSource == null) {
+      throw new TypeError("判定規則変更前のsnapshotがありません");
+    }
+    const firstSnapshot = parseStateSnapshot(new TextDecoder().decode(firstSnapshotSource));
+    const firstTerminalFingerprint = requireCollectionItem(
+      firstSnapshot,
+      terminal.nodeId,
+    ).analysisRulesFingerprint;
+    if (firstTerminalFingerprint.status !== "available") {
+      throw new TypeError("判定規則変更前のterminal項目にfingerprintがありません");
+    }
+    expect(requireCollectionItem(firstSnapshot, untracked.nodeId).analysisRulesFingerprint).toEqual(
+      {
+        status: "unavailable",
+      },
+    );
+    harness.setConfig(
+      Object.freeze({
+        ...config,
+        ai: Object.freeze({
+          ...config.ai,
+          promptVersion: "terminal-rules-v2",
+        }),
+      }),
+    );
+    harness.artifacts.length = 0;
+
+    const result = await harness.runDry(SECOND_RUN_AT);
+    const secondSnapshot = requireDryRunSnapshot(harness.artifacts);
+    const secondTerminalFingerprint = requireCollectionItem(
+      secondSnapshot,
+      terminal.nodeId,
+    ).analysisRulesFingerprint;
+    if (secondTerminalFingerprint.status !== "available") {
+      throw new TypeError("判定規則変更後のterminal項目にfingerprintがありません");
+    }
+
+    expect(result.exitCode).toBe(0);
+    expect(secondTerminalFingerprint.fingerprint).not.toBe(firstTerminalFingerprint.fingerprint);
+    expect(
+      requireCollectionItem(secondSnapshot, untracked.nodeId).analysisRulesFingerprint,
+    ).toEqual({
+      status: "unavailable",
+    });
+  });
+
   it("archiveで除外したrepositoryの理由を日次履歴へ残す", async () => {
     const repository = createRepository("R_archive", "archive", FIRST_RUN_AT);
     const retainedRepository = createRepository("R_retained", "retained", FIRST_RUN_AT);
@@ -3753,7 +3841,7 @@ describe("本番判定入力の接続", () => {
     });
     expect(cacheEntry.cacheKey).toBe(trackedItem.aiAnalysis.cacheKey);
     expect(cacheEntry.metadata).toEqual({
-      deterministicRulesVersion: "daily-rules-v1",
+      deterministicRulesVersion: DETERMINISTIC_RULES_VERSION,
       model: config.ai.model,
       reasoningEffort: config.ai.execution.reasoningEffort,
       backendVersion: "codex-cli-0.145.0",
@@ -4130,6 +4218,158 @@ describe("本番判定入力の接続", () => {
       expect(harness.publicData[0]?.details.graph.edges).toEqual([]);
     },
   );
+
+  it("prompt versionだけを変えた未変更項目を再解析する", async () => {
+    const repository = createRepository("R_identity_change", "identity-change", FIRST_RUN_AT);
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const item = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "identity-change",
+      updatedAt: observedAt,
+      observedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const related = createIssueItem({
+      repository: publicRepository,
+      number: 2,
+      fingerprint: "identity-change-related",
+      updatedAt: observedAt,
+      observedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    fixture.openItems = [item, related];
+    setIssueDetails(fixture, [item, related], observedAt);
+    fixture.details.set(
+      item.nodeId,
+      createIssueDetail({
+        item,
+        body: `入力は変更しません。関連項目は ${related.url} です`,
+        observedAt,
+        nativeDependencies: Object.freeze([]),
+        duplicateComments: true,
+      }),
+    );
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: true,
+    });
+    const harness = createCollectionHarness({
+      repositories: [fixture],
+      config,
+      executeCodexAnalysis: (input) => {
+        const source = input.sources[0];
+        if (source == null) {
+          throw new TypeError("実行identity変更fixtureのsourceがありません");
+        }
+        return Promise.resolve(
+          createCodexOutput(input, {
+            status: "in_progress",
+            waitingOn: {
+              candidateId: input.item.authorCandidateId,
+              kind: "user",
+              role: "assignee",
+              sourceId: source.id,
+            },
+            latestMeaningfulSourceId: null,
+            confidence: 0.95,
+            relationVerdict: "related",
+            notification: {
+              recommended: false,
+              reasonCode: "none",
+              reasonSummary: "通知しません",
+            },
+          }),
+        );
+      },
+    });
+
+    expect((await harness.runDaily(FIRST_RUN_AT)).exitCode).toBe(0);
+    const firstFiles = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const firstSnapshotSource = firstFiles.get("state/snapshot.json");
+    if (firstSnapshotSource == null) {
+      throw new TypeError("実行identity変更前のsnapshotがありません");
+    }
+    const firstCollectionItem = requireCollectionItem(
+      parseStateSnapshot(new TextDecoder().decode(firstSnapshotSource)),
+      item.nodeId,
+    );
+    const firstFingerprint = firstCollectionItem.aiAnalysisFingerprint;
+    const firstAnalysisRulesFingerprint = firstCollectionItem.analysisRulesFingerprint;
+    if (firstFingerprint.status !== "available") {
+      throw new TypeError("実行identity変更前のAI分析fingerprintがありません");
+    }
+    if (firstAnalysisRulesFingerprint.status !== "available") {
+      throw new TypeError("実行identity変更前の判定規則fingerprintがありません");
+    }
+    const firstExecutionCount = harness.codexExecutionCount();
+    const firstItemExecutionCount = harness.codexInputs.filter(
+      (input) => input.item.nodeId === item.nodeId,
+    ).length;
+    harness.setConfig(
+      Object.freeze({
+        ...config,
+        ai: Object.freeze({
+          ...config.ai,
+          promptVersion: "identity-change-v2",
+        }),
+      }),
+    );
+    harness.artifacts.length = 0;
+
+    const result = await harness.runDry(SECOND_RUN_AT);
+    const secondSnapshot = requireDryRunSnapshot(harness.artifacts);
+    const secondCollectionItem = requireCollectionItem(secondSnapshot, item.nodeId);
+    const secondFingerprint = secondCollectionItem.aiAnalysisFingerprint;
+    const secondAnalysisRulesFingerprint = secondCollectionItem.analysisRulesFingerprint;
+    if (secondFingerprint.status !== "available") {
+      throw new TypeError("実行identity変更後のAI分析fingerprintがありません");
+    }
+    if (secondAnalysisRulesFingerprint.status !== "available") {
+      throw new TypeError("実行identity変更後の判定規則fingerprintがありません");
+    }
+    const metrics = z
+      .object({
+        metrics: z.object({
+          aiCallCount: z.number(),
+          aiCacheHitCount: z.number(),
+        }),
+      })
+      .parse(harness.artifacts.at(-1)).metrics;
+
+    expect(result.exitCode).toBe(0);
+    expect(harness.codexExecutionCount()).toBe(firstExecutionCount + metrics.aiCallCount);
+    expect(metrics.aiCallCount).toBeGreaterThan(0);
+    expect(metrics.aiCacheHitCount).toBe(0);
+    expect(harness.codexInputs.filter((input) => input.item.nodeId === item.nodeId)).toHaveLength(
+      firstItemExecutionCount + 1,
+    );
+    expect(secondFingerprint.fingerprint.inputHash).toBe(firstFingerprint.fingerprint.inputHash);
+    expect(secondFingerprint.fingerprint.graphNeighborhoodHash).toBe(
+      firstFingerprint.fingerprint.graphNeighborhoodHash,
+    );
+    expect(secondFingerprint.fingerprint.identityHash).not.toBe(
+      firstFingerprint.fingerprint.identityHash,
+    );
+    expect(firstAnalysisRulesFingerprint.fingerprint).toBe(
+      hashCanonicalJson({
+        deterministicRulesVersion: ISSUE_DETERMINISTIC_RULES_VERSION,
+        identityHash: firstFingerprint.fingerprint.identityHash,
+      }),
+    );
+    expect(secondAnalysisRulesFingerprint.fingerprint).toBe(
+      hashCanonicalJson({
+        deterministicRulesVersion: ISSUE_DETERMINISTIC_RULES_VERSION,
+        identityHash: secondFingerprint.fingerprint.identityHash,
+      }),
+    );
+    expect(secondAnalysisRulesFingerprint.fingerprint).not.toBe(
+      firstAnalysisRulesFingerprint.fingerprint,
+    );
+  });
 
   it("inferred edge解消時に本文未変更の隣接項目を再分類する", async () => {
     const repository = createRepository("R_reclassify", "reclassify", FIRST_RUN_AT);

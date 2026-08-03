@@ -17,6 +17,7 @@ import {
   enumerateGitHubItemsByIdentifiers,
   enumerateOpenGitHubItems,
   planIncrementalItemCollection,
+  type CurrentAnalysisRulesFingerprints,
   type EnumeratedGitHubItem,
   type GitHubRestRequest,
   type GitHubRestResponse,
@@ -96,6 +97,44 @@ const itemParametersSchema = z.object({
 });
 
 const observedAt = createUtcIsoDateTime("2026-08-01T00:00:00Z");
+const initialAnalysisRulesFingerprints = Object.freeze({
+  issue: createGitHubBodyFingerprint("issue-rules-v1"),
+  pull_request: createGitHubBodyFingerprint("pull-request-rules-v1"),
+}) satisfies CurrentAnalysisRulesFingerprints;
+
+function createPreviousCollectionItems(
+  items: readonly EnumeratedGitHubItem[],
+  analysisRulesFingerprints: CurrentAnalysisRulesFingerprints,
+) {
+  return new Map(
+    items.map((item) => [
+      item.nodeId,
+      Object.freeze({
+        itemFingerprint: item.itemFingerprint,
+        analysisRulesFingerprint: Object.freeze({
+          status: "available",
+          fingerprint: analysisRulesFingerprints[item.type],
+        }),
+      }),
+    ]),
+  );
+}
+
+function createPreviousCollectionItemsWithoutAnalysisRulesFingerprint(
+  items: readonly EnumeratedGitHubItem[],
+) {
+  return new Map(
+    items.map((item) => [
+      item.nodeId,
+      Object.freeze({
+        itemFingerprint: item.itemFingerprint,
+        analysisRulesFingerprint: Object.freeze({
+          status: "unavailable",
+        }),
+      }),
+    ]),
+  );
+}
 
 function createRepository(
   nodeId: string,
@@ -551,14 +590,6 @@ describe("増分項目収集", () => {
     );
     const previousItems = await enumerateFixture("R_example", "example", previousMetadata);
     const currentItems = await enumerateFixture("R_example", "example", currentMetadata);
-    const initialPlan = planIncrementalItemCollection({
-      items: previousItems,
-      previous: {
-        status: "none",
-      },
-      adjacentItemNodeIds: new Set(),
-      overlapMilliseconds: 300_000,
-    });
     const adjacentItemNodeIds = new Set<GitHubNodeId>([
       createGitHubNodeId("I_item_100"),
       createGitHubNodeId("I_adjacent_a"),
@@ -570,8 +601,10 @@ describe("増分項目収集", () => {
       previous: {
         status: "successful",
         completedAt: createUtcIsoDateTime("2026-08-01T00:00:00Z"),
-        itemFingerprints: initialPlan.currentItemFingerprints,
+        items: createPreviousCollectionItems(previousItems, initialAnalysisRulesFingerprints),
       },
+      previouslyAnalyzedItemNodeIds: new Set(previousItems.map((item) => item.nodeId)),
+      currentAnalysisRulesFingerprints: initialAnalysisRulesFingerprints,
       adjacentItemNodeIds,
       overlapMilliseconds: 300_000,
     });
@@ -617,8 +650,10 @@ describe("増分項目収集", () => {
       previous: {
         status: "successful",
         completedAt: createUtcIsoDateTime("2026-08-01T00:00:00Z"),
-        itemFingerprints: new Map([[previousItem.nodeId, previousItem.itemFingerprint]]),
+        items: createPreviousCollectionItems(previousItems, initialAnalysisRulesFingerprints),
       },
+      previouslyAnalyzedItemNodeIds: new Set(previousItems.map((item) => item.nodeId)),
+      currentAnalysisRulesFingerprints: initialAnalysisRulesFingerprints,
       adjacentItemNodeIds: new Set(),
       overlapMilliseconds: 300_000,
     });
@@ -630,6 +665,117 @@ describe("増分項目収集", () => {
     expect(plan.changedItemNodeIds).toEqual([]);
     expect(plan.detailItemNodeIds).toEqual([]);
     expect(plan.currentItemFingerprints).toHaveLength(1);
+  });
+
+  it("item fingerprintが同じでも判定規則fingerprintが変われば詳細取得対象にする", async () => {
+    const items = await enumerateFixture("R_example", "example", [createItemMetadata(1, {})]);
+    const item = items[0];
+    if (item == null) {
+      throw new Error("判定規則変更fixtureが不足しています");
+    }
+    const changedAnalysisRulesFingerprints = Object.freeze({
+      ...initialAnalysisRulesFingerprints,
+      issue: createGitHubBodyFingerprint("issue-rules-v2"),
+    }) satisfies CurrentAnalysisRulesFingerprints;
+
+    const plan = planIncrementalItemCollection({
+      items,
+      previous: {
+        status: "successful",
+        completedAt: createUtcIsoDateTime("2026-08-01T00:00:00Z"),
+        items: createPreviousCollectionItems(items, initialAnalysisRulesFingerprints),
+      },
+      previouslyAnalyzedItemNodeIds: new Set(items.map((item) => item.nodeId)),
+      currentAnalysisRulesFingerprints: changedAnalysisRulesFingerprints,
+      adjacentItemNodeIds: new Set(),
+      overlapMilliseconds: 300_000,
+    });
+
+    expect(plan.changedItemNodeIds).toEqual([item.nodeId]);
+    expect(plan.detailItemNodeIds).toEqual([item.nodeId]);
+  });
+
+  it("Issue規則だけが変わったときPull Requestを詳細取得対象にしない", async () => {
+    const items = await enumerateFixture("R_example", "example", [
+      createItemMetadata(1, {}),
+      createItemMetadata(2, {
+        type: "pull_request",
+      }),
+    ]);
+    const issue = items.find((item) => item.type === "issue");
+    const pullRequest = items.find((item) => item.type === "pull_request");
+    if (issue == null || pullRequest == null) {
+      throw new Error("種別別判定規則fixtureが不足しています");
+    }
+    const changedAnalysisRulesFingerprints = Object.freeze({
+      ...initialAnalysisRulesFingerprints,
+      issue: createGitHubBodyFingerprint("issue-rules-v2"),
+    }) satisfies CurrentAnalysisRulesFingerprints;
+
+    const plan = planIncrementalItemCollection({
+      items,
+      previous: {
+        status: "successful",
+        completedAt: createUtcIsoDateTime("2026-08-01T00:00:00Z"),
+        items: createPreviousCollectionItems(items, initialAnalysisRulesFingerprints),
+      },
+      previouslyAnalyzedItemNodeIds: new Set(items.map((item) => item.nodeId)),
+      currentAnalysisRulesFingerprints: changedAnalysisRulesFingerprints,
+      adjacentItemNodeIds: new Set(),
+      overlapMilliseconds: 300_000,
+    });
+
+    expect(plan.changedItemNodeIds).toEqual([issue.nodeId]);
+    expect(plan.detailItemNodeIds).toEqual([issue.nodeId]);
+    expect(plan.detailItemNodeIds).not.toContain(pullRequest.nodeId);
+  });
+
+  it("前回判定済みでない項目は判定規則fingerprintが未保持でも詳細取得対象にしない", async () => {
+    const items = await enumerateFixture("R_example", "example", [createItemMetadata(1, {})]);
+    const item = items[0];
+    if (item == null) {
+      throw new Error("前回未判定fixtureが不足しています");
+    }
+
+    const plan = planIncrementalItemCollection({
+      items,
+      previous: {
+        status: "successful",
+        completedAt: createUtcIsoDateTime("2026-08-01T00:00:00Z"),
+        items: createPreviousCollectionItemsWithoutAnalysisRulesFingerprint(items),
+      },
+      previouslyAnalyzedItemNodeIds: new Set(),
+      currentAnalysisRulesFingerprints: initialAnalysisRulesFingerprints,
+      adjacentItemNodeIds: new Set(),
+      overlapMilliseconds: 300_000,
+    });
+
+    expect(plan.changedItemNodeIds).toEqual([]);
+    expect(plan.detailItemNodeIds).toEqual([]);
+  });
+
+  it("前回判定済みの項目は判定規則fingerprintが未保持なら詳細取得対象にする", async () => {
+    const items = await enumerateFixture("R_example", "example", [createItemMetadata(1, {})]);
+    const item = items[0];
+    if (item == null) {
+      throw new Error("前回判定済みfixtureが不足しています");
+    }
+
+    const plan = planIncrementalItemCollection({
+      items,
+      previous: {
+        status: "successful",
+        completedAt: createUtcIsoDateTime("2026-08-01T00:00:00Z"),
+        items: createPreviousCollectionItemsWithoutAnalysisRulesFingerprint(items),
+      },
+      previouslyAnalyzedItemNodeIds: new Set([item.nodeId]),
+      currentAnalysisRulesFingerprints: initialAnalysisRulesFingerprints,
+      adjacentItemNodeIds: new Set(),
+      overlapMilliseconds: 300_000,
+    });
+
+    expect(plan.changedItemNodeIds).toEqual([item.nodeId]);
+    expect(plan.detailItemNodeIds).toEqual([item.nodeId]);
   });
 });
 

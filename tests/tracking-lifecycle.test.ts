@@ -668,10 +668,15 @@ describe("追跡後のライフサイクル", () => {
     const commonWorkInput = Object.freeze({
       state: "open",
       analysisInputFingerprint: "sha256:same-history",
+      analysisRulesFingerprint: "sha256:same-rules",
       previousObservation: Object.freeze({
         status: "available",
         state: "open",
         analysisInputFingerprint: "sha256:same-history",
+        analysisRulesFingerprint: Object.freeze({
+          status: "available",
+          fingerprint: "sha256:same-rules",
+        }),
       }),
     } satisfies DetermineTrackedItemWorkInput);
     const decisions = selection.trackedItems.map(() => determineTrackedItemWork(commonWorkInput));
@@ -716,10 +721,15 @@ describe("追跡後のライフサイクル", () => {
     const decision = determineTrackedItemWork({
       state: "closed",
       analysisInputFingerprint: "sha256:unchanged",
+      analysisRulesFingerprint: "sha256:unchanged-rules",
       previousObservation: {
         status: "available",
         state: "closed",
         analysisInputFingerprint: "sha256:unchanged",
+        analysisRulesFingerprint: {
+          status: "available",
+          fingerprint: "sha256:unchanged-rules",
+        },
       },
     });
     const codexCalls = [decision].filter((value) => value.codexAnalysis.action === "analyze");
@@ -745,19 +755,29 @@ describe("追跡後のライフサイクル", () => {
     const transitioned = determineTrackedItemWork({
       state: "merged",
       analysisInputFingerprint: "sha256:merged",
+      analysisRulesFingerprint: "sha256:same-rules",
       previousObservation: {
         status: "available",
         state: "open",
         analysisInputFingerprint: "sha256:open",
+        analysisRulesFingerprint: {
+          status: "available",
+          fingerprint: "sha256:same-rules",
+        },
       },
     });
     const changed = determineTrackedItemWork({
       state: "closed",
       analysisInputFingerprint: "sha256:changed",
+      analysisRulesFingerprint: "sha256:same-rules",
       previousObservation: {
         status: "available",
         state: "closed",
         analysisInputFingerprint: "sha256:previous",
+        analysisRulesFingerprint: {
+          status: "available",
+          fingerprint: "sha256:same-rules",
+        },
       },
     });
 
@@ -769,6 +789,49 @@ describe("追跡後のライフサイクル", () => {
       action: "analyze",
       reason: "analysis_input_changed",
     });
+  });
+
+  it("terminal項目の判定規則が変更または未保存ならCodex再分析だけを行う", () => {
+    const changed = determineTrackedItemWork({
+      state: "closed",
+      analysisInputFingerprint: "sha256:unchanged",
+      analysisRulesFingerprint: "sha256:current-rules",
+      previousObservation: {
+        status: "available",
+        state: "closed",
+        analysisInputFingerprint: "sha256:unchanged",
+        analysisRulesFingerprint: {
+          status: "available",
+          fingerprint: "sha256:previous-rules",
+        },
+      },
+    });
+    const unavailable = determineTrackedItemWork({
+      state: "closed",
+      analysisInputFingerprint: "sha256:unchanged",
+      analysisRulesFingerprint: "sha256:current-rules",
+      previousObservation: {
+        status: "available",
+        state: "closed",
+        analysisInputFingerprint: "sha256:unchanged",
+        analysisRulesFingerprint: {
+          status: "unavailable",
+        },
+      },
+    });
+    const expected = {
+      codexAnalysis: {
+        action: "analyze",
+        reason: "analysis_rules_changed",
+      },
+      stallNotification: {
+        action: "suppress",
+        reason: "terminal_unchanged",
+      },
+    } as const;
+
+    expect(changed).toEqual(expected);
+    expect(unavailable).toEqual(expected);
   });
 
   it("automation項目とbot作成項目を追跡し、automationだけを既定digestから外す", () => {

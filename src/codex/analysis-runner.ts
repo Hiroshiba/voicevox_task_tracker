@@ -1,7 +1,7 @@
 import {
   selectAiAnalysisCandidates,
-  type AiAnalysisCandidate,
   type AiAnalysisFingerprint,
+  type AiAnalysisRunIdentity,
   type AiAnalysisSkipReason,
   type PreparedAiAnalysisCandidate,
 } from "./analysis-selection.js";
@@ -20,22 +20,8 @@ import { type CodexAnalysisInput } from "./input.js";
 import { type ValidatedCodexAnalysisOutput } from "./output-types.js";
 import { validateCodexAnalysisOutput } from "./output-validation.js";
 import { executeValidatedCodexAnalysis, type CodexUnavailableReason } from "./reducer.js";
-import {
-  createUtcIsoDateTime,
-  type AnalysisMetadata,
-  type ReasoningEffort,
-} from "../domain/index.js";
+import { createUtcIsoDateTime, type AnalysisMetadata } from "../domain/index.js";
 import { assertNonNullable } from "../util/index.js";
-
-/** AI実行とcache再現性を固定する実行設定とversion情報。 */
-export type AiAnalysisRunIdentity = Readonly<{
-  deterministicRulesVersion: string;
-  model: string;
-  reasoningEffort: ReasoningEffort;
-  backendVersion: string;
-  promptVersion: string;
-  schemaVersion: string;
-}>;
 
 /** 1 runのAI cacheと予算管理設定。 */
 export type AiAnalysisRunConfiguration = Readonly<{
@@ -97,11 +83,7 @@ function createCacheIdentity(
   identity: AiAnalysisRunIdentity,
 ): AiCacheIdentity {
   return Object.freeze({
-    model: identity.model,
-    reasoningEffort: identity.reasoningEffort,
-    backendVersion: identity.backendVersion,
-    promptVersion: identity.promptVersion,
-    schemaVersion: identity.schemaVersion,
+    ...identity,
     inputHash: candidate.fingerprint.inputHash,
   });
 }
@@ -192,7 +174,6 @@ function assertUnchangedCandidatesAreCached(
 async function executeSelectedCandidates(
   selected: readonly PreparedAiAnalysisCandidate[],
   cacheMisses: readonly CacheMissCandidate[],
-  configuration: AiAnalysisRunConfiguration,
   dependencies: AiAnalysisRunDependencies,
 ): Promise<
   Readonly<{
@@ -218,13 +199,7 @@ async function executeSelectedCandidates(
     }
     const output = attempt.output;
     const metadata = Object.freeze({
-      deterministicRulesVersion: configuration.identity.deterministicRulesVersion,
-      model: configuration.identity.model,
-      reasoningEffort: configuration.identity.reasoningEffort,
-      backendVersion: configuration.identity.backendVersion,
-      promptVersion: configuration.identity.promptVersion,
-      schemaVersion: configuration.identity.schemaVersion,
-      inputHash: candidate.fingerprint.inputHash,
+      ...cacheMiss.identity,
       outputHash: hashCanonicalJson(output),
       executedAt: createUtcIsoDateTime(dependencies.executedAt()),
     }) satisfies AnalysisMetadata;
@@ -245,10 +220,19 @@ async function executeSelectedCandidates(
 
 /** 曖昧な変更項目だけをcacheとrun予算の範囲でCodex分析する。 */
 export async function runAiAnalyses(
-  candidates: readonly AiAnalysisCandidate[],
+  candidates: readonly PreparedAiAnalysisCandidate[],
   configuration: AiAnalysisRunConfiguration,
   dependencies: AiAnalysisRunDependencies,
 ): Promise<AiAnalysisRunResult> {
+  const identityHash = hashCanonicalJson(configuration.identity);
+  const identityMismatch = candidates.find(
+    (candidate) => candidate.fingerprint.identityHash !== identityHash,
+  );
+  if (identityMismatch != null) {
+    throw new TypeError(
+      `Codex分析候補とrunの実行identityが一致しません。対象: ${identityMismatch.id}`,
+    );
+  }
   const selection = selectAiAnalysisCandidates(candidates);
   const unchangedCandidates = selection.skipped.flatMap((value) =>
     value.reason === "unchanged" ? [value.candidate] : [],
@@ -270,7 +254,6 @@ export async function runAiAnalyses(
   const executed = await executeSelectedCandidates(
     budgetPlan.selected,
     selectedCacheMisses,
-    configuration,
     dependencies,
   );
 

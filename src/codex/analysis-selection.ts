@@ -1,5 +1,9 @@
 import { hashCanonicalJson, serializeCanonicalJson, type Sha256Hash } from "./canonical-json.js";
+import { type AiCacheIdentity } from "./cache.js";
 import { type CodexAnalysisInput } from "./input.js";
+
+/** AI実行とcache再現性を固定する実行設定とversion情報。 */
+export type AiAnalysisRunIdentity = Omit<AiCacheIdentity, "inputHash">;
 
 /** Codex分析候補の決定論的な確定状態。 */
 export type DeterministicAnalysisResolution = "high_confidence" | "ambiguous";
@@ -9,6 +13,7 @@ export type AiAnalysisFingerprint = Readonly<{
   sourceHash: Sha256Hash;
   inputHash: Sha256Hash;
   graphNeighborhoodHash: Sha256Hash;
+  identityHash: Sha256Hash;
 }>;
 
 /** 前回のCodex分析fingerprint。 */
@@ -101,6 +106,7 @@ function createInputHashValue(input: CodexAnalysisInput): unknown {
 /** Codex分析候補の正規化入力、source、グラフ隣接hashを生成する。 */
 export function prepareAiAnalysisCandidate(
   candidate: AiAnalysisCandidate,
+  identity: AiAnalysisRunIdentity,
 ): PreparedAiAnalysisCandidate {
   validateCandidateId(candidate.id);
   const normalizedInput = `${serializeCanonicalJson(candidate.input)}\n`;
@@ -112,6 +118,7 @@ export function prepareAiAnalysisCandidate(
       input: createInputHashValue(candidate.input),
     }),
     graphNeighborhoodHash,
+    identityHash: hashCanonicalJson(identity),
   });
   return Object.freeze({
     ...candidate,
@@ -131,7 +138,8 @@ function shouldSelectCandidate(candidate: PreparedAiAnalysisCandidate): boolean 
   return (
     candidate.fingerprint.inputHash !== candidate.previousFingerprint.fingerprint.inputHash ||
     candidate.fingerprint.graphNeighborhoodHash !==
-      candidate.previousFingerprint.fingerprint.graphNeighborhoodHash
+      candidate.previousFingerprint.fingerprint.graphNeighborhoodHash ||
+    candidate.fingerprint.identityHash !== candidate.previousFingerprint.fingerprint.identityHash
   );
 }
 
@@ -144,7 +152,7 @@ function determineSkipReason(candidate: PreparedAiAnalysisCandidate): AiAnalysis
 
 /** 高信頼の確定項目と未変更項目を除き、曖昧な変更項目だけを選ぶ。 */
 export function selectAiAnalysisCandidates(
-  candidates: readonly AiAnalysisCandidate[],
+  candidates: readonly PreparedAiAnalysisCandidate[],
 ): AiAnalysisSelection {
   const candidateIds = new Set<string>();
   const selected: PreparedAiAnalysisCandidate[] = [];
@@ -158,13 +166,12 @@ export function selectAiAnalysisCandidates(
       throw new TypeError(`Codex分析候補IDが重複しています。対象: ${candidate.id}`);
     }
     candidateIds.add(candidate.id);
-    const prepared = prepareAiAnalysisCandidate(candidate);
-    if (shouldSelectCandidate(prepared)) {
-      selected.push(prepared);
+    if (shouldSelectCandidate(candidate)) {
+      selected.push(candidate);
     } else {
       skipped.push({
-        candidate: prepared,
-        reason: determineSkipReason(prepared),
+        candidate,
+        reason: determineSkipReason(candidate),
       });
     }
   }
