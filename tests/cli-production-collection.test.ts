@@ -1382,6 +1382,8 @@ describe("本番収集の接続", () => {
     expect(result.exitCode).toBe(0);
     expect(trackedItem).toMatchObject({
       status: "blocked",
+      statusSince: blocked.createdAt,
+      ownerSince: blocked.createdAt,
       waitingOn: [
         {
           candidateId: blocker.nodeId,
@@ -1543,22 +1545,22 @@ describe("本番収集の接続", () => {
     ]);
     expect(trackedItem).toMatchObject({
       status: "blocked",
-      statusSince: FIRST_RUN_AT,
+      statusSince: changedBlocked.createdAt,
       primaryWaitingOn: {
         index: 0,
       },
       waitingOn: [
         {
-          candidateId: blocker.nodeId,
-          role: "dependency",
-          confidence: 1,
-          sourceIds,
-        },
-        {
           candidateId: otherBlocker.nodeId,
           role: "dependency",
           confidence: 1,
           sourceIds: [otherNativeDependency.sourceId],
+        },
+        {
+          candidateId: blocker.nodeId,
+          role: "dependency",
+          confidence: 1,
+          sourceIds,
         },
       ],
     });
@@ -3134,7 +3136,13 @@ describe("本番収集の接続", () => {
       },
       result: {
         notificationSelection: {
-          candidates: [],
+          candidates: [
+            {
+              itemNodeId: firstItem.nodeId,
+              reasonCode: "blocker_overdue",
+              severity: "critical",
+            },
+          ],
         },
       },
     });
@@ -3409,14 +3417,17 @@ describe("本番収集の接続", () => {
     const publicRepository = requirePublicRepository(repository);
     const fixture = createRepositoryFixture(repository);
     const firstObservedAt = createUtcIsoDateTime(FIRST_RUN_AT);
-    const item = createIssueItem({
-      repository: publicRepository,
-      number: 1,
-      fingerprint: "unchanged",
-      updatedAt: firstObservedAt,
-      observedAt: firstObservedAt,
-      state: Object.freeze({ state: "open" }),
-    });
+    const item = replaceCreatedAt(
+      createIssueItem({
+        repository: publicRepository,
+        number: 1,
+        fingerprint: "unchanged",
+        updatedAt: firstObservedAt,
+        observedAt: firstObservedAt,
+        state: Object.freeze({ state: "open" }),
+      }),
+      firstObservedAt,
+    );
     fixture.openItems = [item];
     setIssueDetails(fixture, [item], firstObservedAt);
     const config = await createTestConfig({
@@ -3436,14 +3447,17 @@ describe("本番収集の接続", () => {
     expect(firstSnapshot.items[0]?.severity).toBe("none");
 
     fixture.openItems = [
-      createIssueItem({
-        repository: publicRepository,
-        number: 1,
-        fingerprint: "unchanged",
-        updatedAt: firstObservedAt,
-        observedAt: createUtcIsoDateTime(THIRD_RUN_AT),
-        state: Object.freeze({ state: "open" }),
-      }),
+      replaceCreatedAt(
+        createIssueItem({
+          repository: publicRepository,
+          number: 1,
+          fingerprint: "unchanged",
+          updatedAt: firstObservedAt,
+          observedAt: createUtcIsoDateTime(THIRD_RUN_AT),
+          state: Object.freeze({ state: "open" }),
+        }),
+        firstObservedAt,
+      ),
     ];
     harness.detailCalls.length = 0;
     harness.artifacts.length = 0;
@@ -3562,7 +3576,13 @@ describe("本番収集の接続", () => {
     expect(harness.artifacts.at(-1)).toMatchObject({
       result: {
         notificationSelection: {
-          candidates: [],
+          candidates: [
+            {
+              itemNodeId: target.nodeId,
+              reasonCode: "triage_overdue",
+              severity: "critical",
+            },
+          ],
         },
       },
     });

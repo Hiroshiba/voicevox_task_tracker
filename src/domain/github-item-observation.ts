@@ -16,6 +16,7 @@ export type FreshObservedGitHubItemBase = Readonly<{
   freshness: "fresh";
   sourceId: SourceId;
   nodeId: GitHubNodeId;
+  createdAt: UtcIsoDateTime;
   author: ObservedGitHubItemAuthor;
   assignees: readonly GitHubAccountActor[];
   events: readonly NormalizedEvent[];
@@ -169,7 +170,6 @@ export type FreshObservedGitHubPullRequest = FreshObservedGitHubItemBase &
   ObservedGitHubItemState &
   Readonly<{
     type: "pull_request";
-    createdAt: UtcIsoDateTime;
     draft: boolean;
     headSha: string;
     headCommit: ObservedGitHubPullRequestCommit;

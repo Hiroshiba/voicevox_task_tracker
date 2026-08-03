@@ -292,6 +292,7 @@ function createIssueObservation(
     sourceId: buildSourceId("golden_item", item.nodeId),
     nodeId,
     type: "issue",
+    createdAt: createUtcIsoDateTime(item.createdAt),
     ...createItemState(item),
     author: Object.freeze({
       status: "identified",

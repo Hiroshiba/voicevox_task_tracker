@@ -1459,7 +1459,7 @@ function createNativeBlockers(
         authority: "authoritative",
         confidence: 1,
         sourceIds: candidate.sourceIds,
-        becameBlockingAt: item.observedAt,
+        becameBlockingAt: item.createdAt,
       }),
     );
   }
@@ -2370,17 +2370,18 @@ function graphBlockers(
   state: RuntimeState,
   deterministicAnalysis: DeterministicAnalysis,
   graph: GraphResult,
-  nodeId: GitHubNodeId,
+  item: FreshObservedGitHubItem,
 ): readonly IssueBlocker[] {
   const blockersByCandidateId = new Map<GraphNodeId, IssueBlocker>();
   for (const edge of graph.edges) {
-    if (!edge.active || edge.type !== "blocks" || edge.toNodeId !== nodeId) {
+    if (!edge.active || edge.type !== "blocks" || edge.toNodeId !== item.nodeId) {
       continue;
     }
     const edgeSourceIds = nonEmptySourceIds(
       edge.evidence.map((evidence) => evidence.sourceId),
       `blocker edge ${edge.id}`,
     );
+    const edgeBecameBlockingAt = edge.provenance === "native" ? item.createdAt : edge.firstSeenAt;
     const existing = blockersByCandidateId.get(edge.fromNodeId);
     if (existing == null) {
       blockersByCandidateId.set(
@@ -2391,7 +2392,7 @@ function graphBlockers(
           authority: edge.authoritative ? "authoritative" : "inferred",
           confidence: edge.confidence,
           sourceIds: edgeSourceIds,
-          becameBlockingAt: edge.firstSeenAt,
+          becameBlockingAt: edgeBecameBlockingAt,
         }),
       );
       continue;
@@ -2399,7 +2400,9 @@ function graphBlockers(
     const authority =
       existing.authority === "authoritative" || edge.authoritative ? "authoritative" : "inferred";
     const becameBlockingAt =
-      existing.becameBlockingAt < edge.firstSeenAt ? existing.becameBlockingAt : edge.firstSeenAt;
+      existing.becameBlockingAt < edgeBecameBlockingAt
+        ? existing.becameBlockingAt
+        : edgeBecameBlockingAt;
     blockersByCandidateId.set(
       edge.fromNodeId,
       Object.freeze({
@@ -2440,7 +2443,7 @@ function reassessDeterministicAnalysis(
   const blockers =
     graph == null
       ? createNativeBlockers(analysis.item, analysis.relationCandidates)
-      : graphBlockers(state, deterministicAnalysis, graph, analysis.item.nodeId);
+      : graphBlockers(state, deterministicAnalysis, graph, analysis.item);
   if (analysis.item.type === "issue" && analysis.detail.type === "issue") {
     return Object.freeze({
       ...analysis,
