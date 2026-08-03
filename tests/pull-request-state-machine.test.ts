@@ -501,6 +501,52 @@ describe("reviewと責務の遷移", () => {
     });
   });
 
+  it("変更対応push後に同じreviewerのcommented reviewがあれば不確実性を追加する", () => {
+    const pullRequest = createOpenPullRequest();
+    const changesRequested = createReviewEvent({
+      id: "old-changes-requested-before-commented",
+      actor: reviewer,
+      state: "changes_requested",
+      occurredAt: createUtcIsoDateTime("2026-07-31T02:00:00Z"),
+      commitSha: "old-head",
+    });
+    const commented = createReviewEvent({
+      id: "commented-after-push",
+      actor: {
+        ...reviewer,
+        login: "renamed-reviewer",
+      },
+      state: "commented",
+      occurredAt: createUtcIsoDateTime("2026-07-31T04:00:00Z"),
+      commitSha: headSha,
+    });
+    const decision = determinePullRequestState(
+      createInput({
+        ...pullRequest,
+        events: [changesRequested, ...pullRequest.events, commented],
+      }),
+    );
+
+    expect(decision.status).toBe("waiting_for_review");
+    expect(decision.waitingOn[0]).toMatchObject({
+      kind: "user",
+      role: "reviewer",
+      candidateId: "reviewer",
+    });
+    expect(decision.evidence).toContainEqual({
+      sourceId: commented.sourceId,
+      supports: "uncertainty",
+      summary:
+        "変更対応push後にreviewerがcommented reviewを返しているため追加のauthor対応が必要か判断できません",
+    });
+    expect(decision.evidence).toContainEqual({
+      sourceId: buildSourceId("github_commit", headSha),
+      supports: "uncertainty",
+      summary:
+        "変更対応push後にreviewerがcommented reviewを返しているため追加のauthor対応が必要か判断できません",
+    });
+  });
+
   it("未解決human review threadをresolved版よりauthor待ちとして優先する", () => {
     const comment = createCommentEvent({
       id: "human-thread",

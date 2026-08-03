@@ -929,6 +929,27 @@ function createRereviewDecision(
     return undefined;
   }
 
+  const previousReviewerNodeIds = new Set(
+    previousChangesRequested.map((review) => review.actor.nodeId),
+  );
+  const commentedAfterPush = getHumanReviewEvents(input.pullRequest).filter(
+    (review) =>
+      review.state === "commented" &&
+      review.occurredAt > headBasis.occurredAt &&
+      previousReviewerNodeIds.has(review.actor.nodeId),
+  );
+  if (commentedAfterPush.length > 0) {
+    addUncertainty(
+      context,
+      "変更対応push後にreviewerがcommented reviewを返しているため追加のauthor対応が必要か判断できません",
+      createSourceIds([
+        ...commentedAfterPush.map((review) => review.sourceId),
+        ...headBasis.sourceIds,
+      ]),
+      input.confidenceThresholds.medium,
+    );
+  }
+
   const waitingOn =
     reviewRequests.length > 0
       ? reviewRequests.map((request) =>
