@@ -166,6 +166,7 @@ PRのCurrent reviewersへ実際に待っているuserかteamを追加します�
 
 人間の`CHANGES_REQUESTED`が最新head以後にある場合はauthor待ちが優先されます。
 authorが修正をpushした後はreviewer側を再評価するため、必要ならreview requestも現在の担当へ合わせます。
+未解決のreview threadもauthor待ちの根拠になりますが、authorが最後に返信したthreadはreviewer側の再確認待ちとして扱います。
 botのreviewとcommentだけではbotへ責務を移しません。
 
 ### native dependency

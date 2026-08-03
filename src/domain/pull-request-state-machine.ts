@@ -108,6 +108,10 @@ type ReviewEvent = Extract<NormalizedEvent, { kind: "review" }> & {
   actor: GitHubAccountActor & { type: "human" };
 };
 
+type HumanCommentEvent = Extract<NormalizedEvent, { kind: "comment" }> & {
+  actor: GitHubAccountActor & { type: "human" };
+};
+
 type ResolvedReviewRequest = Readonly<{
   waitingOn: WaitingOn;
   basis: PullRequestTransitionBasis;
@@ -782,6 +786,30 @@ function createReviewThreadDecision(
         context,
         "未解決のhuman review threadがoutdatedのため対応要否を確定できません",
         sourceIds,
+        input.confidenceThresholds.medium,
+      );
+      continue;
+    }
+    const humanComments = comments
+      .filter((comment): comment is HumanCommentEvent => comment.actor.type === "human")
+      .sort(compareEvents);
+    const latestHumanComment = humanComments.at(-1);
+    assertNonNullable(latestHumanComment, "review threadのhuman commentを取得できませんでした");
+    if (
+      input.pullRequest.author.status === "identified" &&
+      latestHumanComment.actor.nodeId === input.pullRequest.author.actor.nodeId
+    ) {
+      const authorRepliedSourceIds = [
+        ...new Set([
+          thread.sourceId,
+          ...reviewerComments.map((comment) => comment.sourceId),
+          latestHumanComment.sourceId,
+        ]),
+      ];
+      addUncertainty(
+        context,
+        "authorが返信済みのため未解決review threadへの対応が完了したか判断できません",
+        authorRepliedSourceIds,
         input.confidenceThresholds.medium,
       );
       continue;

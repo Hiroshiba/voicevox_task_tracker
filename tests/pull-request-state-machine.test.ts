@@ -536,6 +536,60 @@ describe("reviewと責務の遷移", () => {
     expect(determinePullRequestState(createInput(resolved)).status).toBe("waiting_for_review");
   });
 
+  it("未解決human review threadへauthorが最後に返信済みならreviewer待ちとする", () => {
+    const authorFirstComment = createCommentEvent({
+      id: "author-first",
+      actor: author,
+      occurredAt: createUtcIsoDateTime("2026-07-31T05:00:00Z"),
+    });
+    const reviewerComment = createCommentEvent({
+      id: "reviewer-middle",
+      actor: reviewer,
+      occurredAt: createUtcIsoDateTime("2026-07-31T06:00:00Z"),
+    });
+    const authorLastComment = createCommentEvent({
+      id: "author-last",
+      actor: author,
+      occurredAt: createUtcIsoDateTime("2026-07-31T07:00:00Z"),
+    });
+    const pullRequest = createOpenPullRequest();
+    const decision = determinePullRequestState(
+      createInput({
+        ...pullRequest,
+        reviewThreads: [
+          {
+            sourceId: buildSourceId("github_review_thread", "author-replied"),
+            nodeId: createGitHubNodeId("RT_author_replied"),
+            isResolved: false,
+            isOutdated: false,
+            commentSourceIds: [
+              authorLastComment.sourceId,
+              authorFirstComment.sourceId,
+              reviewerComment.sourceId,
+            ],
+          },
+        ],
+        reviewRequests: [
+          createReviewRequest("user", "user-request", createUtcIsoDateTime("2026-07-31T04:00:00Z")),
+        ],
+        events: [...pullRequest.events, authorFirstComment, reviewerComment, authorLastComment],
+      }),
+    );
+
+    expect(decision.status).not.toBe("waiting_for_author");
+    expect(decision.status).toBe("waiting_for_review");
+    expect(decision.waitingOn[0]).toMatchObject({
+      kind: "user",
+      role: "reviewer",
+      candidateId: "reviewer",
+    });
+    expect(decision.evidence).toContainEqual({
+      sourceId: authorLastComment.sourceId,
+      supports: "uncertainty",
+      summary: "authorが返信済みのため未解決review threadへの対応が完了したか判断できません",
+    });
+  });
+
   it("bot reviewとcommentだけではbotへボールを移さない", () => {
     const pullRequest = createOpenPullRequest();
     const botRequestSourceId = buildSourceId("github_review_request", "bot");
