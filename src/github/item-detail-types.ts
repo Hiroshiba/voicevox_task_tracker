@@ -4,6 +4,7 @@ import {
   type GitHubRepositoryId,
   type ObservedGitHubAutoMerge,
   type ObservedGitHubCommitPushedAt,
+  type ObservedGitHubHeadCheckContext,
   type ObservedGitHubHeadChecks,
   type ObservedGitHubMergeQueue,
   type ObservedGitHubPullRequestCommit,
@@ -260,37 +261,18 @@ export type GitHubNativeHierarchyCollection =
       reason: "api_not_supported";
     }>;
 
-/** check runの完了結果。 */
-export type GitHubCheckRunConclusion =
-  | "action_required"
-  | "cancelled"
-  | "failure"
-  | "neutral"
-  | "skipped"
-  | "stale"
-  | "startup_failure"
-  | "success"
-  | "timed_out"
-  | "not_completed";
-
 /** head commitへ紐づくcheck runまたはcommit status。 */
 export type GitHubCheckContext =
-  | Readonly<{
-      type: "check_run";
-      sourceId: SourceId;
-      nodeId: GitHubNodeId;
-      name: string;
-      status: "queued" | "in_progress" | "completed" | "waiting" | "requested" | "pending";
-      conclusion: GitHubCheckRunConclusion;
-    }>
-  | Readonly<{
-      type: "commit_status";
-      sourceId: SourceId;
-      nodeId: GitHubNodeId;
-      context: string;
-      state: "error" | "expected" | "failure" | "pending" | "success";
-      createdAt: UtcIsoDateTime;
-    }>;
+  | (Extract<ObservedGitHubHeadCheckContext, { type: "check_run" }> &
+      Readonly<{
+        nodeId: GitHubNodeId;
+        name: string;
+      }>)
+  | (Extract<ObservedGitHubHeadCheckContext, { type: "commit_status" }> &
+      Readonly<{
+        nodeId: GitHubNodeId;
+        context: string;
+      }>);
 
 /** head commitのstatus check rollup取得結果。 */
 export type GitHubHeadChecks =

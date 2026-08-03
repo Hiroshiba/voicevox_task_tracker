@@ -333,6 +333,7 @@ function createFailedCheckPullRequestDetail(
             name: "test",
             status: "completed",
             conclusion: "failure",
+            completedAt: observedAt,
           }),
         ]),
       }),

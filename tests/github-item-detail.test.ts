@@ -19,6 +19,7 @@ import {
   createPublicRepositoryAllowlist,
   GITHUB_APP_READ_PERMISSIONS,
   GitHubResponseSchemaValidationError,
+  GitHubResponseValidationError,
   type CreateGitHubClientOptions,
   type EnumeratedGitHubItem,
   type GitHubClient,
@@ -908,6 +909,7 @@ function createPullRequestResponse(
   mergeStateStatus:
     "BEHIND" | "BLOCKED" | "CLEAN" | "DIRTY" | "DRAFT" | "HAS_HOOKS" | "UNKNOWN" | "UNSTABLE",
   checkState: "ERROR" | "EXPECTED" | "FAILURE" | "PENDING" | "SUCCESS",
+  checkContexts: readonly unknown[],
 ): unknown {
   return {
     item: {
@@ -934,7 +936,10 @@ function createPullRequestResponse(
               statusCheckRollup: {
                 id: `SCR_${itemNodeId}`,
                 state: checkState,
-                contexts: createEmptyConnection(),
+                contexts: {
+                  nodes: [...checkContexts],
+                  pageInfo: createPageInfo(false, null),
+                },
               },
             },
           },
@@ -1107,8 +1112,9 @@ describe("Pull Request詳細収集", () => {
                         __typename: "CheckRun",
                         id: "CR_build",
                         name: "build",
-                        status: "IN_PROGRESS",
-                        conclusion: null,
+                        status: "COMPLETED",
+                        conclusion: "SUCCESS",
+                        completedAt: "2026-07-31T12:03:00Z",
                       },
                       {
                         __typename: "StatusContext",
@@ -1296,8 +1302,9 @@ describe("Pull Request詳細収集", () => {
             sourceId: "github_check_run:CR_build",
             nodeId: "CR_build",
             name: "build",
-            status: "in_progress",
-            conclusion: "not_completed",
+            status: "completed",
+            conclusion: "success",
+            completedAt: "2026-07-31T12:03:00.000Z",
           },
           {
             type: "commit_status",
@@ -1338,24 +1345,68 @@ describe("Pull Request詳細収集", () => {
     ]);
   });
 
+  it("完了済みcheck runにcompletedAtが無い応答を拒否する", async () => {
+    const allowlist = createAllowlist();
+    const item = createItem(allowlist, "PR_missing_check_completed_at", 8, "pull_request");
+    const response = createPullRequestResponse(
+      "PR_missing_check_completed_at",
+      "MERGEABLE",
+      "BLOCKED",
+      "FAILURE",
+      [
+        {
+          __typename: "CheckRun",
+          id: "CR_missing_completed_at",
+          name: "test",
+          status: "COMPLETED",
+          conclusion: "FAILURE",
+          completedAt: null,
+        },
+      ],
+    );
+    const mock = createGraphqlHttpMock((operation) => {
+      if (operation === "GitHubItemDetailCapabilities") {
+        return createCapabilitiesResponse("available");
+      }
+      if (operation === "GitHubItemDetail") {
+        return response;
+      }
+      throw new Error(`未定義のGraphQL operationです。対象: ${operation}`);
+    });
+
+    await expect(
+      collectGitHubItemDetails({
+        allowlist,
+        targets: [
+          {
+            item,
+            eventWindow: Object.freeze({ mode: "initial" }),
+          },
+        ],
+        observedAt,
+        graphql: mock.graphql,
+      }),
+    ).rejects.toThrowError(GitHubResponseValidationError);
+  });
+
   it("ready、running、failing、conflictを構成するmergeとcheck信号を保持する", async () => {
     const allowlist = createAllowlist();
     const fixtures = [
       {
         item: createItem(allowlist, "PR_ready", 10, "pull_request"),
-        response: createPullRequestResponse("PR_ready", "MERGEABLE", "CLEAN", "SUCCESS"),
+        response: createPullRequestResponse("PR_ready", "MERGEABLE", "CLEAN", "SUCCESS", []),
       },
       {
         item: createItem(allowlist, "PR_running", 11, "pull_request"),
-        response: createPullRequestResponse("PR_running", "MERGEABLE", "BLOCKED", "PENDING"),
+        response: createPullRequestResponse("PR_running", "MERGEABLE", "BLOCKED", "PENDING", []),
       },
       {
         item: createItem(allowlist, "PR_failing", 12, "pull_request"),
-        response: createPullRequestResponse("PR_failing", "MERGEABLE", "BLOCKED", "FAILURE"),
+        response: createPullRequestResponse("PR_failing", "MERGEABLE", "BLOCKED", "FAILURE", []),
       },
       {
         item: createItem(allowlist, "PR_conflict", 13, "pull_request"),
-        response: createPullRequestResponse("PR_conflict", "CONFLICTING", "DIRTY", "SUCCESS"),
+        response: createPullRequestResponse("PR_conflict", "CONFLICTING", "DIRTY", "SUCCESS", []),
       },
     ];
     const responses = new Map(fixtures.map((fixture) => [fixture.item.nodeId, fixture.response]));

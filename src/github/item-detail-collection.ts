@@ -7,6 +7,7 @@ import {
   createUtcIsoDateTime,
   type GitHubItemUrl,
   type GitHubNodeId,
+  type ObservedGitHubCheckRunConclusion,
   type SourceId,
   type UtcIsoDateTime,
 } from "../domain/index.js";
@@ -35,7 +36,6 @@ import {
 import {
   type GitHubAutoMerge,
   type GitHubCheckContext,
-  type GitHubCheckRunConclusion,
   type GitHubCommitPushedAt,
   type GitHubCurrentReviewRequest,
   type GitHubDetailAccount,
@@ -273,6 +273,7 @@ const checkRunSchema = z.object({
       "TIMED_OUT",
     ])
     .nullable(),
+  completedAt: utcIsoDateTimeSchema.nullable(),
 });
 const statusContextSchema = z.object({
   __typename: z.literal("StatusContext"),
@@ -1782,11 +1783,8 @@ function normalizeCheckRunStatus(
 }
 
 function normalizeCheckRunConclusion(
-  conclusion: z.output<typeof checkRunSchema>["conclusion"],
-): GitHubCheckRunConclusion {
-  if (conclusion == null) {
-    return "not_completed";
-  }
+  conclusion: Exclude<z.output<typeof checkRunSchema>["conclusion"], null>,
+): ObservedGitHubCheckRunConclusion {
   switch (conclusion) {
     case "ACTION_REQUIRED":
       return "action_required";
@@ -1809,6 +1807,56 @@ function normalizeCheckRunConclusion(
     default:
       throw new UnreachableError(conclusion);
   }
+}
+
+function normalizeCheckRunContext(
+  context: z.output<typeof checkRunSchema>,
+  nodeId: GitHubNodeId,
+): Extract<GitHubCheckContext, { type: "check_run" }> {
+  const fields = {
+    type: "check_run",
+    sourceId: buildSourceId("github_check_run", nodeId),
+    nodeId,
+    name: context.name,
+  } satisfies Pick<
+    Extract<GitHubCheckContext, { type: "check_run" }>,
+    "type" | "sourceId" | "nodeId" | "name"
+  >;
+  const status = normalizeCheckRunStatus(context.status);
+  if (status === "completed") {
+    if (context.conclusion == null) {
+      throw new GitHubResponseValidationError("head commit check run", {
+        cause: new TypeError("完了済みcheck runにconclusionがありません"),
+      });
+    }
+    if (context.completedAt == null) {
+      throw new GitHubResponseValidationError("head commit check run", {
+        cause: new TypeError("完了済みcheck runに完了時刻がありません"),
+      });
+    }
+    return Object.freeze({
+      ...fields,
+      status,
+      conclusion: normalizeCheckRunConclusion(context.conclusion),
+      completedAt: context.completedAt,
+    });
+  }
+  if (context.conclusion != null) {
+    throw new GitHubResponseValidationError("head commit check run", {
+      cause: new TypeError("未完了check runにconclusionがあります"),
+    });
+  }
+  if (context.completedAt != null) {
+    throw new GitHubResponseValidationError("head commit check run", {
+      cause: new TypeError("未完了check runに完了時刻があります"),
+    });
+  }
+  return Object.freeze({
+    ...fields,
+    status,
+    conclusion: "not_completed",
+    completedAt: null,
+  });
 }
 
 function normalizeCombinedStatus(
@@ -1835,14 +1883,7 @@ function normalizeCheckContexts(nodes: readonly RawCheckContext[]): readonly Git
     nodes.map((context) => {
       const nodeId = createGitHubNodeId(context.id);
       if (context.__typename === "CheckRun") {
-        return Object.freeze({
-          type: "check_run",
-          sourceId: buildSourceId("github_check_run", nodeId),
-          nodeId,
-          name: context.name,
-          status: normalizeCheckRunStatus(context.status),
-          conclusion: normalizeCheckRunConclusion(context.conclusion),
-        });
+        return normalizeCheckRunContext(context, nodeId);
       }
       return Object.freeze({
         type: "commit_status",

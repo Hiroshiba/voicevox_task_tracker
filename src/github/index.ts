@@ -47,7 +47,6 @@ export {
 export {
   type GitHubAutoMerge,
   type GitHubCheckContext,
-  type GitHubCheckRunConclusion,
   type GitHubCommitPushedAt,
   type GitHubCurrentReviewRequest,
   type GitHubDetailAccount,

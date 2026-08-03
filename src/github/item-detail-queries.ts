@@ -161,6 +161,7 @@ const DETAIL_CHECK_CONTEXT_FIELDS_FRAGMENT = `
       name
       status
       conclusion
+      completedAt
     }
     ... on StatusContext {
       id
