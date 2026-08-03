@@ -88,7 +88,7 @@ export type WaitingOnRole =
   | "ci"
   | "unknown";
 
-/** 要件定義のattentionに対応するwatchを含む停滞の重要度。 */
+/** 停滞の重要度。 */
 export type Severity = "none" | "watch" | "urgent" | "critical";
 
 /** staleness.thresholdsHoursのキーと1対1に対応する待機分類。 */
