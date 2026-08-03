@@ -224,6 +224,10 @@ const PAGES_BASE_URL = "https://voicevox.github.io";
 const INCREMENTAL_COLLECTION_OVERLAP_MILLISECONDS = 5 * 60 * 1000;
 const GITHUB_MENTION_PATTERN =
   /(?<![A-Za-z0-9-])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))(?:\/([A-Za-z0-9](?:[A-Za-z0-9-]{0,99})))?/gu;
+const CURRENT_DETERMINISTIC_RULES_VERSIONS = Object.freeze({
+  issue: ISSUE_DETERMINISTIC_RULES_VERSION,
+  pull_request: PULL_REQUEST_DETERMINISTIC_RULES_VERSION,
+}) satisfies Readonly<Record<TrackedItem["type"], string>>;
 
 type EnabledCodexCredentials = Readonly<{
   enabled: true;
@@ -263,11 +267,11 @@ function createCurrentAnalysisRulesFingerprints(config: Config): CurrentAnalysis
   const identityHash = hashCanonicalJson(createAiAnalysisRunIdentity(config));
   return Object.freeze({
     issue: hashCanonicalJson({
-      deterministicRulesVersion: ISSUE_DETERMINISTIC_RULES_VERSION,
+      deterministicRulesVersion: CURRENT_DETERMINISTIC_RULES_VERSIONS.issue,
       identityHash,
     }),
     pull_request: hashCanonicalJson({
-      deterministicRulesVersion: PULL_REQUEST_DETERMINISTIC_RULES_VERSION,
+      deterministicRulesVersion: CURRENT_DETERMINISTIC_RULES_VERSIONS.pull_request,
       identityHash,
     }),
   });
@@ -704,6 +708,9 @@ function createSnapshotCollectionItem(item: EnumeratedGitHubItem): SnapshotColle
       analysisRulesFingerprint: Object.freeze({
         status: "unavailable",
       }),
+      deterministicRulesVersion: Object.freeze({
+        status: "unavailable",
+      }),
       observedAt: item.observedAt,
       state: "open",
       terminalAt: null,
@@ -718,6 +725,9 @@ function createSnapshotCollectionItem(item: EnumeratedGitHubItem): SnapshotColle
       status: "unavailable",
     }),
     analysisRulesFingerprint: Object.freeze({
+      status: "unavailable",
+    }),
+    deterministicRulesVersion: Object.freeze({
       status: "unavailable",
     }),
     observedAt: item.observedAt,
@@ -2818,9 +2828,20 @@ function transitionBasisForDecision(
 function previousStalenessState(
   state: RuntimeState,
   nodeId: GitHubNodeId,
+  itemType: TrackedItem["type"],
 ): Parameters<typeof calculateStaleness>[0]["previousState"] {
-  const previous = previousSnapshot(state)?.items.find((item) => item.nodeId === nodeId);
-  if (previous == null) {
+  const snapshot = previousSnapshot(state);
+  const previous = snapshot?.items.find((item) => item.nodeId === nodeId);
+  const previousCollectionItem = snapshot?.collection.repositories
+    .flatMap((repository) => repository.items)
+    .find((item) => item.nodeId === nodeId);
+  const previousRulesVersion = previousCollectionItem?.deterministicRulesVersion;
+  if (
+    previous == null ||
+    previousRulesVersion == null ||
+    previousRulesVersion.status === "unavailable" ||
+    previousRulesVersion.version !== CURRENT_DETERMINISTIC_RULES_VERSIONS[itemType]
+  ) {
     return Object.freeze({
       availability: "not_available",
     });
@@ -3140,7 +3161,7 @@ function reduceAnalysisPass(
         responsibilityBasis: basis.responsibilityBasis,
       },
       decisionBasis: decision.origin === "deterministic" ? "deterministic" : "ai_only",
-      previousState: previousStalenessState(state, analysis.item.nodeId),
+      previousState: previousStalenessState(state, analysis.item.nodeId, analysis.item.type),
       events: analysis.item.events,
       dependencyResolutions: dependencyResolutions(
         state,
@@ -3910,10 +3931,24 @@ function validateRunCompleteness(
       ] as const;
     }),
   );
+  const deterministicRulesVersionByNodeId = new Map(
+    [...collection.analysisNodeIds].map((nodeId) => {
+      const item = observedItemsByNodeId.get(nodeId);
+      assertNonNullable(item, `再判定対象の観測項目がありません。対象: ${nodeId}`);
+      return [
+        nodeId,
+        Object.freeze({
+          status: "available",
+          version: CURRENT_DETERMINISTIC_RULES_VERSIONS[item.type],
+        }),
+      ] as const;
+    }),
+  );
   const persistedAiFingerprintNodeIds = new Set<string>();
   const persistedAnalysisRulesFingerprintNodeIds = new Set<string>();
+  const persistedDeterministicRulesVersionNodeIds = new Set<string>();
   const snapshot = createStateSnapshot({
-    schemaVersion: "2",
+    schemaVersion: "3",
     generatedAt: invocation.startedAt,
     trackingStartAt: pendingSnapshotTrackingStartAt(configuration, state, invocation),
     ai: snapshotAiState(configuration.config, codexAnalysis),
@@ -3930,6 +3965,12 @@ function validateRunCompleteness(
           if (currentAnalysisRulesFingerprint != null) {
             persistedAnalysisRulesFingerprintNodeIds.add(item.nodeId);
           }
+          const currentDeterministicRulesVersion = deterministicRulesVersionByNodeId.get(
+            item.nodeId,
+          );
+          if (currentDeterministicRulesVersion != null) {
+            persistedDeterministicRulesVersionNodeIds.add(item.nodeId);
+          }
           return {
             ...item,
             aiAnalysisFingerprint:
@@ -3942,6 +3983,11 @@ function validateRunCompleteness(
               (previousItem == null
                 ? item.analysisRulesFingerprint
                 : previousItem.analysisRulesFingerprint),
+            deterministicRulesVersion:
+              currentDeterministicRulesVersion ??
+              (previousItem == null
+                ? item.deterministicRulesVersion
+                : previousItem.deterministicRulesVersion),
           };
         }),
       })),
@@ -3972,6 +4018,11 @@ function validateRunCompleteness(
   for (const nodeId of analysisRulesFingerprintByNodeId.keys()) {
     if (!persistedAnalysisRulesFingerprintNodeIds.has(nodeId)) {
       throw new TypeError(`判定規則fingerprintの保存対象項目がありません。対象: ${nodeId}`);
+    }
+  }
+  for (const nodeId of deterministicRulesVersionByNodeId.keys()) {
+    if (!persistedDeterministicRulesVersionNodeIds.has(nodeId)) {
+      throw new TypeError(`決定規則versionの保存対象項目がありません。対象: ${nodeId}`);
     }
   }
   const notificationSelection = selectDiscordNotifications({

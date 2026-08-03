@@ -1050,7 +1050,7 @@ function createSnapshot(
 ): StateSnapshot {
   const generatedAt = createUtcIsoDateTime(input.evaluatedAt);
   return createStateSnapshot({
-    schemaVersion: "2",
+    schemaVersion: "3",
     generatedAt,
     trackingStartAt: {
       status: "fixed",
@@ -1549,7 +1549,7 @@ function analyzeLargeFixture(
     throw new TypeError("large fixtureのgraph解析結果が全itemを含んでいません");
   }
   const snapshot = createStateSnapshot({
-    schemaVersion: "2",
+    schemaVersion: "3",
     generatedAt: evaluatedAt,
     trackingStartAt: {
       status: "fixed",

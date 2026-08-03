@@ -49,6 +49,7 @@ import {
   MemoryStateBranchAdapter,
   parseStateHistoryRecords,
   parseStateSnapshot,
+  serializeStateSnapshot,
   StatePersistenceSession,
   type StateSnapshot,
 } from "../src/persistence/index.js";
@@ -679,6 +680,29 @@ function requireCollectionItem(
     throw new TypeError(`snapshotの収集項目がありません。対象: ${nodeId}`);
   }
   return item;
+}
+
+async function replaceStateSnapshot(
+  adapter: MemoryStateBranchAdapter,
+  snapshot: StateSnapshot,
+  committedAt: UtcIsoDateTime,
+): Promise<void> {
+  const head = await adapter.resolveHead("tracker-state");
+  if (head.status !== "present") {
+    throw new TypeError("置換対象のstate branchがありません");
+  }
+  await adapter.commit({
+    branch: "tracker-state",
+    expectedHead: head,
+    updates: [
+      {
+        path: "state/snapshot.json",
+        bytes: new TextEncoder().encode(serializeStateSnapshot(snapshot)),
+      },
+    ],
+    message: "停滞起点の保存値を置き換えるfixture",
+    committedAt,
+  });
 }
 
 function createCodexOutput(
@@ -4825,7 +4849,7 @@ describe("本番判定入力の接続", () => {
     },
   );
 
-  it("prompt versionだけを変えた未変更項目を再解析する", async () => {
+  it("prompt versionだけを変えた未変更項目を再解析して保存済みの停滞起点を引き継ぐ", async () => {
     const repository = createRepository("R_identity_change", "identity-change", FIRST_RUN_AT);
     const publicRepository = requirePublicRepository(repository);
     const fixture = createRepositoryFixture(repository);
@@ -4855,7 +4879,7 @@ describe("本番判定入力の接続", () => {
         body: `入力は変更しません。関連項目は ${related.url} です`,
         observedAt,
         nativeDependencies: Object.freeze([]),
-        duplicateComments: true,
+        duplicateComments: false,
       }),
     );
     const config = await createTestConfig({
@@ -4899,18 +4923,37 @@ describe("本番判定入力の接続", () => {
     if (firstSnapshotSource == null) {
       throw new TypeError("実行identity変更前のsnapshotがありません");
     }
-    const firstCollectionItem = requireCollectionItem(
-      parseStateSnapshot(new TextDecoder().decode(firstSnapshotSource)),
-      item.nodeId,
-    );
+    const firstSnapshot = parseStateSnapshot(new TextDecoder().decode(firstSnapshotSource));
+    const firstCollectionItem = requireCollectionItem(firstSnapshot, item.nodeId);
     const firstFingerprint = firstCollectionItem.aiAnalysisFingerprint;
     const firstAnalysisRulesFingerprint = firstCollectionItem.analysisRulesFingerprint;
+    const firstDeterministicRulesVersion = firstCollectionItem.deterministicRulesVersion;
     if (firstFingerprint.status !== "available") {
       throw new TypeError("実行identity変更前のAI分析fingerprintがありません");
     }
     if (firstAnalysisRulesFingerprint.status !== "available") {
       throw new TypeError("実行identity変更前の判定規則fingerprintがありません");
     }
+    if (firstDeterministicRulesVersion.status !== "available") {
+      throw new TypeError("実行identity変更前の決定規則versionがありません");
+    }
+    const savedAt = createUtcIsoDateTime("2026-07-20T00:00:00.000Z");
+    const snapshotWithSavedTimes = createStateSnapshot({
+      ...firstSnapshot,
+      items: firstSnapshot.items.map((candidate) =>
+        candidate.nodeId === item.nodeId
+          ? {
+              ...candidate,
+              statusSince: savedAt,
+              ownerSince: savedAt,
+              stallSince: savedAt,
+              lastProgressAt: savedAt,
+              lastHumanActivityAt: savedAt,
+            }
+          : candidate,
+      ),
+    });
+    await replaceStateSnapshot(harness.stateAdapter, snapshotWithSavedTimes, observedAt);
     const firstExecutionCount = harness.codexExecutionCount();
     const firstItemExecutionCount = harness.codexInputs.filter(
       (input) => input.item.nodeId === item.nodeId,
@@ -4931,11 +4974,19 @@ describe("本番判定入力の接続", () => {
     const secondCollectionItem = requireCollectionItem(secondSnapshot, item.nodeId);
     const secondFingerprint = secondCollectionItem.aiAnalysisFingerprint;
     const secondAnalysisRulesFingerprint = secondCollectionItem.analysisRulesFingerprint;
+    const secondDeterministicRulesVersion = secondCollectionItem.deterministicRulesVersion;
     if (secondFingerprint.status !== "available") {
       throw new TypeError("実行identity変更後のAI分析fingerprintがありません");
     }
     if (secondAnalysisRulesFingerprint.status !== "available") {
       throw new TypeError("実行identity変更後の判定規則fingerprintがありません");
+    }
+    if (secondDeterministicRulesVersion.status !== "available") {
+      throw new TypeError("実行identity変更後の決定規則versionがありません");
+    }
+    const secondItem = secondSnapshot.items.find((candidate) => candidate.nodeId === item.nodeId);
+    if (secondItem == null) {
+      throw new TypeError("実行identity変更後の追跡項目がありません");
     }
     const metrics = z
       .object({
@@ -4975,7 +5026,161 @@ describe("本番判定入力の接続", () => {
     expect(secondAnalysisRulesFingerprint.fingerprint).not.toBe(
       firstAnalysisRulesFingerprint.fingerprint,
     );
+    expect(firstDeterministicRulesVersion.version).toBe(ISSUE_DETERMINISTIC_RULES_VERSION);
+    expect(secondDeterministicRulesVersion).toEqual(firstDeterministicRulesVersion);
+    expect({
+      statusSince: secondItem.statusSince,
+      ownerSince: secondItem.ownerSince,
+      stallSince: secondItem.stallSince,
+      lastProgressAt: secondItem.lastProgressAt,
+      lastHumanActivityAt: secondItem.lastHumanActivityAt,
+    }).toEqual({
+      statusSince: savedAt,
+      ownerSince: savedAt,
+      stallSince: savedAt,
+      lastProgressAt: savedAt,
+      lastHumanActivityAt: savedAt,
+    });
   });
+
+  it.each([
+    Object.freeze({
+      description: "前回の決定規則versionが異なる場合",
+      previousRulesVersion: Object.freeze({
+        status: "available",
+        version: "issue-old-version",
+      }),
+      previousAnalysisRulesFingerprint: Object.freeze({
+        status: "available",
+        fingerprint: hashCanonicalJson({ rules: "old" }),
+      }),
+    }),
+    Object.freeze({
+      description: "前回の決定規則versionが未取得の場合",
+      previousRulesVersion: Object.freeze({
+        status: "unavailable",
+      }),
+      previousAnalysisRulesFingerprint: Object.freeze({
+        status: "unavailable",
+      }),
+    }),
+  ])(
+    "$descriptionは保存済みの停滞起点を引き継がない",
+    async ({ previousRulesVersion, previousAnalysisRulesFingerprint }) => {
+      const repository = createRepository("R_rules_change", "rules-change", FIRST_RUN_AT);
+      const publicRepository = requirePublicRepository(repository);
+      const fixture = createRepositoryFixture(repository);
+      const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+      const item = createIssueItem({
+        repository: publicRepository,
+        number: 1,
+        fingerprint: "rules-change",
+        updatedAt: observedAt,
+        observedAt,
+        state: Object.freeze({ state: "open" }),
+      });
+      fixture.openItems = [item];
+      fixture.details.set(
+        item.nodeId,
+        createIssueDetail({
+          item,
+          body: "決定規則変更時の停滞起点を検証します",
+          observedAt,
+          nativeDependencies: Object.freeze([]),
+          duplicateComments: false,
+        }),
+      );
+      const config = await createTestConfig({
+        explicitIncludes: [],
+        retentionDays: 180,
+        aiEnabled: false,
+      });
+      const harness = createCollectionHarness({ repositories: [fixture], config });
+
+      expect((await harness.runDaily(FIRST_RUN_AT)).exitCode).toBe(0);
+      const firstFiles = await harness.stateAdapter.readBranchFiles("tracker-state");
+      const firstSnapshotSource = firstFiles.get("state/snapshot.json");
+      if (firstSnapshotSource == null) {
+        throw new TypeError("決定規則変更前のsnapshotがありません");
+      }
+      const firstSnapshot = parseStateSnapshot(new TextDecoder().decode(firstSnapshotSource));
+      const savedAt = createUtcIsoDateTime("2026-07-20T00:00:00.000Z");
+      const snapshotWithOldRules = createStateSnapshot({
+        ...firstSnapshot,
+        collection: {
+          repositories: firstSnapshot.collection.repositories.map((collectionRepository) => ({
+            ...collectionRepository,
+            items: collectionRepository.items.map((collectionItem) =>
+              collectionItem.nodeId === item.nodeId
+                ? {
+                    ...collectionItem,
+                    analysisRulesFingerprint: previousAnalysisRulesFingerprint,
+                    deterministicRulesVersion: previousRulesVersion,
+                  }
+                : collectionItem,
+            ),
+          })),
+        },
+        items: firstSnapshot.items.map((candidate) =>
+          candidate.nodeId === item.nodeId
+            ? {
+                ...candidate,
+                statusSince: savedAt,
+                ownerSince: savedAt,
+                stallSince: savedAt,
+                lastProgressAt: savedAt,
+                lastHumanActivityAt: savedAt,
+              }
+            : candidate,
+        ),
+      });
+      await replaceStateSnapshot(harness.stateAdapter, snapshotWithOldRules, observedAt);
+      harness.artifacts.length = 0;
+      harness.detailCalls.length = 0;
+
+      const result = await harness.runDry(SECOND_RUN_AT);
+      const secondSnapshot = requireDryRunSnapshot(harness.artifacts);
+      const secondItem = secondSnapshot.items.find((candidate) => candidate.nodeId === item.nodeId);
+      if (secondItem == null) {
+        throw new TypeError("決定規則変更後の追跡項目がありません");
+      }
+      const secondRulesVersion = requireCollectionItem(
+        secondSnapshot,
+        item.nodeId,
+      ).deterministicRulesVersion;
+
+      expect(result.exitCode).toBe(0);
+      expect(harness.detailCalls).toEqual([
+        {
+          targets: [
+            {
+              nodeId: item.nodeId,
+              eventWindow: {
+                mode: "initial",
+              },
+            },
+          ],
+        },
+      ]);
+      expect({
+        statusSince: secondItem.statusSince,
+        ownerSince: secondItem.ownerSince,
+        stallSince: secondItem.stallSince,
+        lastProgressAt: secondItem.lastProgressAt,
+        lastHumanActivityAt: secondItem.lastHumanActivityAt,
+      }).toEqual({
+        statusSince: item.createdAt,
+        ownerSince: item.createdAt,
+        stallSince: item.createdAt,
+        lastProgressAt: item.createdAt,
+        lastHumanActivityAt: item.createdAt,
+      });
+      expect(secondRulesVersion).toEqual({
+        status: "available",
+        version: ISSUE_DETERMINISTIC_RULES_VERSION,
+      });
+    },
+  );
 
   it("複数blockerのcloseとmergeとedge消失による依存解消時刻をrun開始時刻に依存させない", async () => {
     const issueClosedAt = createUtcIsoDateTime("2026-08-02T08:00:00.000Z");
