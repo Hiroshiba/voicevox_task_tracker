@@ -68,6 +68,7 @@ void loadPublicSummary()
   .then((summary) => {
     render(
       <App
+        basePath={import.meta.env.BASE_URL}
         locale={__VOICEVOX_TRACKER_LOCALE__}
         loadDetails={loadPublicDetails}
         now={new Date()}

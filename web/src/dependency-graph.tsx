@@ -116,7 +116,7 @@ function nodeIcon(node: GraphViewNode): string {
     case "external_reference":
       return "外部";
     case "dependency_cycle":
-      return "CYCLE";
+      return "循環";
     default:
       throw new UnreachableError(node.kind);
   }
@@ -200,9 +200,9 @@ function GraphSvg({ layout }: Readonly<{ layout: GraphLayout }>) {
         aria-labelledby="dependency-graph-title dependency-graph-description"
         data-rendered-node-count={layout.nodes.length}
       >
-        <title id="dependency-graph-title">選択したclusterの依存グラフ</title>
+        <title id="dependency-graph-title">選択したまとまりの依存グラフ</title>
         <desc id="dependency-graph-description">
-          矢印は関係の始点から終点へ向き、blocksはblockerからblocked itemへ向きます。
+          矢印は依存関係の始点から終点へ向き、ブロック関係はブロック元からブロックされる項目へ向きます。
         </desc>
         <defs>
           <marker
@@ -241,8 +241,8 @@ function GraphSvg({ layout }: Readonly<{ layout: GraphLayout }>) {
         <g class="graph-nodes">
           {layout.nodes.map((nodeLayout) => {
             const { node, x, y } = nodeLayout;
-            const frontierLabel = node.frontier ? "、着手可能なfrontier" : "";
-            const cycleLabel = node.cycleIds.length > 0 ? "、dependency cycle構成node" : "";
+            const frontierLabel = node.frontier ? "、着手可能な項目" : "";
+            const cycleLabel = node.cycleIds.length > 0 ? "、循環関係を構成する項目" : "";
             return (
               <g
                 key={node.id}
@@ -343,75 +343,125 @@ function GraphLegend() {
     "related_to",
     "duplicates",
   ];
+
+  function relationDirectionDescription(type: GraphViewEdge["type"]): string {
+    switch (type) {
+      case "blocks":
+        return "ブロック元からブロックされる項目へ";
+      case "parent_of":
+        return "親項目から子項目へ";
+      case "implements":
+        return "実装する項目から対象項目へ";
+      case "related_to":
+        return "参照元から参照先へ";
+      case "duplicates":
+        return "重複元から重複先へ";
+      default:
+        throw new UnreachableError(type);
+    }
+  }
+
   return (
     <aside class="graph-legend" aria-labelledby="graph-legend-heading">
-      <h3 id="graph-legend-heading">凡例</h3>
-      <div class="graph-legend-groups">
-        <div>
-          <h4>node種別</h4>
-          <ul>
-            <li>
-              <span class="legend-node legend-node-issue" aria-hidden="true">
-                ISSUE
-              </span>
-              Issue
-            </li>
-            <li>
-              <span class="legend-node legend-node-pull-request" aria-hidden="true">
-                PR
-              </span>
-              Pull Request
-            </li>
-            <li>
-              <span class="legend-node legend-node-external-reference" aria-hidden="true">
-                外部
-              </span>
-              外部参照
-            </li>
-            <li>
-              <span class="legend-node legend-node-dependency-cycle" aria-hidden="true">
-                CYCLE
-              </span>
-              折り畳んだdependency cycle
-            </li>
-          </ul>
+      <details>
+        <summary>
+          <h3 id="graph-legend-heading">図の見方と凡例</h3>
+        </summary>
+        <div class="graph-legend-content">
+          <div class="graph-legend-groups">
+            <div>
+              <h4>項目の図形</h4>
+              <ul>
+                <li>
+                  <span class="legend-node legend-node-issue" aria-hidden="true">
+                    ISSUE
+                  </span>
+                  <span>
+                    <strong>Issue</strong>
+                    <small>GitHubの課題</small>
+                  </span>
+                </li>
+                <li>
+                  <span class="legend-node legend-node-pull-request" aria-hidden="true">
+                    PR
+                  </span>
+                  <span>
+                    <strong>Pull Request</strong>
+                    <small>GitHubへの変更提案</small>
+                  </span>
+                </li>
+                <li>
+                  <span class="legend-node legend-node-external-reference" aria-hidden="true">
+                    外部
+                  </span>
+                  <span>
+                    <strong>外部参照</strong>
+                    <small>追跡対象外の参照先</small>
+                  </span>
+                </li>
+                <li>
+                  <span class="legend-node legend-node-dependency-cycle" aria-hidden="true">
+                    循環
+                  </span>
+                  <span>
+                    <strong>循環関係</strong>
+                    <small>互いにブロックする項目をまとめた図形</small>
+                  </span>
+                </li>
+              </ul>
+            </div>
+            <div>
+              <h4>依存関係の線</h4>
+              <ul>
+                {edgeTypes.map((type) => (
+                  <li key={type} data-legend-edge-type={type}>
+                    <span class={`legend-edge legend-edge-${type}`} aria-hidden="true" />
+                    <span>
+                      <strong>{relationTypeLabel(type)}</strong>
+                      <small>
+                        <code>{type}</code>・{relationDirectionDescription(type)}
+                      </small>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div>
+              <h4>判定と強調</h4>
+              <ul>
+                <li>
+                  <span class="legend-edge graph-edge-authoritative" aria-hidden="true" />
+                  <span>
+                    <strong>確定関係</strong>
+                    <small>GitHubの正式な関係</small>
+                  </span>
+                </li>
+                <li>
+                  <span class="legend-edge graph-edge-inferred" aria-hidden="true" />
+                  <span>
+                    <strong>推定関係</strong>
+                    <small>本文や参照などから判定した関係</small>
+                  </span>
+                </li>
+                <li>
+                  <span class="legend-frontier" aria-hidden="true">
+                    ▶
+                  </span>
+                  <span>
+                    <strong>着手可能</strong>
+                    <small>未完了で、ブロック元がない項目</small>
+                  </span>
+                </li>
+              </ul>
+            </div>
+          </div>
+          <p>
+            項目の図形は、停滞時間、影響項目数、影響リポジトリ数が増えるほど大きくなります。
+            基準サイズは{MAX_GRAPH_NODE_SIZE.toString()}pxが上限です。
+          </p>
+          <p>すべての矢印は、関係の始点から終点へ向きます。</p>
         </div>
-        <div>
-          <h4>edge種別</h4>
-          <ul>
-            {edgeTypes.map((type) => (
-              <li key={type}>
-                <span class={`legend-edge legend-edge-${type}`} aria-hidden="true" />
-                {type}
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div>
-          <h4>関係と強調</h4>
-          <ul>
-            <li>
-              <span class="legend-edge graph-edge-authoritative" aria-hidden="true" />
-              確定関係
-            </li>
-            <li>
-              <span class="legend-edge graph-edge-inferred" aria-hidden="true" />
-              推定関係
-            </li>
-            <li>
-              <span class="legend-frontier" aria-hidden="true">
-                ▶
-              </span>
-              着手可能なfrontier
-            </li>
-          </ul>
-        </div>
-      </div>
-      <p>
-        nodeは停滞時間と影響項目数、影響リポジトリ数が増えるほど大きくなります。 nodeの基準サイズは
-        {MAX_GRAPH_NODE_SIZE.toString()}pxを上限とします。
-      </p>
-      <p>blocksの矢印はblockerからblocked itemへ向きます。</p>
+      </details>
     </aside>
   );
 }
@@ -442,19 +492,22 @@ function GraphAlternativeTables({
   const sourceNodesById = new Map(view.sourceNodes.map((node) => [node.id, node]));
   return (
     <details class="graph-alternative">
-      <summary>グラフと同じ情報を表形式で確認</summary>
+      <summary>項目と依存関係を表で確認</summary>
+      <p class="graph-alternative-note">
+        図へ最初に表示する上限は{view.maxInitialNodes.toLocaleString(locale)}項目です。
+      </p>
       <div class="table-scroll">
         <table class="graph-node-table">
-          <caption>選択したclusterのnode一覧</caption>
+          <caption>選択したまとまりの項目一覧</caption>
           <thead>
             <tr>
               <th scope="col">項目</th>
               <th scope="col">種別</th>
-              <th scope="col">status</th>
+              <th scope="col">状態</th>
               <th scope="col">停滞時間</th>
               <th scope="col">影響範囲</th>
-              <th scope="col">frontier</th>
-              <th scope="col">cycle</th>
+              <th scope="col">着手可能</th>
+              <th scope="col">循環関係</th>
             </tr>
           </thead>
           <tbody>
@@ -483,11 +536,9 @@ function GraphAlternativeTables({
                   {node.impactRepositoryCount.toLocaleString(locale)}
                   リポジトリ・{node.impactOpenNodeCount.toLocaleString(locale)}項目
                 </td>
-                <td>{node.frontier ? "▶ 着手可能" : "frontierではない"}</td>
+                <td>{node.frontier ? "▶ 着手可能" : "いいえ"}</td>
                 <td>
-                  {node.cycleIds.length === 0
-                    ? "cycleなし"
-                    : `dependency cycle ${node.cycleIds.join("、")}`}
+                  {node.cycleIds.length === 0 ? "なし" : `循環関係 ${node.cycleIds.join("、")}`}
                 </td>
               </tr>
             ))}
@@ -496,13 +547,13 @@ function GraphAlternativeTables({
       </div>
       <div class="table-scroll">
         <table class="graph-edge-table">
-          <caption>選択したclusterのedge一覧</caption>
+          <caption>選択したまとまりの依存関係一覧</caption>
           <thead>
             <tr>
               <th scope="col">向き</th>
-              <th scope="col">関係型</th>
-              <th scope="col">確度</th>
-              <th scope="col">provenance</th>
+              <th scope="col">関係の種類</th>
+              <th scope="col">判定</th>
+              <th scope="col">関係の判定元</th>
               <th scope="col">根拠</th>
             </tr>
           </thead>
@@ -513,7 +564,10 @@ function GraphAlternativeTables({
                   {edgeEndpointLabel(edge.fromNodeId, sourceNodesById)} →{" "}
                   {edgeEndpointLabel(edge.toNodeId, sourceNodesById)}
                 </th>
-                <td>{edge.typeLabel}</td>
+                <td>
+                  {edge.typeLabel}
+                  <span class="technical-value">{edge.type}</span>
+                </td>
                 <td>{edge.authorityLabel}</td>
                 <td>{edge.provenanceLabel}</td>
                 <td>
@@ -532,7 +586,7 @@ function GraphAlternativeTables({
             ))}
             {view.sourceEdges.length === 0 && (
               <tr>
-                <td colSpan={5}>この表示範囲にedgeはありません。</td>
+                <td colSpan={5}>この表示範囲に依存関係はありません。</td>
               </tr>
             )}
           </tbody>
@@ -552,20 +606,20 @@ function CycleControls({
   view: GraphClusterView;
 }>) {
   if (view.cycles.length === 0) {
-    return <p class="graph-no-cycles">このclusterにdependency cycleはありません。</p>;
+    return <p class="graph-no-cycles">このまとまりに循環関係はありません。</p>;
   }
   return (
     <section class="graph-cycles" aria-labelledby="graph-cycles-heading">
-      <h3 id="graph-cycles-heading">dependency cycle</h3>
+      <h3 id="graph-cycles-heading">循環関係</h3>
       <ul>
         {view.cycles.map((cycle, index) => {
           const expanded = expandedCycleIds.includes(cycle.id);
           return (
             <li key={cycle.id} data-cycle-id={cycle.id}>
               <div>
-                <strong>cycle {index + 1}</strong>
+                <strong>循環 {index + 1}</strong>
                 <span>{cycle.memberNodes.map((node) => node.reference).join(" → ")}</span>
-                {!cycle.visible && <span>現在のnode上限外です</span>}
+                {!cycle.visible && <span>現在の項目表示上限外です</span>}
               </div>
               <button
                 type="button"
@@ -574,7 +628,7 @@ function CycleControls({
                   onToggle(cycle.id);
                 }}
               >
-                {expanded ? "cycleを折り畳む" : "構成nodeを展開"}
+                {expanded ? "循環をまとめる" : "構成項目を表示"}
               </button>
             </li>
           );
@@ -627,11 +681,11 @@ function EdgeHistorySnapshot({
         </dd>
       </div>
       <div>
-        <dt>関係型</dt>
+        <dt>関係の種類</dt>
         <dd>{relationTypeLabel(value.type)}</dd>
       </div>
       <div>
-        <dt>confidence</dt>
+        <dt>確信度</dt>
         <dd>{formatConfidence(value.confidence, locale)}</dd>
       </div>
     </dl>
@@ -658,7 +712,7 @@ function EdgeHistoryChange({
         </dd>
       </div>
       <div>
-        <dt>関係型</dt>
+        <dt>関係の種類</dt>
         <dd>
           <span>{relationTypeLabel(before.type)}</span>
           <span aria-hidden="true">→</span>
@@ -666,7 +720,7 @@ function EdgeHistoryChange({
         </dd>
       </div>
       <div>
-        <dt>confidence</dt>
+        <dt>確信度</dt>
         <dd>
           <span>{formatConfidence(before.confidence, locale)}</span>
           <span aria-hidden="true">→</span>
@@ -687,20 +741,20 @@ function EdgeHistoryEventCard({
   let content: VNode;
   switch (operation) {
     case "added": {
-      label = "edgeを追加";
+      label = "依存関係を追加";
       const value = presentEdgeHistoryValue(event.after, event.relationId, "変更後");
       content = <EdgeHistorySnapshot value={value} locale={locale} />;
       break;
     }
     case "changed": {
-      label = "edgeを変更";
+      label = "依存関係を変更";
       const before = presentEdgeHistoryValue(event.before, event.relationId, "変更前");
       const after = presentEdgeHistoryValue(event.after, event.relationId, "変更後");
       content = <EdgeHistoryChange before={before} after={after} locale={locale} />;
       break;
     }
     case "removed": {
-      label = "edgeを削除";
+      label = "依存関係を削除";
       const value =
         event.before.state === "present"
           ? event.before.value
@@ -735,10 +789,15 @@ function EdgeHistoryPanel({
   });
   if (view.edgeHistories.length === 0) {
     return (
-      <section class="edge-history" aria-labelledby="edge-history-heading">
-        <h3 id="edge-history-heading">edge履歴</h3>
-        <p>このclusterに関係するedge履歴はありません。</p>
-      </section>
+      <details class="edge-history" aria-labelledby="edge-history-heading">
+        <summary>
+          <h3 id="edge-history-heading">
+            <span>依存関係の変更履歴</span>
+            <small>0件</small>
+          </h3>
+        </summary>
+        <p>このまとまりに関係する変更履歴はありません。</p>
+      </details>
     );
   }
 
@@ -751,14 +810,16 @@ function EdgeHistoryPanel({
   }
 
   return (
-    <section class="edge-history" aria-labelledby="edge-history-heading">
-      <div class="edge-history-heading">
-        <h3 id="edge-history-heading">edge履歴</h3>
-        <p>削除済みedgeを含む{view.edgeHistories.length.toLocaleString(locale)}件</p>
-      </div>
+    <details class="edge-history" aria-labelledby="edge-history-heading">
+      <summary>
+        <h3 id="edge-history-heading">
+          <span>依存関係の変更履歴</span>
+          <small>削除済みを含む{view.edgeHistories.length.toLocaleString(locale)}件</small>
+        </h3>
+      </summary>
       <div class="edge-history-workspace">
         <div class="edge-history-selector">
-          <h4>edgeを選択</h4>
+          <h4>依存関係を選択</h4>
           <ul>
             {view.edgeHistories.map((history) => {
               const selected =
@@ -791,7 +852,7 @@ function EdgeHistoryPanel({
                     </strong>
                     <span>{history.relationId}</span>
                     <span>
-                      {history.events.length.toLocaleString(locale)} event・
+                      変更{history.events.length.toLocaleString(locale)}件・
                       {active ? "現在有効" : "削除済み"}
                     </span>
                   </button>
@@ -802,11 +863,11 @@ function EdgeHistoryPanel({
         </div>
         <div id="selected-edge-history" class="selected-edge-history" aria-live="polite">
           {selectedHistory == null ? (
-            <p>edgeを選ぶと追加、変更、削除の履歴を表示します。</p>
+            <p>依存関係を選ぶと、追加、変更、削除の履歴を表示します。</p>
           ) : (
             <>
               <h4>{selectedHistory.relationId}</h4>
-              <p>{selectedHistory.events.length.toLocaleString(locale)}件のeventを古い順に表示</p>
+              <p>{selectedHistory.events.length.toLocaleString(locale)}件の変更を古い順に表示</p>
               <ol>
                 {selectedHistory.events.map((event) => (
                   <li key={`${event.runId}:${event.recordedAt}`}>
@@ -818,7 +879,7 @@ function EdgeHistoryPanel({
           )}
         </div>
       </div>
-    </section>
+    </details>
   );
 }
 
@@ -839,16 +900,17 @@ function SelectedComponentGraph({
     <div class="selected-component-graph">
       <div class="graph-selection-summary" aria-live="polite">
         <p>
-          {view.representedSourceNodeCount.toLocaleString(locale)}件のnodeを
+          {view.representedSourceNodeCount.toLocaleString(locale)}件の項目を
           {view.renderedNodeCount.toLocaleString(locale)}個の図形で表示します。
         </p>
-        <p>
-          初期表示上限は{view.maxInitialNodes.toLocaleString(locale)}個です。
-          {view.omittedSourceNodeCount > 0 &&
-            ` 上限外の${view.omittedSourceNodeCount.toLocaleString(locale)}件は全項目一覧で確認できます。`}
-        </p>
+        {view.omittedSourceNodeCount > 0 && (
+          <p>
+            上限外の{view.omittedSourceNodeCount.toLocaleString(locale)}件は下の表で確認できます。
+          </p>
+        )}
       </div>
       <CycleControls view={view} expandedCycleIds={expandedCycleIds} onToggle={onToggleCycle} />
+      <GraphLegend />
       <GraphCanvas view={view} />
       <GraphAlternativeTables view={view} locale={locale} />
       <EdgeHistoryPanel
@@ -1019,16 +1081,29 @@ export function DependencyGraph({
           <p class="eyebrow">Dependency graph</p>
           <h2 id="dependency-heading">依存グラフ</h2>
         </div>
-        <p>connected componentまたはrepository clusterを選んで自動配置します。</p>
+        <p>項目間の依存関係から、作業の流れと今着手できる項目を確認します。</p>
       </div>
-      <GraphLegend />
+      <section class="graph-start-guide" aria-labelledby="graph-start-guide-heading">
+        <div>
+          <p class="graph-guide-step">最初に</p>
+          <h3 id="graph-start-guide-heading">確認したいまとまりを選びます</h3>
+        </div>
+        <div>
+          <p>
+            一覧から1件選ぶと依存グラフを開きます。
+            {summary.graph.clusterByRepository &&
+              " リポジトリをまたぐ作業の流れは「つながりごと」、特定のリポジトリだけを見る場合は「リポジトリ別」が向いています。"}
+          </p>
+          <p>迷ったら、着手可能な項目が多いものや循環関係があるものから確認してください。</p>
+        </div>
+      </section>
       {components.length === 0 ? (
-        <p class="empty-state">表示できる依存componentはありません。</p>
+        <p class="empty-state">表示できる依存関係のまとまりはありません。</p>
       ) : (
         <>
           {summary.graph.clusterByRepository && (
             <fieldset class="graph-cluster-kind">
-              <legend>表示単位</legend>
+              <legend>一覧の分け方</legend>
               <label>
                 <input
                   type="radio"
@@ -1039,7 +1114,10 @@ export function DependencyGraph({
                     changeClusterKind("component");
                   }}
                 />
-                connected component
+                <span>
+                  <strong>つながりごと</strong>
+                  <small>リポジトリをまたぐ作業の流れを見る</small>
+                </span>
               </label>
               <label>
                 <input
@@ -1051,7 +1129,10 @@ export function DependencyGraph({
                     changeClusterKind("repository");
                   }}
                 />
-                repository cluster
+                <span>
+                  <strong>リポジトリ別</strong>
+                  <small>1つのリポジトリ内だけを見る</small>
+                </span>
               </label>
             </fieldset>
           )}
@@ -1060,14 +1141,12 @@ export function DependencyGraph({
               class="component-browser"
               aria-label={
                 clusterKind === "component"
-                  ? "connected componentの選択"
-                  : "repository clusterの選択"
+                  ? "依存関係でつながる項目の選択"
+                  : "リポジトリ別の項目の選択"
               }
             >
               <div class="component-browser-heading">
-                <h3>
-                  {clusterKind === "component" ? "connected component" : "repository cluster"}
-                </h3>
+                <h3>{clusterKind === "component" ? "つながりを選ぶ" : "リポジトリを選ぶ"}</h3>
                 <p>{clusters.length.toLocaleString(locale)}件</p>
               </div>
               <ol start={clusterPage * CLUSTERS_PER_PAGE + 1}>
@@ -1095,23 +1174,37 @@ export function DependencyGraph({
                           selectCluster(cluster.id);
                         }}
                       >
-                        <strong>
+                        <strong>{cluster.repositoryText}</strong>
+                        <span class="component-button-kind">
                           {clusterKind === "component"
-                            ? `component ${cluster.ordinal.toLocaleString(locale)}`
-                            : cluster.repositoryText}
-                        </strong>
-                        <span>
-                          {clusterKind === "component"
-                            ? cluster.repositoryText
-                            : `repository cluster ${cluster.ordinal.toLocaleString(locale)}`}
+                            ? `つながり ${cluster.ordinal.toLocaleString(locale)}`
+                            : "このリポジトリ内"}
                         </span>
-                        <span>
-                          {cluster.nodeCount.toLocaleString(locale)} node・
-                          {cluster.edgeCount.toLocaleString(locale)} edge
+                        <span class="component-button-signals">
+                          <span
+                            class={
+                              cluster.frontierCount > 0
+                                ? "cluster-signal cluster-signal-ready"
+                                : "cluster-signal cluster-signal-neutral"
+                            }
+                          >
+                            着手可能 {cluster.frontierCount.toLocaleString(locale)}件
+                          </span>
+                          <span
+                            class={
+                              cluster.cycleCount > 0
+                                ? "cluster-signal cluster-signal-cycle"
+                                : "cluster-signal cluster-signal-neutral"
+                            }
+                          >
+                            {cluster.cycleCount > 0
+                              ? `循環 ${cluster.cycleCount.toLocaleString(locale)}件`
+                              : "循環なし"}
+                          </span>
                         </span>
-                        <span>
-                          frontier {cluster.frontierCount.toLocaleString(locale)}・cycle{" "}
-                          {cluster.cycleCount.toLocaleString(locale)}
+                        <span class="component-button-totals">
+                          全{cluster.nodeCount.toLocaleString(locale)}項目・依存関係
+                          {cluster.edgeCount.toLocaleString(locale)}件
                         </span>
                       </button>
                     </li>
@@ -1146,16 +1239,16 @@ export function DependencyGraph({
             </nav>
             <div class="component-graph-panel">
               {selection.status === "none" && (
-                <p class="graph-placeholder">clusterを選ぶと依存グラフを開きます。</p>
+                <p class="graph-placeholder">一覧から1件選ぶと依存グラフを開きます。</p>
               )}
               {selection.status === "selected" && detailsState.status === "loading" && (
                 <p class="graph-loading" role="status">
-                  選択したclusterのグラフを取得しています。
+                  選択したまとまりのグラフを取得しています。
                 </p>
               )}
               {selection.status === "selected" && detailsState.status === "failed" && (
                 <div class="graph-load-failure" role="alert">
-                  <p>選択したclusterのグラフを取得できませんでした。</p>
+                  <p>選択したまとまりのグラフを取得できませんでした。</p>
                   <button
                     type="button"
                     onClick={() => {

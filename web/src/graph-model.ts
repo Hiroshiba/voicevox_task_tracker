@@ -168,7 +168,7 @@ export function graphNodeKindLabel(kind: GraphNodeKind): string {
     case "external_reference":
       return "外部参照";
     case "dependency_cycle":
-      return "依存cycle";
+      return "循環関係";
     default:
       throw new UnreachableError(kind);
   }
@@ -178,15 +178,15 @@ export function graphNodeKindLabel(kind: GraphNodeKind): string {
 export function relationTypeLabel(type: RelationType): string {
   switch (type) {
     case "blocks":
-      return "blocks";
+      return "ブロック";
     case "parent_of":
-      return "parent_of";
+      return "親子";
     case "implements":
-      return "implements";
+      return "実装";
     case "related_to":
-      return "related_to";
+      return "関連";
     case "duplicates":
-      return "duplicates";
+      return "重複";
     default:
       throw new UnreachableError(type);
   }
@@ -196,17 +196,17 @@ export function relationTypeLabel(type: RelationType): string {
 export function relationProvenanceLabel(provenance: RelationProvenance): string {
   switch (provenance) {
     case "native":
-      return "GitHub native";
+      return "GitHubの正式な関係";
     case "explicit_text":
-      return "明示テキスト";
+      return "本文の明示記述";
     case "closing_keyword":
-      return "close keyword";
+      return "GitHubのクローズ指定";
     case "checklist":
-      return "checklist";
+      return "チェックリスト";
     case "cross_reference":
       return "相互参照";
     case "ai_inference":
-      return "AI推定";
+      return "AIによる推定";
     default:
       throw new UnreachableError(provenance);
   }

@@ -441,9 +441,26 @@ describe("依存グラフUI", () => {
 
     expect(loadDetails).not.toHaveBeenCalled();
     expect(currentContainer().querySelector(".dependency-graph-svg")).toBeNull();
+    expect(currentContainer().textContent).toContain("確認したいまとまりを選びます");
+    const componentButton = requiredElement<HTMLButtonElement>("[data-component-id]");
+    expect(componentButton.textContent).toContain("着手可能 1件");
+    expect(componentButton.textContent).toContain("全3項目・依存関係2件");
     await selectFirstComponent();
 
     expect(loadDetails).toHaveBeenCalledTimes(1);
+    const legend = requiredElement<HTMLDetailsElement>(".graph-legend details");
+    const alternative = requiredElement<HTMLDetailsElement>(".graph-alternative");
+    const edgeHistory = requiredElement<HTMLDetailsElement>(".edge-history");
+    expect(legend.open).toBe(false);
+    expect(alternative.open).toBe(false);
+    expect(edgeHistory.open).toBe(false);
+    act(() => {
+      requiredElement<HTMLElement>(".graph-legend summary").click();
+      requiredElement<HTMLElement>(".graph-alternative > summary").click();
+    });
+    expect(legend.open).toBe(true);
+    expect(alternative.open).toBe(true);
+    expect(currentContainer().querySelectorAll("[data-legend-edge-type]")).toHaveLength(5);
     const issueNode = requiredElement<SVGGElement>('[data-node-kind="issue"]');
     const pullRequestNode = requiredElement<SVGGElement>('[data-node-kind="pull_request"]');
     const externalNode = requiredElement<SVGGElement>('[data-node-kind="external_reference"]');
@@ -544,6 +561,12 @@ describe("依存グラフUI", () => {
 
     expect(currentContainer().querySelectorAll(".graph-edge")).toHaveLength(0);
     expect(currentContainer().querySelectorAll("[data-edge-event-kind]")).toHaveLength(0);
+    const edgeHistory = requiredElement<HTMLDetailsElement>(".edge-history");
+    expect(edgeHistory.open).toBe(false);
+    act(() => {
+      requiredElement<HTMLElement>(".edge-history > summary").click();
+    });
+    expect(edgeHistory.open).toBe(true);
     const historyButton = requiredElement<HTMLButtonElement>(
       `[data-history-relation-id="${relationId}"]`,
     );
@@ -561,11 +584,11 @@ describe("依存グラフUI", () => {
       "changed",
       "removed",
     ]);
-    expect(currentContainer().textContent).toContain("3件のeventを古い順に表示");
+    expect(currentContainer().textContent).toContain("3件の変更を古い順に表示");
     expect(historyEvents.map((event) => event.textContent)).toEqual([
-      expect.stringContaining("related_to"),
-      expect.stringMatching(/related_to.*implements.*80%.*90%/su),
-      expect.stringContaining("implements"),
+      expect.stringContaining("関連"),
+      expect.stringMatching(/関連.*実装.*80%.*90%/su),
+      expect.stringContaining("実装"),
     ]);
   });
 
@@ -606,7 +629,7 @@ describe("依存グラフUI", () => {
     const loadDetails = vi.fn(() => Promise.resolve(fixture.details));
     renderDependencyGraph(fixture.summary, loadDetails);
 
-    expect(currentContainer().textContent).toContain("1,000 node");
+    expect(currentContainer().textContent).toContain("全1,000項目");
     await selectFirstComponent();
 
     const svg = requiredElement<SVGSVGElement>(".dependency-graph-svg");
@@ -704,11 +727,12 @@ describe("依存グラフUI", () => {
     window.history.replaceState(
       {},
       "",
-      "/voicevox_task_tracker/?graph=repository&cluster=sample-repository-editor#dependency-heading",
+      "/voicevox_task_tracker/graph/repository/sample-repository-editor",
     );
     const loadDetails = vi.fn(() => Promise.resolve(sampleDetails));
     render(
       <App
+        basePath="/voicevox_task_tracker/"
         loadDetails={loadDetails}
         locale={LOCALE}
         now={NOW}
@@ -730,10 +754,10 @@ describe("依存グラフUI", () => {
     expect(repositoryMode.checked).toBe(true);
     expect(repositoryButton.getAttribute("aria-pressed")).toBe("true");
     expect(loadDetails).toHaveBeenCalledTimes(1);
-    expect(new URL(window.location.href).searchParams.get("graph")).toBe("repository");
-    expect(new URL(window.location.href).searchParams.get("cluster")).toBe(
-      "sample-repository-editor",
+    expect(window.location.pathname).toBe(
+      "/voicevox_task_tracker/graph/repository/sample-repository-editor",
     );
+    expect(window.location.search).toBe("");
     expect(
       [...currentContainer().querySelectorAll<SVGGElement>(".graph-node")].map(
         (node) => node.dataset["nodeId"],
@@ -777,7 +801,7 @@ describe("依存グラフUI", () => {
     await selectFirstComponent();
 
     expect(currentContainer().querySelectorAll(".graph-node")).toHaveLength(1);
-    expect(requiredElement('[data-node-kind="dependency_cycle"]').textContent).toContain("CYCLE");
+    expect(requiredElement('[data-node-kind="dependency_cycle"]').textContent).toContain("循環");
     const expandButton = requiredElement<HTMLButtonElement>('[data-cycle-id="cycle:three"] button');
     expect(expandButton.getAttribute("aria-expanded")).toBe("false");
 

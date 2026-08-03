@@ -29,6 +29,7 @@ import { SafeGitHubLink } from "./safe-link.js";
 const NOW = new Date("2026-08-01T00:00:00.000Z");
 const LOCALE = "ja-JP";
 const TITLE = "VOICEVOX Task Tracker";
+const BASE_PATH = "/voicevox_task_tracker/";
 const sampleDetails = createPublicDetailsDto(sampleDetailsSource);
 const sampleSummary = createPublicSummaryDto(sampleSummarySource);
 const TABLE_COLUMN_KEYS: readonly TableColumnKey[] = [
@@ -53,10 +54,18 @@ function renderApp(summary: PublicSummaryDto): void {
 }
 
 function renderAppWithDetails(summary: PublicSummaryDto, details: PublicDetailsDto): void {
+  renderAppWithLoader(summary, () => Promise.resolve(details));
+}
+
+function renderAppWithLoader(
+  summary: PublicSummaryDto,
+  loadDetails: () => Promise<PublicDetailsDto>,
+): void {
   act(() => {
     render(
       <App
-        loadDetails={() => Promise.resolve(details)}
+        basePath={BASE_PATH}
+        loadDetails={loadDetails}
         locale={LOCALE}
         now={NOW}
         summary={summary}
@@ -184,19 +193,183 @@ afterEach(() => {
 });
 
 describe("Web UI", () => {
-  it("公開DTOの集計値、観測時刻、AI unavailableを概要へ表示する", () => {
+  it("要対応項目を先頭にして主要集計、観測時刻、AI unavailableを表示する", () => {
     renderApp(sampleSummary);
 
-    expect(definitionValue("リポジトリ")).toBe("3");
-    expect(definitionValue("項目")).toBe("5");
-    expect(definitionValue("unknown")).toBe("0");
-    expect(definitionValue("staleリポジトリ")).toBe("1");
-    expect(definitionValue("stale項目")).toBe("1");
+    const mainSections = [
+      ...requiredElement<HTMLElement>("main").querySelectorAll(":scope > section"),
+    ];
+    expect(mainSections.map((section) => section.querySelector("h2")?.textContent)).toEqual([
+      "対応が必要な項目",
+      "全体の状況",
+    ]);
+    expect(definitionValue("リポジトリ")).toBe("3件");
+    expect(definitionValue("項目")).toBe("5件");
+    expect(definitionValue("鮮度要確認")).toContain("1リポジトリ");
+    expect(
+      requiredElement<HTMLAnchorElement>(
+        '.metric-with-link a[href="/voicevox_task_tracker/repositories"]',
+      ),
+    ).not.toBeNull();
+
+    const aggregateDetails = requiredElement<HTMLDetailsElement>(".aggregate-details");
+    expect(aggregateDetails.open).toBe(false);
+    expect(definitionValue("unknown項目")).toBe("0");
+    expect(definitionValue("古い観測値の項目")).toBe("1");
     expect(definitionValue("マージ可能")).toBe("1");
     expect(definitionValue("レビュー待ち")).toBe("1");
+    expect(
+      [...aggregateDetails.querySelectorAll("dt")].map((element) => element.textContent),
+    ).not.toContain("未トリアージ");
+    expect(
+      [...aggregateDetails.querySelectorAll("dt")].map((element) => element.textContent),
+    ).not.toContain("通常");
     expect(currentContainer().textContent).toContain("AIを利用できなかったため");
-    expect(currentContainer().textContent).toContain("JST");
-    expect(currentContainer().textContent).toContain("1 日前");
+    const observedTime = requiredElement<HTMLTimeElement>(".overview-observed-time time");
+    expect(observedTime.dateTime).toBe(sampleSummary.observedAt);
+    expect(observedTime.textContent).toBe("1 日前");
+    expect(observedTime.parentElement?.querySelector(".absolute-time")?.textContent).toContain(
+      "JST",
+    );
+  });
+
+  it("グローバルナビゲーションを実リンクとして表示しpathごとにページを切り替える", () => {
+    const loadDetails = vi.fn(() => Promise.resolve(sampleDetails));
+    renderAppWithLoader(sampleSummary, loadDetails);
+
+    const overviewLink = requiredElement<HTMLAnchorElement>(
+      '.global-navigation a[href="/voicevox_task_tracker/"]',
+    );
+    const itemsLink = requiredElement<HTMLAnchorElement>(
+      '.global-navigation a[href="/voicevox_task_tracker/items"]',
+    );
+    const graphLink = requiredElement<HTMLAnchorElement>(
+      '.global-navigation a[href="/voicevox_task_tracker/graph"]',
+    );
+    const repositoriesLink = requiredElement<HTMLAnchorElement>(
+      '.global-navigation a[href="/voicevox_task_tracker/repositories"]',
+    );
+    expect(overviewLink.getAttribute("aria-current")).toBe("page");
+    expect(requiredElement<HTMLDetailsElement>(".run-details").open).toBe(false);
+    expect(currentContainer().textContent).toContain("対応が必要な項目");
+    expect(currentContainer().querySelector(".items-table")).toBeNull();
+
+    act(() => {
+      itemsLink.click();
+    });
+    expect(window.location.pathname).toBe("/voicevox_task_tracker/items");
+    expect(itemsLink.getAttribute("aria-current")).toBe("page");
+    expect(currentContainer().querySelector(".items-table")).not.toBeNull();
+
+    act(() => {
+      graphLink.click();
+    });
+    expect(window.location.pathname).toBe("/voicevox_task_tracker/graph");
+    expect(currentContainer().textContent).toContain("依存グラフ");
+
+    act(() => {
+      repositoriesLink.click();
+    });
+    expect(window.location.pathname).toBe("/voicevox_task_tracker/repositories");
+    expect(currentContainer().textContent).toContain("リポジトリの鮮度");
+    expect(loadDetails).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      path: "/voicevox_task_tracker/items/",
+      canonicalPath: "/voicevox_task_tracker/items",
+      pageSelector: ".items-table",
+    },
+    {
+      path: "/voicevox_task_tracker/graph/",
+      canonicalPath: "/voicevox_task_tracker/graph",
+      pageSelector: ".component-browser",
+    },
+    {
+      path: "/voicevox_task_tracker/repositories/",
+      canonicalPath: "/voicevox_task_tracker/repositories",
+      pageSelector: ".freshness-table",
+    },
+  ])(
+    "末尾スラッシュ付きの$pageSelectorを警告なしで表示してURLを正規化する",
+    ({ path, canonicalPath, pageSelector }) => {
+      window.history.replaceState({}, "", path);
+
+      renderApp(sampleSummary);
+
+      expect(currentContainer().querySelector(pageSelector)).not.toBeNull();
+      expect(currentContainer().querySelector(".url-state-notice")).toBeNull();
+      expect(window.location.pathname).toBe(canonicalPath);
+    },
+  );
+
+  it("末尾スラッシュ付きの項目詳細pathを警告なしで表示してURLを正規化する", async () => {
+    window.history.replaceState({}, "", "/voicevox_task_tracker/items/sample-editor/103/");
+
+    renderApp(sampleSummary);
+    await flushUi();
+
+    expect(
+      currentContainer().querySelector('.item-details-card[data-node-id="sample-item-editor-103"]'),
+    ).not.toBeNull();
+    expect(currentContainer().querySelector(".url-state-notice")).toBeNull();
+    expect(window.location.pathname).toBe("/voicevox_task_tracker/items/sample-editor/103");
+  });
+
+  it("末尾スラッシュ付きのcluster pathを警告なしで表示してURLを正規化する", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/voicevox_task_tracker/graph/repository/sample-repository-editor/",
+    );
+
+    renderApp(sampleSummary);
+    await vi.waitFor(() => {
+      expect(currentContainer().querySelector('[data-layout-status="ready"]')).not.toBeNull();
+    });
+
+    expect(
+      requiredElement<HTMLInputElement>('input[name="graph-cluster-kind"][value="repository"]')
+        .checked,
+    ).toBe(true);
+    expect(currentContainer().querySelector(".url-state-notice")).toBeNull();
+    expect(window.location.pathname).toBe(
+      "/voicevox_task_tracker/graph/repository/sample-repository-editor",
+    );
+  });
+
+  it("スキップリンクのhashが付いたURLを補正対象にしない", () => {
+    window.history.replaceState({}, "", "/voicevox_task_tracker/items#main-content");
+
+    renderApp(sampleSummary);
+
+    expect(currentContainer().querySelector(".items-table")).not.toBeNull();
+    expect(currentContainer().querySelector(".url-state-notice")).toBeNull();
+    expect(window.location.pathname).toBe("/voicevox_task_tracker/items");
+    expect(window.location.hash).toBe("#main-content");
+  });
+
+  it("popstateでpathnameと項目一覧queryを復元する", () => {
+    renderApp(sampleSummary);
+    window.history.pushState(
+      {},
+      "",
+      "/voicevox_task_tracker/items?repo=sample-core&sort=updated&direction=descending",
+    );
+
+    act(() => {
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+
+    expect(window.location.pathname).toBe("/voicevox_task_tracker/items");
+    expect(
+      requiredElement<HTMLInputElement>('input[aria-label="リポジトリで絞り込み"]').value,
+    ).toBe("sample-core");
+    expect(requiredElement<HTMLSelectElement>("#item-sort-key").value).toBe("updated");
+    expect(requiredElement<HTMLButtonElement>(".item-sort-controls button").textContent).toContain(
+      "降順",
+    );
   });
 
   it("公開DTOのtimezoneを絶対時刻へ反映する", () => {
@@ -207,13 +380,12 @@ describe("Web UI", () => {
 
     renderApp(newYorkFixture);
 
-    const generatedTime = [
-      ...currentContainer().querySelectorAll<HTMLTimeElement>(".run-times time"),
-    ].find((element) => element.dateTime === newYorkFixture.generatedAt);
-    assertNonNullable(generatedTime, "生成時刻の表示がありません");
-    expect(generatedTime.textContent).toBe("2026/07/30 20:05:00 GMT-4");
-    expect(generatedTime.parentElement?.querySelector(".relative-time")?.textContent).toBe(
-      "24 時間前",
+    const generatedTime = requiredElement<HTMLTimeElement>(
+      `.aggregate-details time[datetime="${newYorkFixture.generatedAt}"]`,
+    );
+    expect(generatedTime.textContent).toBe("24 時間前");
+    expect(generatedTime.parentElement?.querySelector(".absolute-time")?.textContent).toBe(
+      "2026/07/30 20:05:00 GMT-4",
     );
   });
 
@@ -252,6 +424,44 @@ describe("Web UI", () => {
 
     expect(currentContainer().textContent).toContain("AI分析の一部が縮退したため");
     expect(currentContainer().textContent).not.toContain("AIを利用できなかったため");
+  });
+
+  it("AI分析が正常なときは状態通知を表示しない", () => {
+    renderApp({
+      ...sampleSummary,
+      ai: {
+        enabled: true,
+        available: true,
+        degraded: false,
+      },
+    });
+
+    expect(currentContainer().querySelector(".ai-state-notice")).toBeNull();
+  });
+
+  it("要対応項目の主情報を常時表示し補助情報を折りたたむ", () => {
+    renderApp(sampleSummary);
+
+    const firstItem = requiredElement<HTMLElement>(
+      '.attention-list li[data-node-id="sample-item-editor-101"]',
+    );
+    expect(firstItem.querySelector("h3")?.textContent).toBe("サンプル辞書更新をマージする");
+    expect(firstItem.querySelector(".item-reference")?.textContent).toContain(
+      "VOICEVOX/sample-editor #101",
+    );
+    expect(firstItem.querySelector(".attention-primary-details")?.textContent).toContain(
+      "マージ判断者",
+    );
+    expect(firstItem.querySelector(".attention-primary-details")?.textContent).toContain("12日");
+    expect(firstItem.querySelector(".severity-critical")?.textContent).toBe("最重要");
+
+    const supportingDetails = requiredElement<HTMLDetailsElement>(
+      '.attention-list li[data-node-id="sample-item-editor-101"] .attention-more',
+    );
+    expect(supportingDetails.open).toBe(false);
+    expect(supportingDetails.textContent).toContain("対応優先度");
+    expect(supportingDetails.textContent).toContain("影響範囲");
+    expect(supportingDetails.textContent).toContain("項目観測");
   });
 
   it("attention queueをseverity、対応優先度、影響範囲、停滞時間で並べる", () => {
@@ -440,8 +650,21 @@ describe("Web UI", () => {
     }
   });
 
-  it("keyboard操作可能な入力とbuttonで一覧を絞り込み並び替える", () => {
+  it("主要4列を表示し開閉式の入力とbuttonで一覧を絞り込み並び替える", () => {
+    window.history.replaceState({}, "", "/voicevox_task_tracker/items");
     renderApp(sampleSummary);
+    expect(
+      [...currentContainer().querySelectorAll(".items-table thead th")].map(
+        (heading) => heading.textContent,
+      ),
+    ).toEqual(["項目", "状態", "次の担当", "停滞"]);
+    const filterDetails = requiredElement<HTMLDetailsElement>(".item-filters");
+    expect(filterDetails.open).toBe(false);
+    expect(filterDetails.querySelectorAll('input[type="search"]')).toHaveLength(7);
+    act(() => {
+      requiredElement<HTMLElement>(".item-filters > summary").click();
+    });
+    expect(filterDetails.open).toBe(true);
     const filter = requiredElement<HTMLInputElement>('input[aria-label="リポジトリで絞り込み"]');
 
     act(() => {
@@ -462,20 +685,21 @@ describe("Web UI", () => {
         }),
       );
     });
-    const stallSortButton = [
-      ...currentContainer().querySelectorAll<HTMLButtonElement>(".sort-button"),
-    ].find((button) => button.textContent?.includes("停滞時間") === true);
-    assertNonNullable(stallSortButton, "停滞時間のsort buttonがありません");
+    const sortKey = requiredElement<HTMLSelectElement>("#item-sort-key");
 
     act(() => {
-      stallSortButton.click();
+      sortKey.value = "stall";
+      sortKey.dispatchEvent(new Event("change", { bubbles: true }));
     });
     expect(itemRowNodeIds()[0]).toBe("sample-item-engine-204");
+    expect(new URL(window.location.href).searchParams.get("sort")).toBe("stall");
 
+    const directionButton = requiredElement<HTMLButtonElement>(".item-sort-controls button");
     act(() => {
-      stallSortButton.click();
+      directionButton.click();
     });
     expect(itemRowNodeIds()[0]).toBe("sample-item-editor-101");
+    expect(new URL(window.location.href).searchParams.get("direction")).toBe("descending");
     expect(requiredElement<HTMLAnchorElement>('.items-table tbody a[target="_blank"]').rel).toBe(
       "noopener noreferrer",
     );
@@ -522,14 +746,12 @@ describe("Web UI", () => {
     expect(currentContainer().textContent).toContain("安全でないリンクを無効化しました");
   });
 
-  it("staleなリポジトリと項目を古い観測値として区別する", () => {
+  it("古い観測値のリポジトリを先に表示し正常なリポジトリを折りたたむ", () => {
+    window.history.replaceState({}, "", "/voicevox_task_tracker/repositories");
     renderApp(sampleSummary);
 
     const staleRepository = requiredElement<HTMLTableRowElement>(
       'tr[data-repository-id="sample-repository-core"]',
-    );
-    const staleItem = requiredElement<HTMLTableRowElement>(
-      '.items-table tr[data-node-id="sample-item-core-305"]',
     );
     const freshRepository = requiredElement<HTMLTableRowElement>(
       'tr[data-repository-id="sample-repository-editor"]',
@@ -537,45 +759,77 @@ describe("Web UI", () => {
 
     expect(staleRepository.dataset["freshness"]).toBe("stale");
     expect(staleRepository.textContent).toContain("古い観測値");
-    expect(staleItem.dataset["freshness"]).toBe("stale");
-    expect(staleItem.textContent).toContain("古い観測値");
     expect(freshRepository.dataset["freshness"]).toBe("fresh");
-    expect(freshRepository.textContent).toContain("最新観測");
+    const repositoryRows = [
+      ...currentContainer().querySelectorAll<HTMLTableRowElement>(
+        ".freshness-table tbody [data-repository-id]",
+      ),
+    ];
+    expect(repositoryRows.map((row) => row.dataset["repositoryId"])).toEqual([
+      "sample-repository-core",
+      "sample-repository-editor",
+      "sample-repository-engine",
+    ]);
+    const normalRepositories = requiredElement<HTMLDetailsElement>(".freshness-normal");
+    expect(normalRepositories.open).toBe(false);
+    expect(normalRepositories.textContent).toContain("以下はすべて最新観測です");
+    expect(normalRepositories.querySelectorAll("thead th")).toHaveLength(3);
     const freshnessScrollRegion = requiredElement<HTMLElement>(
-      '[role="region"][aria-label="リポジトリ鮮度表の横スクロール領域"]',
+      '[role="region"][aria-label="要確認リポジトリ鮮度表の横スクロール領域"]',
     );
     expect(freshnessScrollRegion.tabIndex).toBe(0);
+
+    act(() => {
+      render(null, currentContainer());
+    });
+    window.history.replaceState({}, "", "/voicevox_task_tracker/items");
+    renderApp(sampleSummary);
+    const staleItem = requiredElement<HTMLTableRowElement>(
+      '.items-table tr[data-node-id="sample-item-core-305"]',
+    );
+    expect(staleItem.dataset["freshness"]).toBe("stale");
+    expect(staleItem.textContent).toContain("古い観測値");
   });
 
-  it("選択項目の必須欄、GitHub上の根拠、前回との差分を表示する", async () => {
-    window.history.replaceState(
-      {},
-      "",
-      "/voicevox_task_tracker/?item=sample-item-engine-204#item-details",
-    );
+  it("選択項目の状況と次の行動を先に表示し内部情報を折りたたむ", async () => {
+    window.history.replaceState({}, "", "/voicevox_task_tracker/items/sample-engine/204");
     renderApp(sampleSummary);
     await flushUi();
 
     const details = requiredElement<HTMLElement>(
       '.item-details-card[data-node-id="sample-item-engine-204"]',
     );
+    expect(
+      requiredElement<HTMLAnchorElement>(
+        '.global-navigation a[href="/voicevox_task_tracker/items"]',
+      ).getAttribute("aria-current"),
+    ).toBe("page");
     expect(details.textContent).toContain("GitHubで項目を開く");
-    expect(details.textContent).toContain("status");
-    expect(details.textContent).toContain("ブロック中");
-    expect(details.textContent).toContain("waitingOn");
-    expect(details.textContent).toContain("sample-item-editor-103");
-    expect(details.textContent).toContain("次の行動");
-    expect(details.textContent).toContain("各種時刻");
+    const currentAction = requiredElement<HTMLElement>(".current-action-panel");
+    expect(currentAction.textContent).toContain("現在のstatus");
+    expect(currentAction.textContent).toContain("ブロック中");
+    expect(currentAction.textContent).toContain("次の担当");
+    expect(currentAction.textContent).toContain("waitingOn");
+    expect(currentAction.textContent).toContain("VOICEVOX/sample-editor#103");
+    expect(currentAction.textContent).toContain("次の行動");
+    expect(currentAction.textContent).toContain("31日");
+    expect(currentAction.querySelectorAll(".waiting-on-list > li")).toHaveLength(2);
+    expect(currentAction.querySelectorAll(".primary-blocker-badge")).toHaveLength(1);
+    expect(currentAction.querySelector(".blocker-list")).toBeNull();
+    expect(currentAction.textContent?.match(/VOICEVOX\/sample-editor#103/gu)).toHaveLength(1);
+
+    const disclosures = [...details.querySelectorAll<HTMLDetailsElement>(".detail-disclosure")];
+    expect(disclosures).toHaveLength(5);
+    expect(disclosures.every((disclosure) => !disclosure.open)).toBe(true);
     expect(details.querySelectorAll(".timestamp-grid time")).toHaveLength(8);
-    expect(details.textContent).toContain("blocker一覧");
-    expect(details.textContent).toContain("primary blocker");
-    expect(details.textContent).toContain("全blocker");
-    expect(details.textContent).toContain(
-      "選定理由: 複数blockerから影響度が最も高い項目を選びました",
-    );
+    expect(requiredElement<HTMLDetailsElement>(".timestamp-details").open).toBe(false);
+    expect(requiredElement<HTMLDetailsElement>(".decision-details").open).toBe(false);
+    expect(requiredElement<HTMLDetailsElement>(".evidence-details").open).toBe(false);
+    expect(requiredElement<HTMLDetailsElement>(".context-details").open).toBe(false);
+    expect(requiredElement<HTMLDetailsElement>(".history-details").open).toBe(false);
+    expect(details.textContent).toContain("複数blockerから影響度が最も高い項目を選びました");
     expect(details.textContent).toContain("VOICEVOX/sample-editor#103");
     expect(details.textContent).toContain("example/sample-distribution#42");
-    expect(details.querySelectorAll(".blocker-list > li")).toHaveLength(2);
     expect(details.textContent).toContain("判定根拠");
     expect(details.textContent).toContain("GitHub上の根拠を開く");
     expect(details.textContent).toContain("confidence 100%");
@@ -589,6 +843,7 @@ describe("Web UI", () => {
   });
 
   it("リポジトリ、番号、タイトル、アクター、team、ラベルを公開DTO内で検索する", async () => {
+    window.history.replaceState({}, "", "/voicevox_task_tracker/items");
     renderApp(sampleSummary);
     const cases = [
       {
@@ -635,9 +890,9 @@ describe("Web UI", () => {
     }
   });
 
-  it("検索、表filter、並び順、選択項目をdeep linkから再現する", async () => {
+  it("検索、表filter、並び順を項目一覧のdeep linkから再現する", async () => {
     const deepLink =
-      "/voicevox_task_tracker/?q=blocked&repo=sample-engine&status=%E3%83%96%E3%83%AD%E3%83%83%E3%82%AF&sort=stall&direction=descending&item=sample-item-engine-204#item-details";
+      "/voicevox_task_tracker/items?q=blocked&repo=sample-engine&status=%E3%83%96%E3%83%AD%E3%83%83%E3%82%AF&sort=stall&direction=descending";
     window.history.replaceState({}, "", deepLink);
     renderApp(sampleSummary);
     await flushUi();
@@ -649,13 +904,11 @@ describe("Web UI", () => {
     expect(requiredElement<HTMLInputElement>('input[aria-label="statusで絞り込み"]').value).toBe(
       "ブロック",
     );
-    expect(
-      requiredElement<HTMLTableCellElement>('th[aria-sort="descending"] .sort-button').textContent,
-    ).toContain("停滞時間");
-    expect(itemRowNodeIds()).toEqual(["sample-item-engine-204"]);
-    expect(requiredElement<HTMLElement>(".item-details-card").dataset["nodeId"]).toBe(
-      "sample-item-engine-204",
+    expect(requiredElement<HTMLSelectElement>("#item-sort-key").value).toBe("stall");
+    expect(requiredElement<HTMLButtonElement>(".item-sort-controls button").textContent).toContain(
+      "降順",
     );
+    expect(itemRowNodeIds()).toEqual(["sample-item-engine-204"]);
 
     act(() => {
       render(null, currentContainer());
@@ -665,12 +918,10 @@ describe("Web UI", () => {
 
     expect(requiredElement<HTMLInputElement>("#item-search-input").value).toBe("blocked");
     expect(itemRowNodeIds()).toEqual(["sample-item-engine-204"]);
-    expect(requiredElement<HTMLElement>(".item-details-card").dataset["nodeId"]).toBe(
-      "sample-item-engine-204",
-    );
   });
 
   it("repository clusterの選択をdeep linkから再現する", async () => {
+    window.history.replaceState({}, "", "/voicevox_task_tracker/graph");
     renderApp(sampleSummary);
     const repositoryMode = requiredElement<HTMLInputElement>(
       'input[name="graph-cluster-kind"][value="repository"]',
@@ -684,16 +935,18 @@ describe("Web UI", () => {
     act(() => {
       repositoryButton.click();
     });
-    expect(new URL(window.location.href).searchParams.get("graph")).toBe("repository");
+    expect(window.location.pathname).toBe(
+      "/voicevox_task_tracker/graph/repository/sample-repository-editor",
+    );
     await vi.waitFor(() => {
       expect(currentContainer().querySelector('[data-layout-status="ready"]')).not.toBeNull();
     });
 
-    expect(new URL(window.location.href).searchParams.get("graph")).toBe("repository");
-    expect(new URL(window.location.href).searchParams.get("cluster")).toBe(
-      "sample-repository-editor",
+    expect(window.location.pathname).toBe(
+      "/voicevox_task_tracker/graph/repository/sample-repository-editor",
     );
-    expect(window.location.hash).toBe("#dependency-heading");
+    expect(window.location.search).toBe("");
+    expect(window.location.hash).toBe("");
 
     act(() => {
       render(null, currentContainer());
@@ -723,7 +976,7 @@ describe("Web UI", () => {
     window.history.replaceState(
       {},
       "",
-      "/voicevox_task_tracker/?q=first&q=second&repo=%00&sort=invalid&direction=sideways&item=missing&unexpected=value#item-details",
+      "/voicevox_task_tracker/items/missing/999?q=first&q=second&repo=%00&sort=invalid&direction=sideways&item=missing&unexpected=value#item-details",
     );
     renderApp(sampleSummary);
     await flushUi();
@@ -733,12 +986,34 @@ describe("Web UI", () => {
     expect(
       requiredElement<HTMLInputElement>('input[aria-label="リポジトリで絞り込み"]').value,
     ).toBe("");
-    expect(
-      requiredElement<HTMLTableCellElement>('th[aria-sort="ascending"]').textContent,
-    ).toContain("リポジトリ");
+    expect(requiredElement<HTMLSelectElement>("#item-sort-key").value).toBe("repository");
+    expect(requiredElement<HTMLButtonElement>(".item-sort-controls button").textContent).toContain(
+      "昇順",
+    );
+    expect(requiredElement<HTMLTableCellElement>('th[aria-sort="ascending"]').textContent).toBe(
+      "項目",
+    );
     expect(currentContainer().querySelector(".item-details-card")).toBeNull();
+    expect(window.location.pathname).toBe("/voicevox_task_tracker/items");
     expect(window.location.search).toBe("");
-    expect(window.location.hash).toBe("");
+    expect(window.location.hash).toBe("#item-details");
+  });
+
+  it("存在しないcluster pathを未選択の依存グラフへ戻す", () => {
+    const loadDetails = vi.fn(() => Promise.resolve(sampleDetails));
+    window.history.replaceState(
+      {},
+      "",
+      "/voicevox_task_tracker/graph/component/missing?graph=component&cluster=missing",
+    );
+
+    renderAppWithLoader(sampleSummary, loadDetails);
+
+    expect(currentContainer().textContent).toContain("URLに含まれる不正または未対応");
+    expect(currentContainer().textContent).toContain("一覧から1件選ぶと依存グラフを開きます");
+    expect(window.location.pathname).toBe("/voicevox_task_tracker/graph");
+    expect(window.location.search).toBe("");
+    expect(loadDetails).not.toHaveBeenCalled();
   });
 
   it("低confidenceの状態、waitingOn、次の行動を候補として表示する", async () => {
@@ -773,11 +1048,7 @@ describe("Web UI", () => {
           : details,
       ),
     });
-    window.history.replaceState(
-      {},
-      "",
-      "/voicevox_task_tracker/?item=sample-item-editor-103#item-details",
-    );
+    window.history.replaceState({}, "", "/voicevox_task_tracker/items/sample-editor/103");
     renderAppWithDetails(lowConfidenceSummary, lowConfidenceDetails);
     await flushUi();
 
@@ -824,7 +1095,7 @@ describe("Web UI", () => {
           : details,
       ),
     });
-    window.history.replaceState({}, "", `/?item=${targetNodeId}#item-details`);
+    window.history.replaceState({}, "", "/voicevox_task_tracker/items/sample-editor/103");
 
     renderAppWithDetails(configuredSummary, configuredDetails);
     await flushUi();
@@ -836,6 +1107,7 @@ describe("Web UI", () => {
   });
 
   it("keyboard focusとlink activationだけで検索結果から詳細を開いて閉じる", async () => {
+    window.history.replaceState({}, "", "/voicevox_task_tracker/items");
     renderApp(sampleSummary);
     const search = requiredElement<HTMLInputElement>("#item-search-input");
     search.focus();
@@ -843,7 +1115,7 @@ describe("Web UI", () => {
     await enterSearch("blocked");
 
     const detailsLink = requiredElement<HTMLAnchorElement>(
-      '.items-table tr[data-node-id="sample-item-engine-204"] a[aria-controls="item-details"]',
+      '.items-table tr[data-node-id="sample-item-engine-204"] a[href="/voicevox_task_tracker/items/sample-engine/204"]',
     );
     detailsLink.focus();
     expect(document.activeElement).toBe(detailsLink);
@@ -859,9 +1131,11 @@ describe("Web UI", () => {
     });
     await flushUi();
 
-    expect(new URL(window.location.href).searchParams.get("item")).toBe("sample-item-engine-204");
+    expect(window.location.pathname).toBe("/voicevox_task_tracker/items/sample-engine/204");
     expect(document.activeElement?.textContent).toBe("サンプル配布処理を実装する");
-    const closeLink = requiredElement<HTMLAnchorElement>(".item-details-heading > a");
+    const closeLink = requiredElement<HTMLAnchorElement>(
+      '.item-details-actions a[href="/voicevox_task_tracker/items"]',
+    );
     closeLink.focus();
     expect(document.activeElement).toBe(closeLink);
     await act(async () => {
@@ -875,6 +1149,7 @@ describe("Web UI", () => {
       await Promise.resolve();
     });
     expect(currentContainer().querySelector(".item-details-card")).toBeNull();
+    expect(window.location.pathname).toBe("/voicevox_task_tracker/items");
   });
 
   it("詳細内のGitHub由来文字列をHTMLとして実行しない", async () => {
@@ -909,11 +1184,7 @@ describe("Web UI", () => {
           : details,
       ),
     });
-    window.history.replaceState(
-      {},
-      "",
-      "/voicevox_task_tracker/?item=sample-item-editor-101#item-details",
-    );
+    window.history.replaceState({}, "", "/voicevox_task_tracker/items/sample-editor/101");
     renderAppWithDetails(xssSummary, xssDetails);
     await flushUi();
 
@@ -956,11 +1227,7 @@ describe("Web UI", () => {
   });
 
   it("WCAG 2.2 AA対象の重大な自動a11y違反がない", async () => {
-    window.history.replaceState(
-      {},
-      "",
-      "/voicevox_task_tracker/?item=sample-item-engine-204#item-details",
-    );
+    window.history.replaceState({}, "", "/voicevox_task_tracker/items/sample-engine/204");
     renderApp(sampleSummary);
     await flushUi();
 

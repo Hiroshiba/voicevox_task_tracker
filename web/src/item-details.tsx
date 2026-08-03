@@ -9,10 +9,12 @@ import {
 } from "../../src/pages/public-dto.js";
 import { assertNonNullable, UnreachableError } from "../../src/util/index.js";
 import {
+  attentionPriority,
   confidencePresentation,
   formatConfidence,
   formatDateTime,
   formatRelativeTime,
+  formatStallDuration,
   severityLabel,
   statusLabel,
   waitingOnCandidateLabel,
@@ -20,63 +22,12 @@ import {
   type ConfidencePresentation,
 } from "./model.js";
 import { SafeGitHubLink } from "./safe-link.js";
-import { type ItemSelection } from "./url-state.js";
-
-/** details.jsonの項目読込状態。 */
-export type ItemDetailsState =
-  | Readonly<{
-      status: "not_requested";
-    }>
-  | Readonly<{
-      status: "loading";
-    }>
-  | Readonly<{
-      status: "loaded";
-      itemsByNodeId: ReadonlyMap<string, PublicItemDetailsDto>;
-      graphNodesByNodeId: ReadonlyMap<string, PublicGraphNodeDto>;
-    }>
-  | Readonly<{
-      status: "failed";
-    }>;
-
-/** 全項目検索の実行状態。 */
-export type ItemSearchState =
-  | Readonly<{
-      status: "inactive";
-    }>
-  | Readonly<{
-      status: "loading";
-    }>
-  | Readonly<{
-      status: "available";
-      nodeIds: readonly string[];
-    }>
-  | Readonly<{
-      status: "failed";
-    }>;
 
 type ItemDetailsLinkProps = Readonly<{
   children: ComponentChildren;
   href: string;
   nodeId: string;
   onSelect: (nodeId: string) => void;
-}>;
-
-type ItemWorkspaceProps = Readonly<{
-  clearSelectionHref: string;
-  createItemHref: (nodeId: string) => string;
-  detailsState: ItemDetailsState;
-  locale: string;
-  now: Date;
-  onClearSearch: () => void;
-  onClearSelection: () => void;
-  onRetryDetails: () => void;
-  onSearchQueryChange: (query: string) => void;
-  onSelectItem: (nodeId: string) => void;
-  searchQuery: string;
-  searchState: ItemSearchState;
-  selection: ItemSelection;
-  summary: PublicSummaryDto;
 }>;
 
 type ItemDetailsProps = Readonly<{
@@ -100,6 +51,8 @@ type SeverityHistoryValue = Extract<
   PublicItemHistoryEventDto,
   Readonly<{ kind: "severity_changed" }>
 >["before"];
+
+type WaitingOnCandidate = PublicItemDetailsDto["summary"]["waitingOn"][number];
 
 const REVIEW_STATE_LABELS = {
   not_applicable: "対象外",
@@ -141,12 +94,11 @@ function shouldHandleClientNavigation(
   return event.button === 0 && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey;
 }
 
-/** 同一ページ内で項目詳細を開き、通常のリンク操作も維持する。 */
+/** 項目詳細pageへ遷移し、通常のリンク操作も維持する。 */
 export function ItemDetailsLink({ children, href, nodeId, onSelect }: ItemDetailsLinkProps) {
   return (
     <a
       href={href}
-      aria-controls="item-details"
       onClick={(event) => {
         if (!shouldHandleClientNavigation(event)) {
           return;
@@ -297,8 +249,7 @@ function ItemHistory({
 }>) {
   const latestEvent = history.at(-1);
   return (
-    <section aria-labelledby="item-history-heading" class="detail-subsection">
-      <h3 id="item-history-heading">前回との差分と履歴</h3>
+    <div class="item-history-content">
       {latestEvent == null ? (
         <p>前回から状態、waitingOn、severityに記録された差分はありません。</p>
       ) : (
@@ -319,11 +270,72 @@ function ItemHistory({
           </details>
         </>
       )}
-    </section>
+    </div>
   );
 }
 
-function ItemDetails({
+function RelatedItemReference({
+  createItemHref,
+  graphNodesByNodeId,
+  itemsByNodeId,
+  nodeId,
+  onSelectItem,
+}: Readonly<{
+  createItemHref: (nodeId: string) => string;
+  graphNodesByNodeId: ReadonlyMap<string, PublicGraphNodeDto>;
+  itemsByNodeId: ReadonlyMap<string, PublicItemDetailsDto["summary"]>;
+  nodeId: string;
+  onSelectItem: (nodeId: string) => void;
+}>) {
+  const relatedItem = itemsByNodeId.get(nodeId);
+  if (relatedItem != null) {
+    return (
+      <ItemDetailsLink href={createItemHref(nodeId)} nodeId={nodeId} onSelect={onSelectItem}>
+        {relatedItem.displayReference} {relatedItem.title}
+      </ItemDetailsLink>
+    );
+  }
+  const graphNode = graphNodesByNodeId.get(nodeId);
+  assertNonNullable(graphNode, `blocker ${nodeId}の公開graph nodeがありません`);
+  if (graphNode.kind !== "external_reference") {
+    throw new TypeError(`blocker ${nodeId}の公開項目詳細がありません`);
+  }
+  return (
+    <SafeGitHubLink href={graphNode.url}>
+      {graphNode.displayReference} {graphNode.title}
+    </SafeGitHubLink>
+  );
+}
+
+function WaitingOnCandidateReference({
+  candidate,
+  createItemHref,
+  graphNodesByNodeId,
+  itemsByNodeId,
+  onSelectItem,
+}: Readonly<{
+  candidate: WaitingOnCandidate;
+  createItemHref: (nodeId: string) => string;
+  graphNodesByNodeId: ReadonlyMap<string, PublicGraphNodeDto>;
+  itemsByNodeId: ReadonlyMap<string, PublicItemDetailsDto["summary"]>;
+  onSelectItem: (nodeId: string) => void;
+}>) {
+  if (candidate.kind !== "item") {
+    return <>{waitingOnCandidateLabel(candidate)}</>;
+  }
+  return (
+    <RelatedItemReference
+      createItemHref={createItemHref}
+      graphNodesByNodeId={graphNodesByNodeId}
+      itemsByNodeId={itemsByNodeId}
+      nodeId={candidate.candidateId}
+      onSelectItem={onSelectItem}
+    />
+  );
+}
+
+/** 選択した項目の判定根拠と変更履歴を表示する。 */
+export function ItemDetailsContent({
   clearSelectionHref,
   createItemHref,
   details,
@@ -340,7 +352,7 @@ function ItemDetails({
   const itemsByNodeId = new Map(
     summary.items.map((summaryItem) => [summaryItem.nodeId, summaryItem]),
   );
-  let primaryWaitingOnLabelText: string | undefined;
+  let primaryBlockerNodeId: string | undefined;
   if (item.status === "blocked") {
     if (item.primaryWaitingOn.index !== 0) {
       throw new TypeError(`block中の項目 ${item.nodeId}にprimary blockerがありません`);
@@ -353,8 +365,18 @@ function ItemDetails({
     ) {
       throw new TypeError(`項目 ${item.nodeId}のprimary blockerがblocker一覧にありません`);
     }
-    primaryWaitingOnLabelText = waitingOnCandidateLabel(primaryWaitingOn);
+    primaryBlockerNodeId = primaryWaitingOn.candidateId;
   }
+  const waitingOnBlockerNodeIds = new Set(
+    item.waitingOn.flatMap((candidate) =>
+      candidate.kind === "item" && item.blockerNodeIds.includes(candidate.candidateId)
+        ? [candidate.candidateId]
+        : [],
+    ),
+  );
+  const additionalBlockerNodeIds = item.blockerNodeIds.filter(
+    (nodeId) => !waitingOnBlockerNodeIds.has(nodeId),
+  );
   const timestampFields = [
     {
       label: "作成",
@@ -402,358 +424,285 @@ function ItemDetails({
             {item.title}
           </h3>
         </div>
-        <a
-          href={clearSelectionHref}
-          onClick={(event) => {
-            if (!shouldHandleClientNavigation(event)) {
-              return;
-            }
-            event.preventDefault();
-            onClearSelection();
-          }}
-        >
-          詳細を閉じる
-        </a>
+        <div class="item-details-actions">
+          <SafeGitHubLink href={item.url}>GitHubで項目を開く</SafeGitHubLink>
+          <a
+            href={clearSelectionHref}
+            onClick={(event) => {
+              if (!shouldHandleClientNavigation(event)) {
+                return;
+              }
+              event.preventDefault();
+              onClearSelection();
+            }}
+          >
+            一覧へ戻る
+          </a>
+        </div>
       </div>
 
-      <ConfidenceDisplay
-        confidence={item.confidence}
-        locale={locale}
-        thresholds={summary.confidenceThresholds}
-      />
-
-      <dl class="detail-summary-grid">
-        <div>
-          <dt>GitHub</dt>
-          <dd>
-            <SafeGitHubLink href={item.url}>GitHubで項目を開く</SafeGitHubLink>
-          </dd>
+      <section aria-labelledby="current-action-heading" class="current-action-panel">
+        <div class="current-action-heading">
+          <p class="eyebrow">Current action</p>
+          <h3 id="current-action-heading">現在の状況と次の行動</h3>
         </div>
-        <div>
-          <dt>GitHub上の状態</dt>
-          <dd>{item.state}</dd>
-        </div>
-        <div>
-          <dt>{decisionFieldLabel("status", presentation)}</dt>
-          <dd>{statusLabel(item.status)}</dd>
-        </div>
-        <div>
-          <dt>severity</dt>
-          <dd>
-            <span class={`severity-badge severity-${item.severity}`}>
-              {severityLabel(item.severity)}
-            </span>
-          </dd>
-        </div>
-        <div>
-          <dt>review</dt>
-          <dd>{REVIEW_STATE_LABELS[details.reviewState]}</dd>
-        </div>
-        <div>
-          <dt>checks</dt>
-          <dd>{CHECK_STATE_LABELS[details.checkState]}</dd>
-        </div>
-      </dl>
-
-      <section aria-labelledby="item-waiting-on-heading" class="detail-subsection">
-        <h3 id="item-waiting-on-heading">{decisionFieldLabel("waitingOn", presentation)}</h3>
-        {item.waitingOn.length === 0 ? (
-          <p>対応完了</p>
-        ) : (
-          <ul class="waiting-on-list">
-            {item.waitingOn.map((waitingOn) => {
-              const waitingOnPresentation = confidencePresentation(
-                waitingOn.confidence,
-                summary.confidenceThresholds,
-              );
-              return (
-                <li key={`${waitingOn.kind}:${waitingOn.candidateId}:${waitingOn.role}`}>
-                  <div>
-                    <strong>{waitingOnCandidateLabel(waitingOn)}</strong>
-                    <span>{waitingOnRoleLabel(waitingOn.role)}</span>
-                    <span>
-                      {waitingOnPresentation.label}・
-                      {formatConfidence(waitingOn.confidence, locale)}
-                    </span>
-                  </div>
-                  <p>{waitingOn.reasonSummary}</p>
-                  <p class="source-id-list">source ID: {waitingOn.sourceIds.join("、")}</p>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
-
-      <section aria-labelledby="item-next-action-heading" class="detail-subsection">
-        <h3 id="item-next-action-heading">{decisionFieldLabel("次の行動", presentation)}</h3>
-        <p class={presentation.level === "uncertain" ? "uncertain-value" : ""}>{item.nextAction}</p>
-      </section>
-
-      <section aria-labelledby="item-times-heading" class="detail-subsection">
-        <h3 id="item-times-heading">各種時刻</h3>
-        <dl class="timestamp-grid">
-          {timestampFields.map((field) => (
-            <DetailTime
-              key={field.label}
-              label={field.label}
-              value={field.value}
-              now={now}
-              timezone={summary.timezone}
-              locale={locale}
-            />
-          ))}
-        </dl>
-      </section>
-
-      <section aria-labelledby="item-blockers-heading" class="detail-subsection">
-        <h3 id="item-blockers-heading">blocker一覧</h3>
-        <h4>primary blocker</h4>
-        {primaryWaitingOnLabelText == null ? (
-          <p>primary blockerはありません。</p>
-        ) : (
+        <dl class="current-state-grid">
           <div>
-            <p>{primaryWaitingOnLabelText}</p>
-            <p>選定理由: {item.primaryWaitingOn.selectionReason}</p>
-          </div>
-        )}
-        <h4>全blocker</h4>
-        {item.blockerNodeIds.length === 0 ? (
-          <p>blockerはありません。</p>
-        ) : (
-          <ul class="blocker-list">
-            {item.blockerNodeIds.map((nodeId) => {
-              const blocker = itemsByNodeId.get(nodeId);
-              if (blocker != null) {
-                return (
-                  <li key={nodeId}>
-                    <ItemDetailsLink
-                      href={createItemHref(nodeId)}
-                      nodeId={nodeId}
-                      onSelect={onSelectItem}
-                    >
-                      {blocker.displayReference} {blocker.title}
-                    </ItemDetailsLink>
-                    <SafeGitHubLink href={blocker.url}>GitHubで開く</SafeGitHubLink>
-                  </li>
-                );
-              }
-              const graphNode = graphNodesByNodeId.get(nodeId);
-              assertNonNullable(graphNode, `blocker ${nodeId}の公開graph nodeがありません`);
-              if (graphNode.kind !== "external_reference") {
-                throw new TypeError(`blocker ${nodeId}の公開項目詳細がありません`);
-              }
-              return (
-                <li key={nodeId}>
-                  <span>
-                    {graphNode.displayReference} {graphNode.title}
-                  </span>
-                  <SafeGitHubLink href={graphNode.url}>GitHubで開く</SafeGitHubLink>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </section>
-
-      <section aria-labelledby="item-evidence-heading" class="detail-subsection">
-        <h3 id="item-evidence-heading">判定根拠</h3>
-        {details.evidence.length === 0 ? (
-          <p>公開できる判定根拠はありません。</p>
-        ) : (
-          <ol class="evidence-list">
-            {details.evidence.map((evidence) => (
-              <li key={`${evidence.sourceId}:${evidence.supports}`}>
-                <div>
-                  <span>{EVIDENCE_SUPPORT_LABELS[evidence.supports]}</span>
-                  <code>{evidence.sourceId}</code>
-                </div>
-                <p>{evidence.summary}</p>
-                <SafeGitHubLink href={evidence.sourceUrl}>GitHub上の根拠を開く</SafeGitHubLink>
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
-
-      <section aria-labelledby="item-context-heading" class="detail-subsection">
-        <h3 id="item-context-heading">補足情報</h3>
-        <dl class="detail-context-grid">
-          <div>
-            <dt>ラベル</dt>
-            <dd>{details.labels.length === 0 ? "なし" : details.labels.join("、")}</dd>
-          </div>
-          <div>
-            <dt>assignee</dt>
+            <dt>{decisionFieldLabel("現在のstatus", presentation)}</dt>
             <dd>
-              {details.assignees.length === 0
-                ? "なし"
-                : details.assignees.map((assignee) => `@${assignee.login}`).join("、")}
+              <strong>{statusLabel(item.status)}</strong>
+              <span class={`severity-badge severity-${item.severity}`}>
+                {severityLabel(item.severity)}
+              </span>
+            </dd>
+          </div>
+          <div>
+            <dt>停滞</dt>
+            <dd>
+              <strong>{formatStallDuration(item.stallSince, now)}</strong>
+              <span>
+                <time dateTime={item.stallSince}>
+                  {formatDateTime(item.stallSince, summary.timezone, locale)}
+                </time>
+                から
+              </span>
             </dd>
           </div>
         </dl>
-        {details.uncertainties.length > 0 && (
-          <div class="uncertainty-list">
-            <h4>不確実な点</h4>
-            <ul>
-              {details.uncertainties.map((uncertainty) => (
-                <li key={uncertainty}>{uncertainty}</li>
+
+        <div class="current-responsibility">
+          <h4 id="item-waiting-on-heading">
+            {decisionFieldLabel("次の担当", presentation)}
+            <span>waitingOn</span>
+          </h4>
+          {item.waitingOn.length === 0 ? (
+            <p>対応完了</p>
+          ) : (
+            <ul class="waiting-on-list">
+              {item.waitingOn.map((candidate, index) => (
+                <li key={`${candidate.kind}:${candidate.candidateId}:${candidate.role}`}>
+                  <div>
+                    <strong>
+                      <WaitingOnCandidateReference
+                        candidate={candidate}
+                        createItemHref={createItemHref}
+                        graphNodesByNodeId={graphNodesByNodeId}
+                        itemsByNodeId={itemsByNodeId}
+                        onSelectItem={onSelectItem}
+                      />
+                    </strong>
+                    <span>{waitingOnRoleLabel(candidate.role)}</span>
+                    {primaryBlockerNodeId === candidate.candidateId &&
+                      item.primaryWaitingOn.index === index && (
+                        <span class="primary-blocker-badge">主要blocker</span>
+                      )}
+                  </div>
+                  <p>{candidate.reasonSummary}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div class="next-action-card">
+          <h4>{decisionFieldLabel("次の行動", presentation)}</h4>
+          <p class={presentation.level === "uncertain" ? "uncertain-value" : ""}>
+            {item.nextAction}
+          </p>
+        </div>
+
+        {additionalBlockerNodeIds.length > 0 && (
+          <div class="additional-blockers">
+            <h4>その他のblocker</h4>
+            <ul class="blocker-list">
+              {additionalBlockerNodeIds.map((nodeId) => (
+                <li key={nodeId}>
+                  <RelatedItemReference
+                    createItemHref={createItemHref}
+                    graphNodesByNodeId={graphNodesByNodeId}
+                    itemsByNodeId={itemsByNodeId}
+                    nodeId={nodeId}
+                    onSelectItem={onSelectItem}
+                  />
+                </li>
               ))}
             </ul>
           </div>
         )}
       </section>
 
-      <ItemHistory history={details.history} locale={locale} timezone={summary.timezone} />
-    </article>
-  );
-}
-
-function SearchStatus({
-  onRetryDetails,
-  searchState,
-  summary,
-}: Readonly<{
-  onRetryDetails: () => void;
-  searchState: ItemSearchState;
-  summary: PublicSummaryDto;
-}>) {
-  switch (searchState.status) {
-    case "inactive":
-      return (
-        <p class="search-status" role="status" aria-live="polite">
-          全{summary.items.length.toLocaleString()}件を表示しています。
-        </p>
-      );
-    case "loading":
-      return (
-        <p class="search-status" role="status" aria-live="polite">
-          検索用の公開詳細データを読み込んでいます。
-        </p>
-      );
-    case "available":
-      return (
-        <p class="search-status" role="status" aria-live="polite">
-          {searchState.nodeIds.length.toLocaleString()}件が検索条件に一致しました。
-        </p>
-      );
-    case "failed":
-      return (
-        <div class="search-load-failure" role="alert">
-          <p>検索用の公開詳細データを取得できませんでした。</p>
-          <button type="button" onClick={onRetryDetails}>
-            再取得
-          </button>
-        </div>
-      );
-    default:
-      throw new UnreachableError(searchState);
-  }
-}
-
-/** 項目検索と選択中項目の詳細を表示する。 */
-export function ItemWorkspace({
-  clearSelectionHref,
-  createItemHref,
-  detailsState,
-  locale,
-  now,
-  onClearSearch,
-  onClearSelection,
-  onRetryDetails,
-  onSearchQueryChange,
-  onSelectItem,
-  searchQuery,
-  searchState,
-  selection,
-  summary,
-}: ItemWorkspaceProps) {
-  let selectedContent: ComponentChildren;
-  if (selection.status === "none") {
-    selectedContent = (
-      <p class="item-details-placeholder">
-        attention queueまたは全項目一覧の「詳細を開く」から項目を選択できます。
-      </p>
-    );
-  } else {
-    switch (detailsState.status) {
-      case "not_requested":
-      case "loading":
-        selectedContent = (
-          <p class="item-details-placeholder" role="status" aria-live="polite">
-            選択した項目の詳細を読み込んでいます。
-          </p>
-        );
-        break;
-      case "loaded": {
-        const details = detailsState.itemsByNodeId.get(selection.nodeId);
-        assertNonNullable(details, `選択項目 ${selection.nodeId} のdetailsがありません`);
-        selectedContent = (
-          <ItemDetails
-            clearSelectionHref={clearSelectionHref}
-            createItemHref={createItemHref}
-            details={details}
-            graphNodesByNodeId={detailsState.graphNodesByNodeId}
+      <details class="detail-disclosure decision-details">
+        <summary>
+          <span>判定情報</span>
+          <span>confidenceとsource ID</span>
+        </summary>
+        <div class="detail-disclosure-content">
+          <ConfidenceDisplay
+            confidence={item.confidence}
             locale={locale}
-            now={now}
-            onClearSelection={onClearSelection}
-            onSelectItem={onSelectItem}
-            summary={summary}
+            thresholds={summary.confidenceThresholds}
           />
-        );
-        break;
-      }
-      case "failed":
-        selectedContent = (
-          <div class="item-details-placeholder" role="alert">
-            <p>選択した項目の詳細を取得できませんでした。</p>
-            <button type="button" onClick={onRetryDetails}>
-              再取得
-            </button>
-          </div>
-        );
-        break;
-      default:
-        throw new UnreachableError(detailsState);
-    }
-  }
+          {item.waitingOn.length > 0 && (
+            <div class="candidate-decision-details">
+              <h4>waitingOn候補の判定情報</h4>
+              <ol class="decision-candidate-list">
+                {item.waitingOn.map((candidate) => {
+                  const candidatePresentation = confidencePresentation(
+                    candidate.confidence,
+                    summary.confidenceThresholds,
+                  );
+                  return (
+                    <li key={`${candidate.kind}:${candidate.candidateId}:${candidate.role}`}>
+                      <strong>
+                        <WaitingOnCandidateReference
+                          candidate={candidate}
+                          createItemHref={createItemHref}
+                          graphNodesByNodeId={graphNodesByNodeId}
+                          itemsByNodeId={itemsByNodeId}
+                          onSelectItem={onSelectItem}
+                        />
+                      </strong>
+                      <dl>
+                        <div>
+                          <dt>確度区分</dt>
+                          <dd>{candidatePresentation.label}</dd>
+                        </div>
+                        <div>
+                          <dt>confidence</dt>
+                          <dd>{formatConfidence(candidate.confidence, locale)}</dd>
+                        </div>
+                        <div>
+                          <dt>candidate ID</dt>
+                          <dd class="source-id-list">{candidate.candidateId}</dd>
+                        </div>
+                        <div>
+                          <dt>source ID</dt>
+                          <dd class="source-id-list">{candidate.sourceIds.join("、")}</dd>
+                        </div>
+                      </dl>
+                    </li>
+                  );
+                })}
+              </ol>
+            </div>
+          )}
+          {primaryBlockerNodeId != null && (
+            <div class="primary-selection-reason">
+              <h4>primary blockerの選定理由</h4>
+              <p>{item.primaryWaitingOn.selectionReason}</p>
+            </div>
+          )}
+        </div>
+      </details>
 
-  return (
-    <section aria-labelledby="item-workspace-heading" class="section-card item-workspace">
-      <div class="section-heading">
-        <div>
-          <p class="eyebrow">Search and details</p>
-          <h2 id="item-workspace-heading">項目検索と詳細</h2>
+      <details class="detail-disclosure timestamp-details">
+        <summary>
+          <span>各種時刻</span>
+          <span>{timestampFields.length.toString()}件</span>
+        </summary>
+        <div class="detail-disclosure-content">
+          <dl class="timestamp-grid">
+            {timestampFields.map((field) => (
+              <DetailTime
+                key={field.label}
+                label={field.label}
+                value={field.value}
+                now={now}
+                timezone={summary.timezone}
+                locale={locale}
+              />
+            ))}
+          </dl>
         </div>
-        <p>公開済みデータだけを使い、項目の判定根拠と変更履歴まで確認できます。</p>
-      </div>
-      <div class="item-search" role="search" aria-labelledby="item-search-label">
-        <label id="item-search-label" for="item-search-input">
-          リポジトリ、番号、タイトル、アクター、team、ラベルで検索
-        </label>
-        <div class="search-input-row">
-          <input
-            id="item-search-input"
-            type="search"
-            value={searchQuery}
-            maxLength={200}
-            aria-describedby="item-search-description"
-            onInput={(event) => {
-              onSearchQueryChange(event.currentTarget.value);
-            }}
-          />
-          <button type="button" disabled={searchQuery.length === 0} onClick={onClearSearch}>
-            検索をクリア
-          </button>
+      </details>
+
+      <details class="detail-disclosure evidence-details">
+        <summary>
+          <span>判定根拠</span>
+          <span>{details.evidence.length.toString()}件</span>
+        </summary>
+        <div class="detail-disclosure-content">
+          {details.evidence.length === 0 ? (
+            <p>公開できる判定根拠はありません。</p>
+          ) : (
+            <ol class="evidence-list">
+              {details.evidence.map((evidence) => (
+                <li key={`${evidence.sourceId}:${evidence.supports}`}>
+                  <div>
+                    <span>{EVIDENCE_SUPPORT_LABELS[evidence.supports]}</span>
+                    <code>{evidence.sourceId}</code>
+                  </div>
+                  <p>{evidence.summary}</p>
+                  <SafeGitHubLink href={evidence.sourceUrl}>GitHub上の根拠を開く</SafeGitHubLink>
+                </li>
+              ))}
+            </ol>
+          )}
         </div>
-        <p id="item-search-description">
-          空白で区切った語をすべて含む項目を、外部問い合わせなしで検索します。
-        </p>
-        <SearchStatus searchState={searchState} summary={summary} onRetryDetails={onRetryDetails} />
-      </div>
-      <div id="item-details" class="item-details-region" aria-live="polite">
-        {selectedContent}
-      </div>
-    </section>
+      </details>
+
+      <details class="detail-disclosure context-details">
+        <summary>
+          <span>補足情報</span>
+          <span>GitHub、review、ラベルなど</span>
+        </summary>
+        <div class="detail-disclosure-content">
+          <dl class="detail-context-grid">
+            <div>
+              <dt>種別</dt>
+              <dd>{item.type === "issue" ? "Issue" : "Pull Request"}</dd>
+            </div>
+            <div>
+              <dt>GitHub上の状態</dt>
+              <dd>{item.state}</dd>
+            </div>
+            <div>
+              <dt>review</dt>
+              <dd>{REVIEW_STATE_LABELS[details.reviewState]}</dd>
+            </div>
+            <div>
+              <dt>checks</dt>
+              <dd>{CHECK_STATE_LABELS[details.checkState]}</dd>
+            </div>
+            <div>
+              <dt>対応優先度</dt>
+              <dd>{attentionPriority(item).label}</dd>
+            </div>
+            <div>
+              <dt>ラベル</dt>
+              <dd>{details.labels.length === 0 ? "なし" : details.labels.join("、")}</dd>
+            </div>
+            <div>
+              <dt>assignee</dt>
+              <dd>
+                {details.assignees.length === 0
+                  ? "なし"
+                  : details.assignees.map((assignee) => `@${assignee.login}`).join("、")}
+              </dd>
+            </div>
+          </dl>
+          {details.uncertainties.length > 0 && (
+            <div class="uncertainty-list">
+              <h4>不確実な点</h4>
+              <ul>
+                {details.uncertainties.map((uncertainty) => (
+                  <li key={uncertainty}>{uncertainty}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </details>
+
+      <details class="detail-disclosure history-details">
+        <summary>
+          <span>前回との差分と履歴</span>
+          <span>{details.history.length.toString()}件</span>
+        </summary>
+        <div class="detail-disclosure-content">
+          <ItemHistory history={details.history} locale={locale} timezone={summary.timezone} />
+        </div>
+      </details>
+    </article>
   );
 }

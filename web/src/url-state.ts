@@ -7,7 +7,7 @@ import {
   type TableSort,
 } from "./model.js";
 
-const URL_PARAMETER_NAMES: readonly string[] = [
+const ITEMS_QUERY_PARAMETER_NAMES: readonly string[] = [
   "q",
   "repo",
   "type",
@@ -18,9 +18,6 @@ const URL_PARAMETER_NAMES: readonly string[] = [
   "updated",
   "sort",
   "direction",
-  "item",
-  "graph",
-  "cluster",
 ];
 
 const tableColumnKeySchema = z.enum([
@@ -45,9 +42,9 @@ const filterValueSchema = z
     }
     return true;
   });
-const itemNodeIdSchema = z.string().min(1).max(512).regex(/^\S+$/u);
+const basePathSchema = z.string().regex(/^\/(?:[^?#]*\/)?$/u);
 const graphClusterKindSchema = z.enum(["component", "repository"]);
-const graphClusterIdSchema = z.string().min(1).max(512).regex(/^\S+$/u);
+const itemNumberSchema = z.number().int().positive();
 
 const FILTER_PARAMETER_NAMES = {
   repository: "repo",
@@ -58,16 +55,6 @@ const FILTER_PARAMETER_NAMES = {
   blocker: "blocker",
   updated: "updated",
 } satisfies Readonly<Record<TableColumnKey, string>>;
-
-/** URLで共有する項目選択。 */
-export type ItemSelection =
-  | Readonly<{
-      status: "none";
-    }>
-  | Readonly<{
-      status: "selected";
-      nodeId: string;
-    }>;
 
 /** URLで共有する依存グラフのcluster選択。 */
 export type GraphSelection =
@@ -85,25 +72,68 @@ export type GraphSelection =
       repositoryId: string;
     }>;
 
+/** 項目詳細pathから選択する公開項目。 */
+export type ItemRouteTarget = Readonly<{
+  nodeId: string;
+  repositoryName: string;
+  number: number;
+}>;
+
+/** pathnameで表す表示ページ。 */
+export type WebRoute =
+  | Readonly<{
+      page: "overview";
+    }>
+  | Readonly<{
+      page: "items";
+    }>
+  | Readonly<{
+      page: "item-details";
+      target: ItemRouteTarget;
+    }>
+  | Readonly<{
+      page: "graph";
+      selection: GraphSelection;
+    }>
+  | Readonly<{
+      page: "repositories";
+    }>;
+
 /** 選択可能な依存グラフのcluster ID。 */
 export type ValidGraphClusterIds = Readonly<{
   componentIds: ReadonlySet<string>;
   repositoryIds: ReadonlySet<string>;
 }>;
 
-/** URLで共有する検索、絞り込み、並び順、選択項目。 */
+/** URLの検証に使う公開DTO由来の選択肢。 */
+export type ValidWebRouteTargets = Readonly<{
+  items: readonly ItemRouteTarget[];
+  graphClusters: ValidGraphClusterIds;
+}>;
+
+/** ブラウザから読み取るURL。 */
+export type WebLocation = Readonly<{
+  pathname: string;
+  search: string;
+  hash: string;
+}>;
+
+/** URLで共有するrouteと項目一覧の表示状態。 */
 export type WebViewState = Readonly<{
+  route: WebRoute;
   searchQuery: string;
   tableFilters: TableFilters;
   tableSort: TableSort;
-  selection: ItemSelection;
-  graphSelection: GraphSelection;
 }>;
 
 /** URL状態を検証した結果。 */
 export type ParsedWebViewState =
   | Readonly<{
       status: "valid";
+      state: WebViewState;
+    }>
+  | Readonly<{
+      status: "canonicalized";
       state: WebViewState;
     }>
   | Readonly<{
@@ -123,22 +153,64 @@ type ParsedParameter<Value> =
       status: "invalid";
     }>;
 
-/** URLを使わない場合の画面状態を作る。 */
-export function createDefaultWebViewState(): WebViewState {
+type ParsedRoute = Readonly<{
+  route: WebRoute;
+  status: "valid" | "canonicalized" | "sanitized";
+}>;
+
+/** 指定routeの既定画面状態を作る。 */
+export function createWebViewState(route: WebRoute): WebViewState {
   return {
+    route,
     searchQuery: "",
     tableFilters: createEmptyTableFilters(),
     tableSort: {
       key: "repository",
       direction: "ascending",
     },
-    selection: {
-      status: "none",
-    },
-    graphSelection: {
-      status: "none",
-    },
   };
+}
+
+/** 公開項目からpathname検証用の項目一覧を作る。 */
+export function createItemRouteTargets(
+  items: readonly Readonly<{
+    displayReference: string;
+    nodeId: string;
+    number: number;
+  }>[],
+): readonly ItemRouteTarget[] {
+  const targets = items.map((item) => {
+    const expectedSuffix = `#${item.number.toString()}`;
+    if (!item.displayReference.endsWith(expectedSuffix)) {
+      throw new TypeError(`項目 ${item.nodeId} のdisplayReferenceと番号が一致しません`);
+    }
+    const repositoryReference = item.displayReference.slice(0, -expectedSuffix.length);
+    const separatorIndex = repositoryReference.lastIndexOf("/");
+    if (separatorIndex <= 0 || separatorIndex === repositoryReference.length - 1) {
+      throw new TypeError(`項目 ${item.nodeId} のdisplayReferenceからリポジトリ名を取得できません`);
+    }
+    return {
+      nodeId: item.nodeId,
+      repositoryName: repositoryReference.slice(separatorIndex + 1),
+      number: item.number,
+    };
+  });
+  const pathKeys = new Set<string>();
+  const nodeIds = new Set<string>();
+  for (const target of targets) {
+    const pathKey = `${target.repositoryName}\u0000${target.number.toString()}`;
+    if (pathKeys.has(pathKey)) {
+      throw new TypeError(
+        `項目詳細pathが重複しています: ${target.repositoryName}#${target.number.toString()}`,
+      );
+    }
+    if (nodeIds.has(target.nodeId)) {
+      throw new TypeError(`項目node IDが重複しています: ${target.nodeId}`);
+    }
+    pathKeys.add(pathKey);
+    nodeIds.add(target.nodeId);
+  }
+  return targets;
 }
 
 function parseParameter<Value>(
@@ -195,73 +267,193 @@ function parameterValueOr<Value>(
   }
 }
 
-function hasUnknownParameter(parameters: URLSearchParams): boolean {
-  const allowedNames = new Set<string>(URL_PARAMETER_NAMES);
-  return [...parameters.keys()].some((name) => !allowedNames.has(name));
+function decodePathSegment(value: string): string | undefined {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return undefined;
+  }
 }
 
-function parseGraphSelection(
-  parameters: URLSearchParams,
-  validIds: ValidGraphClusterIds,
-): Readonly<{
-  invalid: boolean;
-  selection: GraphSelection;
-}> {
-  const kind = parseParameter(parameters, "graph", graphClusterKindSchema);
-  const clusterId = parseParameter(parameters, "cluster", graphClusterIdSchema);
-  if (kind.status === "absent" && clusterId.status === "absent") {
-    return {
-      invalid: false,
-      selection: {
-        status: "none",
-      },
-    };
+function parseItemRoute(
+  segments: readonly string[],
+  validItems: readonly ItemRouteTarget[],
+): ParsedRoute {
+  const fallback: ParsedRoute = {
+    route: {
+      page: "items",
+    },
+    status: "sanitized",
+  };
+  if (segments.length !== 3) {
+    return fallback;
   }
-  if (kind.status !== "valid" || clusterId.status !== "valid") {
-    return {
-      invalid: true,
-      selection: {
-        status: "none",
-      },
-    };
+  const repositoryName = decodePathSegment(segments[1] ?? "");
+  const numberText = decodePathSegment(segments[2] ?? "");
+  if (repositoryName == null || numberText == null || !/^[1-9]\d*$/u.test(numberText)) {
+    return fallback;
   }
-  if (kind.value === "component" && validIds.componentIds.has(clusterId.value)) {
-    return {
-      invalid: false,
-      selection: {
-        status: "selected",
-        kind: "component",
-        componentId: clusterId.value,
-      },
-    };
+  const parsedNumber = itemNumberSchema.safeParse(Number(numberText));
+  if (!parsedNumber.success) {
+    return fallback;
   }
-  if (kind.value === "repository" && validIds.repositoryIds.has(clusterId.value)) {
-    return {
-      invalid: false,
-      selection: {
-        status: "selected",
-        kind: "repository",
-        repositoryId: clusterId.value,
-      },
-    };
+  const target = validItems.find(
+    (item) => item.repositoryName === repositoryName && item.number === parsedNumber.data,
+  );
+  if (target == null) {
+    return fallback;
   }
   return {
-    invalid: true,
+    route: {
+      page: "item-details",
+      target,
+    },
+    status: "valid",
+  };
+}
+
+function parseGraphRoute(segments: readonly string[], validIds: ValidGraphClusterIds): ParsedRoute {
+  const unselectedRoute: WebRoute = {
+    page: "graph",
     selection: {
       status: "none",
     },
   };
+  if (segments.length !== 3) {
+    return {
+      route: unselectedRoute,
+      status: "sanitized",
+    };
+  }
+  const parsedKind = graphClusterKindSchema.safeParse(decodePathSegment(segments[1] ?? ""));
+  const clusterId = decodePathSegment(segments[2] ?? "");
+  if (!parsedKind.success || clusterId == null) {
+    return {
+      route: unselectedRoute,
+      status: "sanitized",
+    };
+  }
+  if (parsedKind.data === "component" && validIds.componentIds.has(clusterId)) {
+    return {
+      route: {
+        page: "graph",
+        selection: {
+          status: "selected",
+          kind: "component",
+          componentId: clusterId,
+        },
+      },
+      status: "valid",
+    };
+  }
+  if (parsedKind.data === "repository" && validIds.repositoryIds.has(clusterId)) {
+    return {
+      route: {
+        page: "graph",
+        selection: {
+          status: "selected",
+          kind: "repository",
+          repositoryId: clusterId,
+        },
+      },
+      status: "valid",
+    };
+  }
+  return {
+    route: unselectedRoute,
+    status: "sanitized",
+  };
 }
 
-/** query stringを検証し、不正な値だけを安全な既定値へ戻す。 */
-export function parseWebViewState(
+function parseRelativeRoute(relativePath: string, targets: ValidWebRouteTargets): ParsedRoute {
+  const segments = relativePath.split("/");
+  switch (segments[0]) {
+    case "items":
+      if (segments.length === 1) {
+        return {
+          route: {
+            page: "items",
+          },
+          status: "valid",
+        };
+      }
+      return parseItemRoute(segments, targets.items);
+    case "graph":
+      if (segments.length === 1) {
+        return {
+          route: {
+            page: "graph",
+            selection: {
+              status: "none",
+            },
+          },
+          status: "valid",
+        };
+      }
+      return parseGraphRoute(segments, targets.graphClusters);
+    case "repositories":
+      return {
+        route: {
+          page: "repositories",
+        },
+        status: segments.length === 1 ? "valid" : "sanitized",
+      };
+    default:
+      return {
+        route: {
+          page: "overview",
+        },
+        status: "sanitized",
+      };
+  }
+}
+
+function parseRoute(
+  pathname: string,
+  basePath: string,
+  targets: ValidWebRouteTargets,
+): ParsedRoute {
+  const parsedBasePath = basePathSchema.parse(basePath);
+  if (!pathname.startsWith(parsedBasePath)) {
+    return {
+      route: {
+        page: "overview",
+      },
+      status: "sanitized",
+    };
+  }
+  const relativePath = pathname.slice(parsedBasePath.length);
+  if (relativePath.length === 0) {
+    return {
+      route: {
+        page: "overview",
+      },
+      status: "valid",
+    };
+  }
+  const hasTrailingSlash = relativePath.endsWith("/");
+  const normalizedRelativePath = hasTrailingSlash ? relativePath.slice(0, -1) : relativePath;
+  const parsedRoute = parseRelativeRoute(normalizedRelativePath, targets);
+  if (hasTrailingSlash && parsedRoute.status === "valid") {
+    return {
+      ...parsedRoute,
+      status: "canonicalized",
+    };
+  }
+  return parsedRoute;
+}
+
+function parseItemsQuery(
   search: string,
-  validItemNodeIds: ReadonlySet<string>,
-  validGraphClusterIds: ValidGraphClusterIds,
-): ParsedWebViewState {
+  route: Extract<WebRoute, Readonly<{ page: "items" }>>,
+): Readonly<{
+  sanitized: boolean;
+  state: WebViewState;
+}> {
   const parameters = new URLSearchParams(search);
-  const defaults = createDefaultWebViewState();
-  let sanitized = hasUnknownParameter(parameters);
+  const defaults = createWebViewState(route);
+  const allowedNames = new Set<string>(ITEMS_QUERY_PARAMETER_NAMES);
+  let sanitized = [...parameters.keys()].some((name) => !allowedNames.has(name));
 
   const searchQuery = parameterValueOr(
     parseParameter(parameters, "q", filterValueSchema),
@@ -301,56 +493,44 @@ export function parseWebViewState(
   );
   sanitized ||= sortKey.invalid || sortDirection.invalid;
 
-  const selectedItem = parseParameter(parameters, "item", itemNodeIdSchema);
-  let selection: ItemSelection;
-  switch (selectedItem.status) {
-    case "absent":
-      selection = {
-        status: "none",
-      };
-      break;
-    case "valid":
-      if (validItemNodeIds.has(selectedItem.value)) {
-        selection = {
-          status: "selected",
-          nodeId: selectedItem.value,
-        };
-      } else {
-        sanitized = true;
-        selection = {
-          status: "none",
-        };
-      }
-      break;
-    case "invalid":
-      sanitized = true;
-      selection = {
-        status: "none",
-      };
-      break;
-  }
-  const graphSelection = parseGraphSelection(parameters, validGraphClusterIds);
-  sanitized ||= graphSelection.invalid;
-
-  const state = {
-    searchQuery: searchQuery.value,
-    tableFilters: parsedTableFilters,
-    tableSort: {
-      key: sortKey.value,
-      direction: sortDirection.value,
+  return {
+    sanitized,
+    state: {
+      route,
+      searchQuery: searchQuery.value,
+      tableFilters: parsedTableFilters,
+      tableSort: {
+        key: sortKey.value,
+        direction: sortDirection.value,
+      },
     },
-    selection,
-    graphSelection: graphSelection.selection,
   };
-  return sanitized
-    ? {
-        status: "sanitized",
-        state,
-      }
-    : {
-        status: "valid",
-        state,
-      };
+}
+
+/** pathnameとqueryを検証し、不正な値だけを該当ページの既定状態へ戻す。 */
+export function parseWebViewState(
+  location: WebLocation,
+  basePath: string,
+  targets: ValidWebRouteTargets,
+): ParsedWebViewState {
+  const parsedRoute = parseRoute(location.pathname, basePath, targets);
+  const queryResult =
+    parsedRoute.route.page === "items"
+      ? parseItemsQuery(location.search, parsedRoute.route)
+      : {
+          sanitized: location.search.length > 0,
+          state: createWebViewState(parsedRoute.route),
+        };
+  if (parsedRoute.status === "sanitized" || queryResult.sanitized) {
+    return {
+      status: "sanitized",
+      state: queryResult.state,
+    };
+  }
+  return {
+    status: parsedRoute.status,
+    state: queryResult.state,
+  };
 }
 
 function appendNonEmptyParameter(parameters: URLSearchParams, name: string, value: string): void {
@@ -359,8 +539,36 @@ function appendNonEmptyParameter(parameters: URLSearchParams, name: string, valu
   }
 }
 
-/** 検証済み画面状態を同一ページのdeep linkへ変換する。 */
-export function createWebViewHref(pathname: string, state: WebViewState): string {
+function createRoutePath(basePath: string, route: WebRoute): string {
+  const parsedBasePath = basePathSchema.parse(basePath);
+  const pathPrefix = parsedBasePath === "/" ? "" : parsedBasePath.slice(0, -1);
+  switch (route.page) {
+    case "overview":
+      return parsedBasePath;
+    case "items":
+      return `${pathPrefix}/items`;
+    case "item-details":
+      return `${pathPrefix}/items/${encodeURIComponent(route.target.repositoryName)}/${route.target.number.toString()}`;
+    case "graph":
+      if (route.selection.status === "none") {
+        return `${pathPrefix}/graph`;
+      }
+      return `${pathPrefix}/graph/${route.selection.kind}/${encodeURIComponent(
+        route.selection.kind === "component"
+          ? route.selection.componentId
+          : route.selection.repositoryId,
+      )}`;
+    case "repositories":
+      return `${pathPrefix}/repositories`;
+  }
+}
+
+/** 検証済み画面状態をbasePath配下のdeep linkへ変換する。 */
+export function createWebViewHref(basePath: string, state: WebViewState): string {
+  const pathname = createRoutePath(basePath, state.route);
+  if (state.route.page !== "items") {
+    return pathname;
+  }
   const parameters = new URLSearchParams();
   appendNonEmptyParameter(parameters, "q", state.searchQuery);
   for (const [key, parameterName] of Object.entries(FILTER_PARAMETER_NAMES)) {
@@ -383,24 +591,6 @@ export function createWebViewHref(pathname: string, state: WebViewState): string
   if (state.tableSort.direction !== "ascending") {
     parameters.set("direction", state.tableSort.direction);
   }
-  if (state.selection.status === "selected") {
-    parameters.set("item", state.selection.nodeId);
-  }
-  if (state.graphSelection.status === "selected") {
-    parameters.set("graph", state.graphSelection.kind);
-    parameters.set(
-      "cluster",
-      state.graphSelection.kind === "component"
-        ? state.graphSelection.componentId
-        : state.graphSelection.repositoryId,
-    );
-  }
   const query = parameters.toString();
-  const hash =
-    state.selection.status === "selected"
-      ? "#item-details"
-      : state.graphSelection.status === "selected"
-        ? "#dependency-heading"
-        : "";
-  return `${pathname}${query.length === 0 ? "" : `?${query}`}${hash}`;
+  return `${pathname}${query.length === 0 ? "" : `?${query}`}`;
 }
