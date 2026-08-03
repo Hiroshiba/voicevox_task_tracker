@@ -4185,6 +4185,328 @@ describe("本番判定入力の接続", () => {
     expect(infrastructureItem?.status).not.toBe("waiting_for_author");
   });
 
+  it("同じGitHubデータなら前回stateなしの走査時刻が数ヶ月違っても全項目の停滞起点が一致する", async () => {
+    const githubSignalAt = createUtcIsoDateTime("2026-07-20T12:00:00.000Z");
+    const runAt = async (
+      startedAt: string,
+    ): Promise<
+      readonly Readonly<{
+        nodeId: GitHubNodeId;
+        type: "issue" | "pull_request";
+        status: StateSnapshot["items"][number]["status"];
+        statusSince: UtcIsoDateTime;
+        ownerSince: UtcIsoDateTime;
+        stallSince: UtcIsoDateTime;
+      }>[]
+    > => {
+      const observedAt = createUtcIsoDateTime(startedAt);
+      const repository = createRepository(
+        "R_deterministic_stall_since",
+        "deterministic-stall-since",
+        startedAt,
+      );
+      const publicRepository = requirePublicRepository(repository);
+      const fixture = createRepositoryFixture(repository);
+      const unassignedIssue = createIssueItem({
+        repository: publicRepository,
+        number: 1,
+        fingerprint: "deterministic-unassigned",
+        updatedAt: githubSignalAt,
+        observedAt,
+        state: Object.freeze({ state: "open" }),
+      });
+      const blockedIssue = createIssueItem({
+        repository: publicRepository,
+        number: 2,
+        fingerprint: "deterministic-blocked",
+        updatedAt: githubSignalAt,
+        observedAt,
+        state: Object.freeze({ state: "open" }),
+      });
+      const draftPullRequestBase = createPullRequestItem({
+        repository: publicRepository,
+        number: 3,
+        fingerprint: "deterministic-draft",
+        updatedAt: githubSignalAt,
+        observedAt,
+      });
+      if (draftPullRequestBase.type !== "pull_request") {
+        throw new TypeError("決定論性fixtureのdraftがPull Requestではありません");
+      }
+      const draftPullRequest = Object.freeze({
+        ...draftPullRequestBase,
+        draft: true,
+      });
+      const failedCheckPullRequest = createPullRequestItem({
+        repository: publicRepository,
+        number: 4,
+        fingerprint: "deterministic-failed-check",
+        updatedAt: githubSignalAt,
+        observedAt,
+      });
+      const conflictingPullRequest = createPullRequestItem({
+        repository: publicRepository,
+        number: 5,
+        fingerprint: "deterministic-conflict",
+        updatedAt: githubSignalAt,
+        observedAt,
+      });
+      const reviewWaitingPullRequest = createPullRequestItem({
+        repository: publicRepository,
+        number: 6,
+        fingerprint: "deterministic-review-waiting",
+        updatedAt: githubSignalAt,
+        observedAt,
+      });
+      const pendingCheckPullRequest = createPullRequestItem({
+        repository: publicRepository,
+        number: 7,
+        fingerprint: "deterministic-pending-check",
+        updatedAt: githubSignalAt,
+        observedAt,
+      });
+      const items = [
+        unassignedIssue,
+        blockedIssue,
+        draftPullRequest,
+        failedCheckPullRequest,
+        conflictingPullRequest,
+        reviewWaitingPullRequest,
+        pendingCheckPullRequest,
+      ];
+      fixture.openItems = items;
+      fixture.details.set(
+        unassignedIssue.nodeId,
+        createIssueDetail({
+          item: unassignedIssue,
+          body: "未アサインのIssueです",
+          observedAt,
+          nativeDependencies: Object.freeze([]),
+          duplicateComments: false,
+        }),
+      );
+      fixture.details.set(
+        blockedIssue.nodeId,
+        createIssueDetail({
+          item: blockedIssue,
+          body: "draft Pull Requestの完了を待ちます",
+          observedAt,
+          nativeDependencies: Object.freeze([createNativeBlocker(blockedIssue, draftPullRequest)]),
+          duplicateComments: false,
+        }),
+      );
+      const createDetailWithoutChecks = (
+        item: EnumeratedGitHubItem,
+        mergeability: Extract<
+          GitHubItemDetail,
+          Readonly<{ type: "pull_request" }>
+        >["mergeState"]["mergeability"],
+        mergeState: Extract<
+          GitHubItemDetail,
+          Readonly<{ type: "pull_request" }>
+        >["mergeState"]["mergeState"],
+      ): Extract<GitHubItemDetail, Readonly<{ type: "pull_request" }>> => {
+        const detail = createFailedCheckPullRequestDetail(item, githubSignalAt);
+        return Object.freeze({
+          ...detail,
+          mergeState: Object.freeze({
+            ...detail.mergeState,
+            mergeability,
+            mergeState,
+            checks: Object.freeze({
+              status: "not_configured",
+            }),
+          }),
+          observedAt,
+        });
+      };
+      fixture.details.set(
+        draftPullRequest.nodeId,
+        createDetailWithoutChecks(draftPullRequest, "unknown", "draft"),
+      );
+      fixture.details.set(
+        failedCheckPullRequest.nodeId,
+        Object.freeze({
+          ...createFailedCheckPullRequestDetail(failedCheckPullRequest, githubSignalAt),
+          observedAt,
+        }),
+      );
+      fixture.details.set(
+        conflictingPullRequest.nodeId,
+        createDetailWithoutChecks(conflictingPullRequest, "conflicting", "dirty"),
+      );
+      const reviewRequestSourceId = buildSourceId(
+        "github_review_request",
+        reviewWaitingPullRequest.nodeId,
+      );
+      const reviewRequestNodeId = createGitHubNodeId(`RR_${reviewWaitingPullRequest.nodeId}`);
+      const reviewerNodeId = createGitHubNodeId("U_deterministic_reviewer");
+      const reviewWaitingDetail = createDetailWithoutChecks(
+        reviewWaitingPullRequest,
+        "mergeable",
+        "blocked",
+      );
+      fixture.details.set(
+        reviewWaitingPullRequest.nodeId,
+        Object.freeze({
+          ...reviewWaitingDetail,
+          reviewRequests: Object.freeze({
+            current: Object.freeze([
+              Object.freeze({
+                sourceId: reviewRequestSourceId,
+                nodeId: reviewRequestNodeId,
+                target: Object.freeze({
+                  type: "user",
+                  sourceId: buildSourceId("github_user", reviewerNodeId),
+                  nodeId: reviewerNodeId,
+                  login: "deterministic-reviewer",
+                  apiType: "User",
+                }),
+                requestedAt: Object.freeze({
+                  status: "unavailable",
+                  reason: "timeline_event_not_found",
+                }),
+              }),
+            ]),
+            history: Object.freeze([]),
+          }),
+        }),
+      );
+      const pendingCheckDetail = createFailedCheckPullRequestDetail(
+        pendingCheckPullRequest,
+        githubSignalAt,
+      );
+      if (pendingCheckDetail.mergeState.checks.status !== "configured") {
+        throw new TypeError("決定論性fixtureのrequired checksがありません");
+      }
+      fixture.details.set(
+        pendingCheckPullRequest.nodeId,
+        Object.freeze({
+          ...pendingCheckDetail,
+          mergeState: Object.freeze({
+            ...pendingCheckDetail.mergeState,
+            mergeState: "unstable",
+            checks: Object.freeze({
+              ...pendingCheckDetail.mergeState.checks,
+              combinedState: "pending",
+              contexts: Object.freeze(
+                pendingCheckDetail.mergeState.checks.contexts.map((context) => {
+                  if (context.type !== "check_run") {
+                    throw new TypeError("決定論性fixtureのcheck runを取得できません");
+                  }
+                  return Object.freeze({
+                    ...context,
+                    status: "in_progress",
+                    conclusion: "not_completed",
+                    completedAt: null,
+                  });
+                }),
+              ),
+            }),
+          }),
+          observedAt,
+        }),
+      );
+      const config = await createTestConfig({
+        explicitIncludes: [],
+        retentionDays: 180,
+        aiEnabled: true,
+      });
+      const harness = createCollectionHarness({
+        repositories: [fixture],
+        config,
+        executeCodexAnalysis: (input) => {
+          const failedCheck = input.item.nodeId === failedCheckPullRequest.nodeId;
+          const basisSource = input.sources.find((source) =>
+            failedCheck ? source.kind === "check_run" : source.kind === "body",
+          );
+          if (basisSource == null) {
+            throw new TypeError("決定論性fixtureのCodex根拠sourceがありません");
+          }
+          return Promise.resolve(
+            createCodexOutput(input, {
+              status: "waiting_for_author",
+              waitingOn: {
+                candidateId: input.item.authorCandidateId,
+                kind: "user",
+                role: "author",
+                sourceId: basisSource.id,
+              },
+              latestMeaningfulSourceId: null,
+              confidence: failedCheck ? 0.95 : 0.1,
+              relationVerdict: "related",
+              notification: {
+                recommended: false,
+                reasonCode: "none",
+                reasonSummary: "通知しません",
+              },
+            }),
+          );
+        },
+      });
+
+      const result = await harness.runDaily(startedAt);
+      const files = await harness.stateAdapter.readBranchFiles("tracker-state");
+      const snapshotSource = files.get("state/snapshot.json");
+      if (snapshotSource == null) {
+        throw new TypeError("決定論性検証のsnapshotがありません");
+      }
+      const snapshot = parseStateSnapshot(new TextDecoder().decode(snapshotSource));
+
+      expect(result.exitCode).toBe(0);
+      expect(harness.codexInputs.map((input) => input.item.nodeId)).toEqual([
+        unassignedIssue.nodeId,
+        failedCheckPullRequest.nodeId,
+      ]);
+      expect(snapshot.items).toHaveLength(items.length);
+      expect(snapshot.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ nodeId: unassignedIssue.nodeId, status: "new_untriaged" }),
+          expect.objectContaining({ nodeId: blockedIssue.nodeId, status: "blocked" }),
+          expect.objectContaining({ nodeId: draftPullRequest.nodeId, status: "in_progress" }),
+          expect.objectContaining({
+            nodeId: failedCheckPullRequest.nodeId,
+            status: "waiting_for_author",
+          }),
+          expect.objectContaining({
+            nodeId: conflictingPullRequest.nodeId,
+            status: "waiting_for_author",
+          }),
+          expect.objectContaining({
+            nodeId: reviewWaitingPullRequest.nodeId,
+            status: "waiting_for_review",
+          }),
+          expect.objectContaining({
+            nodeId: pendingCheckPullRequest.nodeId,
+            status: "waiting_for_automation",
+          }),
+        ]),
+      );
+      return Object.freeze(
+        snapshot.items
+          .map((item) =>
+            Object.freeze({
+              nodeId: item.nodeId,
+              type: item.type,
+              status: item.status,
+              statusSince: item.statusSince,
+              ownerSince: item.ownerSince,
+              stallSince: item.stallSince,
+            }),
+          )
+          .toSorted((left, right) => left.nodeId.localeCompare(right.nodeId)),
+      );
+    };
+
+    const first = await runAt(FIRST_RUN_AT);
+    const second = await runAt("2027-02-01T00:00:00.000Z");
+
+    expect(
+      second,
+      "同じGitHubデータを前回stateなしで走査したのに、run開始時刻の違いでstatusSince、ownerSince、stallSinceが変わりました。観測時刻が停滞起点へ混入しています。",
+    ).toEqual(first);
+  });
+
   it("check source時刻とCodex由来basisをrun開始時刻に依存させない", async () => {
     const headPushedAt = createUtcIsoDateTime("2026-07-30T12:00:00.000Z");
     const checkCompletedAt = createUtcIsoDateTime("2026-07-31T18:00:00.000Z");
