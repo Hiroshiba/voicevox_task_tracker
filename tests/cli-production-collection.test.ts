@@ -1539,12 +1539,12 @@ describe("本番収集の接続", () => {
       {
         provenance: "explicit_text",
         confidence: 0.7,
-        firstSeenAt: FIRST_RUN_AT,
+        firstSeenAt: blocked.createdAt,
       },
       {
         provenance: "native",
         confidence: 1,
-        firstSeenAt: SECOND_RUN_AT,
+        firstSeenAt: changedBlocked.createdAt,
       },
     ]);
     expect(trackedItem).toMatchObject({

@@ -569,6 +569,25 @@ function createRelationCandidate(
   }
 }
 
+function createRelationSourceOccurredAtById(
+  input: StandardGoldenInput,
+  items: ReadonlyMap<string, GoldenItemInput>,
+): ReadonlyMap<SourceId, UtcIsoDateTime> {
+  const sourceOccurredAtById = new Map<SourceId, UtcIsoDateTime>();
+  for (const relation of input.relations) {
+    const currentItem = items.get(relation.currentNodeId);
+    assertNonNullable(currentItem, `関係 ${relation.id}のcurrent itemがありません`);
+    const sourceId = buildSourceId("golden_relation", relation.sourceId);
+    const occurredAt = createUtcIsoDateTime(currentItem.createdAt);
+    const existingOccurredAt = sourceOccurredAtById.get(sourceId);
+    if (existingOccurredAt != null && existingOccurredAt !== occurredAt) {
+      throw new TypeError(`同じgolden関係source IDに異なる発生時刻があります。対象: ${sourceId}`);
+    }
+    sourceOccurredAtById.set(sourceId, occurredAt);
+  }
+  return sourceOccurredAtById;
+}
+
 function createNativeBlockers(
   item: GoldenItemInput,
   relationInputs: readonly GoldenRelationInput[],
@@ -1266,6 +1285,7 @@ function analyzeStandardFixture(input: StandardGoldenInput): GoldenFixtureAnalys
     }),
     candidates,
     assessments: fixedAi.relationAssessments,
+    sourceOccurredAtById: createRelationSourceOccurredAtById(input, items),
     minimumInferredConfidence: CONFIDENCE_THRESHOLDS.medium,
     reconciledAt: createUtcIsoDateTime(input.evaluatedAt),
   });

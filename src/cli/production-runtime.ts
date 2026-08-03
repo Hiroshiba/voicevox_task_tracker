@@ -3102,6 +3102,31 @@ function retainGraphEdgesForAvailableNodes(
   return Object.freeze(retainedEdges);
 }
 
+function addRelationSourceOccurredAt(
+  sourceOccurredAtById: Map<SourceId, UtcIsoDateTime>,
+  sourceId: SourceId,
+  occurredAt: UtcIsoDateTime,
+): void {
+  const existingOccurredAt = sourceOccurredAtById.get(sourceId);
+  if (existingOccurredAt != null && existingOccurredAt !== occurredAt) {
+    throw new TypeError(`同じ関係source IDに異なる発生時刻があります。対象: ${sourceId}`);
+  }
+  sourceOccurredAtById.set(sourceId, occurredAt);
+}
+
+function createRelationSourceOccurredAtById(
+  items: readonly FreshObservedGitHubItem[],
+): ReadonlyMap<SourceId, UtcIsoDateTime> {
+  const sourceOccurredAtById = new Map<SourceId, UtcIsoDateTime>();
+  for (const item of items) {
+    addRelationSourceOccurredAt(sourceOccurredAtById, item.bodySourceId, item.createdAt);
+    for (const event of item.events) {
+      addRelationSourceOccurredAt(sourceOccurredAtById, event.sourceId, event.occurredAt);
+    }
+  }
+  return sourceOccurredAtById;
+}
+
 function reconcileCurrentGraph(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
@@ -3128,6 +3153,7 @@ function reconcileCurrentGraph(
     assessments: reduction.relationAssessments.filter((assessment) =>
       candidateIds.has(assessment.candidateId),
     ),
+    sourceOccurredAtById: createRelationSourceOccurredAtById(collection.observedItems),
     minimumInferredConfidence: configuration.config.ai.confidence.medium,
     reconciledAt: invocation.startedAt,
   });
