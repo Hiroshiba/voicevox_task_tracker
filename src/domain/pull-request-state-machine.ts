@@ -112,6 +112,12 @@ type HumanCommentEvent = Extract<NormalizedEvent, { kind: "comment" }> & {
   actor: GitHubAccountActor & { type: "human" };
 };
 
+type LabelEvent = Extract<NormalizedEvent, { kind: "label" }>;
+
+type LabelEventReplay = Readonly<{
+  activeAdditionByLabelName: ReadonlyMap<string, LabelEvent>;
+}>;
+
 type ResolvedReviewRequest = Readonly<{
   waitingOn: WaitingOn;
   basis: PullRequestTransitionBasis;
@@ -357,6 +363,94 @@ function compareEvents(left: NormalizedEvent, right: NormalizedEvent): -1 | 0 | 
 
 function getLatestEvent<T extends NormalizedEvent>(events: readonly T[]): T | undefined {
   return [...events].sort(compareEvents).at(-1);
+}
+
+function replayLabelEvents(events: readonly NormalizedEvent[]): LabelEventReplay {
+  const activeAdditionByLabelName = new Map<string, LabelEvent>();
+  const labelEvents = events
+    .filter((event): event is LabelEvent => event.kind === "label")
+    .sort(compareEvents);
+
+  for (const event of labelEvents) {
+    if (event.action === "added") {
+      activeAdditionByLabelName.set(event.labelName, event);
+      continue;
+    }
+    activeAdditionByLabelName.delete(event.labelName);
+  }
+
+  return Object.freeze({ activeAdditionByLabelName });
+}
+
+function compareTransitionBases(
+  left: PullRequestTransitionBasis,
+  right: PullRequestTransitionBasis,
+): -1 | 0 | 1 {
+  if (left.occurredAt < right.occurredAt) {
+    return -1;
+  }
+  if (left.occurredAt > right.occurredAt) {
+    return 1;
+  }
+  return compareSourceIds(left.sourceIds[0], right.sourceIds[0]);
+}
+
+function resolveMaintainerDecisionLabelBasis(
+  pullRequest: FreshObservedGitHubPullRequest,
+  labelNames: readonly string[],
+): PullRequestTransitionBasis {
+  const replay = replayLabelEvents(pullRequest.events);
+  const bases = [...new Set(labelNames)].map((labelName) => {
+    const additionEvent = replay.activeAdditionByLabelName.get(labelName);
+    return additionEvent == null
+      ? createBasis([pullRequest.sourceId], pullRequest.createdAt, "inferred")
+      : createBasis([additionEvent.sourceId], additionEvent.occurredAt, "event");
+  });
+  return (
+    bases.sort(compareTransitionBases)[0] ??
+    createBasis([pullRequest.sourceId], pullRequest.createdAt, "inferred")
+  );
+}
+
+type DraftLifecycleEvent = NormalizedEvent &
+  Readonly<{ kind: "ready_for_review" | "converted_to_draft" }>;
+
+function resolveDraftIntervalBasis(
+  pullRequest: FreshObservedGitHubPullRequest,
+): PullRequestTransitionBasis {
+  const events = pullRequest.events
+    .filter(
+      (event): event is DraftLifecycleEvent =>
+        event.kind === "ready_for_review" || event.kind === "converted_to_draft",
+    )
+    .sort(compareEvents);
+  const firstEvent = events[0];
+  if (firstEvent == null) {
+    return createBasis([pullRequest.sourceId], pullRequest.createdAt, "inferred");
+  }
+
+  let draft = firstEvent.kind === "ready_for_review";
+  let intervalStartEvent: DraftLifecycleEvent | undefined;
+  for (const event of events) {
+    if (event.kind === "ready_for_review") {
+      if (!draft) {
+        throw new TypeError("non-draftのPull Requestにready for reviewイベントがあります");
+      }
+      draft = false;
+    } else {
+      if (draft) {
+        throw new TypeError("draftのPull Requestにdraft変換イベントがあります");
+      }
+      draft = true;
+    }
+    intervalStartEvent = event;
+  }
+
+  if (draft !== pullRequest.draft) {
+    throw new TypeError("Pull Requestのdraft状態とlifecycleイベントが一致しません");
+  }
+  assertNonNullable(intervalStartEvent, "draft区間の開始イベントを取得できませんでした");
+  return createBasis([intervalStartEvent.sourceId], intervalStartEvent.occurredAt, "event");
 }
 
 function createTerminalDecision(
@@ -891,7 +985,7 @@ function resolveHumanReviewRequests(
     const basis =
       request.requestedAt.status === "available"
         ? createBasis([request.sourceId], request.requestedAt.value, "event")
-        : createBasis([request.sourceId], pullRequest.observedAt, "observation");
+        : createBasis([request.sourceId], pullRequest.createdAt, "inferred");
     const resolved = Object.freeze({
       waitingOn: createWaitingOn({
         kind,
@@ -1038,10 +1132,9 @@ function createLabelDecision(
   if (!input.labelEffects.requiresMaintainerDecision) {
     return undefined;
   }
-  const basis = createBasis(
-    [input.pullRequest.sourceId],
-    input.pullRequest.observedAt,
-    "observation",
+  const basis = resolveMaintainerDecisionLabelBasis(
+    input.pullRequest,
+    input.labelEffects.maintainerDecisionLabelNames,
   );
   return finalizeDecision(input, context, {
     status: "needs_maintainer_decision",
@@ -1076,11 +1169,7 @@ function createDraftDecision(
   if (!input.pullRequest.draft) {
     return undefined;
   }
-  const basis = createBasis(
-    [input.pullRequest.sourceId],
-    input.pullRequest.observedAt,
-    "observation",
-  );
+  const basis = resolveDraftIntervalBasis(input.pullRequest);
   return finalizeDecision(input, context, {
     status: "in_progress",
     waitingOn: [
@@ -1364,11 +1453,7 @@ function createMaintainerTriageDecision(
   input: PullRequestStateMachineInput,
   context: DecisionContext,
 ): PullRequestStateDecision {
-  const basis = createBasis(
-    [input.pullRequest.sourceId],
-    input.pullRequest.observedAt,
-    "observation",
-  );
+  const basis = resolveDraftIntervalBasis(input.pullRequest);
   return finalizeDecision(input, context, {
     status: "needs_maintainer_decision",
     waitingOn: [

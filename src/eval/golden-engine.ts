@@ -639,6 +639,7 @@ function determineItemState(
       priorityWeight: item.priorityWeight,
       severityLift: 0,
       requiresMaintainerDecision: false,
+      maintainerDecisionLabelNames: Object.freeze([]),
       suppressNotifications: false,
       countsAsProgress: false,
     }),
