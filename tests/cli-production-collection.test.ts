@@ -433,7 +433,10 @@ function createNativeBlocker(
       number: blocker.number,
       url: blocker.url,
       createdAt: blocker.createdAt,
-      state: blocker.state,
+      state:
+        blocker.type === "pull_request" && blocker.mergeStatus === "merged"
+          ? "merged"
+          : blocker.state,
     }),
   });
 }
@@ -4182,6 +4185,165 @@ describe("本番判定入力の接続", () => {
     expect(infrastructureItem?.status).not.toBe("waiting_for_author");
   });
 
+  it("check source時刻とCodex由来basisをrun開始時刻に依存させない", async () => {
+    const headPushedAt = createUtcIsoDateTime("2026-07-30T12:00:00.000Z");
+    const checkCompletedAt = createUtcIsoDateTime("2026-07-31T18:00:00.000Z");
+    const runAt = async (
+      startedAt: string,
+    ): Promise<
+      Readonly<{
+        input: CodexAnalysisInput;
+        item: StateSnapshot["items"][number];
+      }>
+    > => {
+      const repository = createRepository(
+        "R_deterministic_codex",
+        "deterministic-codex",
+        startedAt,
+      );
+      const publicRepository = requirePublicRepository(repository);
+      const fixture = createRepositoryFixture(repository);
+      const item = createPullRequestItem({
+        repository: publicRepository,
+        number: 1,
+        fingerprint: "deterministic-codex",
+        updatedAt: checkCompletedAt,
+        observedAt: checkCompletedAt,
+      });
+      const detail = createFailedCheckPullRequestDetail(item, headPushedAt);
+      if (detail.mergeState.checks.status !== "configured") {
+        throw new TypeError("決定論的Codex fixtureのcheckがありません");
+      }
+      const completedContexts = detail.mergeState.checks.contexts.map((context) => {
+        if (context.type !== "check_run" || context.status !== "completed") {
+          throw new TypeError("決定論的Codex fixtureに完了済みcheck run以外があります");
+        }
+        return Object.freeze({
+          ...context,
+          completedAt: checkCompletedAt,
+        });
+      });
+      const pendingContext = Object.freeze({
+        type: "check_run",
+        sourceId: buildSourceId("github_check_run", `${item.nodeId}:pending`),
+        nodeId: createGitHubNodeId(`CHECK_${item.nodeId}_pending`),
+        name: "pending-test",
+        status: "in_progress",
+        conclusion: "not_completed",
+        completedAt: null,
+      });
+      fixture.openItems = [item];
+      fixture.details.set(
+        item.nodeId,
+        Object.freeze({
+          ...detail,
+          mergeState: Object.freeze({
+            ...detail.mergeState,
+            checks: Object.freeze({
+              ...detail.mergeState.checks,
+              contexts: Object.freeze([...completedContexts, pendingContext]),
+            }),
+          }),
+          observedAt: checkCompletedAt,
+        }),
+      );
+      const config = await createTestConfig({
+        explicitIncludes: [],
+        retentionDays: 180,
+        aiEnabled: true,
+      });
+      const harness = createCollectionHarness({
+        repositories: [fixture],
+        config,
+        executeCodexAnalysis: (input) => {
+          const checkSource = input.sources.find((source) => source.kind === "check_run");
+          if (checkSource == null) {
+            throw new TypeError("決定論的Codex fixtureのcheck sourceがありません");
+          }
+          return Promise.resolve(
+            createCodexOutput(input, {
+              status: "waiting_for_author",
+              waitingOn: {
+                candidateId: input.item.authorCandidateId,
+                kind: "user",
+                role: "author",
+                sourceId: checkSource.id,
+              },
+              latestMeaningfulSourceId: null,
+              confidence: 0.95,
+              relationVerdict: "related",
+              notification: {
+                recommended: false,
+                reasonCode: "none",
+                reasonSummary: "通知しません",
+              },
+            }),
+          );
+        },
+      });
+
+      const result = await harness.runDry(startedAt);
+      const input = harness.codexInputs[0];
+      const trackedItem = requireDryRunSnapshot(harness.artifacts).items.find(
+        (candidate) => candidate.nodeId === item.nodeId,
+      );
+      if (input == null || trackedItem == null) {
+        throw new TypeError("決定論的Codex fixtureの結果がありません");
+      }
+      expect(result.exitCode).toBe(0);
+      return Object.freeze({ input, item: trackedItem });
+    };
+
+    const first = await runAt(SECOND_RUN_AT);
+    const second = await runAt(THIRD_RUN_AT);
+    const sourceTimes = (input: CodexAnalysisInput): Readonly<Record<string, string>> =>
+      Object.freeze(
+        Object.fromEntries(
+          input.sources
+            .filter(
+              (source) => source.kind === "required_check_rollup" || source.kind === "check_run",
+            )
+            .map((source) => {
+              if (source.kind !== "check_run") {
+                return [source.kind, source.createdAt];
+              }
+              const status = source["status"];
+              if (typeof status !== "string") {
+                throw new TypeError("check run sourceのstatusが文字列ではありません");
+              }
+              return [`check_run_${status}`, source.createdAt];
+            }),
+        ),
+      );
+    const transitionTimes = (item: StateSnapshot["items"][number]) =>
+      Object.freeze({
+        statusSince: item.statusSince,
+        ownerSince: item.ownerSince,
+        stallSince: item.stallSince,
+      });
+    const pendingCheckTime = (input: CodexAnalysisInput): string | undefined =>
+      input.sources.find(
+        (source) => source.kind === "check_run" && source["status"] === "in_progress",
+      )?.createdAt;
+
+    expect(first.input.now).toBe(SECOND_RUN_AT);
+    expect(second.input.now).toBe(THIRD_RUN_AT);
+    expect(sourceTimes(first.input)).toEqual({
+      required_check_rollup: checkCompletedAt,
+      check_run_completed: checkCompletedAt,
+      check_run_in_progress: headPushedAt,
+    });
+    expect(sourceTimes(second.input)).toEqual(sourceTimes(first.input));
+    expect(pendingCheckTime(first.input)).toBe(headPushedAt);
+    expect(pendingCheckTime(second.input)).toBe(headPushedAt);
+    expect(transitionTimes(first.item)).toEqual({
+      statusSince: checkCompletedAt,
+      ownerSince: checkCompletedAt,
+      stallSince: checkCompletedAt,
+    });
+    expect(transitionTimes(second.item)).toEqual(transitionTimes(first.item));
+  });
+
   it("primary blockerと全blockerと外部ghostをstateと公開DTOへ運ぶ", async () => {
     const repository = createRepository("R_blockers", "blockers", FIRST_RUN_AT);
     const publicRepository = requirePublicRepository(repository);
@@ -4493,6 +4655,170 @@ describe("本番判定入力の接続", () => {
     );
   });
 
+  it("複数blockerのcloseとmergeとedge消失による依存解消時刻をrun開始時刻に依存させない", async () => {
+    const issueClosedAt = createUtcIsoDateTime("2026-08-02T08:00:00.000Z");
+    const pullRequestMergedAt = createUtcIsoDateTime("2026-08-02T16:00:00.000Z");
+    const resolutionObservedAt = createUtcIsoDateTime("2026-08-03T00:00:00.000Z");
+    const runResolutionAt = async (
+      startedAt: string,
+    ): Promise<
+      Readonly<{
+        lastProgressAt: UtcIsoDateTime;
+        stallSince: UtcIsoDateTime;
+      }>
+    > => {
+      const repository = createRepository(
+        "R_deterministic_dependency",
+        "deterministic-dependency",
+        FIRST_RUN_AT,
+      );
+      const publicRepository = requirePublicRepository(repository);
+      const fixture = createRepositoryFixture(repository);
+      const firstObservedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+      const blocked = createIssueItem({
+        repository: publicRepository,
+        number: 1,
+        fingerprint: "deterministic-blocked",
+        updatedAt: firstObservedAt,
+        observedAt: firstObservedAt,
+        state: Object.freeze({ state: "open" }),
+      });
+      const issueBlocker = createIssueItem({
+        repository: publicRepository,
+        number: 2,
+        fingerprint: "deterministic-issue-blocker-open",
+        updatedAt: firstObservedAt,
+        observedAt: firstObservedAt,
+        state: Object.freeze({ state: "open" }),
+      });
+      const pullRequestBlocker = createPullRequestItem({
+        repository: publicRepository,
+        number: 3,
+        fingerprint: "deterministic-pr-blocker-open",
+        updatedAt: firstObservedAt,
+        observedAt: firstObservedAt,
+      });
+      const edgeBlocker = createIssueItem({
+        repository: publicRepository,
+        number: 4,
+        fingerprint: "deterministic-edge-blocker",
+        updatedAt: firstObservedAt,
+        observedAt: firstObservedAt,
+        state: Object.freeze({ state: "open" }),
+      });
+      fixture.openItems = [blocked, issueBlocker, pullRequestBlocker, edgeBlocker];
+      setIssueDetails(fixture, [blocked, issueBlocker, edgeBlocker], firstObservedAt);
+      fixture.details.set(
+        pullRequestBlocker.nodeId,
+        createFailedCheckPullRequestDetail(pullRequestBlocker, firstObservedAt),
+      );
+      fixture.details.set(
+        blocked.nodeId,
+        createIssueDetail({
+          item: blocked,
+          body: "IssueとPull Requestの完了を待ちます",
+          observedAt: firstObservedAt,
+          nativeDependencies: Object.freeze([
+            createNativeBlocker(blocked, issueBlocker),
+            createNativeBlocker(blocked, pullRequestBlocker),
+            createNativeBlocker(blocked, edgeBlocker),
+          ]),
+          duplicateComments: false,
+        }),
+      );
+      const config = await createTestConfig({
+        explicitIncludes: [],
+        retentionDays: 180,
+        aiEnabled: false,
+      });
+      const harness = createCollectionHarness({ repositories: [fixture], config });
+      expect((await harness.runDaily(FIRST_RUN_AT)).exitCode).toBe(0);
+
+      const currentBlocked = createIssueItem({
+        repository: publicRepository,
+        number: 1,
+        fingerprint: "deterministic-blocked",
+        updatedAt: firstObservedAt,
+        observedAt: resolutionObservedAt,
+        state: Object.freeze({ state: "open" }),
+      });
+      const closedIssueBlocker = createIssueItem({
+        repository: publicRepository,
+        number: 2,
+        fingerprint: "deterministic-issue-blocker-closed",
+        updatedAt: issueClosedAt,
+        observedAt: resolutionObservedAt,
+        state: Object.freeze({
+          state: "closed",
+          closedAt: issueClosedAt,
+        }),
+      });
+      const mergedPullRequestBlocker = createMergedPullRequestItem({
+        repository: publicRepository,
+        number: 3,
+        fingerprint: "deterministic-pr-blocker-merged",
+        mergedAt: pullRequestMergedAt,
+        observedAt: resolutionObservedAt,
+      });
+      const currentEdgeBlocker = createIssueItem({
+        repository: publicRepository,
+        number: 4,
+        fingerprint: "deterministic-edge-blocker",
+        updatedAt: firstObservedAt,
+        observedAt: resolutionObservedAt,
+        state: Object.freeze({ state: "open" }),
+      });
+      fixture.openItems = [currentBlocked, currentEdgeBlocker];
+      fixture.individualItems.set(closedIssueBlocker.nodeId, closedIssueBlocker);
+      fixture.individualItems.set(mergedPullRequestBlocker.nodeId, mergedPullRequestBlocker);
+      setIssueDetails(
+        fixture,
+        [currentBlocked, closedIssueBlocker, currentEdgeBlocker],
+        resolutionObservedAt,
+      );
+      fixture.details.set(
+        mergedPullRequestBlocker.nodeId,
+        createFailedCheckPullRequestDetail(mergedPullRequestBlocker, resolutionObservedAt),
+      );
+      fixture.details.set(
+        currentBlocked.nodeId,
+        createIssueDetail({
+          item: currentBlocked,
+          body: "IssueとPull Requestの完了を待ちます",
+          observedAt: resolutionObservedAt,
+          nativeDependencies: Object.freeze([
+            createNativeBlocker(currentBlocked, closedIssueBlocker),
+            createNativeBlocker(currentBlocked, mergedPullRequestBlocker),
+          ]),
+          duplicateComments: false,
+        }),
+      );
+      harness.artifacts.length = 0;
+
+      const result = await harness.runDry(startedAt);
+      const resolvedItem = requireDryRunSnapshot(harness.artifacts).items.find(
+        (item) => item.nodeId === blocked.nodeId,
+      );
+      if (resolvedItem == null) {
+        throw new TypeError("決定論的依存解消fixtureの追跡項目がありません");
+      }
+      expect(result.exitCode).toBe(0);
+      return Object.freeze({
+        lastProgressAt: resolvedItem.lastProgressAt,
+        stallSince: resolvedItem.stallSince,
+      });
+    };
+
+    const first = await runResolutionAt(THIRD_RUN_AT);
+    const second = await runResolutionAt(FOURTH_RUN_AT);
+
+    expect(first).toEqual({
+      lastProgressAt: pullRequestMergedAt,
+      stallSince: pullRequestMergedAt,
+    });
+    expect(second).toEqual(first);
+  });
+
   it("inferred edge解消時に本文未変更の隣接項目を再分類する", async () => {
     const repository = createRepository("R_reclassify", "reclassify", FIRST_RUN_AT);
     const publicRepository = requirePublicRepository(repository);
@@ -4670,7 +4996,7 @@ describe("本番判定入力の接続", () => {
       (input) => input.item.nodeId === blocked.nodeId,
     );
     expect(reclassified?.status).not.toBe("blocked");
-    expect(reclassified?.lastProgressAt).toBe(THIRD_RUN_AT);
+    expect(reclassified?.lastProgressAt).toBe(blocked.createdAt);
     expect(thirdSnapshot.relations).toContainEqual(
       expect.objectContaining({
         fromNodeId: blocker.nodeId,

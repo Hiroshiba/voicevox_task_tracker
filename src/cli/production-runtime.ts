@@ -45,6 +45,7 @@ import {
   ISSUE_DETERMINISTIC_RULES_VERSION,
   parseSourceId,
   PULL_REQUEST_DETERMINISTIC_RULES_VERSION,
+  resolvePullRequestCommitOccurredAt,
   resolveTrackingStartAt,
   resolveRepositoryTeams,
   selectTrackingItems,
@@ -116,6 +117,7 @@ import {
   type FreshObservedGitHubItem,
   type GitHubAppCredentials,
   type GitHubClient,
+  type GitHubCheckContext,
   type GitHubItemDetail,
   type GitHubItemDetailEventWindow,
   type PublicRepository,
@@ -1688,6 +1690,73 @@ function relationAssessmentOwnerNodeId(candidate: RelationCandidate): GraphNodeI
   }
 }
 
+function latestUtcIsoDateTime(values: readonly UtcIsoDateTime[], context: string): UtcIsoDateTime {
+  const firstValue = values[0];
+  assertNonNullable(firstValue, `${context}の時刻がありません`);
+  return values.slice(1).reduce((latest, value) => (latest < value ? value : latest), firstValue);
+}
+
+function addCodexSourceOccurredAt(
+  sourceOccurredAtById: Map<SourceId, UtcIsoDateTime>,
+  sourceId: SourceId,
+  occurredAt: UtcIsoDateTime,
+): void {
+  const existingOccurredAt = sourceOccurredAtById.get(sourceId);
+  if (existingOccurredAt != null && existingOccurredAt !== occurredAt) {
+    throw new TypeError(`同じCodex source IDに異なる発生時刻があります。対象: ${sourceId}`);
+  }
+  sourceOccurredAtById.set(sourceId, occurredAt);
+}
+
+function checkContextOccurredAt(
+  headOccurredAt: UtcIsoDateTime,
+  context: GitHubCheckContext,
+): UtcIsoDateTime {
+  if (context.type === "commit_status") {
+    return context.createdAt;
+  }
+  return context.completedAt ?? headOccurredAt;
+}
+
+function createCodexSourceOccurredAtById(
+  item: FreshObservedGitHubItem,
+  detail: GitHubItemDetail,
+): ReadonlyMap<SourceId, UtcIsoDateTime> {
+  const sourceOccurredAtById = new Map(createRelationSourceOccurredAtById([item]));
+  addCodexSourceOccurredAt(sourceOccurredAtById, item.sourceId, item.createdAt);
+  addCodexSourceOccurredAt(sourceOccurredAtById, detail.bodySourceId, item.createdAt);
+  for (const comment of detail.comments) {
+    addCodexSourceOccurredAt(sourceOccurredAtById, comment.sourceId, comment.createdAt);
+  }
+  if (detail.type !== "pull_request" || detail.mergeState.checks.status !== "configured") {
+    return sourceOccurredAtById;
+  }
+  const headOccurredAt = resolvePullRequestCommitOccurredAt(detail.headCommit, item.createdAt);
+  const checkOccurredAts = detail.mergeState.checks.contexts.map((context) => {
+    const occurredAt = checkContextOccurredAt(headOccurredAt, context);
+    addCodexSourceOccurredAt(sourceOccurredAtById, context.sourceId, occurredAt);
+    return occurredAt;
+  });
+  addCodexSourceOccurredAt(
+    sourceOccurredAtById,
+    detail.mergeState.checks.sourceId,
+    latestUtcIsoDateTime(
+      [headOccurredAt, ...checkOccurredAts],
+      `check rollup ${detail.mergeState.checks.sourceId}`,
+    ),
+  );
+  return sourceOccurredAtById;
+}
+
+function requireCodexSourceOccurredAt(
+  sourceOccurredAtById: ReadonlyMap<SourceId, UtcIsoDateTime>,
+  sourceId: SourceId,
+): UtcIsoDateTime {
+  const occurredAt = sourceOccurredAtById.get(sourceId);
+  assertNonNullable(occurredAt, `Codex sourceの発生時刻がありません。対象: ${sourceId}`);
+  return occurredAt;
+}
+
 function createCodexInput(
   invocation: DailyRunInvocation,
   analysis: DeterministicItemAnalysis,
@@ -1721,6 +1790,7 @@ function createCodexInput(
   for (const candidate of mentionedCandidates) {
     waitingOnCandidates.set(candidate.id, candidate);
   }
+  const sourceOccurredAtById = createCodexSourceOccurredAtById(analysis.item, analysis.detail);
   const sourceRecords = new Map<string, unknown>();
   sourceRecords.set(
     analysis.item.sourceId,
@@ -1776,7 +1846,7 @@ function createCodexInput(
         id: checks.sourceId,
         kind: "required_check_rollup",
         actorType: "system",
-        createdAt: analysis.item.observedAt,
+        createdAt: requireCodexSourceOccurredAt(sourceOccurredAtById, checks.sourceId),
         combinedState: checks.combinedState,
       }),
     );
@@ -1787,8 +1857,7 @@ function createCodexInput(
           id: context.sourceId,
           kind: context.type,
           actorType: "system",
-          createdAt:
-            context.type === "commit_status" ? context.createdAt : analysis.item.observedAt,
+          createdAt: requireCodexSourceOccurredAt(sourceOccurredAtById, context.sourceId),
           ...(context.type === "check_run"
             ? {
                 name: context.name,
@@ -2482,25 +2551,204 @@ function reassessDeterministicAnalysis(
   throw new TypeError(`GitHub項目と詳細の種別が一致しません。対象: ${analysis.item.nodeId}`);
 }
 
-function dependencyResolutions(
-  invocation: DailyRunInvocation,
+function enumeratedTerminalAt(item: EnumeratedGitHubItem | undefined): UtcIsoDateTime | undefined {
+  if (item == null) {
+    return undefined;
+  }
+  if (item.type === "pull_request" && item.mergeStatus === "merged") {
+    return item.mergedAt;
+  }
+  return item.state === "closed" ? item.closedAt : undefined;
+}
+
+function previousBlockerEdges(
   state: RuntimeState,
-  graph: GraphResult | undefined,
   nodeId: GitHubNodeId,
+): ReadonlyMap<GraphNodeId, readonly (Relation & Readonly<{ active: true }>)[]> {
+  const snapshot = previousSnapshot(state);
+  assertNonNullable(snapshot, `newly unblocked項目 ${nodeId}の前回snapshotがありません`);
+  const previousStateByNodeId = new Map<GraphNodeId, TrackedItem["state"]>([
+    ...snapshot.items.map((item) => [item.nodeId, item.state] as const),
+    ...snapshot.externalReferences.map((item) => [item.nodeId, item.state] as const),
+  ]);
+  const edgesByBlockerNodeId = new Map<GraphNodeId, (Relation & Readonly<{ active: true }>)[]>();
+  for (const edge of snapshot.relations) {
+    if (
+      !edge.active ||
+      edge.type !== "blocks" ||
+      edge.toNodeId !== nodeId ||
+      previousStateByNodeId.get(edge.fromNodeId) !== "open"
+    ) {
+      continue;
+    }
+    const edges = edgesByBlockerNodeId.get(edge.fromNodeId);
+    if (edges == null) {
+      edgesByBlockerNodeId.set(edge.fromNodeId, [edge]);
+    } else {
+      edges.push(edge);
+    }
+  }
+  return edgesByBlockerNodeId;
+}
+
+function relationRemovalEventOccurredAts(
+  collection: CollectedItems,
+  edge: Relation,
+): readonly UtcIsoDateTime[] {
+  const latestEvent = collection.observedItems
+    .flatMap((item) => item.events)
+    .filter(
+      (event) =>
+        event.kind === "relation" &&
+        event.target.type === "node" &&
+        event.relationType === edge.type &&
+        event.provenance === edge.provenance &&
+        event.occurredAt >= edge.firstSeenAt &&
+        (event.direction === "from_item"
+          ? event.itemNodeId === edge.fromNodeId && event.target.nodeId === edge.toNodeId
+          : event.itemNodeId === edge.toNodeId && event.target.nodeId === edge.fromNodeId),
+    )
+    .sort((left, right) => {
+      if (left.occurredAt !== right.occurredAt) {
+        return left.occurredAt.localeCompare(right.occurredAt);
+      }
+      return left.sourceId.localeCompare(right.sourceId);
+    })
+    .at(-1);
+  return Object.freeze(
+    latestEvent?.kind === "relation" && latestEvent.action === "removed"
+      ? [latestEvent.occurredAt]
+      : [],
+  );
+}
+
+function editedRelationSourceOccurredAts(
+  collection: CollectedItems,
+  edge: Relation,
+): readonly UtcIsoDateTime[] {
+  const evidenceSourceIds = new Set(edge.evidence.map((evidence) => evidence.sourceId));
+  return Object.freeze(
+    collection.details.flatMap((detail) =>
+      detail.comments.flatMap((comment) =>
+        evidenceSourceIds.has(comment.sourceId) && comment.updatedAt !== comment.createdAt
+          ? [comment.updatedAt]
+          : [],
+      ),
+    ),
+  );
+}
+
+function createDependencySourceOccurredAtById(
+  collection: CollectedItems,
+): ReadonlyMap<SourceId, UtcIsoDateTime> {
+  const sourceOccurredAtById = new Map<SourceId, UtcIsoDateTime>();
+  for (const item of collection.observedItems) {
+    const detail = collection.details.find((candidate) => candidate.nodeId === item.nodeId);
+    assertNonNullable(detail, `依存解消sourceの詳細がありません。対象: ${item.nodeId}`);
+    for (const [sourceId, occurredAt] of createCodexSourceOccurredAtById(item, detail)) {
+      const existingOccurredAt = sourceOccurredAtById.get(sourceId);
+      if (existingOccurredAt == null || existingOccurredAt < occurredAt) {
+        sourceOccurredAtById.set(sourceId, occurredAt);
+      }
+    }
+  }
+  return sourceOccurredAtById;
+}
+
+function resolvedSourceOccurredAts(
+  sourceIds: readonly SourceId[],
+  sourceOccurredAtById: ReadonlyMap<SourceId, UtcIsoDateTime>,
+): readonly UtcIsoDateTime[] {
+  return Object.freeze(
+    [...new Set(sourceIds)].flatMap((sourceId) => {
+      const occurredAt = sourceOccurredAtById.get(sourceId);
+      return occurredAt == null ? [] : [occurredAt];
+    }),
+  );
+}
+
+function relationResolutionOccurredAt(
+  collection: CollectedItems,
+  graph: GraphResult,
+  relationAssessments: readonly RelationCandidateAssessment[],
+  sourceOccurredAtById: ReadonlyMap<SourceId, UtcIsoDateTime>,
+  edge: Relation & Readonly<{ active: true }>,
+): UtcIsoDateTime {
+  const removalEventOccurredAts = relationRemovalEventOccurredAts(collection, edge);
+  if (removalEventOccurredAts.length > 0) {
+    return latestUtcIsoDateTime(removalEventOccurredAts, `relation ${edge.id}の削除イベント`);
+  }
+  const currentCandidate = collection.relationCandidates.find(
+    (candidate) => candidate.id === edge.id,
+  );
+  if (currentCandidate == null) {
+    const editedSourceOccurredAts = editedRelationSourceOccurredAts(collection, edge);
+    return editedSourceOccurredAts.length === 0
+      ? edge.firstSeenAt
+      : latestUtcIsoDateTime(editedSourceOccurredAts, `relation ${edge.id}の根拠編集`);
+  }
+  const currentEdge = graph.edges.find((candidate) => candidate.id === edge.id);
+  const currentEdgeOccurredAts = resolvedSourceOccurredAts(
+    currentEdge?.evidence.map((evidence) => evidence.sourceId) ?? [],
+    sourceOccurredAtById,
+  );
+  const assessment = relationAssessments.find((candidate) => candidate.candidateId === edge.id);
+  const assessmentOccurredAts = resolvedSourceOccurredAts(
+    assessment?.sourceIds ?? [],
+    sourceOccurredAtById,
+  );
+  const occurredAts = [...currentEdgeOccurredAts, ...assessmentOccurredAts];
+  return occurredAts.length === 0
+    ? edge.firstSeenAt
+    : latestUtcIsoDateTime(occurredAts, `relation ${edge.id}の再判定根拠`);
+}
+
+function dependencyResolutions(
+  state: RuntimeState,
+  collection: CollectedItems,
+  graph: GraphResult | undefined,
+  relationAssessments: readonly RelationCandidateAssessment[],
+  analysis: DeterministicItemAnalysis,
 ): readonly DependencyResolutionProgress[] {
-  if (graph?.analysis.newlyUnblockedNodeIds.includes(nodeId) !== true) {
+  if (graph?.analysis.newlyUnblockedNodeIds.includes(analysis.item.nodeId) !== true) {
     return Object.freeze([]);
   }
-  const sourceIds = [...(previousSnapshot(state)?.relations ?? []), ...graph.edges]
-    .filter((edge) => edge.type === "blocks" && edge.toNodeId === nodeId)
-    .flatMap((edge) => edge.evidence.map((evidence) => evidence.sourceId));
-  if (sourceIds.length === 0) {
-    throw new TypeError(`newly unblocked項目 ${nodeId}の依存解消根拠がありません`);
+  const edgesByBlockerNodeId = previousBlockerEdges(state, analysis.item.nodeId);
+  if (edgesByBlockerNodeId.size === 0) {
+    throw new TypeError(`newly unblocked項目 ${analysis.item.nodeId}の前回blockerがありません`);
   }
+  const enumeratedItemsByNodeId = new Map<GraphNodeId, EnumeratedGitHubItem>(
+    collection.enumeratedItems.map((item) => [item.nodeId, item]),
+  );
+  const sourceOccurredAtById = createDependencySourceOccurredAtById(collection);
+  const blockerResolutionOccurredAts = [...edgesByBlockerNodeId].map(([blockerNodeId, edges]) => {
+    const terminalAt = enumeratedTerminalAt(enumeratedItemsByNodeId.get(blockerNodeId));
+    if (terminalAt != null) {
+      return terminalAt;
+    }
+    return latestUtcIsoDateTime(
+      edges.map((edge) =>
+        relationResolutionOccurredAt(
+          collection,
+          graph,
+          relationAssessments,
+          sourceOccurredAtById,
+          edge,
+        ),
+      ),
+      `blocker ${blockerNodeId}の関係解消`,
+    );
+  });
+  const sourceIds = [...edgesByBlockerNodeId.values()]
+    .flat()
+    .flatMap((edge) => edge.evidence.map((evidence) => evidence.sourceId));
   return Object.freeze([
     Object.freeze({
-      occurredAt: invocation.startedAt,
-      sourceIds: nonEmptySourceIds(sourceIds, `newly unblocked項目 ${nodeId}`),
+      occurredAt: latestUtcIsoDateTime(
+        [analysis.item.createdAt, ...blockerResolutionOccurredAts],
+        `newly unblocked項目 ${analysis.item.nodeId}`,
+      ),
+      sourceIds: nonEmptySourceIds(sourceIds, `newly unblocked項目 ${analysis.item.nodeId}`),
     }),
   ]);
 }
@@ -2525,7 +2773,6 @@ function primaryWaitingOnForDecision(
 }
 
 function transitionBasisForDecision(
-  invocation: DailyRunInvocation,
   analysis: DeterministicItemAnalysis,
   decision: ReducedCodexDecision,
 ): Readonly<{
@@ -2538,10 +2785,28 @@ function transitionBasisForDecision(
       responsibilityBasis: analysis.decision.responsibilityBasis,
     });
   }
-  const sourceId = decision.evidence[0]?.sourceId ?? analysis.item.sourceId;
+  const sourceIds = [
+    ...decision.evidence.map((evidence) => evidence.sourceId),
+    ...decision.waitingOn.flatMap((waitingOn) => waitingOn.sourceIds),
+  ];
+  const sourceOccurredAtById = createCodexSourceOccurredAtById(analysis.item, analysis.detail);
+  const resolvedOccurredAts = [...new Set(sourceIds)].flatMap((sourceId) => {
+    const occurredAt = sourceOccurredAtById.get(sourceId);
+    return occurredAt == null ? [] : [occurredAt];
+  });
+  const basisSourceIds =
+    sourceIds.length === 0
+      ? Object.freeze([analysis.item.sourceId] satisfies [SourceId])
+      : nonEmptySourceIds(sourceIds, `Codex判定 ${analysis.item.nodeId}`);
   const basis = Object.freeze({
-    sourceIds: Object.freeze([sourceId] satisfies [SourceId]),
-    occurredAt: invocation.startedAt,
+    sourceIds: basisSourceIds,
+    occurredAt:
+      resolvedOccurredAts.length === 0
+        ? analysis.item.createdAt
+        : latestUtcIsoDateTime(
+            [analysis.item.createdAt, ...resolvedOccurredAts],
+            `Codex判定 ${analysis.item.nodeId}`,
+          ),
     precision: "inferred",
   });
   return Object.freeze({
@@ -2862,7 +3127,7 @@ function reduceAnalysisPass(
       runStatus = "fallback";
     }
     relationAssessments.push(...(reduction?.relationAssessments ?? []));
-    const basis = transitionBasisForDecision(invocation, analysis, decision);
+    const basis = transitionBasisForDecision(analysis, decision);
     const repository = findRepository(inventory, analysis.item.repositoryId);
     const staleness = calculateStaleness({
       createdAt: analysis.item.createdAt,
@@ -2876,7 +3141,13 @@ function reduceAnalysisPass(
       },
       previousState: previousStalenessState(state, analysis.item.nodeId),
       events: analysis.item.events,
-      dependencyResolutions: dependencyResolutions(invocation, state, graph, analysis.item.nodeId),
+      dependencyResolutions: dependencyResolutions(
+        state,
+        collection,
+        graph,
+        reduction?.relationAssessments ?? [],
+        analysis,
+      ),
       naturalLanguageAssessments: naturalLanguageProgressAssessments(analysis, output),
       minimumAiConfidence: configuration.config.ai.confidence.medium,
       repositoryFullName: repositoryFullName(repository),
