@@ -688,6 +688,28 @@ describe("state履歴の入力イベント", () => {
     expect(reverse).toEqual(forward);
   });
 
+  it("Pull Request固有イベントの6種を受理する", () => {
+    const kinds = Object.freeze([
+      "ready_for_review",
+      "converted_to_draft",
+      "added_to_merge_queue",
+      "removed_from_merge_queue",
+      "auto_merge_enabled",
+      "auto_merge_disabled",
+    ] satisfies readonly StateHistoryInputEvent["kind"][]);
+    const events = kinds.map((kind) =>
+      Object.freeze({
+        ...createHistoryInputEvent("I_PULL_REQUEST", `github_timeline_event:${kind}`),
+        kind,
+      } satisfies StateHistoryInputEvent),
+    );
+
+    const normalized = createStateHistoryInputEvents(events);
+
+    expect(normalized).toHaveLength(6);
+    expect(new Set(normalized.map((event) => event.kind))).toEqual(new Set(kinds));
+  });
+
   it("同じ項目のsource ID重複を拒否する", () => {
     const event = createHistoryInputEvent(
       "I_DUPLICATE",

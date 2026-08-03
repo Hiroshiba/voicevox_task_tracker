@@ -46,6 +46,19 @@ const thresholdsHours = Object.freeze({
 } satisfies SeverityThresholds);
 const noLabelEffects = createLabelEffectsResolver([]);
 
+type PullRequestLifecycleEvent = Extract<
+  NormalizedEvent,
+  {
+    kind:
+      | "ready_for_review"
+      | "converted_to_draft"
+      | "added_to_merge_queue"
+      | "removed_from_merge_queue"
+      | "auto_merge_enabled"
+      | "auto_merge_disabled";
+  }
+>;
+
 type DecisionOptions = Readonly<{
   status: Status;
   waitingOn: readonly WaitingOn[];
@@ -255,6 +268,37 @@ describe("停滞時間", () => {
     expect(result.lastHumanActivityAt).toBe(CREATED_AT);
     expect(result.naturalLanguageProgressCandidates).toEqual([]);
     expect(result.elapsedHours.stall).toBe(72);
+  });
+
+  it("Pull Request固有イベントを進捗とhuman活動へ反映しない", () => {
+    const input = createBaseInput();
+    const kinds = Object.freeze([
+      "ready_for_review",
+      "converted_to_draft",
+      "added_to_merge_queue",
+      "removed_from_merge_queue",
+      "auto_merge_enabled",
+      "auto_merge_disabled",
+    ] satisfies readonly PullRequestLifecycleEvent["kind"][]);
+    const events = kinds.map((kind, index) =>
+      Object.freeze({
+        kind,
+        sourceId: buildSourceId("pull_request_lifecycle", kind),
+        itemNodeId: ITEM_NODE_ID,
+        occurredAt: addHours(CREATED_AT, index + 1),
+        actor: human,
+      } satisfies PullRequestLifecycleEvent),
+    );
+
+    const result = calculateStaleness({
+      ...input,
+      events,
+    });
+
+    expect(result.stallSince).toBe(CREATED_AT);
+    expect(result.lastProgressAt).toBe(CREATED_AT);
+    expect(result.lastHumanActivityAt).toBe(CREATED_AT);
+    expect(result.meaningfulProgress).toEqual([]);
   });
 
   it("maintainerからreviewerへの責務移動をreview request時刻へ反映する", () => {

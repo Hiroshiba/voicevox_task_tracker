@@ -44,6 +44,21 @@ const repository = {
 } satisfies Repository;
 const publicRepositoryId = createPublicRepositoryAllowlist([repository]).require(repositoryId).id;
 
+type PullRequestLifecycleEventKind =
+  | "ready_for_review"
+  | "converted_to_draft"
+  | "added_to_merge_queue"
+  | "removed_from_merge_queue"
+  | "auto_merge_enabled"
+  | "auto_merge_disabled";
+
+type PullRequestLifecycleEvent = GitHubTimelineEvent &
+  Readonly<{
+    kind: PullRequestLifecycleEventKind;
+    occurredAt: UtcIsoDateTime;
+    actor: GitHubDetailActor;
+  }>;
+
 function createAccountActor(
   nodeIdValue: string,
   login: string,
@@ -195,6 +210,22 @@ function createTimeline(): readonly GitHubTimelineEvent[] {
       },
     },
   ];
+}
+
+function createPullRequestLifecycleEvent(
+  kind: PullRequestLifecycleEventKind,
+  sequence: number,
+  eventOccurredAt: UtcIsoDateTime,
+): PullRequestLifecycleEvent {
+  const nodeId = createGitHubNodeId(`E_${kind}`);
+  return Object.freeze({
+    sourceId: buildSourceId("github_timeline_event", nodeId),
+    nodeId,
+    sequence,
+    occurredAt: eventOccurredAt,
+    actor: createAccountActor("U_lifecycle", "lifecycle-author", "User"),
+    kind,
+  });
 }
 
 function createDetail(): Extract<GitHubItemDetail, { type: "pull_request" }> {
@@ -445,6 +476,67 @@ describe("GitHubイベント正規化", () => {
           occurredAt: pushedAt,
         }),
       ]),
+    );
+  });
+
+  it("Pull Request固有の6種のtimelineイベントを発生時刻付きで保持する", () => {
+    const timeline = Object.freeze([
+      createPullRequestLifecycleEvent(
+        "converted_to_draft",
+        0,
+        createUtcIsoDateTime("2026-07-25T01:00:00Z"),
+      ),
+      createPullRequestLifecycleEvent(
+        "ready_for_review",
+        1,
+        createUtcIsoDateTime("2026-07-25T02:00:00Z"),
+      ),
+      createPullRequestLifecycleEvent(
+        "added_to_merge_queue",
+        2,
+        createUtcIsoDateTime("2026-07-25T03:00:00Z"),
+      ),
+      createPullRequestLifecycleEvent(
+        "removed_from_merge_queue",
+        3,
+        createUtcIsoDateTime("2026-07-25T04:00:00Z"),
+      ),
+      createPullRequestLifecycleEvent(
+        "auto_merge_enabled",
+        4,
+        createUtcIsoDateTime("2026-07-25T05:00:00Z"),
+      ),
+      createPullRequestLifecycleEvent(
+        "auto_merge_disabled",
+        5,
+        createUtcIsoDateTime("2026-07-25T06:00:00Z"),
+      ),
+    ] satisfies readonly PullRequestLifecycleEvent[]);
+    const item = createItem("VOICEVOX/example#1", "https://github.com/VOICEVOX/example/pull/1");
+    const detail = {
+      ...createDetail(),
+      timeline,
+    } satisfies Extract<GitHubItemDetail, { type: "pull_request" }>;
+
+    const events = normalizeGitHubEvents({
+      item,
+      detail,
+      isBot,
+    });
+    const lifecycleSourceIds = new Set(timeline.map((event) => event.sourceId));
+
+    expect(events.filter((event) => lifecycleSourceIds.has(event.sourceId))).toEqual(
+      timeline.map((event) => ({
+        kind: event.kind,
+        sourceId: event.sourceId,
+        itemNodeId: detail.nodeId,
+        occurredAt: event.occurredAt,
+        actor: {
+          type: "human",
+          nodeId: "U_lifecycle",
+          login: "lifecycle-author",
+        },
+      })),
     );
   });
 

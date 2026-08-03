@@ -460,7 +460,15 @@ function normalizeTimelineEvent(
     case "removed_from_merge_queue":
     case "auto_merge_enabled":
     case "auto_merge_disabled":
-      return Object.freeze([]);
+      return Object.freeze([
+        Object.freeze({
+          kind: event.kind,
+          sourceId: event.sourceId,
+          itemNodeId: detail.nodeId,
+          occurredAt: event.occurredAt,
+          actor: normalizeGitHubActor(event.actor, isBot),
+        }),
+      ]);
     default:
       throw new UnreachableError(event);
   }
