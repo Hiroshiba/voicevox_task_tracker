@@ -27,23 +27,24 @@ Actionsでは収集reportとworkflow全体のreportを、run IDと試行番号�
 
 run reportの主な確認項目は次のとおりです。
 
-| field                       | 意味                                                                          |
-| --------------------------- | ----------------------------------------------------------------------------- |
-| `status`                    | `success`は完全成功、`fallback`はCodex縮退を含む完全run、`failure`は不完全run |
-| `complete`                  | stateと公開処理へ進める完全性を満たしたか                                     |
-| `failedStage`               | failureが起きた処理段階                                                       |
-| `diagnostics`               | secretや信頼できない本文を含まない診断                                        |
-| `repositoryCount`           | 公開allowlistに入ったrepository数                                             |
-| `itemCount`                 | 追跡項目数                                                                    |
-| `changedItemCount`          | 前回から更新された追跡項目数                                                  |
-| `activeEdgeCount`           | 有効な関係edge数                                                              |
-| `aiCallCount`               | Codexを実行した件数                                                           |
-| `aiCacheHitCount`           | AI cacheを再利用した件数                                                      |
-| `estimatedInputTokens`      | Codex入力tokenの見積り                                                        |
-| `githubApiRemaining`        | 最後に観測したGitHub API残量                                                  |
-| `notificationCount`         | 送信結果をledgerへ記録した通知数                                              |
-| `scheduleDelayMilliseconds` | 予定起動時刻からCLI開始までの遅延                                             |
-| `durationMilliseconds`      | CLI開始からrun完了までの所要時間                                              |
+| field                               | 意味                                                                          |
+| ----------------------------------- | ----------------------------------------------------------------------------- |
+| `status`                            | `success`は完全成功、`fallback`はCodex縮退を含む完全run、`failure`は不完全run |
+| `complete`                          | stateと公開処理へ進める完全性を満たしたか                                     |
+| `failedStage`                       | failureが起きた処理段階                                                       |
+| `diagnostics`                       | secretや信頼できない本文を含まない診断                                        |
+| `metrics.repositoryCount`           | 公開allowlistに入ったrepository数                                             |
+| `metrics.itemCount`                 | 追跡項目数                                                                    |
+| `metrics.changedItemCount`          | 前回から更新された追跡項目数                                                  |
+| `metrics.activeEdgeCount`           | 有効な関係edge数                                                              |
+| `metrics.aiCallCount`               | Codexを実行した件数                                                           |
+| `metrics.aiCacheHitCount`           | AI cacheを再利用した件数                                                      |
+| `metrics.estimatedInputTokens`      | Codex入力tokenの見積り                                                        |
+| `metrics.githubApiRemaining`        | 最後に観測したGitHub API残量                                                  |
+| `metrics.staleRepositoryCount`      | 前回値を利用したrepository数                                                  |
+| `metrics.notificationCount`         | 送信結果をledgerへ記録した通知数                                              |
+| `metrics.scheduleDelayMilliseconds` | 予定起動時刻からCLI開始までの遅延                                             |
+| `metrics.durationMilliseconds`      | CLI開始からrun完了までの所要時間                                              |
 
 `tracker-state`は自動更新専用です。
 人間がsnapshot、履歴、AI cache、通知ledgerを直接編集すると履歴とcooldownの整合を壊すため、修正はGitHub上の正本か`config.yml`で行います。
@@ -155,7 +156,7 @@ repository globとlabel名の正規表現を一致させ、必要な効果を設
 | `countsAsProgress`           | そのlabel変更を意味のある進捗として扱う   |
 
 trackerはlabelを追加も変更もしません。
-label規則を変えた場合は`pnpm test`と`pnpm eval:golden`で通知差分を確認します。
+label規則を変えた場合は`pnpm test`とdry-runで通知候補の差分を確認します。
 
 ### review request
 
@@ -213,7 +214,7 @@ Renovateの`dependencyDashboardTitle`を変更した場合は同じtitleをこ�
 2. automation dashboardのtitleを`notifications.automationNoiseTitles`へ追加するか、対象labelへ`labels.rules.effects.suppressNotifications`を割り当てます。
 3. `staleness.thresholdsHours`と`recentProgressGraceHours`を増やします。
 4. `cooldownDays`を増やし、`maxItemsPerDigest`を減らします。
-5. AI推定が原因なら`ai.confidence.medium`を上げ、golden evalでrecallを確認します。
+5. AI推定が原因なら`ai.confidence.medium`を上げ、実モデルを呼び出すdry-runでAI判定と通知候補の差分を確認します。
 
 通知が少なすぎる場合は逆方向に調整します。
 
@@ -221,9 +222,12 @@ Renovateの`dependencyDashboardTitle`を変更した場合は同じtitleをこ�
 2. `staleness.thresholdsHours`と`recentProgressGraceHours`を減らします。
 3. `maxItemsPerDigest`を増やし、`cooldownDays`を減らします。
 4. 重要labelへ`priorityWeight`か`severityLift: 1`を設定します。
-5. AI予算不足なら`ai.budget`を増やし、費用とgolden evalを確認します。
+5. AI予算不足なら`ai.budget`を増やし、dry-runの`metrics.aiCallCount`、`metrics.estimatedInputTokens`、deferred項目、通知候補を確認します。
 
-閾値、confidence、label規則、model、reasoning effort、promptを変更する場合は、`pnpm test`と`pnpm eval:golden`を通してから反映します。
+閾値、confidence、label規則、AI予算を変更する場合は、`pnpm test`とdry-runを実行して通知候補の差分を確認します。
+schema、semantic validation、reducer、状態、graph、通知判定を変更する場合は`pnpm eval:golden`も実行します。
+golden evalはfixture内の固定AI出力を検証して期待結果と比較し、標準fixtureで`fixedAi.networkCallCount: 0`を要求します。
+実モデル、reasoning effort、promptの応答品質は評価しないため、これらを変更する場合は`metrics.aiCallCount`が1以上のdry-runでAI判定と通知候補の差分を確認します。
 mentionは通知量の調整に使わず、運用上必要なuserだけをallowlistへ追加します。
 
 ## 障害時の確認

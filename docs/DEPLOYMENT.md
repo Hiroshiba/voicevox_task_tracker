@@ -102,51 +102,26 @@ workflowの`deploy-pages` jobはrepositoryをcheckoutせず、`build-pages`が�
 
 ## config.yml
 
-現行の`config.yml`には実運用値が入っています。
-初回runより前に、設定済みのorganization、team slug、model ID、公開URL、secret名がデプロイ先と一致することを確認します。
-Zodのstrict schemaで未知のfieldも拒否するため、設定名は`config.yml`にあるものだけを使います。
+現行の`config.yml`には実運用値と全設定項目が入っています。
+設定の完全な一覧は`config.yml`を直接確認します。
+Zodのstrict schemaで未知のfieldも拒否するため、設定名を追加せず既存項目を変更します。
 
-| 設定                                                | 指定内容                                                      |
-| --------------------------------------------------- | ------------------------------------------------------------- |
-| `schemaVersion`                                     | 対応majorである`1`                                            |
-| `organization`                                      | 固定値`VOICEVOX`                                              |
-| `tracking.startAt`                                  | 追跡開始日時か`null`                                          |
-| `tracking.autoInclude`                              | 作成日時、活動、参照、native relationによる自動追加規則       |
-| `tracking.relationExpansion.maxItemsPerRun`         | 1 runで関係先として個別列挙する一意なnode IDの上限            |
-| `tracking.include`                                  | 常に追跡するIssueかPRのHTTPS URL、またはGitHub node ID        |
-| `tracking.retentionDaysAfterTerminal`               | terminal項目を保持する日数                                    |
-| `tracking.backfill.maxItemsPerRun`                  | 1回のbackfillで追加する上限                                   |
-| `teams.defaults`                                    | 既定のmaintainer teamとreviewer teamの実在slug                |
-| `teams.repositories`                                | `VOICEVOX/repository`ごとのteam上書き                         |
-| `actors.bots`                                       | botのlogin pattern、既知login、人間扱いする例外               |
-| `labels.rules`                                      | repository glob、label名の正規表現、判定と通知への効果        |
-| `staleness`                                         | 進捗猶予時間とwait class別のwatch、urgent、critical閾値       |
-| `ai.enabled`                                        | Codexを呼び出すかどうか                                       |
-| `ai.authentication`                                 | 既定は`auth-json`で、ローカル実行では`api-key`も選べる        |
-| `ai.model`                                          | 固定したCodex CLIと認証情報で利用できる設定済みmodel ID       |
-| `ai.confidence`                                     | highとmediumの境界                                            |
-| `ai.budget`                                         | call数、入力文字数、推定費用のrun上限                         |
-| `notifications.automationNoiseTitles`               | bot作成時にautomation noiseとみなすIssueまたはPRのtitle一覧   |
-| `notifications.discord.enabled`                     | Discord通知を送るかどうか                                     |
-| `notifications.discord.webhookSecretName`           | 通常通知用secretの環境変数名                                  |
-| `notifications.discord.operationsWebhookSecretName` | 障害通知用secretの環境変数名                                  |
-| `notifications.discord.mentions`                    | mentionの有効化とGitHub loginからDiscord user IDへのallowlist |
-| `notifications.discord.maxItemsPerDigest`           | 1回のdigestへ含める最大項目数                                 |
-| `notifications.discord.cooldownDays`                | urgentとcriticalの再通知間隔                                  |
-| `state`                                             | 固定branch、snapshot、履歴、cache、ledger、reportの保存先     |
-| `web`                                               | base path、画面名、locale、初期graph上限                      |
-| `operations.githubApiBudgetRatio`                   | 1 runで使ってよいGitHub API予算の比率                         |
-| `operations.retry`                                  | GitHubとDiscordの一時失敗に対するretry設定                    |
+デプロイ前に必ず確認する項目は次のとおりです。
 
-`tracking.relationExpansion.maxItemsPerRun`を増やすと、識別子指定の列挙とdetail取得によるGitHub API消費が増えます。
-変更時は`operations.githubApiBudgetRatio`とdry-runのAPI残量を合わせて確認します。
+| 設定                                                                                           | 確認内容                                                      |
+| ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `tracking.startAt`                                                                             | 追跡を開始する日時                                            |
+| `teams.defaults`と`teams.repositories`                                                         | Organizationに実在するmaintainerとreviewerのteam slug         |
+| `ai.authentication`と`ai.model`                                                                | Actionsへ登録した認証方式と利用可能なmodel ID                 |
+| `notifications.discord.enabled`                                                                | 初回の日次workflowからDiscord通知を実行する設定になっているか |
+| `notifications.discord.webhookSecretName`と`notifications.discord.operationsWebhookSecretName` | Actionsへ登録した2つのsecret名と一致するか                    |
+| `web.basePath`                                                                                 | GitHub Pagesのrepository pathと一致するか                     |
 
-現行設定ではCodexとDiscord通知が有効です。
-`ai.model`の利用可否は、lockfileで固定したCodex CLIと`CODEX_HOME`直下の`auth.json`を使うdry-runで確認します。
-`webhookSecretName`には`DISCORD_WEBHOOK_URL`、`operationsWebhookSecretName`には`DISCORD_OPERATIONS_WEBHOOK_URL`を指定します。
-通常digestと運用障害通知を同じchannelへ送る場合は、2つのsecretへ同じIncoming Webhook URLを登録します。
+secretの値は`config.yml`へ書きません。
+現行設定ではCodexとDiscord通知が有効で、mentionは無効です。
+その他の閾値、追跡規則、通知上限、保存先は`config.yml`を正本として確認し、運用中の調整は[運用手順](OPERATIONS.md)に従います。
 
-## 段階的な導入
+## デプロイ確認
 
 ### 1. ローカルdry-run
 
@@ -217,19 +192,24 @@ pnpm exec codex --version
 ローカルで`api-key`を使う場合は、`ai.authentication`を`api-key`にして`OPENAI_API_KEY`を渡します。
 どちらの方式でも、選択しなかった方式の環境変数はCodexへ渡りません。
 
-`aiCallCount`が1以上で`status`が`success`となり、`diagnostics`にmodelの利用不可を示す内容がなければ、設定済みmodel IDを利用できています。
-`aiCallCount`が0ならmodelを呼び出していないため、利用可否を確認できていません。
+`metrics.aiCallCount`が1以上で`status`が`success`となり、`diagnostics`にmodelの利用不可を示す内容がなければ、設定済みmodel IDを利用できています。
+`metrics.aiCallCount`が0ならmodelを呼び出していないため、利用可否を確認できていません。
 その場合は設定済みmodel IDを`--model`へ指定した最小の`pnpm exec codex exec`を同じ認証情報で実行します。
 
-`aiCacheHitCount`、`estimatedInputTokens`、`diagnostics`も確認します。
-model、prompt、schemaを変更した場合は`pnpm eval:golden`も実行します。
+`metrics.aiCacheHitCount`、`metrics.estimatedInputTokens`、`diagnostics`も確認します。
+`pnpm eval:golden`はfixture内の固定AI出力をschema検証、semantic検証、reducer、状態判定、graph、通知選別へ通し、期待結果と比較します。
+標準fixtureは`fixedAi.networkCallCount: 0`を要求するため、実モデル、reasoning effort、promptの応答品質を評価しません。
+schema、semantic validation、reducer、状態、graph、通知判定を変更した場合はgolden evalも実行します。
+model、reasoning effort、promptを変更した場合は、実モデルを呼び出したdry-runで`metrics.aiCallCount`が1以上になることを確認し、AI判定と通知候補の差分を確認します。
 Actionsの`collect-analyze` jobはlockfileから同じCodex CLIをインストールし、収集前にversion確認を行います。
 
-### 3. stateとPages
+### 3. 日次workflow
 
-PagesのSourceを`GitHub Actions`にして、repositoryのdefault branchから日次workflowを手動実行します。
+通常digest用と運用障害通知用のIncoming Webhookを作成し、Actionsの`DISCORD_WEBHOOK_URL`と`DISCORD_OPERATIONS_WEBHOOK_URL`へ登録します。
+PagesのSourceを`GitHub Actions`にし、`notifications.discord.enabled: true`であることを確認してから、repositoryのdefault branchから日次workflowを手動実行します。
 workflowはdefault branchからのscheduleまたは手動実行だけを許可します。
 入力は`backfill: none`とし、repository filterは空にします。
+手動実行でも`persist-state`、Pages buildとdeploy、`notify-discord`の順に進みます。
 
 成功後に次を確認します。
 
@@ -238,18 +218,11 @@ workflowはdefault branchからのscheduleまたは手動実行だけを許可�
 - 後続の通知jobが実測時刻と実送信数を含むrun reportと通知ledgerのcommitを追加していること
 - Pagesの生成時刻がrun reportの`startedAt`と一致し、repository数、item数、stale表示も一致すること
 - private repositoryのID、名前、URL、secret、不要な本文がstateとPagesにないこと
+- 通常digestがPages deploy後にだけ送信され、候補0件なら送信されないこと
+- 同じ候補を含む再実行でcooldownが効くこと
 
 `tracking.startAt: null`なら、最初の完全成功runの時刻がsnapshotへ固定されます。
-Pagesとdry-runの判定を少なくとも2週間確認し、必要なteam、label、閾値を調整します。
-
-### 4. Discord
-
-通常digest用のIncoming Webhookを作成し、`DISCORD_WEBHOOK_URL`へ登録します。
-運用障害通知用のIncoming Webhookを作成し、`DISCORD_OPERATIONS_WEBHOOK_URL`へ登録します。
-現行設定は`notifications.discord.enabled: true`と`mentions.enabled: false`です。
-
-手動runで通常digestがPages deploy後にだけ通知されること、候補0件なら送信されないこと、再実行でcooldownが効くことを確認します。
-収集またはPagesの処理が失敗した場合は、運用障害通知が送られることも確認します。
+収集、Pages、Discordのいずれかで運用対象の失敗が起きたrunでは、`notify-operations`が障害通知を1件送ります。
 GitHub Actionsのscheduleは遅延し得るため、08:00 JSTは起動予定時刻として扱います。
 
 mentionが必要になった場合だけ、GitHub loginと17桁から20桁のDiscord user IDを`mentions.users`へ登録します。

@@ -12,6 +12,8 @@
 
 要求文の `MUST` / `SHOULD` は RFC 2119・RFC 8174の規範語として用いる。本書は、要求の識別可能性・検証可能性・追跡可能性を重視するISO/IEC/IEEE 29148系の考え方、NASA Software Engineering Handbookの要求・受入基準・双方向トレーサビリティの実務例を参考に、VOICEVOX向けへ具体化した。全文標準を転載するものではない。
 
+Snapshotデータモデルの正本は[snapshot schema](../schemas/snapshot.schema.json)、構成と処理境界の詳細は[アーキテクチャ](ARCHITECTURE.md)、実運用の設定値は[config.yml](../config.yml)とする。本書ではこれらの定義を重複して掲載しない。
+
 ## 2. 背景と問題
 
 VOICEVOXではEditor、Engine、Core、モデル・ランタイム・追加ライブラリ・ブログ等に作業が分散し、次の問題が同時に起きる。
@@ -24,14 +26,16 @@ VOICEVOXではEditor、Engine、Core、モデル・ランタイム・追加ラ�
 
 ## 3. 実データ調査から得た設計上の結論
 
-| 観察例                                                                   | 観察したパターン                                                                 | 要件への反映                                                                                 |
-| ------------------------------------------------------------------------ | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `voicevox_project#99`、`voicevox_engine#1871`、`onnxruntime-builder#111` | 横断project Issue、PR本文の待ちリスト、既にclosedなのに未チェックのblockerが併存 | 本文だけでなく隣接nodeの最新stateを伝播し、依存解消時に依存元を再判定する                    |
-| `voicevox_core#1286`                                                     | release Issueの入れ子checklistが実質的な親子・作業一覧                           | checklist/indentを候補抽出し、native relationと区別してAI判定する                            |
-| `voicevox#3079`                                                          | botレビュー/previewの後にhumanのCHANGES_REQUESTED                                | bot activityを進捗扱いせず、latest headとhuman reviewの前後関係でauthor/reviewer待ちを決める |
-| `kanalizer#133`                                                          | human approvalとbotの指摘が同居                                                  | botをボール所有者にせず、承認・merge readiness・未解決human threadを別々に評価する           |
-| `voicevox_core#635`                                                      | Renovate Dependency Dashboardの定期更新                                          | 追跡・graph利用とDiscord noise抑制を分離する                                                 |
-| `voicevox#3031`                                                          | 本文で特定個人へ判断を依頼                                                       | assigneeだけでなく、未回答の明示依頼をCodexで根拠付き判定する                                |
+調査したIssueとPR、観察内容は[Research SourcesのVOICEVOX実例](RESEARCH_SOURCES.md#voicevox実例)を参照。
+
+実例から次の設計判断を導いた。
+
+- 本文の記載だけでなく、隣接nodeの最新stateを伝播し、依存解消時に依存元を再判定する。
+- checklistとindentからrelation候補を抽出し、native relationと区別して曖昧な関係だけをCodexで判定する。
+- bot activityを進捗扱いせず、latest headとhuman reviewの前後関係でauthor待ちとreviewer待ちを決める。
+- botをボール所有者にせず、承認、merge readiness、未解決human threadを別々に評価する。
+- 追跡とgraph利用をDiscordのnoise抑制から分離する。
+- assigneeだけでなく、未回答の明示依頼をCodexで根拠付き判定する。
 
 このため、システムは「GitHubの確定情報による状態機械」＋「曖昧な自然言語関係だけを判定するCodex」＋「型付き依存グラフ」の三層とする。
 
@@ -50,7 +54,7 @@ VOICEVOXではEditor、Engine、Core、モデル・ランタイム・追加ラ�
 - 48時間を超えた未triage項目をgolden fixture上で100%検出する。
 - daily digestは通常10項目以下とし、同一理由の不要な連日再送を行わない。
 - private/internal repo由来データの公開件数を常に0件とする。
-- model/reasoning effort/prompt更新時、golden evalのcritical/urgent recallを95%以上、誤通知率を10%以下に保つ。
+- 固定AI出力を使うgolden fixtureの処理結果について、critical/urgent recallを95%以上、誤通知率を10%以下に保つ。
 
 ## 5. スコープ
 
@@ -151,7 +155,7 @@ blocked parentは「親自身を毎日催促」せず、blockerのseverityとdow
 
 通知する主な変化:
 
-- severityがattention/urgent/criticalへ初めて上がった。
+- severityがwatch/urgent/criticalへ初めて上がった。
 - 未triage・owner unknownが48時間を超えた。
 - human `CHANGES_REQUESTED`後のauthor待ちが長期化した。
 - high-impact blockerがurgent以上になった。
@@ -180,60 +184,11 @@ blocked parentは「親自身を毎日催促」せず、blockerのseverityとdow
 
 一度入った項目は古さにかかわらず同一ルールで扱う。closed/merged後も既定180日保持する。
 
-## 11. データモデル要約
-
-```text
-Repository
-  id, owner, name, visibility, archived, observedAt
-TrackedItem
-  nodeId, type, repositoryId, number, url, title
-  state, status, waitingOn[], nextAction
-  createdAt, githubUpdatedAt, lastHumanActivityAt, lastProgressAt
-  statusSince, ownerSince, stallSince, observedAt
-  labels[], assignees[], reviewState, checkState
-  confidence, evidence[], uncertainties[]
-Relation
-  id, fromNodeId, toNodeId, type
-  provenance, confidence, evidence[], active
-  firstSeenAt, lastConfirmedAt, removedAt
-AnalysisMetadata
-  deterministicRulesVersion, model, reasoningEffort, backendVersion
-  promptVersion, schemaVersion, inputHash, outputHash
-SnapshotAiState
-  enabled, available, degraded
-NotificationLedger
-  notificationKey, itemNodeId, reasonCode, severity
-  reservedAt, expiresAt, sentAt, discordMessageId, cooldownUntil
-```
-
-canonical graph edgeは `blocker --blocks--> blocked item` とする。
-
-## 12. reference architecture
-
-```mermaid
-flowchart LR
-  A[GitHub Actions 23:00 UTC] --> B[Repo inventory + public guard]
-  B --> C[Incremental GitHub collector]
-  C --> D[Normalized events + fingerprints]
-  D --> E[Deterministic state machine]
-  E --> F[Relation candidates / ambiguous items]
-  F --> G[Codex structured analysis]
-  E --> H[Validated reducer]
-  G --> H
-  H --> I[Graph reconcile + severity]
-  I --> J[tracker-state commit]
-  I --> K[Static site build]
-  K --> L[GitHub Pages deploy]
-  L --> M[Discord digest]
-```
-
-詳細は `docs/ARCHITECTURE.md` を参照。
-
-## 13. 要求一覧
+## 11. 要求一覧
 
 要求は合計170件である。
 
-### 13.1 目的・成果
+### 11.1 目的・成果
 
 | ID        | 規範 | 要求                                                                                                                      | 受入要約                                                                                                 |
 | --------- | ---- | ------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
@@ -246,7 +201,7 @@ flowchart LR
 | `GOL-007` | MUST | 読み取り専用運用 — 追跡対象リポジトリのIssue、PR、コメント、ラベル、アサイン、レビュー依頼を変更してはならない。          | `AT-GOL-007`: 統合テストで対象リポジトリへのwrite API呼び出しが0件である。                               |
 | `GOL-008` | MUST | 決定論優先 — GitHubの確定情報と定式ルールを先に適用し、Codexは変更された曖昧部分の補助に限定しなければならない。          | `AT-GOL-008`: 明確なレビュー依頼fixtureではAI呼び出しなしで同一結果が得られる。                          |
 
-### 13.2 スコープ
+### 11.2 スコープ
 
 | ID        | 規範   | 要求                                                                                                                                                | 受入要約                                                                                                         |
 | --------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -262,7 +217,7 @@ flowchart LR
 | `SCP-010` | MUST   | bot作成項目の同等扱い — botが作成したIssue/PRを作成者だけを理由に特別扱いしてはならない。                                                           | `AT-SCP-010`: 同一内容のhuman作成・bot作成fixtureで、作成者種別以外の判定結果が一致する。                        |
 | `SCP-011` | MUST   | 外部参照の公開条件 — VOICEVOX外の参照先もpublic・non-archived・non-disabledの場合だけ関係候補として扱い、除外対象をstateとPagesへ残してはならない。 | `AT-SCP-011`: 通常、archive済み、disabledの外部repository参照fixtureで通常の参照だけが候補、state、Pagesに残る。 |
 
-### 13.3 設定
+### 11.3 設定
 
 | ID        | 規範 | 要求                                                                                                                                                  | 受入要約                                                                                      |
 | --------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
@@ -277,7 +232,7 @@ flowchart LR
 | `CFG-009` | MUST | 手動includeと追跡追加上限 — 古い項目の明示include、repo filter、backfill上限、`tracking.relationExpansion.maxItemsPerRun`を設定できなければならない。 | `AT-CFG-009`: 開始日前の指定URLだけをincludeでき、関係先展開上限がAPI呼び出し前に適用される。 |
 | `CFG-010` | MUST | Discordメンション設定 — GitHub loginとDiscord user IDの対応、mentions.enabled、許可対象を設定でき、既定は無効でなければならない。                     | `AT-CFG-010`: 既定payloadのallowed_mentionsが空で、enabled時も許可ID以外をmentionしない。     |
 
-### 13.4 GitHub収集
+### 11.4 GitHub収集
 
 | ID        | 規範 | 要求                                                                                                                                                   | 受入要約                                                                                              |
 | --------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
@@ -304,7 +259,7 @@ flowchart LR
 | `COL-021` | MUST | rate limit管理 — GitHub rate-limit headers/GraphQL costを監視し、安全余裕を残して収集計画を調整しなければならない。                                    | `AT-COL-021`: 残量閾値以下のfixtureでAI前にcheckpoint/停止し、部分公開しない。                        |
 | `COL-022` | MUST | repo単位stale処理 — 一時的に取得不能なrepoをstaleとして明示し、前回値と取得時刻を保持しつつ誤った最新値として扱ってはならない。                        | `AT-COL-022`: 1 repoだけ503のfixtureで全体は診断付き、当該repoはstale表示され通知判定から除外される。 |
 
-### 13.5 追跡ライフサイクル
+### 11.5 追跡ライフサイクル
 
 | ID        | 規範 | 要求                                                                                                                                                                      | 受入要約                                                                          |
 | --------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
@@ -321,7 +276,7 @@ flowchart LR
 | `TRK-011` | MUST | terminal再分析抑制 — terminal項目は状態遷移直後を除き、本文等が変わらない限りCodex再分析・停滞通知を行ってはならない。                                                    | `AT-TRK-011`: closed unchanged fixtureでAI callとstall notificationが0件になる。  |
 | `TRK-012` | MUST | automation noiseは追跡と通知を分離 — Renovate dashboard等のautomation項目を必要なら追跡・関係表示しつつ、作成者だけで削除せず通知抑制ルールを別に適用しなければならない。 | `AT-TRK-012`: automation itemがgraph nodeとして残り、既定digestからは除外される。 |
 
-### 13.6 状態・ボール判定
+### 11.6 状態・ボール判定
 
 | ID        | 規範 | 要求                                                                                                                                                              | 受入要約                                                                                   |
 | --------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
@@ -354,7 +309,7 @@ flowchart LR
 | `RSP-027` | MUST | label変更の扱い — label変更はpriority/semanticsを再計算するが、設定で進捗扱いされたlabel以外はstallSinceをリセットしてはならない。                                | `AT-RSP-027`: priority label追加fixtureでseverityだけ変わりstallSinceは維持される。        |
 | `RSP-028` | MUST | 不確実性表示 — 責務判定にconfidence、根拠source IDs、uncertaintiesを持ち、低信頼時はunknown/推定表示へ縮退しなければならない。                                    | `AT-RSP-028`: 低confidence fixtureが断定表示・高優先通知にならない。                       |
 
-### 13.7 依存グラフ
+### 11.7 依存グラフ
 
 | ID        | 規範 | 要求                                                                                                                                          | 受入要約                                                                               |
 | --------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
@@ -375,33 +330,33 @@ flowchart LR
 | `GRF-015` | MUST | cross-repo保持 — repo境界を越えるedgeを同一connected componentに保持しなければならない。                                                      | `AT-GRF-015`: project→core→engine fixtureが1 componentになる。                         |
 | `GRF-016` | MUST | 隣接変化伝播 — 依存nodeのstate/edgeが変わった場合、本文未更新の隣接nodeも再分類しなければならない。                                           | `AT-GRF-016`: 閉じたblockerを待つ古いPR fixtureが本文変更なしでnewly_unblockedになる。 |
 
-### 13.8 Codex利用
+### 11.8 Codex利用
 
-| ID        | 規範 | 要求                                                                                                                                                                                                                                                                                          | 受入要約                                                                                                                                       |
-| --------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AIC-001` | MUST | Codex限定 — 初期リリースのAI backendはOpenAI Codexだけを実装対象としなければならない。                                                                                                                                                                                                        | `AT-AIC-001`: configでprovider=codex以外を指定すると未対応エラーになる。                                                                       |
-| `AIC-002` | MUST | 曖昧変更だけ呼出し — 定式ルールで高信頼に確定できず、入力または隣接graph hashが変わった項目だけCodexへ送らなければならない。                                                                                                                                                                  | `AT-AIC-002`: unchanged/clear fixtureのAI call数が0、ambiguous changedのみ1となる。                                                            |
-| `AIC-003` | MUST | content-addressed cache — model、reasoningEffort、Codex CLI/API version、promptVersion、schemaVersion、判定に影響しないrun開始時刻を除いたnormalized input hashをcache keyに含めなければならない。                                                                                            | `AT-AIC-003`: key構成要素または判定入力の変更でcache missとなり、run開始時刻だけの変更ではcache hitとなる。                                    |
-| `AIC-004` | MUST | Structured Output — Codex最終出力を`schemas/codex-analysis.schema.json`で拘束しなければならない。                                                                                                                                                                                             | `AT-AIC-004`: Codex呼び出しが同Schemaを使い、非JSON・extra property・enum外出力が受理されない。                                                |
-| `AIC-005` | MUST | read-only隔離 — Codexを空の一時workspace、read-only sandbox、承認要求なし、不要toolなしで実行しなければならない。                                                                                                                                                                             | `AT-AIC-005`: adversarial prompt fixtureでworking tree変更・外部コマンド成功が0件である。                                                      |
-| `AIC-006` | MUST | secret隔離 — Codex subprocessへOpenAI認証以外のGitHub App key、installation token、Discord webhook、Actions tokenを渡してはならない。                                                                                                                                                         | `AT-AIC-006`: process environment snapshotで禁止secret名が存在しない。                                                                         |
-| `AIC-007` | MUST | prompt injection対策 — Issue/PR本文・コメントをuntrusted dataとして区切り、内部命令に従わないsystem instructionを固定しなければならない。                                                                                                                                                     | `AT-AIC-007`: 「schemaを無視せよ」fixtureでもschema準拠出力になる。                                                                            |
-| `AIC-008` | MUST | 候補制約 — relation targetとwaitingOn user/teamは入力candidate集合からのみ選択させなければならない。                                                                                                                                                                                          | `AT-AIC-008`: 未知URL/loginを返した出力がsemantic validationで拒否される。                                                                     |
-| `AIC-009` | MUST | source ID根拠 — AI判定のevidenceは入力に付与したsource IDを参照しなければならない。                                                                                                                                                                                                           | `AT-AIC-009`: 存在しないsource IDの出力が拒否される。                                                                                          |
-| `AIC-010` | MUST | 簡潔な説明 — 出力は短いreasonSummaryと根拠だけを含み、内部思考過程の出力を要求・保存してはならない。                                                                                                                                                                                          | `AT-AIC-010`: schemaにchainOfThought相当フィールドがなく、summary長制限が効く。                                                                |
-| `AIC-011` | MUST | confidence閾値 — high>=0.85、medium>=0.65、low<0.65を既定とし、mediumは推定表示、lowはfallbackとしなければならない。                                                                                                                                                                          | `AT-AIC-011`: 境界値fixtureで表示・通知扱いが仕様通り変わる。                                                                                  |
-| `AIC-012` | MUST | 二重validation — JSON Schema validation後にcandidate参照、時刻、URL、矛盾、native relation保護のsemantic validationを行わなければならない。                                                                                                                                                   | `AT-AIC-012`: schema-validだが候補外のfixtureがsemantic stageで失敗する。                                                                      |
-| `AIC-013` | MUST | AI失敗時縮退 — timeout、rate limit、schema error時も定式判定でPages生成を継続し、AIの有効状態、利用可否、縮退状態をrun statusと独立してsnapshotへ保存し明示しなければならない。                                                                                                               | `AT-AIC-013`: AI無効のsuccess runとCodex 500のfallback runで異なるAI状態が表示される。                                                         |
-| `AIC-014` | MUST | 旧結果の安全再利用 — source/input hashが完全一致する場合だけ前回AI結果を再利用し、変更後はstale結果を断定表示してはならない。                                                                                                                                                                 | `AT-AIC-014`: 本文1文字変更fixtureで旧cacheが使われない。                                                                                      |
-| `AIC-015` | MUST | 再現情報 — 各AI結果にmodel identifier、reasoningEffort、backend version、promptVersion、schemaVersion、input/output hash、実行時刻を記録しなければならない。                                                                                                                                  | `AT-AIC-015`: 任意結果から全再現metadataが取得できる。                                                                                         |
-| `AIC-016` | MUST | run予算 — 1 runあたりcall数、入力文字/token見積、費用上限を設定できなければならない。                                                                                                                                                                                                         | `AT-AIC-016`: 上限到達fixtureで追加callを停止する。                                                                                            |
-| `AIC-017` | MUST | 予算超過優先順位 — 予算不足時はseverity候補、owner unknown、changed blockers、downstream impact順に分析し、残りをdeferred表示しなければならない。                                                                                                                                             | `AT-AIC-017`: 10候補/3call上限fixtureで上位3件が選ばれる。                                                                                     |
-| `AIC-018` | MUST | golden eval — 実VOICEVOX運用パターンを匿名化/固定したgolden fixture suiteを保持しなければならない。                                                                                                                                                                                           | `AT-AIC-018`: review change、stale blocker、checklist、bot noise、direct requestのfixtureが存在する。                                          |
-| `AIC-019` | MUST | 更新前回帰評価 — model、reasoning effort、prompt、schema、判定ルール更新はgolden evalの基準を満たさない限りmainへ反映してはならない。                                                                                                                                                         | `AT-AIC-019`: 意図的退行PRでCIが失敗する。                                                                                                     |
-| `AIC-020` | MUST | AI非書込 — Codex出力は提案データとして検証・reducerを通し、GitHub変更、Discord直接送信、state直接上書きを許してはならない。                                                                                                                                                                   | `AT-AIC-020`: mockでCodexがwrite指示を返しても副作用APIが呼ばれない。                                                                          |
-| `AIC-021` | MUST | 認証方式選択 — `ai.authentication`は`api-key`か`auth-json`に限定し、AI有効時だけ選択した方式の認証情報を要求しなければならない。`api-key`では`OPENAI_API_KEY`だけを渡さなければならない。`auth-json`では`CODEX_HOME`だけを渡し、直下の`auth.json`は存在だけを確認して内容を読んではならない。 | `AT-AIC-021`: 認証方式ごとのprocess environmentと`auth.json`不在時の起動前エラーが要件に一致し、AI無効時はどちらの認証環境変数も要求されない。 |
+| ID        | 規範 | 要求                                                                                                                                                                                                                                                                                          | 受入要約                                                                                                                                                                                              |
+| --------- | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `AIC-001` | MUST | Codex限定 — 初期リリースのAI backendはOpenAI Codexだけを実装対象としなければならない。                                                                                                                                                                                                        | `AT-AIC-001`: configでprovider=codex以外を指定すると未対応エラーになる。                                                                                                                              |
+| `AIC-002` | MUST | 曖昧変更だけ呼出し — 定式ルールで高信頼に確定できず、入力または隣接graph hashが変わった項目だけCodexへ送らなければならない。                                                                                                                                                                  | `AT-AIC-002`: unchanged/clear fixtureのAI call数が0、ambiguous changedのみ1となる。                                                                                                                   |
+| `AIC-003` | MUST | content-addressed cache — model、reasoningEffort、Codex CLI/API version、promptVersion、schemaVersion、判定に影響しないrun開始時刻を除いたnormalized input hashをcache keyに含めなければならない。                                                                                            | `AT-AIC-003`: key構成要素または判定入力の変更でcache missとなり、run開始時刻だけの変更ではcache hitとなる。                                                                                           |
+| `AIC-004` | MUST | Structured Output — Codex最終出力を`schemas/codex-analysis.schema.json`で拘束しなければならない。                                                                                                                                                                                             | `AT-AIC-004`: Codex呼び出しが同Schemaを使い、非JSON・extra property・enum外出力が受理されない。                                                                                                       |
+| `AIC-005` | MUST | read-only隔離 — Codexを空の一時workspace、read-only sandbox、承認要求なし、不要toolなしで実行しなければならない。                                                                                                                                                                             | `AT-AIC-005`: adversarial prompt fixtureでworking tree変更・外部コマンド成功が0件である。                                                                                                             |
+| `AIC-006` | MUST | secret隔離 — Codex subprocessへOpenAI認証以外のGitHub App key、installation token、Discord webhook、Actions tokenを渡してはならない。                                                                                                                                                         | `AT-AIC-006`: process environment snapshotで禁止secret名が存在しない。                                                                                                                                |
+| `AIC-007` | MUST | prompt injection対策 — Issue/PR本文・コメントをuntrusted dataとして区切り、内部命令に従わないsystem instructionを固定しなければならない。                                                                                                                                                     | `AT-AIC-007`: unit testで固定system instructionとuntrusted入力JSONの分離を確認する。golden fixtureでは命令を採用した固定AI出力をvalidationで拒否し、実モデルを呼び出さない。                          |
+| `AIC-008` | MUST | 候補制約 — relation targetとwaitingOn user/teamは入力candidate集合からのみ選択させなければならない。                                                                                                                                                                                          | `AT-AIC-008`: 未知URL/loginを返した出力がsemantic validationで拒否される。                                                                                                                            |
+| `AIC-009` | MUST | source ID根拠 — AI判定のevidenceは入力に付与したsource IDを参照しなければならない。                                                                                                                                                                                                           | `AT-AIC-009`: 存在しないsource IDの出力が拒否される。                                                                                                                                                 |
+| `AIC-010` | MUST | 簡潔な説明 — 出力は短いreasonSummaryと根拠だけを含み、内部思考過程の出力を要求・保存してはならない。                                                                                                                                                                                          | `AT-AIC-010`: schemaにchainOfThought相当フィールドがなく、summary長制限が効く。                                                                                                                       |
+| `AIC-011` | MUST | confidence閾値 — high>=0.85、medium>=0.65、low<0.65を既定とし、mediumは推定表示、lowはfallbackとしなければならない。                                                                                                                                                                          | `AT-AIC-011`: 境界値fixtureで表示・通知扱いが仕様通り変わる。                                                                                                                                         |
+| `AIC-012` | MUST | 二重validation — JSON Schema validation後にcandidate参照、時刻、URL、矛盾、native relation保護のsemantic validationを行わなければならない。                                                                                                                                                   | `AT-AIC-012`: schema-validだが候補外のfixtureがsemantic stageで失敗する。                                                                                                                             |
+| `AIC-013` | MUST | AI失敗時縮退 — timeout、rate limit、schema error時も定式判定でPages生成を継続し、AIの有効状態、利用可否、縮退状態をrun statusと独立してsnapshotへ保存し明示しなければならない。                                                                                                               | `AT-AIC-013`: AI無効のsuccess runとCodex 500のfallback runで異なるAI状態が表示される。                                                                                                                |
+| `AIC-014` | MUST | 旧結果の安全再利用 — source/input hashが完全一致する場合だけ前回AI結果を再利用し、変更後はstale結果を断定表示してはならない。                                                                                                                                                                 | `AT-AIC-014`: 本文1文字変更fixtureで旧cacheが使われない。                                                                                                                                             |
+| `AIC-015` | MUST | 再現情報 — 各AI結果にmodel identifier、reasoningEffort、backend version、promptVersion、schemaVersion、input/output hash、実行時刻を記録しなければならない。                                                                                                                                  | `AT-AIC-015`: 任意結果から全再現metadataが取得できる。                                                                                                                                                |
+| `AIC-016` | MUST | run予算 — 1 runあたりcall数、入力文字/token見積、費用上限を設定できなければならない。                                                                                                                                                                                                         | `AT-AIC-016`: 上限到達fixtureで追加callを停止する。                                                                                                                                                   |
+| `AIC-017` | MUST | 予算超過優先順位 — 予算不足時はseverity候補、owner unknown、changed blockers、downstream impact順に分析し、残りをdeferred表示しなければならない。                                                                                                                                             | `AT-AIC-017`: 10候補/3call上限fixtureで上位3件が選ばれる。                                                                                                                                            |
+| `AIC-018` | MUST | golden eval — 実VOICEVOX運用パターンを匿名化/固定したgolden fixture suiteを保持しなければならない。                                                                                                                                                                                           | `AT-AIC-018`: review change、stale blocker、checklist、bot noise、direct requestのfixtureが存在する。                                                                                                 |
+| `AIC-019` | MUST | 更新前回帰評価 — schema、semantic validation、reducer、状態、graph、通知判定の更新は固定AI出力を使うgolden evalの基準を満たさなければならない。model、reasoning effort、promptの更新は実モデルを呼び出すdry-run結果も確認しなければならない。                                                 | `AT-AIC-019`: 意図的な判定退行でCIが失敗し、標準golden fixtureの`fixedAi.networkCallCount`が0になる。model、reasoning effort、promptの変更では`metrics.aiCallCount`が1以上のdry-run差分をreviewする。 |
+| `AIC-020` | MUST | AI非書込 — Codex出力は提案データとして検証・reducerを通し、GitHub変更、Discord直接送信、state直接上書きを許してはならない。                                                                                                                                                                   | `AT-AIC-020`: mockでCodexがwrite指示を返しても副作用APIが呼ばれない。                                                                                                                                 |
+| `AIC-021` | MUST | 認証方式選択 — `ai.authentication`は`api-key`か`auth-json`に限定し、AI有効時だけ選択した方式の認証情報を要求しなければならない。`api-key`では`OPENAI_API_KEY`だけを渡さなければならない。`auth-json`では`CODEX_HOME`だけを渡し、直下の`auth.json`は存在だけを確認して内容を読んではならない。 | `AT-AIC-021`: 認証方式ごとのprocess environmentと`auth.json`不在時の起動前エラーが要件に一致し、AI無効時はどちらの認証環境変数も要求されない。                                                        |
 
-### 13.9 Webページ
+### 11.9 Webページ
 
 | ID        | 規範 | 要求                                                                                                                                         | 受入要約                                                                                   |
 | --------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
@@ -418,7 +373,7 @@ flowchart LR
 | `WEB-011` | MUST | アクセシビリティ — 日本語UIはWCAG 2.2 AAを目標に、keyboard、focus、contrast、非色依存、screen-reader labelを備えなければならない。           | `AT-WEB-011`: 自動a11y検査に重大違反がなく、主要flowをkeyboardで完了できる。               |
 | `WEB-012` | MUST | 鮮度表示 — 全体とrepo/itemごとにobservedAt、JST絶対時刻、相対時間、staleを表示し、AIの無効、利用不可、縮退を区別して表示しなければならない。 | `AT-WEB-012`: stale repoと3種類のAI状態のfixtureが最新や完全成功と誤認できない表示になる。 |
 
-### 13.10 Discord通知
+### 11.10 Discord通知
 
 | ID        | 規範 | 要求                                                                                                                                                                                                    | 受入要約                                                                                    |
 | --------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
@@ -436,7 +391,7 @@ flowchart LR
 | `NTF-012` | MUST | 運用障害通知 — 収集・Pages・Discord自身の重大障害を通常item digestと区別し、設定により同一または別webhookへ1件だけ通知できなければならない。                                                            | `AT-NTF-012`: 連続retry失敗fixtureで重複しないops alertが生成される。                       |
 | `NTF-013` | MUST | 永続化済みrun照合 — 通常digestの送信前にworkflow artifactのsnapshotとtracker-state branchの永続化済みsnapshotでrun IDが一致することを検証し、不一致なら送信せず失敗しなければならない。                 | `AT-NTF-013`: 同じrunなら送信adapterが呼ばれ、異なるrunなら呼ばれず日本語エラーで失敗する。 |
 
-### 13.11 永続化
+### 11.11 永続化
 
 | ID        | 規範 | 要求                                                                                                                                                                                                   | 受入要約                                                                                          |
 | --------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
@@ -447,7 +402,7 @@ flowchart LR
 | `DAT-005` | MUST | AI cacheと通知ledger — AI cache、analysis metadata、予約期限と送信結果を持つnotification ledgerをstate branchで保持しなければならない。                                                                | `AT-DAT-005`: runnerを破棄して再実行してもcache hit、予約期限、cooldownが維持される。             |
 | `DAT-006` | MUST | atomic/canonical/public-safe commit — validation完了後だけsorted/canonical stateをatomic commitし、secret、raw token、private repoのID、owner/name、repository URL、不要な全文本文を含めてはならない。 | `AT-DAT-006`: 失敗途中でlast good commitが変わらず、secret scan/private sentinel testが成功する。 |
 
-### 13.12 セキュリティ・プライバシー
+### 11.12 セキュリティ・プライバシー
 
 | ID        | 規範 | 要求                                                                                                                                                                                                                                         | 受入要約                                                                                                                                                |
 | --------- | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -459,7 +414,7 @@ flowchart LR
 | `SEC-006` | MUST | ログredaction — Actions log・job summary・artifactにsecret、authorization header、raw App key、webhook URL、未加工API responseを出してはならない。                                                                                           | `AT-SEC-006`: canary secretを用いた統合テストで全log/artifact検索が0件になる。                                                                          |
 | `SEC-007` | MUST | Codex認証ファイルの一時配置 — `collect-analyze` jobは`CODEX_AUTH_JSON` secretをrunnerの一時directoryにある`auth.json`へ権限600で配置し、Codex認証情報として`CODEX_HOME`だけを収集stepへ渡し、job終了時に成否を問わず削除しなければならない。 | `AT-SEC-007`: workflow静的検査でsecretの空値拒否、directory権限700、file権限600、`CODEX_HOME`の受け渡し、`if: always()`による最終stepの削除を確認する。 |
 
-### 13.13 運用・性能
+### 11.13 運用・性能
 
 | ID        | 規範 | 要求                                                                                                                                                                                              | 受入要約                                                                                                                                    |
 | --------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -468,13 +423,13 @@ flowchart LR
 | `OPS-003` | MUST | observability — run summaryにrepo/item/change/edge/AI call/cache/token見積/API残量/stale/notification/所要時間を記録しなければならない。                                                          | `AT-OPS-003`: 成功・fallback・失敗runのsummaryに必須metricが存在する。                                                                      |
 | `OPS-004` | MUST | 性能と予算 — 基準fixture（5,000 items、10,000 edges、変更100件）を30分以内、GitHub API予算70%以内、Codex設定上限以内で処理し、Web初期summaryをgzip 1 MiB以内にしなければならない。                | `AT-OPS-004`: CI performance profileが全閾値を満たす。                                                                                      |
 
-## 14. 非機能方針補足
+## 12. 非機能方針補足
 
-### 14.1 可用性・正確性
+### 12.1 可用性・正確性
 
 GitHub Actionsのscheduleは厳密なリアルタイムschedulerではなく、混雑時に遅延し得る。そのため「08:00 JSTにtriggerする」ことを要件とし、実投稿時刻と遅延をmetric化する。完全性を満たさないrunはlast-goodを上書きしない。
 
-### 14.2 セキュリティ
+### 12.2 セキュリティ
 
 - GitHub Appはread-only。webhook受信は不要。
 - AppをOrganizationのall repositoriesへinstallする場合でも、repo metadata直後とpublish直前の二重public guardを必須とする。
@@ -483,55 +438,22 @@ GitHub Actionsのscheduleは厳密なリアルタイムschedulerではなく、�
 - public pageへ全文転載せず、短いparaphrase、source ID、GitHub URLを保存する。
 - workflow actionはfull SHA pin、secret jobはschedule/manual default branchのみ。
 
-### 14.3 保守性
+### 12.3 保守性
 
 - pure TypeScript domain reducerとGitHub/Codex/Discord adapterを分離する。
 - prompt・schema・deterministic rulesは独立versionを持つ。
 - state schema migrationを用意し、古いstateを破壊的に読み捨てない。
-- runtimeはNode.js LTSをpinし、strict TypeScript、lint、format、unit/integration/e2eをCIで実行する。
+- runtimeはNode.js LTSをpinし、strict TypeScriptの型検査、lint、format検査、VitestによるNodeとWebのテスト、golden eval、CLI、workflow用CLI、WebのbuildをCIで実行する。
 
-## 15. 導入段階
-
-### Phase 0: fixture/eval先行
-
-実例を固定fixture化し、収集mock、状態機械、graph reducer、Discord snapshotを先に作る。
-
-### Phase 1: read-only dashboard
-
-GitHub収集、deterministic判定、state branch、Pagesを実装。DiscordとCodexはdry-run。
-
-### Phase 2: Codex推定
-
-曖昧項目だけStructured Outputで分析。golden evalを満たすまで「推定」表示のみ。
-
-### Phase 3: Discord運用
-
-最初の2週間はdry-run結果をActions artifactで確認し、その後public channel投稿を有効化。mentionは無効のまま開始する。
-
-### Phase 4: tuning/backfill
-
-誤判定はGitHubの既存コメント・ラベル・review request・dependencyを明確化して直す。必要な古い項目をmanual/linked/all-open backfillする。
-
-## 16. 未確定だが実装前に設定する値
-
-- default maintainer team slug
-- default reviewer team slug
-- repo別override
-- priority/要議論/通知抑制に使う既存label mapping
-- Codex model identifier、reasoning effort、call/token予算
-- Discord webhook secretと、将来mentionを使う場合のID mapping
-- startAt（未指定なら初回完全成功時刻）
-
-これらは要件の未決ではなく、`config.yml`の運用パラメータである。
-
-## 17. 受入と変更管理
+## 13. 受入と変更管理
 
 - 全170要求は一意な受入試験IDを持つ。
 - MUST要求の未達はrelease blocker。
 - SHOULD要求の未達は理由・代替・期限をdecision logへ記録する。
-- model/reasoning effort/prompt/schema/状態判定変更はgolden evalとDiscord snapshot差分をPRでreviewする。
+- schema、semantic validation、reducer、状態、graph、通知判定の変更はgolden evalと通知候補差分をPRでreviewする。
+- model、reasoning effort、promptの変更は実モデルを呼び出したdry-runのAI判定と通知候補差分をPRでreviewする。
 - 仕様変更は本書、schema、configを同一PRで更新する。
 
-## 18. 参照資料
+## 14. 参照資料
 
 公式仕様とVOICEVOX実例の一覧は `docs/RESEARCH_SOURCES.md` を参照。

@@ -31,7 +31,7 @@
 | Codex CLI reference       | https://developers.openai.com/codex/cli/reference          | version pin、sandbox、approval、output schema等   |
 | Codex authentication      | https://developers.openai.com/codex/auth                   | Actions secretからの認証方法                      |
 | Structured Outputs        | https://platform.openai.com/docs/guides/structured-outputs | JSON Schema拘束とvalidation                       |
-| Evaluation best practices | https://platform.openai.com/docs/guides/evals              | golden fixture、model/prompt更新時の回帰評価      |
+| Evaluation best practices | https://platform.openai.com/docs/guides/evals              | 固定AI出力を通したgolden fixtureの回帰評価        |
 
 ## Discord公式
 
