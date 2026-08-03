@@ -309,6 +309,7 @@ function createNativeDependency(
       type: "issue",
       number: blockerItem.number,
       url: blockerItem.url,
+      createdAt: blockerItem.createdAt,
       state: "open",
     }),
   });

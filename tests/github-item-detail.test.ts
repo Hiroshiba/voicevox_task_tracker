@@ -366,6 +366,7 @@ function createReferencedIssue(
     id: nodeId,
     number,
     url: `https://github.com/VOICEVOX/example/issues/${number.toString()}`,
+    createdAt: "2026-07-01T00:00:00Z",
     issueState,
     repository: {
       id: "R_example",
@@ -607,6 +608,34 @@ describe("Issue詳細収集", () => {
         actor: createActor(7),
         subject: createReferencedIssue("I_connected", 100, "OPEN"),
       },
+      {
+        __typename: "SubIssueAddedEvent",
+        id: "SIAE_added",
+        createdAt: "2026-07-31T08:00:00Z",
+        actor: createActor(8),
+        subIssue: createReferencedIssue("I_child", 5, "CLOSED"),
+      },
+      {
+        __typename: "SubIssueRemovedEvent",
+        id: "SIRE_removed",
+        createdAt: "2026-07-31T09:00:00Z",
+        actor: createActor(9),
+        subIssue: createReferencedIssue("I_old_child", 6, "CLOSED"),
+      },
+      {
+        __typename: "ParentIssueAddedEvent",
+        id: "PIAE_added",
+        createdAt: "2026-07-31T10:00:00Z",
+        actor: createActor(10),
+        parent: createReferencedIssue("I_parent", 4, "OPEN"),
+      },
+      {
+        __typename: "ParentIssueRemovedEvent",
+        id: "PIRE_removed",
+        createdAt: "2026-07-31T11:00:00Z",
+        actor: createActor(11),
+        parent: createReferencedIssue("I_old_parent", 7, "CLOSED"),
+      },
     ];
     const baseResponse = {
       item: {
@@ -699,6 +728,10 @@ describe("Issue詳細収集", () => {
       "cross_referenced",
       "connected",
       "disconnected",
+      "sub_issue_added",
+      "sub_issue_removed",
+      "parent_issue_added",
+      "parent_issue_removed",
     ]);
     expect(detail.timeline[0]?.sourceId).toBe("github_timeline_event:AE_assigned");
     const labeledEvent = detail.timeline.find((event) => event.kind === "labeled");
@@ -706,6 +739,25 @@ describe("Issue詳細収集", () => {
       throw new Error("Bot actor付きlabel event fixtureがありません");
     }
     expect(labeledEvent.actor.account.apiType).toBe("Bot");
+    expect(
+      detail.timeline.flatMap<Readonly<{ kind: string; relatedNodeId: string }>>((event) => {
+        switch (event.kind) {
+          case "sub_issue_added":
+          case "sub_issue_removed":
+            return [{ kind: event.kind, relatedNodeId: event.subIssue.nodeId }];
+          case "parent_issue_added":
+          case "parent_issue_removed":
+            return [{ kind: event.kind, relatedNodeId: event.parent.nodeId }];
+          default:
+            return [];
+        }
+      }),
+    ).toEqual([
+      { kind: "sub_issue_added", relatedNodeId: "I_child" },
+      { kind: "sub_issue_removed", relatedNodeId: "I_old_child" },
+      { kind: "parent_issue_added", relatedNodeId: "I_parent" },
+      { kind: "parent_issue_removed", relatedNodeId: "I_old_parent" },
+    ]);
     if (detail.nativeDependencies.availability !== "available") {
       throw new Error("native dependency fixtureが利用不可です");
     }

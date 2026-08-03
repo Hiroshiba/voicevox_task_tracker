@@ -24,6 +24,7 @@ import {
   type GitHubItemDetail,
   type GitHubIssueComment,
   type GitHubPullRequestCommit,
+  type GitHubReferencedItem,
   type GitHubTimelineEvent,
 } from "../src/github/index.js";
 
@@ -131,6 +132,70 @@ function createItem(
   };
 }
 
+function createIssueItem(
+  itemObservedAt: UtcIsoDateTime,
+): Extract<EnumeratedGitHubItem, { type: "issue" }> {
+  const nodeId = createGitHubNodeId("I_normalization");
+  const bodyFingerprint = createGitHubBodyFingerprint("列挙時のIssue本文");
+  return {
+    nodeId,
+    repositoryId: publicRepositoryId,
+    displayReference: "VOICEVOX/example#2",
+    number: 2,
+    url: "https://github.com/VOICEVOX/example/issues/2",
+    title: "正規化対象Issue",
+    bodyFingerprint,
+    bodyLocator: {
+      kind: "github_item_body",
+      repositoryId: publicRepositoryId,
+      itemNodeId: nodeId,
+      number: 2,
+    },
+    author: {
+      kind: "account",
+      account: {
+        nodeId: createGitHubNodeId("U_issue_author"),
+        login: "issue-author",
+        apiType: "User",
+      },
+    },
+    createdAt: createUtcIsoDateTime("2026-07-01T00:00:00Z"),
+    updatedAt: occurredAt,
+    state: "open",
+    stateReason: null,
+    closedAt: null,
+    draft: "not_applicable",
+    assignees: [],
+    labels: [],
+    milestone: null,
+    itemFingerprint: bodyFingerprint,
+    observedAt: itemObservedAt,
+    type: "issue",
+  };
+}
+
+function createReferencedIssue(
+  nodeIdValue: string,
+  number: number,
+  createdAt: UtcIsoDateTime,
+): GitHubReferencedItem {
+  const nodeId = createGitHubNodeId(nodeIdValue);
+  return {
+    sourceId: buildSourceId("github_item", nodeId),
+    nodeId,
+    repositoryId: publicRepositoryId,
+    repositoryOwner: "VOICEVOX",
+    repositoryName: "example",
+    repositoryArchived: false,
+    repositoryDisabled: false,
+    type: "issue",
+    number,
+    url: `https://github.com/VOICEVOX/example/issues/${number.toString()}`,
+    createdAt,
+    state: "open",
+  };
+}
+
 function createTimeline(): readonly GitHubTimelineEvent[] {
   const humanActor = createAccountActor("U_human", "human", "User");
   const reviewRequestEvent = {
@@ -206,6 +271,7 @@ function createTimeline(): readonly GitHubTimelineEvent[] {
         type: "issue",
         number: 2,
         url: "https://github.com/VOICEVOX/example/issues/2",
+        createdAt: createUtcIsoDateTime("2026-07-02T00:00:00Z"),
         state: "open",
       },
     },
@@ -576,6 +642,7 @@ describe("GitHubイベント正規化", () => {
     );
     expect(events).toHaveLength(8);
     expect(events.filter((event) => event.kind === "comment")).toHaveLength(1);
+    expect(events.filter((event) => event.kind === "review_request")).toHaveLength(1);
     expect(events.map((event) => event.sourceId)).toEqual(
       [...events.map((event) => event.sourceId)].sort(),
     );
@@ -623,6 +690,192 @@ describe("GitHubイベント正規化", () => {
 
     expect(second).toEqual(first);
     expect(renamed.map((event) => event.sourceId)).toEqual(first.map((event) => event.sourceId));
+  });
+
+  it("観測時刻だけを変えても合成イベントの時刻を維持する", () => {
+    const secondObservedAt = createUtcIsoDateTime("2026-08-02T00:00:00Z");
+    const dependencySourceId = buildSourceId(
+      "github_native_dependency",
+      "I_normalization:blocked_by:I_dependency",
+    );
+    const subIssueSourceId = buildSourceId(
+      "github_native_hierarchy",
+      "I_normalization:sub_issue:I_sub_issue",
+    );
+    const parentSourceId = buildSourceId(
+      "github_native_hierarchy",
+      "I_normalization:parent:I_parent",
+    );
+    const hierarchyActor = Object.freeze({
+      status: "unavailable",
+      reason: "github_did_not_return_actor",
+    } satisfies GitHubDetailActor);
+
+    const normalizeIssueAt = (itemObservedAt: UtcIsoDateTime): readonly NormalizedEvent[] => {
+      const item = createIssueItem(itemObservedAt);
+      const dependency = createReferencedIssue(
+        "I_dependency",
+        3,
+        createUtcIsoDateTime("2026-07-05T00:00:00Z"),
+      );
+      const subIssue = createReferencedIssue(
+        "I_sub_issue",
+        4,
+        createUtcIsoDateTime("2026-07-02T00:00:00Z"),
+      );
+      const parent = createReferencedIssue(
+        "I_parent",
+        5,
+        createUtcIsoDateTime("2026-06-20T00:00:00Z"),
+      );
+      const detail = {
+        sourceId: buildSourceId("github_item_detail", item.nodeId),
+        nodeId: item.nodeId,
+        repositoryId: item.repositoryId,
+        number: item.number,
+        type: "issue",
+        bodySourceId: buildSourceId("github_item_body", item.nodeId),
+        body: "本文",
+        comments: [],
+        timeline: [
+          {
+            sourceId: buildSourceId("github_timeline_event", "SIAE_current"),
+            nodeId: createGitHubNodeId("SIAE_current"),
+            sequence: 2,
+            occurredAt: createUtcIsoDateTime("2026-07-25T00:00:00Z"),
+            actor: hierarchyActor,
+            kind: "sub_issue_added",
+            subIssue,
+          },
+          {
+            sourceId: buildSourceId("github_timeline_event", "SIAE_initial"),
+            nodeId: createGitHubNodeId("SIAE_initial"),
+            sequence: 0,
+            occurredAt: createUtcIsoDateTime("2026-07-10T00:00:00Z"),
+            actor: hierarchyActor,
+            kind: "sub_issue_added",
+            subIssue,
+          },
+          {
+            sourceId: buildSourceId("github_timeline_event", "SIRE_previous"),
+            nodeId: createGitHubNodeId("SIRE_previous"),
+            sequence: 1,
+            occurredAt: createUtcIsoDateTime("2026-07-20T00:00:00Z"),
+            actor: hierarchyActor,
+            kind: "sub_issue_removed",
+            subIssue,
+          },
+        ],
+        inboundCrossReferences: [],
+        nativeDependencies: {
+          availability: "available",
+          relations: [
+            {
+              sourceId: dependencySourceId,
+              authoritative: true,
+              provenance: "native",
+              direction: "blocked_by",
+              relatedItem: dependency,
+            },
+          ],
+        },
+        nativeHierarchy: {
+          availability: "available",
+          relations: [
+            {
+              sourceId: subIssueSourceId,
+              authoritative: true,
+              provenance: "native",
+              relationship: "sub_issue",
+              relatedItem: subIssue,
+            },
+            {
+              sourceId: parentSourceId,
+              authoritative: true,
+              provenance: "native",
+              relationship: "parent",
+              relatedItem: parent,
+            },
+          ],
+        },
+        observedAt: itemObservedAt,
+      } satisfies Extract<GitHubItemDetail, { type: "issue" }>;
+      return normalizeGitHubEvents({ item, detail, isBot });
+    };
+
+    const currentReviewRequestSourceId = buildSourceId("github_review_request", "RR_current");
+    const unavailableReviewRequestSourceId = buildSourceId(
+      "github_review_request",
+      "RR_unavailable",
+    );
+    const normalizePullRequestAt = (itemObservedAt: UtcIsoDateTime): readonly NormalizedEvent[] => {
+      const item = {
+        ...createItem("VOICEVOX/example#1", "https://github.com/VOICEVOX/example/pull/1"),
+        observedAt: itemObservedAt,
+      };
+      const baseDetail = createDetail();
+      const detail = {
+        ...baseDetail,
+        observedAt: itemObservedAt,
+        reviewRequests: {
+          ...baseDetail.reviewRequests,
+          current: [
+            ...baseDetail.reviewRequests.current,
+            {
+              sourceId: unavailableReviewRequestSourceId,
+              nodeId: createGitHubNodeId("RR_unavailable"),
+              target: {
+                type: "user",
+                sourceId: buildSourceId("github_user", "U_unavailable_reviewer"),
+                nodeId: createGitHubNodeId("U_unavailable_reviewer"),
+                login: "unavailable-reviewer",
+                apiType: "User",
+              },
+              requestedAt: {
+                status: "unavailable",
+                reason: "timeline_event_not_found",
+              },
+            },
+          ],
+        },
+      } satisfies Extract<GitHubItemDetail, { type: "pull_request" }>;
+      return normalizeGitHubEvents({ item, detail, isBot });
+    };
+
+    const issueSourceIds = [dependencySourceId, subIssueSourceId, parentSourceId];
+    const firstIssueEvents = normalizeIssueAt(observedAt);
+    const secondIssueEvents = normalizeIssueAt(secondObservedAt);
+    const firstIssueOccurredAts = issueSourceIds.map(
+      (sourceId) => firstIssueEvents.find((event) => event.sourceId === sourceId)?.occurredAt,
+    );
+    const secondIssueOccurredAts = issueSourceIds.map(
+      (sourceId) => secondIssueEvents.find((event) => event.sourceId === sourceId)?.occurredAt,
+    );
+
+    expect(firstIssueOccurredAts).toEqual([
+      "2026-07-05T00:00:00.000Z",
+      "2026-07-25T00:00:00.000Z",
+      "2026-07-01T00:00:00.000Z",
+    ]);
+    expect(secondIssueOccurredAts).toEqual(firstIssueOccurredAts);
+
+    const firstPullRequestEvents = normalizePullRequestAt(observedAt);
+    const secondPullRequestEvents = normalizePullRequestAt(secondObservedAt);
+    const firstReviewRequestOccurredAt = firstPullRequestEvents.find(
+      (event) => event.sourceId === unavailableReviewRequestSourceId,
+    )?.occurredAt;
+    const secondReviewRequestOccurredAt = secondPullRequestEvents.find(
+      (event) => event.sourceId === unavailableReviewRequestSourceId,
+    )?.occurredAt;
+
+    expect(
+      firstPullRequestEvents.find((event) => event.sourceId === currentReviewRequestSourceId),
+    ).toBeUndefined();
+    expect(
+      secondPullRequestEvents.find((event) => event.sourceId === currentReviewRequestSourceId),
+    ).toBeUndefined();
+    expect(firstReviewRequestOccurredAt).toBe("2026-07-01T00:00:00.000Z");
+    expect(secondReviewRequestOccurredAt).toBe(firstReviewRequestOccurredAt);
   });
 
   it("GitHub Bot型、設定判定、通常アカウント、取得不能を区別する", () => {

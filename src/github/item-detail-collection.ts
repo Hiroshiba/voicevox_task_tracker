@@ -177,6 +177,7 @@ const referencedItemSchema = z.discriminatedUnion("__typename", [
     id: opaqueIdSchema,
     number: z.number().int().positive(),
     url: githubItemUrlSchema,
+    createdAt: utcIsoDateTimeSchema,
     issueState: z.enum(["OPEN", "CLOSED"]),
     repository: referencedRepositorySchema,
   }),
@@ -185,6 +186,7 @@ const referencedItemSchema = z.discriminatedUnion("__typename", [
     id: opaqueIdSchema,
     number: z.number().int().positive(),
     url: githubItemUrlSchema,
+    createdAt: utcIsoDateTimeSchema,
     pullRequestState: z.enum(["OPEN", "CLOSED", "MERGED"]),
     repository: referencedRepositorySchema,
   }),
@@ -373,6 +375,22 @@ const connectedEventSchema = timelineEventBaseSchema.extend({
 const disconnectedEventSchema = timelineEventBaseSchema.extend({
   __typename: z.literal("DisconnectedEvent"),
   subject: referencedItemSchema,
+});
+const subIssueAddedEventSchema = timelineEventBaseSchema.extend({
+  __typename: z.literal("SubIssueAddedEvent"),
+  subIssue: referencedItemSchema,
+});
+const subIssueRemovedEventSchema = timelineEventBaseSchema.extend({
+  __typename: z.literal("SubIssueRemovedEvent"),
+  subIssue: referencedItemSchema,
+});
+const parentIssueAddedEventSchema = timelineEventBaseSchema.extend({
+  __typename: z.literal("ParentIssueAddedEvent"),
+  parent: referencedItemSchema,
+});
+const parentIssueRemovedEventSchema = timelineEventBaseSchema.extend({
+  __typename: z.literal("ParentIssueRemovedEvent"),
+  parent: referencedItemSchema,
 });
 const headRefForcePushedEventSchema = timelineEventBaseSchema.extend({
   __typename: z.literal("HeadRefForcePushedEvent"),
@@ -743,6 +761,7 @@ function normalizeReferencedItem(item: RawReferencedItem): GitHubReferencedItem 
     type,
     number: item.number,
     url: item.url,
+    createdAt: item.createdAt,
     state,
   });
 }
@@ -1097,6 +1116,46 @@ function normalizeTimelineNode(node: RawTimelineNode, sequence: number): GitHubT
         ...normalizeTimelineBase(event, sequence),
         kind: "disconnected",
         subject: normalizeReferencedItem(event.subject),
+      });
+    }
+    case "SubIssueAddedEvent": {
+      const event = parseGraphqlResponse(subIssueAddedEventSchema, node, "SubIssueAddedEvent");
+      return Object.freeze({
+        ...normalizeTimelineBase(event, sequence),
+        kind: "sub_issue_added",
+        subIssue: normalizeReferencedItem(event.subIssue),
+      });
+    }
+    case "SubIssueRemovedEvent": {
+      const event = parseGraphqlResponse(subIssueRemovedEventSchema, node, "SubIssueRemovedEvent");
+      return Object.freeze({
+        ...normalizeTimelineBase(event, sequence),
+        kind: "sub_issue_removed",
+        subIssue: normalizeReferencedItem(event.subIssue),
+      });
+    }
+    case "ParentIssueAddedEvent": {
+      const event = parseGraphqlResponse(
+        parentIssueAddedEventSchema,
+        node,
+        "ParentIssueAddedEvent",
+      );
+      return Object.freeze({
+        ...normalizeTimelineBase(event, sequence),
+        kind: "parent_issue_added",
+        parent: normalizeReferencedItem(event.parent),
+      });
+    }
+    case "ParentIssueRemovedEvent": {
+      const event = parseGraphqlResponse(
+        parentIssueRemovedEventSchema,
+        node,
+        "ParentIssueRemovedEvent",
+      );
+      return Object.freeze({
+        ...normalizeTimelineBase(event, sequence),
+        kind: "parent_issue_removed",
+        parent: normalizeReferencedItem(event.parent),
       });
     }
     case "HeadRefForcePushedEvent": {

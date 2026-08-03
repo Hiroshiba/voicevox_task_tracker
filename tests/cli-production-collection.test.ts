@@ -432,6 +432,7 @@ function createNativeBlocker(
       type: blocker.type,
       number: blocker.number,
       url: blocker.url,
+      createdAt: blocker.createdAt,
       state: blocker.state,
     }),
   });
@@ -460,6 +461,7 @@ function createReferencedItem(item: EnumeratedGitHubItem): GitHubReferencedItem 
     type: item.type,
     number: item.number,
     url: item.url,
+    createdAt: item.createdAt,
     state: item.type === "pull_request" && item.mergeStatus === "merged" ? "merged" : item.state,
   });
 }
@@ -556,6 +558,7 @@ function createExternalNativeBlocker(
       type: "issue",
       number: 42,
       url: "https://github.com/external-owner/external-repository/issues/42",
+      createdAt: blocked.createdAt,
       state: options.state,
     }),
   });
@@ -2001,6 +2004,7 @@ describe("本番収集の接続", () => {
       type: source.type,
       number: source.number,
       url: source.url,
+      createdAt: source.createdAt,
       state: source.state,
     } satisfies GitHubReferencedItem);
     const eventNodeId = createGitHubNodeId("CRE_inbound_reference");

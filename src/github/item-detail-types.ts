@@ -60,6 +60,7 @@ export type GitHubReferencedItem = Readonly<{
   type: "issue" | "pull_request";
   number: number;
   url: GitHubItemUrl;
+  createdAt: UtcIsoDateTime;
   state: "open" | "closed" | "merged";
 }>;
 
@@ -197,6 +198,16 @@ export type GitHubTimelineEvent =
       Readonly<{
         kind: "connected" | "disconnected";
         subject: GitHubReferencedItem;
+      }>)
+  | (GitHubTimelineEventBase &
+      Readonly<{
+        kind: "sub_issue_added" | "sub_issue_removed";
+        subIssue: GitHubReferencedItem;
+      }>)
+  | (GitHubTimelineEventBase &
+      Readonly<{
+        kind: "parent_issue_added" | "parent_issue_removed";
+        parent: GitHubReferencedItem;
       }>)
   | (GitHubTimelineEventBase &
       Readonly<{
