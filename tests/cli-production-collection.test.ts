@@ -3778,7 +3778,10 @@ describe("本番判定入力の接続", () => {
       ]),
     );
     expect(publicItem).toMatchObject({
-      author: trackedItem.author,
+      summary: {
+        author: trackedItem.author,
+        assignees: trackedItem.assignees,
+      },
       latestEventActor: trackedItem.latestEventActor,
       aiAnalysis: trackedItem.aiAnalysis,
       inputEvents: trackedItem.inputEvents,

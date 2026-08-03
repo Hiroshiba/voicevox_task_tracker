@@ -7,13 +7,11 @@ import { ItemDetailsLink } from "./item-details.js";
 import {
   createItemDetailsMap,
   createItemTableRows,
-  confidencePresentation,
   filterAndSortTableRows,
   formatStallDuration,
   formatWaitingOn,
   searchItemNodeIds,
   statusLabel,
-  waitingOnCandidateLabel,
   type ItemTableRow,
   type TableColumnKey,
   type TableFilters,
@@ -135,43 +133,6 @@ function ItemTitleLink({
       {row.item.title}
     </ItemDetailsLink>
   );
-}
-
-function readableWaitingOnCandidateLabel(
-  candidate: ItemTableRow["item"]["waitingOn"][number],
-  summary: PublicSummaryDto,
-): string {
-  if (candidate.kind !== "item") {
-    return waitingOnCandidateLabel(candidate);
-  }
-  const relatedItem = summary.items.find((item) => item.nodeId === candidate.candidateId);
-  if (relatedItem != null) {
-    return relatedItem.displayReference;
-  }
-  const graphNode = summary.graph.nodes.find((node) => node.nodeId === candidate.candidateId);
-  assertNonNullable(graphNode, `waitingOn項目 ${candidate.candidateId} がありません`);
-  if (graphNode.kind !== "external_reference") {
-    throw new TypeError(`waitingOn項目 ${candidate.candidateId} の表示名がありません`);
-  }
-  return graphNode.displayReference;
-}
-
-function formatReadableWaitingOn(item: ItemTableRow["item"], summary: PublicSummaryDto): string {
-  if (item.waitingOn.length === 0) {
-    return formatWaitingOn(item, summary.confidenceThresholds);
-  }
-  return item.waitingOn
-    .map((candidate) => {
-      const candidatePresentation = confidencePresentation(
-        candidate.confidence,
-        summary.confidenceThresholds,
-      );
-      const label = readableWaitingOnCandidateLabel(candidate, summary);
-      return candidatePresentation.fieldQualifier.length === 0
-        ? label
-        : `${candidatePresentation.fieldQualifier}: ${label}`;
-    })
-    .join("、");
 }
 
 function SearchStatus({
@@ -436,7 +397,7 @@ function ItemTable({
                   )}
                 </th>
                 <td>{statusLabel(row.item.status)}</td>
-                <td>{formatReadableWaitingOn(row.item, summary)}</td>
+                <td>{formatWaitingOn(row.item, summary)}</td>
                 <td>
                   <strong>{formatStallDuration(row.item.stallSince, now)}</strong>
                 </td>
@@ -478,7 +439,7 @@ function ItemTable({
                 </div>
                 <div>
                   <dt>次の担当</dt>
-                  <dd>{formatReadableWaitingOn(row.item, summary)}</dd>
+                  <dd>{formatWaitingOn(row.item, summary)}</dd>
                 </div>
                 <div>
                   <dt>停滞</dt>

@@ -17,8 +17,8 @@ import {
   formatStallDuration,
   severityLabel,
   statusLabel,
-  waitingOnCandidateLabel,
-  waitingOnRoleLabel,
+  waitingOnHistoryLabel,
+  waitingOnLabel,
   type ConfidencePresentation,
 } from "./model.js";
 import { SafeGitHubLink } from "./safe-link.js";
@@ -182,14 +182,20 @@ function DetailTime({
   );
 }
 
-function formatResponsibilityHistoryValue(value: ResponsibilityHistoryValue): string {
+function formatResponsibilityHistoryValue(
+  value: ResponsibilityHistoryValue,
+  item: PublicItemDetailsDto["summary"],
+  summary: PublicSummaryDto,
+): string {
   if (value.state === "absent") {
     return "記録なし";
   }
   const waitingOn =
     value.value.waitingOn.length === 0
       ? "対応完了"
-      : value.value.waitingOn.map(waitingOnCandidateLabel).join("、");
+      : value.value.waitingOn
+          .map((candidate) => waitingOnHistoryLabel(candidate, item, summary))
+          .join("、");
   return `${statusLabel(value.value.status)}・${waitingOn}`;
 }
 
@@ -199,17 +205,23 @@ function formatSeverityHistoryValue(value: SeverityHistoryValue): string {
 
 function HistoryEvent({
   event,
+  item,
   locale,
-  timezone,
-}: Readonly<{ event: PublicItemHistoryEventDto; locale: string; timezone: string }>) {
+  summary,
+}: Readonly<{
+  event: PublicItemHistoryEventDto;
+  item: PublicItemDetailsDto["summary"];
+  locale: string;
+  summary: PublicSummaryDto;
+}>) {
   let label: string;
   let before: string;
   let after: string;
   switch (event.kind) {
     case "responsibility_changed":
       label = "状態とwaitingOnの変更";
-      before = formatResponsibilityHistoryValue(event.before);
-      after = formatResponsibilityHistoryValue(event.after);
+      before = formatResponsibilityHistoryValue(event.before, item, summary);
+      after = formatResponsibilityHistoryValue(event.after, item, summary);
       break;
     case "severity_changed":
       label = "severityの変更";
@@ -224,7 +236,7 @@ function HistoryEvent({
       <div>
         <h4>{label}</h4>
         <time dateTime={event.recordedAt}>
-          {formatDateTime(event.recordedAt, timezone, locale)}
+          {formatDateTime(event.recordedAt, summary.timezone, locale)}
         </time>
       </div>
       <p>
@@ -240,12 +252,14 @@ function HistoryEvent({
 
 function ItemHistory({
   history,
+  item,
   locale,
-  timezone,
+  summary,
 }: Readonly<{
   history: readonly PublicItemHistoryEventDto[];
+  item: PublicItemDetailsDto["summary"];
   locale: string;
-  timezone: string;
+  summary: PublicSummaryDto;
 }>) {
   const latestEvent = history.at(-1);
   return (
@@ -256,14 +270,14 @@ function ItemHistory({
         <>
           <div class="latest-difference">
             <h4>前回との差分</h4>
-            <HistoryEvent event={latestEvent} locale={locale} timezone={timezone} />
+            <HistoryEvent event={latestEvent} item={item} locale={locale} summary={summary} />
           </div>
           <details class="history-list">
             <summary>全履歴を表示</summary>
             <ol>
               {[...history].reverse().map((event) => (
                 <li key={`${event.runId}:${event.kind}:${event.recordedAt}`}>
-                  <HistoryEvent event={event} locale={locale} timezone={timezone} />
+                  <HistoryEvent event={event} item={item} locale={locale} summary={summary} />
                 </li>
               ))}
             </ol>
@@ -311,27 +325,31 @@ function WaitingOnCandidateReference({
   candidate,
   createItemHref,
   graphNodesByNodeId,
+  item,
   itemsByNodeId,
   onSelectItem,
+  summary,
 }: Readonly<{
   candidate: WaitingOnCandidate;
   createItemHref: (nodeId: string) => string;
   graphNodesByNodeId: ReadonlyMap<string, PublicGraphNodeDto>;
+  item: PublicItemDetailsDto["summary"];
   itemsByNodeId: ReadonlyMap<string, PublicItemDetailsDto["summary"]>;
   onSelectItem: (nodeId: string) => void;
+  summary: PublicSummaryDto;
 }>) {
-  if (candidate.kind !== "item") {
-    return <>{waitingOnCandidateLabel(candidate)}</>;
+  if (candidate.kind === "item") {
+    return (
+      <RelatedItemReference
+        createItemHref={createItemHref}
+        graphNodesByNodeId={graphNodesByNodeId}
+        itemsByNodeId={itemsByNodeId}
+        nodeId={candidate.candidateId}
+        onSelectItem={onSelectItem}
+      />
+    );
   }
-  return (
-    <RelatedItemReference
-      createItemHref={createItemHref}
-      graphNodesByNodeId={graphNodesByNodeId}
-      itemsByNodeId={itemsByNodeId}
-      nodeId={candidate.candidateId}
-      onSelectItem={onSelectItem}
-    />
-  );
+  return <>{waitingOnLabel(candidate, item, summary)}</>;
 }
 
 /** 選択した項目の判定根拠と変更履歴を表示する。 */
@@ -487,11 +505,12 @@ export function ItemDetailsContent({
                         candidate={candidate}
                         createItemHref={createItemHref}
                         graphNodesByNodeId={graphNodesByNodeId}
+                        item={item}
                         itemsByNodeId={itemsByNodeId}
                         onSelectItem={onSelectItem}
+                        summary={summary}
                       />
                     </strong>
-                    <span>{waitingOnRoleLabel(candidate.role)}</span>
                     {primaryBlockerNodeId === candidate.candidateId &&
                       item.primaryWaitingOn.index === index && (
                         <span class="primary-blocker-badge">主要blocker</span>
@@ -558,8 +577,10 @@ export function ItemDetailsContent({
                           candidate={candidate}
                           createItemHref={createItemHref}
                           graphNodesByNodeId={graphNodesByNodeId}
+                          item={item}
                           itemsByNodeId={itemsByNodeId}
                           onSelectItem={onSelectItem}
+                          summary={summary}
                         />
                       </strong>
                       <dl>
@@ -675,9 +696,9 @@ export function ItemDetailsContent({
             <div>
               <dt>assignee</dt>
               <dd>
-                {details.assignees.length === 0
+                {item.assignees.length === 0
                   ? "なし"
-                  : details.assignees.map((assignee) => `@${assignee.login}`).join("、")}
+                  : item.assignees.map((assignee) => `@${assignee.login}`).join("、")}
               </dd>
             </div>
           </dl>
@@ -700,7 +721,7 @@ export function ItemDetailsContent({
           <span>{details.history.length.toString()}件</span>
         </summary>
         <div class="detail-disclosure-content">
-          <ItemHistory history={details.history} locale={locale} timezone={summary.timezone} />
+          <ItemHistory history={details.history} item={item} locale={locale} summary={summary} />
         </div>
       </details>
     </article>

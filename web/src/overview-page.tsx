@@ -315,7 +315,7 @@ function AttentionQueue({
                   <dl class="attention-primary-details">
                     <div>
                       <dt>待っている相手</dt>
-                      <dd>{formatWaitingOn(item, summary.confidenceThresholds)}</dd>
+                      <dd>{formatWaitingOn(item, summary)}</dd>
                     </div>
                     <div>
                       <dt>停滞時間</dt>

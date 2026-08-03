@@ -92,11 +92,26 @@
       "url": "https://github.com/VOICEVOX/sample-editor/pull/101",
       "title": "サンプル辞書更新をマージする",
       "state": "open",
+      "author": {
+        "status": "identified",
+        "actor": {
+          "type": "human",
+          "nodeId": "sample-actor-dictionary-author",
+          "login": "sample-dictionary-author"
+        }
+      },
+      "assignees": [
+        {
+          "type": "human",
+          "nodeId": "sample-actor-merge-maintainer",
+          "login": "sample-merge-maintainer"
+        }
+      ],
       "status": "ready_to_merge",
       "waitingOn": [
         {
           "kind": "role",
-          "candidateId": "sample-merge-decider",
+          "candidateId": "maintainer",
           "role": "merge_decider",
           "reasonSummary": "確認が完了し、メンテナーのマージ判断を待っています",
           "sourceIds": ["sample-source-editor-101"],
@@ -131,6 +146,21 @@
       "url": "https://github.com/VOICEVOX/sample-engine/pull/202",
       "title": "サンプルAPIのレビューを完了する",
       "state": "open",
+      "author": {
+        "status": "identified",
+        "actor": {
+          "type": "human",
+          "nodeId": "sample-actor-api-creator",
+          "login": "sample-api-creator"
+        }
+      },
+      "assignees": [
+        {
+          "type": "human",
+          "nodeId": "sample-actor-api-author",
+          "login": "sample-api-author"
+        }
+      ],
       "status": "waiting_for_review",
       "waitingOn": [
         {
@@ -170,11 +200,26 @@
       "url": "https://github.com/VOICEVOX/sample-editor/issues/103",
       "title": "サンプル配布方針を決める",
       "state": "open",
+      "author": {
+        "status": "identified",
+        "actor": {
+          "type": "human",
+          "nodeId": "sample-actor-discussion-author",
+          "login": "sample-discussion-author"
+        }
+      },
+      "assignees": [
+        {
+          "type": "human",
+          "nodeId": "sample-actor-hiho",
+          "login": "hiho"
+        }
+      ],
       "status": "needs_maintainer_decision",
       "waitingOn": [
         {
           "kind": "role",
-          "candidateId": "sample-maintainers",
+          "candidateId": "maintainer",
           "role": "maintainer",
           "reasonSummary": "配布方針についてメンテナーの判断が必要です",
           "sourceIds": ["sample-source-editor-103"],
@@ -209,6 +254,17 @@
       "url": "https://github.com/VOICEVOX/sample-engine/issues/204",
       "title": "サンプル配布処理を実装する",
       "state": "open",
+      "author": {
+        "status": "unavailable",
+        "reason": "deleted_account"
+      },
+      "assignees": [
+        {
+          "type": "human",
+          "nodeId": "sample-actor-implementer",
+          "login": "sample-implementer"
+        }
+      ],
       "status": "blocked",
       "waitingOn": [
         {
@@ -256,11 +312,26 @@
       "url": "https://github.com/VOICEVOX/sample-core/pull/305",
       "title": "サンプル修正へ回答する",
       "state": "open",
+      "author": {
+        "status": "identified",
+        "actor": {
+          "type": "human",
+          "nodeId": "sample-actor-bug-author",
+          "login": "sample-bug-author"
+        }
+      },
+      "assignees": [
+        {
+          "type": "human",
+          "nodeId": "sample-actor-author",
+          "login": "sample-author"
+        }
+      ],
       "status": "waiting_for_author",
       "waitingOn": [
         {
           "kind": "role",
-          "candidateId": "sample-author",
+          "candidateId": "author",
           "role": "author",
           "reasonSummary": "レビュー指摘への修正を待っています",
           "sourceIds": ["sample-source-core-305"],

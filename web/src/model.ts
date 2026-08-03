@@ -10,6 +10,8 @@ type PublicRepositoryDto = PublicSummaryDto["repositories"][number];
 type ConfidenceThresholds = PublicSummaryDto["confidenceThresholds"];
 type Status = PublicItemSummaryDto["status"];
 type Severity = PublicItemSummaryDto["severity"];
+type WaitingOnCandidate = PublicItemSummaryDto["waitingOn"][number];
+type WaitingOnRole = WaitingOnCandidate["role"];
 type PublicActor = Extract<
   PublicItemDetailsDto["latestEventActor"],
   Readonly<{ status: "present" }>
@@ -107,7 +109,7 @@ const ROLE_LABELS = {
   merge_decider: "マージ判断者",
   ci: "CI",
   unknown: "不明",
-} satisfies Readonly<Record<PublicItemSummaryDto["waitingOn"][number]["role"], string>>;
+} satisfies Readonly<Record<WaitingOnRole, string>>;
 
 /** 一覧表の空の絞り込み条件を作る。 */
 export function createEmptyTableFilters(): TableFilters {
@@ -237,19 +239,37 @@ export function formatStallDuration(stallSince: string, now: Date): string {
   return `${elapsedDays.toString()}日 ${remainingHours.toString()}時間`;
 }
 
-/** waitingOn候補を日本語の表示文字列へ変換する。 */
-export function waitingOnCandidateLabel(
-  waitingOn: PublicItemSummaryDto["waitingOn"][number],
+function waitingOnRoleName(role: WaitingOnRole): string {
+  return ROLE_LABELS[role];
+}
+
+function waitingOnItemLabel(candidateId: string, summary: PublicSummaryDto): string {
+  const relatedItem = summary.items.find((item) => item.nodeId === candidateId);
+  if (relatedItem != null) {
+    return relatedItem.displayReference;
+  }
+  const graphNode = summary.graph.nodes.find((node) => node.nodeId === candidateId);
+  assertNonNullable(graphNode, `waitingOn項目 ${candidateId} がありません`);
+  if (graphNode.kind !== "external_reference") {
+    throw new TypeError(`waitingOn項目 ${candidateId} の表示名がありません`);
+  }
+  return graphNode.displayReference;
+}
+
+function waitingOnKindLabel(
+  waitingOn: WaitingOnCandidate,
+  summary: PublicSummaryDto,
+  roleLabel: (role: WaitingOnRole) => string,
 ): string {
   switch (waitingOn.kind) {
     case "user":
-      return `@${waitingOn.candidateId}`;
+      return `${waitingOnRoleName(waitingOn.role)} @${waitingOn.candidateId}`;
     case "team":
-      return `チーム ${waitingOn.candidateId}`;
+      return `${waitingOnRoleName(waitingOn.role)} チーム ${waitingOn.candidateId}`;
     case "role":
-      return ROLE_LABELS[waitingOn.role];
+      return roleLabel(waitingOn.role);
     case "item":
-      return `項目 ${waitingOn.candidateId}`;
+      return waitingOnItemLabel(waitingOn.candidateId, summary);
     case "automation":
       return `自動処理 ${waitingOn.candidateId}`;
     case "unknown":
@@ -259,11 +279,59 @@ export function waitingOnCandidateLabel(
   }
 }
 
-/** waitingOnのroleを日本語の表示文字列へ変換する。 */
-export function waitingOnRoleLabel(
-  role: PublicItemSummaryDto["waitingOn"][number]["role"],
+function currentWaitingOnRoleLabel(role: WaitingOnRole, item: PublicItemSummaryDto): string {
+  switch (role) {
+    case "author":
+      switch (item.author.status) {
+        case "identified":
+          return `${waitingOnRoleName(role)} @${item.author.actor.login}`;
+        case "unavailable":
+          return `${waitingOnRoleName(role)} アカウント削除済み`;
+        default:
+          throw new UnreachableError(item.author);
+      }
+    case "assignee":
+      return item.assignees.length === 0
+        ? `${waitingOnRoleName(role)} 未割り当て`
+        : `${waitingOnRoleName(role)} ${item.assignees
+            .map((assignee) => `@${assignee.login}`)
+            .join("、")}`;
+    case "maintainer":
+    case "reviewer":
+    case "merge_decider":
+      return `${waitingOnRoleName(role)}の誰か`;
+    case "ci":
+    case "dependency":
+    case "unknown":
+      return waitingOnRoleName(role);
+    default:
+      throw new UnreachableError(role);
+  }
+}
+
+function historyWaitingOnRoleLabel(role: WaitingOnRole, item: PublicItemSummaryDto): string {
+  if (role === "assignee") {
+    return `当時の${waitingOnRoleName(role)}`;
+  }
+  return currentWaitingOnRoleLabel(role, item);
+}
+
+/** 現在のwaitingOn候補を役割と対象がわかる表示文字列へ変換する。 */
+export function waitingOnLabel(
+  waitingOn: WaitingOnCandidate,
+  item: PublicItemSummaryDto,
+  summary: PublicSummaryDto,
 ): string {
-  return ROLE_LABELS[role];
+  return waitingOnKindLabel(waitingOn, summary, (role) => currentWaitingOnRoleLabel(role, item));
+}
+
+/** 過去のwaitingOn候補を対象がわかる表示文字列へ変換する。 */
+export function waitingOnHistoryLabel(
+  waitingOn: WaitingOnCandidate,
+  item: PublicItemSummaryDto,
+  summary: PublicSummaryDto,
+): string {
+  return waitingOnKindLabel(waitingOn, summary, (role) => historyWaitingOnRoleLabel(role, item));
 }
 
 /** confidenceを確定、推定、候補の表示へ変換する。 */
@@ -314,10 +382,7 @@ export function formatConfidence(confidence: number, locale: string): string {
 }
 
 /** waitingOn配列を日本語の表示文字列へ変換する。 */
-export function formatWaitingOn(
-  item: PublicItemSummaryDto,
-  thresholds: ConfidenceThresholds,
-): string {
+export function formatWaitingOn(item: PublicItemSummaryDto, summary: PublicSummaryDto): string {
   if (item.waitingOn.length === 0) {
     if (
       item.status !== "terminal_merged" &&
@@ -330,10 +395,13 @@ export function formatWaitingOn(
   }
   return item.waitingOn
     .map((waitingOn) => {
-      const presentation = confidencePresentation(waitingOn.confidence, thresholds);
+      const presentation = confidencePresentation(
+        waitingOn.confidence,
+        summary.confidenceThresholds,
+      );
       return presentation.fieldQualifier.length === 0
-        ? waitingOnCandidateLabel(waitingOn)
-        : `${presentation.fieldQualifier}: ${waitingOnCandidateLabel(waitingOn)}`;
+        ? waitingOnLabel(waitingOn, item, summary)
+        : `${presentation.fieldQualifier}: ${waitingOnLabel(waitingOn, item, summary)}`;
     })
     .join("、");
 }
@@ -471,7 +539,7 @@ export function createItemTableRows(
       statusText: `${statusLabel(item.status)} ${item.status} ${severityLabel(
         item.severity,
       )} 優先度 ${item.priorityWeight.toString()}`,
-      waitingOnText: `${formatWaitingOn(item, summary.confidenceThresholds)} ${item.waitingOn
+      waitingOnText: `${formatWaitingOn(item, summary)} ${item.waitingOn
         .map((waitingOn) => waitingOn.reasonSummary)
         .join(" ")}`,
       stallText: `${formatStallDuration(item.stallSince, now)} ${item.stallSince}`,
@@ -558,14 +626,15 @@ export function searchItemNodeIds(
           item.displayReference,
           item.title,
           ...item.waitingOn.flatMap((waitingOn) => [
+            waitingOnLabel(waitingOn, item, summary),
             waitingOn.candidateId,
             waitingOn.reasonSummary,
           ]),
-          ...(details.author.status === "identified" ? [details.author.actor.login] : []),
+          ...(item.author.status === "identified" ? [item.author.actor.login] : []),
           ...(details.latestEventActor.status === "present"
             ? [actorSearchName(details.latestEventActor.actor)]
             : []),
-          ...details.assignees.map((assignee) => assignee.login),
+          ...item.assignees.map((assignee) => assignee.login),
           ...details.labels,
         ].join("\n"),
       );

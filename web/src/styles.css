@@ -992,7 +992,6 @@ tbody th {
   gap: 0.4rem 0.75rem;
 }
 
-.waiting-on-list li > div span,
 .evidence-list li > div span {
   color: #52617b;
   font-size: 0.8rem;

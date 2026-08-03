@@ -123,6 +123,21 @@ const downstreamImpactSchema = z.strictObject({
   openNodeCount: nonNegativeIntegerSchema,
   repositoryCount: nonNegativeIntegerSchema,
 });
+const accountActorSchema = z.strictObject({
+  type: z.enum(["human", "bot"]),
+  nodeId: identifierSchema,
+  login: z.string().min(1).max(256),
+});
+const itemAuthorSchema = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("identified"),
+    actor: accountActorSchema,
+  }),
+  z.strictObject({
+    status: z.literal("unavailable"),
+    reason: z.literal("deleted_account"),
+  }),
+]);
 const publicItemSummarySchema = z.strictObject({
   nodeId: identifierSchema,
   type: z.enum(["issue", "pull_request"]),
@@ -132,6 +147,8 @@ const publicItemSummarySchema = z.strictObject({
   url: githubUrlSchema,
   title: z.string().max(500),
   state: z.enum(["open", "closed", "merged"]),
+  author: itemAuthorSchema,
+  assignees: z.array(accountActorSchema),
   status: statusSchema,
   waitingOn: z.array(waitingOnSchema),
   primaryWaitingOn: primaryWaitingOnSchema,
@@ -156,26 +173,11 @@ const itemTimestampsSchema = z.strictObject({
   stallSince: dateTimeSchema,
   observedAt: dateTimeSchema,
 });
-const accountActorSchema = z.strictObject({
-  type: z.enum(["human", "bot"]),
-  nodeId: identifierSchema,
-  login: z.string().min(1).max(256),
-});
 const actorSchema = z.discriminatedUnion("type", [
   accountActorSchema,
   z.strictObject({
     type: z.literal("system"),
     name: z.string().min(1).max(512),
-  }),
-]);
-const itemAuthorSchema = z.discriminatedUnion("status", [
-  z.strictObject({
-    status: z.literal("identified"),
-    actor: accountActorSchema,
-  }),
-  z.strictObject({
-    status: z.literal("unavailable"),
-    reason: z.literal("deleted_account"),
   }),
 ]);
 const latestEventActorSchema = z.discriminatedUnion("status", [
@@ -228,10 +230,8 @@ const publicItemHistoryEventSchema = z.discriminatedUnion("kind", [
 const publicItemDetailsSchema = z.strictObject({
   summary: publicItemSummarySchema,
   timestamps: itemTimestampsSchema,
-  author: itemAuthorSchema,
   latestEventActor: latestEventActorSchema,
   labels: z.array(z.string().min(1).max(256)),
-  assignees: z.array(accountActorSchema),
   reviewState: z.enum([
     "not_applicable",
     "not_requested",

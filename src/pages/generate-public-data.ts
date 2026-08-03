@@ -596,6 +596,20 @@ function createItemSummary(
     url: item.url,
     title: item.title,
     state: item.state,
+    author:
+      item.author.status === "unavailable"
+        ? {
+            ...item.author,
+          }
+        : {
+            ...item.author,
+            actor: {
+              ...item.author.actor,
+            },
+          },
+    assignees: item.assignees.map((assignee) => ({
+      ...assignee,
+    })),
     status: item.status,
     waitingOn: item.waitingOn.map((waitingOn) => ({
       ...waitingOn,
@@ -973,17 +987,6 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
           stallSince: item.stallSince,
           observedAt: item.observedAt,
         },
-        author:
-          item.author.status === "unavailable"
-            ? {
-                ...item.author,
-              }
-            : {
-                ...item.author,
-                actor: {
-                  ...item.author.actor,
-                },
-              },
         latestEventActor:
           item.latestEventActor.status === "absent"
             ? {
@@ -996,9 +999,6 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
                 },
               },
         labels: [...item.labels],
-        assignees: item.assignees.map((assignee) => ({
-          ...assignee,
-        })),
         reviewState: item.reviewState,
         checkState: item.checkState,
         aiAnalysis: {

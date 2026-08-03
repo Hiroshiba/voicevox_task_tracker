@@ -450,7 +450,7 @@ describe("Web UI", () => {
       "VOICEVOX/sample-editor #101",
     );
     expect(firstItem.querySelector(".attention-primary-details")?.textContent).toContain(
-      "マージ判断者",
+      "マージ判断者の誰か",
     );
     expect(firstItem.querySelector(".attention-primary-details")?.textContent).toContain("12日");
     expect(firstItem.querySelector(".severity-critical")?.textContent).toBe("最重要");
@@ -594,7 +594,7 @@ describe("Web UI", () => {
       },
       {
         key: "waitingOn",
-        value: "sample-reviewers",
+        value: "レビュワー チーム sample-reviewers",
         expectedNodeIds: ["sample-item-engine-202"],
       },
       {
@@ -789,6 +789,7 @@ describe("Web UI", () => {
     );
     expect(staleItem.dataset["freshness"]).toBe("stale");
     expect(staleItem.textContent).toContain("古い観測値");
+    expect(staleItem.textContent).toContain("推定: 作成者 @sample-bug-author");
   });
 
   it("選択項目の状況と次の行動を先に表示し内部情報を折りたたむ", async () => {
@@ -814,6 +815,14 @@ describe("Web UI", () => {
     expect(currentAction.textContent).toContain("次の行動");
     expect(currentAction.textContent).toContain("31日");
     expect(currentAction.querySelectorAll(".waiting-on-list > li")).toHaveLength(2);
+    expect(
+      [...currentAction.querySelectorAll(".waiting-on-list > li strong")].map(
+        (label) => label.textContent,
+      ),
+    ).toEqual([
+      "VOICEVOX/sample-editor#103 サンプル配布方針を決める",
+      "example/sample-distribution#42 配布ツールの新形式へ対応する",
+    ]);
     expect(currentAction.querySelectorAll(".primary-blocker-badge")).toHaveLength(1);
     expect(currentAction.querySelector(".blocker-list")).toBeNull();
     expect(currentAction.textContent?.match(/VOICEVOX\/sample-editor#103/gu)).toHaveLength(1);
@@ -834,6 +843,12 @@ describe("Web UI", () => {
     expect(details.textContent).toContain("GitHub上の根拠を開く");
     expect(details.textContent).toContain("confidence 100%");
     expect(details.textContent).toContain("前回との差分");
+    const historyDetails = requiredElement<HTMLDetailsElement>(".history-details");
+    expect(historyDetails.textContent).toContain("進行中・当時の担当者");
+    expect(historyDetails.textContent).not.toContain("担当者 @sample-implementer");
+    expect(historyDetails.textContent).toContain(
+      "ブロック中・VOICEVOX/sample-editor#103、example/sample-distribution#42",
+    );
     expect(details.textContent).toContain("通常");
     expect(details.textContent).toContain("要確認");
     expect(details.querySelector<HTMLAnchorElement>(".evidence-list a")?.rel).toBe(
@@ -872,6 +887,10 @@ describe("Web UI", () => {
       },
       {
         query: "sample-reviewers",
+        nodeIds: ["sample-item-engine-202"],
+      },
+      {
+        query: "レビュワー チーム",
         nodeIds: ["sample-item-engine-202"],
       },
       {

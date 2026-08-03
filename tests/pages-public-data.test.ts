@@ -227,7 +227,13 @@ function createItem(options: ItemFixtureOptions): unknown {
     stallSince: options.observedAt,
     observedAt: options.observedAt,
     labels: ["優先度：高"],
-    assignees: [],
+    assignees: [
+      {
+        type: "human",
+        nodeId: `U_assignee_${options.nodeId}`,
+        login: `assignee-${options.nodeId}`,
+      },
+    ],
     reviewState: options.number % 2 === 0 ? "requested" : "not_applicable",
     checkState: options.number % 2 === 0 ? "pending" : "not_applicable",
     aiAnalysis: {
@@ -1271,12 +1277,17 @@ describe("公開DTO生成", () => {
     const itemA = generated.details.items.find((item) => item.summary.nodeId === "I_A");
     expect(itemA?.summary.blockerNodeIds).toEqual(["I_B"]);
     expect(itemA?.summary.priorityWeight).toBe(25);
-    expect(itemA?.author).toMatchObject({
+    expect(itemA?.summary.author).toMatchObject({
       status: "identified",
       actor: {
         login: "author-I_A",
       },
     });
+    expect(itemA?.summary.assignees).toMatchObject([
+      {
+        login: "assignee-I_A",
+      },
+    ]);
     expect(itemA?.latestEventActor).toMatchObject({
       status: "present",
       actor: {
