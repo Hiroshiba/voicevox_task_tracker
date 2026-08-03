@@ -577,11 +577,16 @@ type RawCheckContext = z.output<typeof checkContextSchema>;
 type RawTimelineNode = z.output<typeof timelineNodeSchema>;
 type RawActor = NonNullable<z.output<typeof actorSchema>>;
 
+/** 項目ごとの詳細取得対象とtimeline取得窓。 */
+export type GitHubItemDetailTarget = Readonly<{
+  item: EnumeratedGitHubItem;
+  eventWindow: GitHubItemDetailEventWindow;
+}>;
+
 export type CollectGitHubItemDetailsOptions = Readonly<{
   allowlist: PublicRepositoryAllowlist;
-  items: readonly EnumeratedGitHubItem[];
+  targets: readonly GitHubItemDetailTarget[];
   observedAt: UtcIsoDateTime;
-  eventWindow: GitHubItemDetailEventWindow;
   graphql: Graphql;
 }>;
 
@@ -1976,10 +1981,10 @@ async function normalizePullRequestMergeState(
 
 function validateDetailTargets(
   allowlist: PublicRepositoryAllowlist,
-  items: readonly EnumeratedGitHubItem[],
+  targets: readonly GitHubItemDetailTarget[],
 ): void {
   const itemNodeIds = new Set<GitHubNodeId>();
-  for (const item of items) {
+  for (const { item } of targets) {
     allowlist.require(item.repositoryId);
     if (itemNodeIds.has(item.nodeId)) {
       throw new TypeError(`詳細取得対象のitem node IDが重複しています。対象: ${item.nodeId}`);
@@ -2003,6 +2008,7 @@ function validateItemRepositoryAlias(
 
 async function collectIssueDetail(
   item: EnumeratedGitHubItem,
+  eventWindow: GitHubItemDetailEventWindow,
   issue: z.output<typeof baseIssueSchema>,
   capabilities: GitHubItemDetailCapabilities,
   options: CollectGitHubItemDetailsOptions,
@@ -2011,7 +2017,7 @@ async function collectIssueDetail(
   const timelineNodes = await collectTimelineNodes(
     item,
     issue.timelineItems,
-    options.eventWindow,
+    eventWindow,
     options.graphql,
   );
   const timeline = normalizeTimeline(timelineNodes);
@@ -2039,6 +2045,7 @@ async function collectIssueDetail(
 
 async function collectPullRequestDetail(
   item: EnumeratedGitHubItem,
+  eventWindow: GitHubItemDetailEventWindow,
   pullRequest: z.output<typeof basePullRequestSchema>,
   options: CollectGitHubItemDetailsOptions,
 ): Promise<GitHubItemDetail> {
@@ -2064,7 +2071,7 @@ async function collectPullRequestDetail(
   const timelineNodes = await collectTimelineNodes(
     item,
     pullRequest.timelineItems,
-    options.eventWindow,
+    eventWindow,
     options.graphql,
   );
   const timeline = normalizeTimeline(timelineNodes);
@@ -2095,14 +2102,15 @@ async function collectPullRequestDetail(
 
 async function collectItemDetail(
   item: EnumeratedGitHubItem,
+  eventWindow: GitHubItemDetailEventWindow,
   repository: PublicRepository,
   capabilities: GitHubItemDetailCapabilities,
   options: CollectGitHubItemDetailsOptions,
 ): Promise<GitHubItemDetail> {
   validateItemRepositoryAlias(item, repository);
-  const response = await options.graphql(createItemDetailQuery(capabilities, options.eventWindow), {
+  const response = await options.graphql(createItemDetailQuery(capabilities, eventWindow), {
     itemId: item.nodeId,
-    ...eventWindowVariables(options.eventWindow),
+    ...eventWindowVariables(eventWindow),
   });
   const parsed = parseGraphqlResponse(
     baseItemDetailResponseSchema,
@@ -2117,27 +2125,29 @@ async function collectItemDetail(
   );
   assertItemResponseType(responseItem.__typename, item, `${item.displayReference} details`);
   if (responseItem.__typename === "Issue") {
-    return collectIssueDetail(item, responseItem, capabilities, options);
+    return collectIssueDetail(item, eventWindow, responseItem, capabilities, options);
   }
-  return collectPullRequestDetail(item, responseItem, options);
+  return collectPullRequestDetail(item, eventWindow, responseItem, options);
 }
 
 /** 公開allowlist内の詳細取得対象から判定に必要なGitHub情報を全ページ収集する。 */
 export async function collectGitHubItemDetails(
   options: CollectGitHubItemDetailsOptions,
 ): Promise<GitHubItemDetailCollection> {
-  if (
-    options.eventWindow.mode === "incremental" &&
-    options.eventWindow.since > options.observedAt
-  ) {
-    throw new RangeError("増分イベント取得起点は詳細観測時刻以前にしてください");
+  for (const target of options.targets) {
+    if (
+      target.eventWindow.mode === "incremental" &&
+      target.eventWindow.since > options.observedAt
+    ) {
+      throw new RangeError("増分イベント取得起点は詳細観測時刻以前にしてください");
+    }
   }
-  validateDetailTargets(options.allowlist, options.items);
+  validateDetailTargets(options.allowlist, options.targets);
   const capabilities = await discoverCapabilities(options.graphql);
   const details: GitHubItemDetail[] = [];
-  for (const item of options.items) {
+  for (const { item, eventWindow } of options.targets) {
     const repository = options.allowlist.require(item.repositoryId);
-    details.push(await collectItemDetail(item, repository, capabilities, options));
+    details.push(await collectItemDetail(item, eventWindow, repository, capabilities, options));
   }
   return Object.freeze({
     capabilities,

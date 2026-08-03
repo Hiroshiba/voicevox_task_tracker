@@ -426,9 +426,13 @@ describe("Issue詳細収集", () => {
     try {
       await collectGitHubItemDetails({
         allowlist,
-        items: [item],
+        targets: [
+          {
+            item,
+            eventWindow: Object.freeze({ mode: "initial" }),
+          },
+        ],
         observedAt,
-        eventWindow: Object.freeze({ mode: "initial" }),
         graphql: mock.graphql,
       });
       throw new Error("GitHubResponseSchemaValidationErrorが発生しませんでした");
@@ -460,6 +464,71 @@ describe("Issue詳細収集", () => {
       expect(diagnosticText).not.toContain("input");
       expect(diagnosticText).not.toContain("received");
     }
+  });
+
+  it("同じ詳細収集で項目ごとのtimeline取得窓を使う", async () => {
+    const allowlist = createAllowlist();
+    const fullHistoryItem = createItem(allowlist, "I_full_history", 1, "issue");
+    const incrementalItem = createItem(allowlist, "I_incremental", 2, "issue");
+    const since = createUtcIsoDateTime("2026-07-31T23:55:00Z");
+    const mock = createGraphqlHttpMock((operation, variables) => {
+      if (operation === "GitHubItemDetailCapabilities") {
+        return createCapabilitiesResponse("unavailable");
+      }
+      if (operation === "GitHubItemDetail") {
+        const itemNodeId = getStringVariable(variables, "itemId");
+        return {
+          item: {
+            __typename: "Issue",
+            id: itemNodeId,
+            body: "本文",
+            comments: createEmptyConnection(),
+            timelineItems: createEmptyConnection(),
+          },
+        };
+      }
+      throw new Error(`未定義のGraphQL operationです。対象: ${operation}`);
+    });
+
+    const collection = await collectGitHubItemDetails({
+      allowlist,
+      targets: [
+        {
+          item: fullHistoryItem,
+          eventWindow: Object.freeze({ mode: "initial" }),
+        },
+        {
+          item: incrementalItem,
+          eventWindow: Object.freeze({
+            mode: "incremental",
+            since,
+          }),
+        },
+      ],
+      observedAt,
+      graphql: mock.graphql,
+    });
+    const detailRequests = mock.requests.filter(
+      (request) => request.operation === "GitHubItemDetail",
+    );
+    const fullHistoryRequest = detailRequests.find(
+      (request) => request.variables["itemId"] === fullHistoryItem.nodeId,
+    );
+    const incrementalRequest = detailRequests.find(
+      (request) => request.variables["itemId"] === incrementalItem.nodeId,
+    );
+    if (fullHistoryRequest == null || incrementalRequest == null) {
+      throw new Error("項目別timeline取得窓のGraphQL requestが不足しています");
+    }
+
+    expect(collection.items.map((item) => item.nodeId)).toEqual([
+      fullHistoryItem.nodeId,
+      incrementalItem.nodeId,
+    ]);
+    expect(fullHistoryRequest.variables).not.toHaveProperty("since");
+    expect(fullHistoryRequest.query).not.toContain("$since");
+    expect(incrementalRequest.variables).toMatchObject({ since });
+    expect(incrementalRequest.query).toContain("$since");
   });
 
   it("100件を超えるコメントの順序とIDを保持し、native関係とinbound sourceを返す", async () => {
@@ -592,9 +661,13 @@ describe("Issue詳細収集", () => {
 
     const collection = await collectGitHubItemDetails({
       allowlist,
-      items: [item],
+      targets: [
+        {
+          item,
+          eventWindow: Object.freeze({ mode: "initial" }),
+        },
+      ],
       observedAt,
-      eventWindow: Object.freeze({ mode: "initial" }),
       graphql: mock.graphql,
     });
 
@@ -749,9 +822,13 @@ describe("Issue詳細収集", () => {
 
     const collection = await collectGitHubItemDetails({
       allowlist,
-      items: [item],
+      targets: [
+        {
+          item,
+          eventWindow: Object.freeze({ mode: "initial" }),
+        },
+      ],
       observedAt,
-      eventWindow: Object.freeze({ mode: "initial" }),
       graphql: mock.client.graphql,
     });
 
@@ -1079,9 +1156,13 @@ describe("Pull Request詳細収集", () => {
 
     const collection = await collectGitHubItemDetails({
       allowlist,
-      items: [item],
+      targets: [
+        {
+          item,
+          eventWindow: Object.freeze({ mode: "initial" }),
+        },
+      ],
       observedAt,
-      eventWindow: Object.freeze({ mode: "initial" }),
       graphql: mock.graphql,
     });
 
@@ -1295,9 +1376,11 @@ describe("Pull Request詳細収集", () => {
 
     const collection = await collectGitHubItemDetails({
       allowlist,
-      items: fixtures.map((fixture) => fixture.item),
+      targets: fixtures.map((fixture) => ({
+        item: fixture.item,
+        eventWindow: Object.freeze({ mode: "initial" }),
+      })),
       observedAt,
-      eventWindow: Object.freeze({ mode: "initial" }),
       graphql: mock.graphql,
     });
 

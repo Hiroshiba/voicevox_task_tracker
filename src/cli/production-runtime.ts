@@ -4120,37 +4120,61 @@ async function collectFreshRepositoryItemObservations(
 ): Promise<FreshRepositoryItemCollection> {
   const allowlist = createPublicRepositoryAllowlist([repository]);
   const currentNodeIds = new Set(enumeratedItems.map((item) => item.nodeId));
+  const previouslyAnalyzedItemNodeIds = new Set(
+    (previousSnapshot(state)?.items ?? []).map((item) => item.nodeId),
+  );
   const plan = planIncrementalItemCollection({
     items: enumeratedItems,
     previous: previousItemCollection(state, repository),
-    previouslyAnalyzedItemNodeIds: new Set(
-      (previousSnapshot(state)?.items ?? []).map((item) => item.nodeId),
-    ),
+    previouslyAnalyzedItemNodeIds,
     currentAnalysisRulesFingerprints: createCurrentAnalysisRulesFingerprints(configuration.config),
     adjacentItemNodeIds: new Set(
       [...adjacentNodeIds].filter((nodeId) => currentNodeIds.has(nodeId)),
     ),
     overlapMilliseconds: INCREMENTAL_COLLECTION_OVERLAP_MILLISECONDS,
   });
+  const plannedDetailTargetsByNodeId = new Map(
+    plan.detailTargets.map((target) => [target.nodeId, target]),
+  );
   const detailNodeIds = new Set([
-    ...plan.detailItemNodeIds,
+    ...plannedDetailTargetsByNodeId.keys(),
     ...requiredTrackingDetailNodeIds(invocation, configuration, state, repository, enumeratedItems),
   ]);
-  const detailTargets = enumeratedItems.filter((item) => detailNodeIds.has(item.nodeId));
+  const detailItems = enumeratedItems.filter((item) => detailNodeIds.has(item.nodeId));
+  const defaultEventWindow = detailEventWindow(plan);
+  const fullHistoryEventWindow = Object.freeze({
+    mode: "initial",
+  }) satisfies GitHubItemDetailEventWindow;
+  const detailTargets = Object.freeze(
+    detailItems.map((item) => {
+      const plannedTarget = plannedDetailTargetsByNodeId.get(item.nodeId);
+      if (plannedTarget != null) {
+        return Object.freeze({
+          item,
+          eventWindow: plannedTarget.eventWindow,
+        });
+      }
+      return Object.freeze({
+        item,
+        eventWindow: previouslyAnalyzedItemNodeIds.has(item.nodeId)
+          ? defaultEventWindow
+          : fullHistoryEventWindow,
+      });
+    }),
+  );
   const details =
     detailTargets.length === 0
       ? Object.freeze([])
       : (
           await adapters.collectGitHubItemDetails({
             allowlist,
-            items: detailTargets,
+            targets: detailTargets,
             observedAt: invocation.startedAt,
-            eventWindow: detailEventWindow(plan),
             graphql: authentication.graphql,
           })
         ).items;
   const observedItems = normalizeObservedGitHubItems({
-    items: detailTargets,
+    items: detailItems,
     details,
     isBot: createGitHubBotPredicate(configuration.config.actors.bots),
   });

@@ -87,8 +87,10 @@ interface RepositoryFixture {
 }
 
 type DetailCall = Readonly<{
-  nodeIds: readonly GitHubNodeId[];
-  eventWindow: GitHubItemDetailEventWindow;
+  targets: readonly Readonly<{
+    nodeId: GitHubNodeId;
+    eventWindow: GitHubItemDetailEventWindow;
+  }>[];
 }>;
 
 function createRepository(id: string, name: string, observedAt: string): Repository {
@@ -829,11 +831,18 @@ function createCollectionHarness(
     collectGitHubItemDetails: (input) => {
       detailCalls.push(
         Object.freeze({
-          nodeIds: Object.freeze(input.items.map((item) => item.nodeId)),
-          eventWindow: input.eventWindow,
+          targets: Object.freeze(
+            input.targets.map((target) =>
+              Object.freeze({
+                nodeId: target.item.nodeId,
+                eventWindow: target.eventWindow,
+              }),
+            ),
+          ),
         }),
       );
-      const items = input.items.map((item) => {
+      const items = input.targets.map((target) => {
+        const item = target.item;
         const fixture = fixturesByRepositoryId.get(item.repositoryId);
         const detail = fixture?.details.get(item.nodeId);
         if (detail == null) {
@@ -2125,9 +2134,9 @@ describe("本番収集の接続", () => {
 
     expect(result.exitCode).toBe(0);
     expect(harness.individualCalls).toEqual([[secondReferenced.nodeId]]);
-    expect(harness.detailCalls.map((call) => call.nodeIds)).toContainEqual([
-      secondReferenced.nodeId,
-    ]);
+    expect(
+      harness.detailCalls.map((call) => call.targets.map((target) => target.nodeId)),
+    ).toContainEqual([secondReferenced.nodeId]);
     expect(snapshot.items.map((item) => item.nodeId)).toEqual(
       expect.arrayContaining([secondTracked.nodeId, secondReferenced.nodeId]),
     );
@@ -2766,10 +2775,13 @@ describe("本番収集の接続", () => {
 
     expect(result.exitCode).toBe(0);
     expect(harness.individualCalls).toEqual([]);
-    expect(harness.detailCalls.map((call) => call.nodeIds)).toEqual([
+    expect(harness.detailCalls.map((call) => call.targets.map((target) => target.nodeId))).toEqual([
       [secondTracked.nodeId],
       [secondReferenced.nodeId],
     ]);
+    expect(harness.detailCalls[1]?.targets[0]?.eventWindow).toEqual({
+      mode: "initial",
+    });
     expect(snapshot.items.map((item) => item.nodeId)).toEqual(
       expect.arrayContaining([secondTracked.nodeId, secondReferenced.nodeId]),
     );
@@ -2820,7 +2832,7 @@ describe("本番収集の接続", () => {
     });
   });
 
-  it("all-open backfillで未変更かつ前回未追跡の項目を詳細取得して追加する", async () => {
+  it("all-open backfillで未変更かつ前回未追跡の項目を全履歴取得して追加する", async () => {
     const repository = createRepository("R_all_open_unchanged", "all-open-unchanged", FIRST_RUN_AT);
     const publicRepository = requirePublicRepository(repository);
     const fixture = createRepositoryFixture(repository);
@@ -2864,11 +2876,14 @@ describe("本番収集の接続", () => {
     expect(result.exitCode).toBe(0);
     expect(harness.detailCalls).toEqual([
       {
-        nodeIds: [item.nodeId],
-        eventWindow: {
-          mode: "incremental",
-          since: "2026-07-31T23:55:00.000Z",
-        },
+        targets: [
+          {
+            nodeId: item.nodeId,
+            eventWindow: {
+              mode: "initial",
+            },
+          },
+        ],
       },
     ]);
     expect(snapshot.items.map((candidate) => candidate.nodeId)).toContain(item.nodeId);
@@ -2952,13 +2967,95 @@ describe("本番収集の接続", () => {
     expect(secondResult).toMatchObject({ exitCode: 0 });
     expect(harness.detailCalls).toHaveLength(1);
     expect(harness.detailCalls[0]).toEqual({
-      nodeIds: [firstItems[0]?.nodeId, changed.nodeId, blocker.nodeId],
-      eventWindow: {
-        mode: "incremental",
-        since: "2026-07-31T23:55:00.000Z",
-      },
+      targets: [first, changed, blocker].map((item) => ({
+        nodeId: item.nodeId,
+        eventWindow: {
+          mode: "incremental",
+          since: "2026-07-31T23:55:00.000Z",
+        },
+      })),
     });
     expect(requireDryRunSnapshot(harness.artifacts).items).toHaveLength(4);
+  });
+
+  it("判定規則変更項目と初回判定のupdated_at変更項目を全履歴で収集する", async () => {
+    const repository = createRepository("R_mixed_windows", "mixed-windows", FIRST_RUN_AT);
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const firstObservedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const firstTracked = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "tracked-v1",
+      updatedAt: firstObservedAt,
+      observedAt: firstObservedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const firstUntracked = createOldIssueItem(publicRepository, 2, "untracked-v1", firstObservedAt);
+    fixture.openItems = [firstTracked, firstUntracked];
+    setIssueDetails(fixture, fixture.openItems, firstObservedAt);
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: false,
+    });
+    const harness = createCollectionHarness({ repositories: [fixture], config });
+
+    expect((await harness.runDaily(FIRST_RUN_AT)).exitCode).toBe(0);
+    harness.detailCalls.length = 0;
+    const secondObservedAt = createUtcIsoDateTime(SECOND_RUN_AT);
+    const secondTracked = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "tracked-v1",
+      updatedAt: firstObservedAt,
+      observedAt: secondObservedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const secondUntracked = replaceCreatedAt(
+      createIssueItem({
+        repository: publicRepository,
+        number: 2,
+        fingerprint: "untracked-v2",
+        updatedAt: secondObservedAt,
+        observedAt: secondObservedAt,
+        state: Object.freeze({ state: "open" }),
+      }),
+      createUtcIsoDateTime(OLD_ITEM_AT),
+    );
+    fixture.openItems = [secondTracked, secondUntracked];
+    setIssueDetails(fixture, fixture.openItems, secondObservedAt);
+    harness.setConfig(
+      Object.freeze({
+        ...config,
+        ai: Object.freeze({
+          ...config.ai,
+          promptVersion: "mixed-windows-v2",
+        }),
+      }),
+    );
+
+    const result = await harness.runDry(SECOND_RUN_AT);
+
+    expect(result.exitCode).toBe(0);
+    expect(harness.detailCalls).toEqual([
+      {
+        targets: [
+          {
+            nodeId: secondTracked.nodeId,
+            eventWindow: {
+              mode: "initial",
+            },
+          },
+          {
+            nodeId: secondUntracked.nodeId,
+            eventWindow: {
+              mode: "initial",
+            },
+          },
+        ],
+      },
+    ]);
   });
 
   it("503のrepositoryを前回値と最終成功時刻付きstaleとして保持して通知から除外する", async () => {
@@ -3163,7 +3260,7 @@ describe("本番収集の接続", () => {
 
     expect(result.exitCode).toBe(0);
     expect(harness.individualCalls).toContainEqual([item.url]);
-    expect(harness.detailCalls[0]?.nodeIds).toEqual([item.nodeId]);
+    expect(harness.detailCalls[0]?.targets.map((target) => target.nodeId)).toEqual([item.nodeId]);
     expect(snapshot.items[0]).toMatchObject({
       nodeId: item.nodeId,
       state: "closed",
