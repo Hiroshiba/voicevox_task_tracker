@@ -1314,6 +1314,141 @@ describe("本番収集の接続", () => {
     );
   });
 
+  it("作成時刻が異なるPull Requestで共有するcommit sourceの最古時刻をedgeへ使う", async () => {
+    const repository = createRepository(
+      "R_shared_commit_occurred_at",
+      "shared-commit-occurred-at",
+      FIRST_RUN_AT,
+    );
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const commitOccurredAt = createUtcIsoDateTime("2026-07-10T03:13:05.000Z");
+    const earlierPullRequest = replaceCreatedAt(
+      createPullRequestItem({
+        repository: publicRepository,
+        number: 1,
+        fingerprint: "shared-commit-occurred-at-earlier",
+        updatedAt: observedAt,
+        observedAt,
+      }),
+      createUtcIsoDateTime("2026-07-05T10:13:26.000Z"),
+    );
+    const laterPullRequest = replaceCreatedAt(
+      createPullRequestItem({
+        repository: publicRepository,
+        number: 2,
+        fingerprint: "shared-commit-occurred-at-later",
+        updatedAt: observedAt,
+        observedAt,
+      }),
+      createUtcIsoDateTime("2026-07-10T07:03:33.000Z"),
+    );
+    const sharedCommitNodeId = createGitHubNodeId("C_shared_commit_occurred_at");
+    const sharedSourceId = buildSourceId("github_commit", sharedCommitNodeId);
+    const sharedHeadSha = "shared-commit-occurred-at-head";
+    const earlierDetail = createFailedCheckPullRequestDetail(earlierPullRequest, observedAt);
+    const laterDetail = createFailedCheckPullRequestDetail(laterPullRequest, observedAt);
+    const sharedHeadCommit = Object.freeze({
+      ...earlierDetail.headCommit,
+      sourceId: sharedSourceId,
+      nodeId: sharedCommitNodeId,
+      sha: sharedHeadSha,
+      committedAt: commitOccurredAt,
+      pushedAt: Object.freeze({
+        status: "unavailable",
+        reason: "github_did_not_return_pushed_at",
+      }),
+    });
+    const crossReference = createInboundCrossReference(
+      earlierPullRequest,
+      laterPullRequest,
+      observedAt,
+    );
+    fixture.openItems = [earlierPullRequest, laterPullRequest];
+    fixture.details.set(
+      earlierPullRequest.nodeId,
+      Object.freeze({
+        ...earlierDetail,
+        headSha: sharedHeadSha,
+        headCommit: sharedHeadCommit,
+        inboundCrossReferences: Object.freeze([
+          Object.freeze({
+            ...crossReference.candidate,
+            eventSourceId: sharedSourceId,
+          }),
+        ]),
+      }),
+    );
+    fixture.details.set(
+      laterPullRequest.nodeId,
+      Object.freeze({
+        ...laterDetail,
+        headSha: sharedHeadSha,
+        headCommit: sharedHeadCommit,
+      }),
+    );
+    const config = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: true,
+    });
+    const harness = createCollectionHarness({
+      repositories: [fixture],
+      config,
+      executeCodexAnalysis: (input) => {
+        const source = input.sources[0];
+        if (source == null) {
+          throw new TypeError("共有commit時刻fixtureのsourceがありません");
+        }
+        return Promise.resolve(
+          createCodexOutput(input, {
+            status: "in_progress",
+            waitingOn: {
+              candidateId: input.item.authorCandidateId,
+              kind: "user",
+              role: "assignee",
+              sourceId: source.id,
+            },
+            latestMeaningfulSourceId: null,
+            confidence: 0.7,
+            relationVerdict: "related",
+            notification: {
+              recommended: false,
+              reasonCode: "none",
+              reasonSummary: "通知しません",
+            },
+          }),
+        );
+      },
+    });
+
+    const result = await harness.runDaily(FIRST_RUN_AT);
+    const files = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const snapshotBytes = files.get("state/snapshot.json");
+    const historyBytes = files.get("state/history/2026-08-01.jsonl");
+    if (snapshotBytes == null || historyBytes == null) {
+      throw new TypeError("共有commit時刻のstateがありません");
+    }
+    const snapshot = parseStateSnapshot(new TextDecoder().decode(snapshotBytes));
+    const historyRecords = parseStateHistoryRecords(new TextDecoder().decode(historyBytes));
+    const relation = snapshot.relations.find((candidate) =>
+      candidate.evidence.some((evidence) => evidence.sourceId === sharedSourceId),
+    );
+    const sharedCommitOccurredAts = historyRecords
+      .flatMap((record) => record.inputEvents)
+      .filter((event) => event.sourceId === sharedSourceId)
+      .map((event) => event.occurredAt)
+      .sort();
+
+    expect(result.exitCode).toBe(0);
+    expect(sharedCommitOccurredAts).toEqual([commitOccurredAt, laterPullRequest.createdAt]);
+    expect(relation).toMatchObject({
+      active: true,
+      firstSeenAt: commitOccurredAt,
+    });
+  });
+
   it("AI無効時の有効状態と利用可否をrun成功状態から分離して保存する", async () => {
     const repository = createRepository("R_ai_disabled", "ai-disabled", FIRST_RUN_AT);
     const fixture = createRepositoryFixture(repository);

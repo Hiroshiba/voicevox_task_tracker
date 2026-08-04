@@ -1732,7 +1732,7 @@ function createCodexSourceOccurredAtById(
   item: FreshObservedGitHubItem,
   detail: GitHubItemDetail,
 ): ReadonlyMap<SourceId, UtcIsoDateTime> {
-  const sourceOccurredAtById = new Map(createRelationSourceOccurredAtById([item]));
+  const sourceOccurredAtById = new Map(createEarliestRelationSourceOccurredAtById([item]));
   addCodexSourceOccurredAt(sourceOccurredAtById, item.sourceId, item.createdAt);
   addCodexSourceOccurredAt(sourceOccurredAtById, detail.bodySourceId, item.createdAt);
   for (const comment of detail.comments) {
@@ -3395,26 +3395,25 @@ function retainGraphEdgesForAvailableNodes(
   return Object.freeze(retainedEdges);
 }
 
-function addRelationSourceOccurredAt(
+function setEarliestRelationSourceOccurredAt(
   sourceOccurredAtById: Map<SourceId, UtcIsoDateTime>,
   sourceId: SourceId,
   occurredAt: UtcIsoDateTime,
 ): void {
   const existingOccurredAt = sourceOccurredAtById.get(sourceId);
-  if (existingOccurredAt != null && existingOccurredAt !== occurredAt) {
-    throw new TypeError(`同じ関係source IDに異なる発生時刻があります。対象: ${sourceId}`);
+  if (existingOccurredAt == null || occurredAt < existingOccurredAt) {
+    sourceOccurredAtById.set(sourceId, occurredAt);
   }
-  sourceOccurredAtById.set(sourceId, occurredAt);
 }
 
-function createRelationSourceOccurredAtById(
+function createEarliestRelationSourceOccurredAtById(
   items: readonly FreshObservedGitHubItem[],
 ): ReadonlyMap<SourceId, UtcIsoDateTime> {
   const sourceOccurredAtById = new Map<SourceId, UtcIsoDateTime>();
   for (const item of items) {
-    addRelationSourceOccurredAt(sourceOccurredAtById, item.bodySourceId, item.createdAt);
+    setEarliestRelationSourceOccurredAt(sourceOccurredAtById, item.bodySourceId, item.createdAt);
     for (const event of item.events) {
-      addRelationSourceOccurredAt(sourceOccurredAtById, event.sourceId, event.occurredAt);
+      setEarliestRelationSourceOccurredAt(sourceOccurredAtById, event.sourceId, event.occurredAt);
     }
   }
   return sourceOccurredAtById;
@@ -3446,7 +3445,7 @@ function reconcileCurrentGraph(
     assessments: reduction.relationAssessments.filter((assessment) =>
       candidateIds.has(assessment.candidateId),
     ),
-    sourceOccurredAtById: createRelationSourceOccurredAtById(collection.observedItems),
+    sourceOccurredAtById: createEarliestRelationSourceOccurredAtById(collection.observedItems),
     minimumInferredConfidence: configuration.config.ai.confidence.medium,
     reconciledAt: invocation.startedAt,
   });
