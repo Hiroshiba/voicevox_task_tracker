@@ -18,7 +18,7 @@
   ],
   "properties": {
     "schemaVersion": {
-      "const": "3"
+      "const": "5"
     },
     "generatedAt": {
       "$ref": "#/$defs/dateTime"
@@ -740,6 +740,134 @@
         }
       ]
     },
+    "milestone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodeId", "number", "title", "state", "dueOn"],
+      "properties": {
+        "nodeId": {
+          "$ref": "#/$defs/identifier"
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "state": {
+          "enum": ["open", "closed"]
+        },
+        "dueOn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/dateTime"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "importanceFactor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "points", "detail"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "priorityLabel",
+            "downstreamImpact",
+            "milestoneDeadline",
+            "significantFeature",
+            "explicitDeadline",
+            "futureRisk"
+          ]
+        },
+        "points": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      }
+    },
+    "importance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "level", "factors"],
+      "properties": {
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "level": {
+          "enum": ["low", "medium", "high"]
+        },
+        "factors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/importanceFactor"
+          }
+        }
+      }
+    },
+    "importanceAssessment": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status"],
+          "properties": {
+            "status": {
+              "const": "not_available"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "value"],
+          "properties": {
+            "status": {
+              "const": "available"
+            },
+            "value": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "significantFeature",
+                "explicitDeadline",
+                "futureRisk",
+                "rationale"
+              ],
+              "properties": {
+                "significantFeature": {
+                  "type": "boolean"
+                },
+                "explicitDeadline": {
+                  "type": "boolean"
+                },
+                "futureRisk": {
+                  "type": "boolean"
+                },
+                "rationale": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 120
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
     "item": {
       "type": "object",
       "additionalProperties": false,
@@ -751,6 +879,9 @@
         "number",
         "url",
         "title",
+        "milestone",
+        "importance",
+        "importanceAssessment",
         "author",
         "latestEventActor",
         "state",
@@ -808,6 +939,22 @@
         "title": {
           "type": "string",
           "maxLength": 500
+        },
+        "milestone": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/milestone"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "importance": {
+          "$ref": "#/$defs/importance"
+        },
+        "importanceAssessment": {
+          "$ref": "#/$defs/importanceAssessment"
         },
         "author": {
           "$ref": "#/$defs/itemAuthor"

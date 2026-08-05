@@ -33,6 +33,22 @@ export {
   type ResolvedLabelEffects,
 } from "./label-resolution.js";
 export {
+  calculateImportance,
+  combineImportance,
+  IMPORTANCE_FACTOR_KINDS,
+  type CalculateImportanceInput,
+  type CombineImportanceInput,
+  type Importance,
+  type ImportanceDownstreamImpact,
+  type ImportanceFactor,
+  type ImportanceFactorKind,
+  type ImportanceLevel,
+  type ImportanceLevelThresholds,
+  type ImportanceWeights,
+  type NaturalLanguageImportanceAssessment,
+  type NaturalLanguageImportanceAssessmentState,
+} from "./importance.js";
+export {
   determineMeaningfulProgress,
   type DependencyResolutionProgress,
   type MeaningfulProgress,
@@ -209,6 +225,7 @@ export {
   type TrackedItemAiAnalysis,
   type TrackedItemInputEvent,
   type TrackedItemLatestEventActor,
+  type TrackedItemMilestone,
   type TrackedItemState,
   type TrackedItemType,
   type UtcIsoDateTime,

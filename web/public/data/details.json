@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1",
+  "schemaVersion": "3",
   "runId": "sample-run-2026-07-31",
   "generatedAt": "2026-07-31T00:05:00.000Z",
   "items": [
@@ -12,6 +12,13 @@
         "number": 101,
         "url": "https://github.com/VOICEVOX/sample-editor/pull/101",
         "title": "サンプル辞書更新をマージする",
+        "milestone": {
+          "nodeId": "sample-milestone-editor-1",
+          "number": 1,
+          "title": "サンプルリリース",
+          "state": "open",
+          "dueOn": "2026-08-31T00:00:00.000Z"
+        },
         "state": "open",
         "author": {
           "status": "identified",
@@ -45,6 +52,10 @@
         },
         "nextAction": "メンテナーが内容を確認してマージする",
         "severity": "critical",
+        "importance": {
+          "score": 63,
+          "level": "high"
+        },
         "priorityWeight": 25,
         "confidence": 1,
         "githubUpdatedAt": "2026-07-30T03:00:00.000Z",
@@ -58,6 +69,28 @@
           "repositoryCount": 1
         }
       },
+      "importanceFactors": [
+        {
+          "kind": "priorityLabel",
+          "points": 25,
+          "detail": "優先度ラベルの重みで25点を加算します"
+        },
+        {
+          "kind": "significantFeature",
+          "points": 20,
+          "detail": "Codex判定で20点です。利用者へ広く影響する重要な機能です"
+        },
+        {
+          "kind": "milestoneDeadline",
+          "points": 10,
+          "detail": "期限付きのopen milestoneで10点です"
+        },
+        {
+          "kind": "downstreamImpact",
+          "points": 8,
+          "detail": "open項目1件とリポジトリ1件への影響で8点です"
+        }
+      ],
       "timestamps": {
         "createdAt": "2026-07-01T01:00:00.000Z",
         "githubUpdatedAt": "2026-07-30T03:00:00.000Z",
@@ -94,6 +127,7 @@
         "number": 202,
         "url": "https://github.com/VOICEVOX/sample-engine/pull/202",
         "title": "サンプルAPIのレビューを完了する",
+        "milestone": null,
         "state": "open",
         "author": {
           "status": "identified",
@@ -127,6 +161,10 @@
         },
         "nextAction": "レビューチームが変更内容を確認する",
         "severity": "critical",
+        "importance": {
+          "score": 39,
+          "level": "medium"
+        },
         "priorityWeight": 12,
         "confidence": 1,
         "githubUpdatedAt": "2026-07-29T06:00:00.000Z",
@@ -140,6 +178,18 @@
           "repositoryCount": 3
         }
       },
+      "importanceFactors": [
+        {
+          "kind": "downstreamImpact",
+          "points": 27,
+          "detail": "open項目4件とリポジトリ3件への影響で27点です"
+        },
+        {
+          "kind": "priorityLabel",
+          "points": 12,
+          "detail": "優先度ラベルの重みで12点を加算します"
+        }
+      ],
       "timestamps": {
         "createdAt": "2026-07-05T02:00:00.000Z",
         "githubUpdatedAt": "2026-07-29T06:00:00.000Z",
@@ -183,6 +233,7 @@
         "number": 103,
         "url": "https://github.com/VOICEVOX/sample-editor/issues/103",
         "title": "サンプル配布方針を決める",
+        "milestone": null,
         "state": "open",
         "author": {
           "status": "identified",
@@ -216,6 +267,10 @@
         },
         "nextAction": "メンテナーが配布方針を決める",
         "severity": "urgent",
+        "importance": {
+          "score": 41,
+          "level": "high"
+        },
         "priorityWeight": 25,
         "confidence": 0.95,
         "githubUpdatedAt": "2026-07-28T05:00:00.000Z",
@@ -229,6 +284,18 @@
           "repositoryCount": 2
         }
       },
+      "importanceFactors": [
+        {
+          "kind": "priorityLabel",
+          "points": 25,
+          "detail": "優先度ラベルの重みで25点を加算します"
+        },
+        {
+          "kind": "downstreamImpact",
+          "points": 16,
+          "detail": "open項目2件とリポジトリ2件への影響で16点です"
+        }
+      ],
       "timestamps": {
         "createdAt": "2026-07-08T03:00:00.000Z",
         "githubUpdatedAt": "2026-07-28T05:00:00.000Z",
@@ -265,6 +332,7 @@
         "number": 204,
         "url": "https://github.com/VOICEVOX/sample-engine/issues/204",
         "title": "サンプル配布処理を実装する",
+        "milestone": null,
         "state": "open",
         "author": {
           "status": "unavailable",
@@ -302,6 +370,10 @@
         },
         "nextAction": "依存項目の完了後に実装を再開する",
         "severity": "watch",
+        "importance": {
+          "score": 12,
+          "level": "low"
+        },
         "priorityWeight": 12,
         "confidence": 1,
         "githubUpdatedAt": "2026-07-25T02:00:00.000Z",
@@ -315,6 +387,13 @@
           "repositoryCount": 0
         }
       },
+      "importanceFactors": [
+        {
+          "kind": "priorityLabel",
+          "points": 12,
+          "detail": "優先度ラベルの重みで12点を加算します"
+        }
+      ],
       "timestamps": {
         "createdAt": "2026-07-01T00:00:00.000Z",
         "githubUpdatedAt": "2026-07-25T02:00:00.000Z",
@@ -422,6 +501,7 @@
         "number": 305,
         "url": "https://github.com/VOICEVOX/sample-core/pull/305",
         "title": "サンプル修正へ回答する",
+        "milestone": null,
         "state": "open",
         "author": {
           "status": "identified",
@@ -455,6 +535,10 @@
         },
         "nextAction": "作成者がレビュー指摘へ対応する",
         "severity": "urgent",
+        "importance": {
+          "score": 44,
+          "level": "high"
+        },
         "priorityWeight": 25,
         "confidence": 0.9,
         "githubUpdatedAt": "2026-07-27T08:00:00.000Z",
@@ -468,6 +552,18 @@
           "repositoryCount": 2
         }
       },
+      "importanceFactors": [
+        {
+          "kind": "priorityLabel",
+          "points": 25,
+          "detail": "優先度ラベルの重みで25点を加算します"
+        },
+        {
+          "kind": "downstreamImpact",
+          "points": 19,
+          "detail": "open項目3件とリポジトリ2件への影響で19点です"
+        }
+      ],
       "timestamps": {
         "createdAt": "2026-07-02T00:00:00.000Z",
         "githubUpdatedAt": "2026-07-27T08:00:00.000Z",

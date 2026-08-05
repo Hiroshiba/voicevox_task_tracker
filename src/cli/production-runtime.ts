@@ -27,6 +27,8 @@ import { type Config, type loadConfig } from "../config/index.js";
 import {
   aggregatePullRequestCheckState,
   aggregatePullRequestReviewState,
+  calculateImportance,
+  combineImportance,
   classifyTrackingNotification,
   createUtcIsoDateTime,
   createGitHubNodeId,
@@ -76,6 +78,7 @@ import {
   type StalenessWaitClass,
   type StalenessResult,
   type NaturalLanguageProgressAssessment,
+  type NaturalLanguageImportanceAssessmentState,
   type DependencyResolutionProgress,
   type ExternalGhostNode,
   type TrackedItem,
@@ -221,7 +224,7 @@ import { WorkflowStageRunner } from "./workflow-stage.js";
 
 const CODEX_CLI_VERSION = "0.145.0";
 const CODEX_BACKEND_VERSION = `codex-cli-${CODEX_CLI_VERSION}`;
-const CODEX_SCHEMA_VERSION = "1";
+const CODEX_SCHEMA_VERSION = "2";
 const PAGES_BASE_URL = "https://voicevox.github.io";
 const INCREMENTAL_COLLECTION_OVERLAP_MILLISECONDS = 5 * 60 * 1000;
 const GITHUB_MENTION_PATTERN =
@@ -370,6 +373,7 @@ type ReducedItemAnalysis = Readonly<{
   notificationRecommendation: DiscordNotificationItem["notificationRecommendation"];
   primaryWaitingOn: PrimaryWaitingOn;
   staleness: StalenessResult;
+  importanceAssessment: NaturalLanguageImportanceAssessmentState;
 }>;
 
 type TrackedItemStaleness = Readonly<{
@@ -378,8 +382,15 @@ type TrackedItemStaleness = Readonly<{
   severityContext: StalenessSeverityContext;
 }>;
 
+type WithoutImportance<T> = T extends unknown ? Omit<T, "importance"> : never;
+type PendingTrackedItem = WithoutImportance<TrackedItem>;
+type TrackedItemWithImportanceAssessment = TrackedItem &
+  Readonly<{
+    importanceAssessment: NaturalLanguageImportanceAssessmentState;
+  }>;
+
 type ReducedAnalysis = Readonly<{
-  items: readonly TrackedItem[];
+  items: readonly PendingTrackedItem[];
   currentItems: readonly ReducedItemAnalysis[];
   stalenessByNodeId: ReadonlyMap<GitHubNodeId, TrackedItemStaleness>;
   relationAssessments: readonly RelationCandidateAssessment[];
@@ -2234,6 +2245,22 @@ function reducedDeterministicDecision(
   });
 }
 
+function unavailableImportanceAssessment(): NaturalLanguageImportanceAssessmentState {
+  return Object.freeze({
+    status: "not_available",
+  });
+}
+
+function resolveImportanceAssessment(
+  current: NaturalLanguageImportanceAssessmentState | undefined,
+  previous: NaturalLanguageImportanceAssessmentState | undefined,
+): NaturalLanguageImportanceAssessmentState {
+  if (current?.status === "available") {
+    return current;
+  }
+  return previous ?? unavailableImportanceAssessment();
+}
+
 function reductionForAnalysis(
   configuration: RuntimeConfiguration,
   analysis: DeterministicItemAnalysis,
@@ -3026,7 +3053,7 @@ function createTrackedItem(
   primaryWaitingOn: PrimaryWaitingOn,
   staleness: StalenessResult,
   codexAnalysis: CodexAnalysis,
-): TrackedItem {
+): PendingTrackedItem {
   const commonFields = {
     nodeId: analysis.item.nodeId,
     type: analysis.item.type,
@@ -3035,6 +3062,7 @@ function createTrackedItem(
     number: analysis.item.number,
     url: analysis.item.url,
     title: analysis.item.title,
+    milestone: analysis.item.milestone,
     author: analysis.item.author,
     latestEventActor: createTrackedItemLatestEventActor(analysis.item.events),
     state: trackedItemState(analysis.item, decision),
@@ -3064,7 +3092,7 @@ function createTrackedItem(
     confidence: decision.confidence,
     evidence: decision.evidence,
     uncertainties: decision.uncertainties,
-  } satisfies Omit<TrackedItem, "status" | "waitingOn">;
+  } satisfies Omit<PendingTrackedItem, "status" | "waitingOn">;
   if (isTerminalStatus(decision.status)) {
     return Object.freeze({
       ...commonFields,
@@ -3193,9 +3221,12 @@ function reduceAnalysisPass(
 ): ReducedAnalysis {
   const resolveLabelEffects = createLabelEffectsResolver(normalizeLabelRules(configuration.config));
   const currentItems: ReducedItemAnalysis[] = [];
-  const items: TrackedItem[] = [];
+  const items: PendingTrackedItem[] = [];
   const stalenessByNodeId = new Map<GitHubNodeId, TrackedItemStaleness>();
   const relationAssessments: RelationCandidateAssessment[] = [];
+  const previousImportanceAssessmentByNodeId = new Map(
+    (previousSnapshot(state)?.items ?? []).map((item) => [item.nodeId, item.importanceAssessment]),
+  );
   let runStatus: ReducedAnalysis["runStatus"] = "success";
   for (const originalAnalysis of deterministicAnalysis.items) {
     const output = codexOutputForAnalysis(originalAnalysis, codexAnalysis);
@@ -3270,6 +3301,10 @@ function reduceAnalysisPass(
               }),
         primaryWaitingOn,
         staleness,
+        importanceAssessment: resolveImportanceAssessment(
+          reduction?.importanceAssessment,
+          previousImportanceAssessmentByNodeId.get(analysis.item.nodeId),
+        ),
       }),
     );
     stalenessByNodeId.set(analysis.item.nodeId, trackedItemStaleness(staleness));
@@ -3355,7 +3390,7 @@ function reduceAllAnalyses(
   );
 }
 
-function graphAnalysisNode(item: TrackedItem): GraphAnalysisNode {
+function graphAnalysisNode(item: PendingTrackedItem): GraphAnalysisNode {
   return Object.freeze({
     kind: item.type,
     nodeId: item.nodeId,
@@ -3661,9 +3696,11 @@ function snapshotRepositories(collection: CollectedItems): readonly SnapshotRepo
 
 function notificationLedgerEntries(
   state: RuntimeState,
-  items: readonly TrackedItem[],
+  items: readonly PendingTrackedItem[],
 ): readonly NotificationLedgerEntry[] {
-  const itemsByNodeId = new Map<string, TrackedItem>(items.map((item) => [item.nodeId, item]));
+  const itemsByNodeId = new Map<string, PendingTrackedItem>(
+    items.map((item) => [item.nodeId, item]),
+  );
   const entries: NotificationLedgerEntry[] = [];
   for (const entry of state.notificationLedger.entries) {
     const item = itemsByNodeId.get(entry.itemNodeId);
@@ -3724,7 +3761,7 @@ type NotificationAnalysisState =
     }>;
 
 function notificationDecisionBasis(
-  item: TrackedItem,
+  item: PendingTrackedItem,
   staleness: TrackedItemStaleness,
   analysisState: NotificationAnalysisState,
 ): DiscordNotificationItem["decisionBasis"] {
@@ -3749,7 +3786,7 @@ function notificationDecisionBasis(
 }
 
 function notificationDraftState(
-  item: TrackedItem,
+  item: PendingTrackedItem,
   enumeratedItemsByNodeId: ReadonlyMap<GitHubNodeId, EnumeratedGitHubItem>,
 ): DiscordNotificationItem["draftState"] {
   const observed = enumeratedItemsByNodeId.get(item.nodeId);
@@ -3770,7 +3807,7 @@ function notificationItem(
   inventory: RepositoryInventory,
   enumeratedItemsByNodeId: ReadonlyMap<GitHubNodeId, EnumeratedGitHubItem>,
   graph: GraphResult,
-  item: TrackedItem,
+  item: PendingTrackedItem,
   staleness: TrackedItemStaleness,
   analysisState: NotificationAnalysisState,
 ): DiscordNotificationItem {
@@ -3967,6 +4004,45 @@ function stateHistoryInputEvents(reduction: ReducedAnalysis): readonly StateHist
   );
 }
 
+function createTrackedItemWithImportance(
+  invocation: DailyRunInvocation,
+  configuration: RuntimeConfiguration,
+  inventory: RepositoryInventory,
+  graph: GraphResult,
+  resolveLabelEffects: ReturnType<typeof createLabelEffectsResolver>,
+  item: PendingTrackedItem,
+  naturalLanguageAssessment: NaturalLanguageImportanceAssessmentState,
+): TrackedItemWithImportanceAssessment {
+  const repository = findRepository(inventory, item.repositoryId);
+  const downstreamImpact = graph.analysis.downstreamImpacts.find(
+    (impact) => impact.nodeId === item.nodeId,
+  );
+  assertNonNullable(
+    downstreamImpact,
+    `重要度計算対象 ${item.nodeId}のdownstream impactがありません`,
+  );
+  const labelEffects = resolveLabelEffects(repositoryFullName(repository), item.labels);
+  const deterministicImportance = calculateImportance({
+    priorityWeight: labelEffects.priorityWeight,
+    downstreamImpact,
+    milestone: item.milestone,
+    evaluatedAt: invocation.startedAt,
+    weights: configuration.config.importance.weights,
+    dueSoonDays: configuration.config.importance.dueSoonDays,
+    levels: configuration.config.importance.levels,
+  });
+  return Object.freeze({
+    ...item,
+    importanceAssessment: naturalLanguageAssessment,
+    importance: combineImportance({
+      deterministic: deterministicImportance,
+      naturalLanguageAssessment,
+      weights: configuration.config.importance.weights,
+      levels: configuration.config.importance.levels,
+    }),
+  });
+}
+
 function validateRunCompleteness(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
@@ -3977,6 +4053,28 @@ function validateRunCompleteness(
   reduction: ReducedAnalysis,
   graph: GraphResult,
 ): ValidatedRun {
+  const resolveLabelEffects = createLabelEffectsResolver(normalizeLabelRules(configuration.config));
+  const currentAnalysisByNodeId = new Map(
+    reduction.currentItems.map((analysis) => [analysis.item.nodeId, analysis]),
+  );
+  const previousImportanceAssessmentByNodeId = new Map(
+    (previousSnapshot(state)?.items ?? []).map((item) => [item.nodeId, item.importanceAssessment]),
+  );
+  const items = reduction.items.map((item) => {
+    const currentAnalysis = currentAnalysisByNodeId.get(item.nodeId);
+    return createTrackedItemWithImportance(
+      invocation,
+      configuration,
+      inventory,
+      graph,
+      resolveLabelEffects,
+      item,
+      resolveImportanceAssessment(
+        currentAnalysis?.importanceAssessment,
+        previousImportanceAssessmentByNodeId.get(item.nodeId),
+      ),
+    );
+  });
   const previousCollectionItems = previousCollectionItemsByNodeId(state);
   const currentAnalysisRulesFingerprints = createCurrentAnalysisRulesFingerprints(
     configuration.config,
@@ -4023,7 +4121,7 @@ function validateRunCompleteness(
   const persistedAnalysisRulesFingerprintNodeIds = new Set<string>();
   const persistedDeterministicRulesVersionNodeIds = new Set<string>();
   const snapshot = createStateSnapshot({
-    schemaVersion: "3",
+    schemaVersion: "5",
     generatedAt: invocation.startedAt,
     trackingStartAt: pendingSnapshotTrackingStartAt(configuration, state, invocation),
     ai: snapshotAiState(configuration.config, codexAnalysis),
@@ -4068,7 +4166,7 @@ function validateRunCompleteness(
       })),
     },
     repositories: snapshotRepositories(collection),
-    items: reduction.items.map((item) => {
+    items: items.map((item) => {
       const staleness = reduction.stalenessByNodeId.get(item.nodeId);
       assertNonNullable(staleness, `追跡項目 ${item.nodeId}のseverity再計算結果がありません`);
       return {

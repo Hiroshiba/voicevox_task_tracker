@@ -969,6 +969,12 @@ function createTrackedItem(repositoryName: string, analysis: ItemAnalysis): Trac
     number: item.number,
     url: itemUrl(repositoryName, item),
     title: item.title,
+    milestone: null,
+    importance: Object.freeze({
+      score: 0,
+      level: "low",
+      factors: Object.freeze([]),
+    }),
     author: Object.freeze({
       status: "identified",
       actor: createAccountActor(item.author),
@@ -1055,7 +1061,7 @@ function createSnapshot(
 ): StateSnapshot {
   const generatedAt = createUtcIsoDateTime(input.evaluatedAt);
   return createStateSnapshot({
-    schemaVersion: "3",
+    schemaVersion: "5",
     generatedAt,
     trackingStartAt: {
       status: "fixed",
@@ -1091,6 +1097,9 @@ function createSnapshot(
       assertNonNullable(repository, `項目 ${analysis.input.nodeId}のrepositoryがありません`);
       return {
         ...createTrackedItem(repository.name, analysis),
+        importanceAssessment: {
+          status: "not_available",
+        },
         severity: analysis.staleness.severity,
         severityContext: analysis.staleness.severityContext,
       };
@@ -1423,6 +1432,12 @@ function createLargeItems(itemCount: number, evaluatedAt: UtcIsoDateTime): reado
         number: index + 1,
         url: `https://github.com/${ORGANIZATION}/${repositoryName}/${index % 2 === 0 ? "issues" : "pull"}/${(index + 1).toString()}`,
         title: `匿名性能項目 ${index.toString().padStart(4, "0")}`,
+        milestone: null,
+        importance: Object.freeze({
+          score: 0,
+          level: "low",
+          factors: Object.freeze([]),
+        }),
         author: Object.freeze({
           status: "identified",
           actor: author,
@@ -1554,7 +1569,7 @@ function analyzeLargeFixture(
     throw new TypeError("large fixtureのgraph解析結果が全itemを含んでいません");
   }
   const snapshot = createStateSnapshot({
-    schemaVersion: "3",
+    schemaVersion: "5",
     generatedAt: evaluatedAt,
     trackingStartAt: {
       status: "fixed",
@@ -1575,6 +1590,9 @@ function analyzeLargeFixture(
     })),
     items: items.map((item) => ({
       ...item,
+      importanceAssessment: {
+        status: "not_available",
+      },
       severity: "none",
       severityContext: {
         waitClass: "assigneeOrInProgress",
