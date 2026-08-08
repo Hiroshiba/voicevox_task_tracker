@@ -392,17 +392,22 @@ function createCodexOutput(input: CodexAnalysisInput): unknown {
     source,
     `性能profileのCodex入力にhuman commentがありません。対象: ${input.item.nodeId}`,
   );
+  const authorCandidateId = input.item.authorCandidateId;
+  assertNonNullable(
+    authorCandidateId,
+    `性能profileのCodex入力に作者候補IDがありません。対象: ${input.item.nodeId}`,
+  );
   return {
     schemaVersion: "2",
     item: {
       nodeId: input.item.nodeId,
       url: input.item.url,
     },
-    status: "waiting_for_assignee",
+    status: "waiting_for_work",
     waitingOn: [
       {
         kind: "user",
-        candidateId: input.item.authorCandidateId,
+        candidateId: authorCandidateId,
         role: "assignee",
         reasonSummary: "モック分析では作成者を次の担当候補として扱います",
         sourceIds: [source.id],

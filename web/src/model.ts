@@ -136,16 +136,18 @@ interface WaitingSubjectRowAccumulator {
 }
 
 const STATUS_LABELS = {
-  new_untriaged: "未トリアージ",
-  needs_maintainer_decision: "メンテナー判断待ち",
+  waiting_for_assessment: "内容確認待ち",
+  waiting_for_owner: "担当決め待ち",
+  waiting_for_decision: "方針判断待ち",
   waiting_for_review: "レビュー待ち",
-  waiting_for_author: "作成者待ち",
-  waiting_for_assignee: "担当者待ち",
-  blocked: "ブロック中",
+  waiting_for_revision: "修正待ち",
+  waiting_for_reply: "返答待ち",
+  waiting_for_work: "作業待ち",
+  waiting_for_unblock: "ブロック解消待ち",
   waiting_for_automation: "自動処理待ち",
-  ready_to_merge: "マージ可能",
-  in_progress: "進行中",
-  unknown: "不明",
+  waiting_for_merge: "マージ待ち",
+  in_progress: "作業中",
+  unknown: "待ち先不明",
   terminal_merged: "マージ済み",
   terminal_completed: "完了",
   terminal_not_planned: "対応しない",
@@ -216,6 +218,7 @@ const ROLE_LABELS = {
   maintainer: "メンテナー",
   reviewer: "レビュワー",
   assignee: "担当者",
+  respondent: "回答者",
   dependency: "依存項目",
   merge_decider: "マージ判断者",
   ci: "CI",
@@ -489,6 +492,7 @@ function currentWaitingOnRoleLabel(role: WaitingOnRole, item: PublicItemSummaryD
       return `${waitingOnRoleName(role)}の誰か`;
     case "ci":
     case "dependency":
+    case "respondent":
     case "unknown":
       return waitingOnRoleName(role);
     default:
@@ -573,6 +577,7 @@ function resolveWaitingOnCandidateSubjects(
         case "merge_decider":
         case "ci":
         case "dependency":
+        case "respondent":
         case "unknown":
           return [];
         default:
@@ -774,7 +779,7 @@ export function selectWaitingSubjectReasons(
     });
 }
 
-/** loginまたは所属teamを待っている項目のnode ID集合を返す。 */
+/** loginまたは所属teamの対応を待っている項目のnode ID集合を返す。 */
 export function selectWaitingSubjectItemNodeIds(
   summary: PublicSummaryDto,
   login: string,

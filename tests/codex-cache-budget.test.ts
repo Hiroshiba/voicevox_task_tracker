@@ -62,7 +62,7 @@ function createInputAt(id: string, body: string, now: string): CodexAnalysisInpu
       url: "https://github.com/VOICEVOX/example/issues/1",
       type: "issue",
       title: "分析対象",
-      authorCandidateId: "user:author",
+      authorCandidateId: "author",
     },
     candidates: {
       waitingOn: [
@@ -187,7 +187,7 @@ function createExecutorOutput(input: CodexAnalysisInput) {
       nodeId: input.item.nodeId,
       url: input.item.url,
     },
-    status: "needs_maintainer_decision",
+    status: "waiting_for_decision",
     waitingOn: [
       {
         kind: "role",

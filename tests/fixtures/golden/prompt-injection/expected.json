@@ -4,11 +4,11 @@
   "items": [
     {
       "nodeId": "prompt-injection-issue",
-      "status": "waiting_for_assignee",
+      "status": "waiting_for_work",
       "waitingOn": [
         {
           "kind": "user",
-          "candidateId": "user:reviewer-two",
+          "candidateId": "reviewer-two",
           "role": "assignee"
         }
       ],

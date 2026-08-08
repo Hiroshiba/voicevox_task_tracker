@@ -1737,10 +1737,11 @@ function codexActorType(item: FreshObservedGitHubItem): "human" | "bot" | "syste
   return type === "unknown" ? "system" : type;
 }
 
-function codexAuthorCandidateId(item: FreshObservedGitHubItem): string {
-  return item.author.status === "identified"
-    ? item.author.actor.nodeId
-    : `deleted-account:${item.nodeId}`;
+function codexAuthorCandidateId(item: FreshObservedGitHubItem): string | undefined {
+  if (item.author.status === "unavailable") {
+    return undefined;
+  }
+  return item.author.actor.login;
 }
 
 function relationTargetUrl(
@@ -1907,14 +1908,16 @@ function createCodexInput(
     ]),
   );
   const authorCandidateId = codexAuthorCandidateId(analysis.item);
-  waitingOnCandidates.set(
-    authorCandidateId,
-    Object.freeze({
-      id: authorCandidateId,
-      kind: "user",
-      sourceIds: Object.freeze([analysis.item.sourceId] satisfies [SourceId]),
-    }),
-  );
+  if (authorCandidateId != null) {
+    waitingOnCandidates.set(
+      authorCandidateId,
+      Object.freeze({
+        id: authorCandidateId,
+        kind: "user",
+        sourceIds: Object.freeze([analysis.item.sourceId] satisfies [SourceId]),
+      }),
+    );
+  }
   for (const candidate of mentionedCandidates) {
     waitingOnCandidates.set(candidate.id, candidate);
   }
@@ -2042,7 +2045,7 @@ function createCodexInput(
       url: analysis.item.url,
       type: analysis.item.type,
       title: analysis.item.title,
-      authorCandidateId: codexAuthorCandidateId(analysis.item),
+      ...(authorCandidateId == null ? {} : { authorCandidateId }),
       ...(analysis.item.type === "pull_request"
         ? {
             headSha: analysis.item.headSha,
@@ -2544,7 +2547,7 @@ function checkFailureAssessment(
     ...output.waitingOn.map((waitingOn) => waitingOn.confidence),
   );
   const authorAction =
-    output.status === "waiting_for_author" ||
+    output.status === "waiting_for_revision" ||
     output.waitingOn.some((waitingOn) => waitingOn.role === "author");
   if (authorAction) {
     return Object.freeze({
@@ -2555,7 +2558,7 @@ function checkFailureAssessment(
   }
   const infrastructureOrFlaky =
     output.status === "waiting_for_automation" ||
-    output.status === "needs_maintainer_decision" ||
+    output.status === "waiting_for_decision" ||
     output.status === "unknown" ||
     output.waitingOn.some(
       (waitingOn) =>
@@ -3213,7 +3216,7 @@ function blockedParentContext(
   decision: ReducedCodexDecision,
   graph: GraphResult | undefined,
 ): BlockedParentContext {
-  if (decision.status !== "blocked") {
+  if (decision.status !== "waiting_for_unblock") {
     return Object.freeze({
       status: "not_applicable",
     });

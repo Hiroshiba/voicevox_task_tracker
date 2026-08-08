@@ -248,11 +248,15 @@ function validateCurrentState(item: DiscordNotificationItem, evaluatedTimestamp:
   if (!terminal && item.current.waitClass === "notApplicable") {
     throw new TypeError(`${item.nodeId}の継続中状態をnotApplicableにはできません`);
   }
-  if (item.current.status === "blocked" && item.current.waitClass !== "blockedParent") {
-    throw new TypeError(`${item.nodeId}のblocked状態はblockedParentとして扱ってください`);
+  if (item.current.status === "waiting_for_unblock" && item.current.waitClass !== "blockedParent") {
+    throw new TypeError(
+      `${item.nodeId}のwaiting_for_unblock状態はblockedParentとして扱ってください`,
+    );
   }
-  if (item.current.status !== "blocked" && item.current.waitClass === "blockedParent") {
-    throw new TypeError(`${item.nodeId}のblocked以外の状態をblockedParentにはできません`);
+  if (item.current.status !== "waiting_for_unblock" && item.current.waitClass === "blockedParent") {
+    throw new TypeError(
+      `${item.nodeId}のwaiting_for_unblock以外の状態をblockedParentにはできません`,
+    );
   }
 
   const createdTimestamp = parseTimestamp(item.createdAt, `${item.nodeId}の作成時刻`);
@@ -436,22 +440,27 @@ function isItemSuppressed(
 }
 
 function overdueReasonCode(
+  status: Status,
   waitClass: StalenessWaitClass,
 ): DiscordNotificationReasonCode | undefined {
   switch (waitClass) {
-    case "maintainerTriage":
-      return "triage_overdue";
-    case "ownerUnknown":
-      return "owner_unknown";
-    case "reviewer":
+    case "assessment":
+      return "assessment_overdue";
+    case "owner":
+      return status === "unknown" ? "owner_unknown" : "owner_overdue";
+    case "decision":
+      return "decision_overdue";
+    case "review":
       return "review_overdue";
-    case "authorAfterChangesRequested":
-      return "author_overdue";
-    case "readyToMerge":
-      return "ready_to_merge_overdue";
+    case "revision":
+      return "revision_overdue";
+    case "reply":
+      return "reply_overdue";
+    case "merge":
+      return "merge_overdue";
     case "automation":
       return "automation_stuck";
-    case "assigneeOrInProgress":
+    case "work":
     case "blockedParent":
     case "notApplicable":
       return undefined;
@@ -505,7 +514,7 @@ function createOverdueSignals(
     return [];
   }
   const signals: ReasonSignal[] = [];
-  const reasonCode = overdueReasonCode(item.current.waitClass);
+  const reasonCode = overdueReasonCode(item.current.status, item.current.waitClass);
   if (reasonCode != null && isStateReasonAllowed(item, reasonCode, settings.minimumAiConfidence)) {
     signals.push({
       reasonCode,
@@ -589,12 +598,15 @@ function createResponsibilityChangedSignal(
 
 function recommendationIsRepeatable(reasonCode: DiscordNotificationReasonCode): boolean {
   switch (reasonCode) {
-    case "triage_overdue":
+    case "assessment_overdue":
+    case "owner_overdue":
+    case "decision_overdue":
     case "review_overdue":
-    case "author_overdue":
+    case "revision_overdue":
+    case "reply_overdue":
     case "owner_unknown":
     case "blocker_overdue":
-    case "ready_to_merge_overdue":
+    case "merge_overdue":
     case "automation_stuck":
       return true;
     case "newly_unblocked":
@@ -852,13 +864,16 @@ function reasonPriority(reasonCode: DiscordNotificationReasonCode): number {
       return 7;
     case "responsibility_changed":
       return 6;
-    case "ready_to_merge_overdue":
+    case "merge_overdue":
       return 5;
-    case "author_overdue":
+    case "revision_overdue":
       return 4;
+    case "decision_overdue":
+    case "reply_overdue":
     case "review_overdue":
       return 3;
-    case "triage_overdue":
+    case "owner_overdue":
+    case "assessment_overdue":
       return 2;
     case "automation_stuck":
       return 1;

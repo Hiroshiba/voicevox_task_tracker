@@ -20,7 +20,7 @@ import { assertNonNullable } from "../util/index.js";
 const confidenceSchema = z.number().min(0).max(1);
 
 /** Issue判定へ適用した決定規則のversion。 */
-export const ISSUE_DETERMINISTIC_RULES_VERSION = "issue-v6";
+export const ISSUE_DETERMINISTIC_RULES_VERSION = "issue-v9";
 
 /** 依存グラフからIssue判定へ渡すblocker。 */
 export type IssueBlocker = Readonly<{
@@ -267,6 +267,11 @@ function validateAssessment(
           `明示依頼先の根拠が外部判定の根拠に含まれていません。対象: ${sourceId}`,
         );
       }
+    }
+    if (!target.sourceIds.includes(assessment.requestSourceId)) {
+      throw new TypeError(
+        `明示依頼先の根拠に選定した依頼のsource IDがありません。対象: ${target.candidateId}`,
+      );
     }
     const targetKey = `${target.kind}:${target.candidateId}`;
     if (targetKeys.has(targetKey)) {
@@ -621,7 +626,7 @@ function createBlockedDecision(
   const basis = createBasis(primaryBlocker.sourceIds, primaryBlocker.becameBlockingAt, "event");
 
   return finalizeDecision(input, context, {
-    status: "blocked",
+    status: "waiting_for_unblock",
     waitingOn,
     primarySelectionReason,
     nextAction: `${primaryBlocker.candidateId}の完了を待つ`,
@@ -666,8 +671,8 @@ function getRequestTargetKindOrder(kind: IssueExplicitRequestTarget["kind"]): nu
 
 function getRequestDecisionStatus(targets: readonly IssueExplicitRequestTarget[]): Status {
   return targets.every((target) => target.kind === "role" && target.role === "maintainer")
-    ? "needs_maintainer_decision"
-    : "waiting_for_assignee";
+    ? "waiting_for_decision"
+    : "waiting_for_reply";
 }
 
 function createExplicitRequestDecision(
@@ -739,7 +744,7 @@ function createExplicitRequestDecision(
     createWaitingOn({
       kind: target.kind,
       candidateId: target.candidateId,
-      role: target.role,
+      role: target.kind === "role" ? target.role : "respondent",
       reasonSummary: "最新の未回答な明示依頼があります",
       sourceIds: target.sourceIds,
       confidence: Math.min(target.confidence, assessment.confidence),
@@ -847,7 +852,7 @@ function createAssigneeDecision(
   const sourceIds = assignees.flatMap((assignee) => assignee.waitingOn.sourceIds);
 
   return finalizeDecision(input, context, {
-    status: "waiting_for_assignee",
+    status: "waiting_for_work",
     waitingOn: assignees.map((assignee) => assignee.waitingOn),
     primarySelectionReason: "assign時刻とcandidate IDの順でassigneeを選定しました",
     nextAction: `${primaryAssignee.waitingOn.candidateId}がIssueを進める`,
@@ -861,6 +866,22 @@ function createAssigneeDecision(
   });
 }
 
+function determineUnassignedNextAction(
+  assessmentCompleted: boolean,
+  hasUncertainty: boolean,
+): string {
+  if (assessmentCompleted && hasUncertainty) {
+    return "maintainerが不確実な点を確認して担当を決める";
+  }
+  if (assessmentCompleted) {
+    return "maintainerがIssueの担当を決める";
+  }
+  if (hasUncertainty) {
+    return "maintainerが不確実な点を確認してIssueの内容を確認する";
+  }
+  return "maintainerがIssueの内容を確認する";
+}
+
 function createUnassignedDecision(
   input: IssueStateMachineInput,
   context: DecisionContext,
@@ -870,29 +891,59 @@ function createUnassignedDecision(
     lastUnassignedEvent == null
       ? createBasis([input.issue.sourceId], input.issue.createdAt, "inferred")
       : createBasis([lastUnassignedEvent.sourceId], lastUnassignedEvent.occurredAt, "event");
+  const assessmentEvidenceSourceIds = input.issue.events.flatMap((event) => {
+    if (event.kind === "assignee" && event.action === "added") {
+      return [event.sourceId];
+    }
+    if (event.kind !== "comment" || event.actor.type !== "human") {
+      return [];
+    }
+    if (
+      input.issue.author.status === "identified" &&
+      event.actor.nodeId === input.issue.author.actor.nodeId
+    ) {
+      return [];
+    }
+    return [event.sourceId];
+  });
+  if (input.issue.labels.length > 0) {
+    assessmentEvidenceSourceIds.push(input.issue.sourceId);
+  }
+  const assessmentCompleted = assessmentEvidenceSourceIds.length > 0;
+  const nextAction = determineUnassignedNextAction(
+    assessmentCompleted,
+    context.uncertainties.length > 0,
+  );
   const waitingOn = createWaitingOn({
     kind: "role",
     candidateId: "maintainer",
     role: "maintainer",
-    reasonSummary: "未アサインIssueのtriageが必要です",
+    reasonSummary: assessmentCompleted
+      ? "内容確認済みの未アサインIssueで担当決定が必要です"
+      : "未アサインIssueの内容確認が必要です",
     sourceIds: basis.sourceIds,
     confidence: 1,
   });
   return finalizeDecision(input, context, {
-    status: "new_untriaged",
+    status: assessmentCompleted ? "waiting_for_owner" : "waiting_for_assessment",
     waitingOn: [waitingOn],
     primarySelectionReason: "未アサインIssueの既定責務としてmaintainerを選定しました",
-    nextAction:
-      context.uncertainties.length === 0
-        ? "maintainerがIssueをtriageする"
-        : "maintainerが不確実な点を確認してIssueをtriageする",
+    nextAction,
     confidence: 1,
     evidence: [
-      ...createEvidence([input.issue.sourceId], "status", "Issueにassigneeが設定されていません"),
+      ...createEvidence(
+        assessmentCompleted ? assessmentEvidenceSourceIds : [input.issue.sourceId],
+        "status",
+        assessmentCompleted
+          ? "Issueの内容が確認された根拠があり、assigneeは設定されていません"
+          : "Issueにassigneeがなく、内容確認済みの根拠もありません",
+      ),
       ...createEvidence(
         basis.sourceIds,
         "waiting_on",
-        "未アサインIssueのtriageはmaintainerの責務です",
+        assessmentCompleted
+          ? "未アサインIssueの担当決定はmaintainerの責務です"
+          : "未アサインIssueの内容確認はmaintainerの責務です",
       ),
     ],
     statusBasis: basis,

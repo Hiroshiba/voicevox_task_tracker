@@ -55,14 +55,16 @@ export function createUtcIsoDateTime(value: string): UtcIsoDateTime {
 
 /** 追跡項目の処理状態。 */
 export type Status =
-  | "new_untriaged"
-  | "needs_maintainer_decision"
+  | "waiting_for_assessment"
+  | "waiting_for_owner"
+  | "waiting_for_decision"
   | "waiting_for_review"
-  | "waiting_for_author"
-  | "waiting_for_assignee"
-  | "blocked"
+  | "waiting_for_revision"
+  | "waiting_for_reply"
+  | "waiting_for_work"
+  | "waiting_for_unblock"
   | "waiting_for_automation"
-  | "ready_to_merge"
+  | "waiting_for_merge"
   | "in_progress"
   | "unknown"
   | "terminal_merged"
@@ -84,6 +86,7 @@ export type WaitingOnRole =
   | "maintainer"
   | "reviewer"
   | "assignee"
+  | "respondent"
   | "dependency"
   | "merge_decider"
   | "ci"
@@ -94,12 +97,14 @@ export type Severity = "none" | "watch" | "urgent" | "critical";
 
 /** staleness.thresholdsHoursのキーと1対1に対応する待機分類。 */
 export type WaitClass =
-  | "maintainerTriage"
-  | "ownerUnknown"
-  | "reviewer"
-  | "authorAfterChangesRequested"
-  | "assigneeOrInProgress"
-  | "readyToMerge"
+  | "assessment"
+  | "owner"
+  | "decision"
+  | "review"
+  | "revision"
+  | "reply"
+  | "work"
+  | "merge"
   | "automation";
 
 /** グラフnodeの種別。 */
@@ -135,15 +140,18 @@ export type RelationContradictionSummary = Readonly<{
 /** Codex出力schemaと一致する通知理由コード。 */
 export type NotificationReasonCode =
   | "none"
-  | "triage_overdue"
+  | "assessment_overdue"
+  | "owner_overdue"
+  | "decision_overdue"
   | "review_overdue"
-  | "author_overdue"
+  | "revision_overdue"
+  | "reply_overdue"
   | "owner_unknown"
   | "blocker_overdue"
   | "newly_unblocked"
   | "dependency_cycle"
   | "responsibility_changed"
-  | "ready_to_merge_overdue"
+  | "merge_overdue"
   | "automation_stuck";
 
 /** イベントを起こした主体の種別。 */

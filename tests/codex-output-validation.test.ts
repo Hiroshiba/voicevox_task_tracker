@@ -68,7 +68,7 @@ function createInput(): CodexAnalysisInput {
       url: "https://github.com/VOICEVOX/example/issues/1",
       type: "issue",
       title: "方針を決める",
-      authorCandidateId: "user:author",
+      authorCandidateId: "author",
     },
     candidates: {
       waitingOn: [
@@ -114,7 +114,7 @@ function createOutput(confidence: number) {
       nodeId: "I_example",
       url: "https://github.com/VOICEVOX/example/issues/1",
     },
-    status: "needs_maintainer_decision",
+    status: "waiting_for_decision",
     waitingOn: [
       {
         kind: "role",
@@ -157,8 +157,8 @@ function createOutput(confidence: number) {
     uncertainties: [],
     notification: {
       recommended: true,
-      reasonCode: "triage_overdue",
-      reasonSummary: "triageが必要です",
+      reasonCode: "assessment_overdue",
+      reasonSummary: "内容確認が必要です",
     },
   };
 }
@@ -169,7 +169,7 @@ function createDeterministicDecision(
   const sourceId = buildSourceId("body", "current");
   return Object.freeze({
     determination,
-    status: "needs_maintainer_decision",
+    status: "waiting_for_decision",
     waitingOn: Object.freeze([
       Object.freeze({
         kind: "role",
@@ -224,6 +224,26 @@ describe("Codex出力のJSON Schema検証", () => {
     ).toThrow(CodexOutputSchemaValidationError);
   });
 
+  it("返答待ちと回答者をschema段階で受理する", () => {
+    const output = validateCodexAnalysisSchema({
+      ...createOutput(0.9),
+      status: "waiting_for_reply",
+      waitingOn: [
+        {
+          kind: "user",
+          candidateId: "requested-user",
+          role: "respondent",
+          reasonSummary: "名指しされた質問への返答待ちです",
+          sourceIds: ["body:current"],
+          confidence: 0.9,
+        },
+      ],
+    });
+
+    expect(output.status).toBe("waiting_for_reply");
+    expect(output.waitingOn[0]?.role).toBe("respondent");
+  });
+
   it("importanceのrationaleを120文字以内に制限する", () => {
     expect(() =>
       validateCodexAnalysisSchema({
@@ -266,6 +286,54 @@ describe("Codex出力のJSON Schema検証", () => {
 });
 
 describe("Codex出力のsemantic検証", () => {
+  it("作者候補がない入力では作者を待ち先にする出力を拒否する", () => {
+    const baseInput = createInput();
+    const input = createCodexAnalysisInput({
+      ...baseInput,
+      item: {
+        nodeId: baseInput.item.nodeId,
+        url: baseInput.item.url,
+        type: baseInput.item.type,
+        title: baseInput.item.title,
+      },
+    });
+    const attemptedAuthorCandidateId = `deleted-account:${input.item.nodeId}`;
+    const output = createOutput(0.9);
+    const errorAction = () =>
+      validateCodexAnalysisOutput(
+        {
+          ...output,
+          waitingOn: [
+            {
+              ...output.waitingOn[0],
+              candidateId: attemptedAuthorCandidateId,
+              kind: "user",
+              role: "author",
+            },
+          ],
+        },
+        input,
+      );
+
+    expect(input.item).not.toHaveProperty("authorCandidateId");
+    expect(input.candidates.waitingOn.map((candidate) => candidate.id)).not.toContain(
+      attemptedAuthorCandidateId,
+    );
+    expect(errorAction).toThrow(CodexOutputSemanticValidationError);
+    try {
+      errorAction();
+    } catch (error: unknown) {
+      if (!(error instanceof CodexOutputSemanticValidationError)) {
+        throw error;
+      }
+      expect(error.issues).toContainEqual({
+        path: "/waitingOn/0/candidateId",
+        code: "unknown_waiting_on_candidate",
+        message: "入力のwaitingOn候補集合にない対象を参照しています",
+      });
+    }
+  });
+
   it("候補集合の外にあるwaitingOnとrelationをsemantic段階で拒否する", () => {
     const input = createInput();
     const output = createOutput(0.9);
@@ -276,7 +344,7 @@ describe("Codex出力のsemantic検証", () => {
           waitingOn: [
             {
               ...output.waitingOn[0],
-              candidateId: "user:unknown",
+              candidateId: "unknown-user",
               kind: "user",
             },
           ],
@@ -714,7 +782,7 @@ describe("confidence境界とreducer統合", () => {
     });
     const deterministic = Object.freeze({
       determination: "codex_candidate",
-      status: "blocked",
+      status: "waiting_for_unblock",
       waitingOn: Object.freeze([
         Object.freeze({
           kind: "item",
@@ -759,7 +827,7 @@ describe("confidence境界とreducer統合", () => {
 
     expect(result.decision).toMatchObject({
       origin: "deterministic",
-      status: "blocked",
+      status: "waiting_for_unblock",
     });
     expect(result.ai).toMatchObject({
       application: "native_relation_preserved",

@@ -108,6 +108,7 @@ function createOpenIssue(): FreshObservedGitHubIssue {
       status: "identified",
       actor: author,
     },
+    labels: [],
     assignees: [],
     events: [],
     observedAt,
@@ -240,10 +241,10 @@ describe("Issue状態機械の入力と出力契約", () => {
 });
 
 describe("Issueの既定責務", () => {
-  it("未アサインIssueをmaintainer待ちにする", () => {
+  it("コメントもラベルもない未アサインIssueを内容確認待ちにする", () => {
     const decision = determineIssueState(createInput(createOpenIssue()));
 
-    expect(decision.status).toBe("new_untriaged");
+    expect(decision.status).toBe("waiting_for_assessment");
     expect(decision.waitingOn).toEqual([
       expect.objectContaining({
         kind: "team",
@@ -274,7 +275,7 @@ describe("Issueの既定責務", () => {
       }),
     );
 
-    expect(singleDecision.status).toBe("waiting_for_assignee");
+    expect(singleDecision.status).toBe("waiting_for_work");
     expect(singleDecision.waitingOn.map((value) => value.candidateId)).toEqual([
       firstAssignee.login,
     ]);
@@ -491,7 +492,7 @@ describe("Issueの既定責務", () => {
     expect(decision.waitingOn.map((value) => value.candidateId)).not.toContain(maintainer.login);
   });
 
-  it("直近のhuman actorがreviewerでもtriageをmaintainer teamの責務にする", () => {
+  it("作成者以外のhumanコメントがある未アサインIssueを担当決め待ちにする", () => {
     const reviewerActivity = createCommentEvent(
       "reviewer-activity",
       reviewer,
@@ -504,6 +505,7 @@ describe("Issueの既定責務", () => {
       }),
     );
 
+    expect(decision.status).toBe("waiting_for_owner");
     expect(decision.waitingOn[0]).toMatchObject({
       kind: "team",
       candidateId: "VOICEVOX/maintainers",
@@ -514,6 +516,54 @@ describe("Issueの既定責務", () => {
       occurredAt: createdAt,
       precision: "inferred",
     });
+  });
+
+  it("botコメントだけの未アサインIssueを内容確認待ちにする", () => {
+    const botActivity = createCommentEvent(
+      "bot-activity",
+      botAuthor,
+      createUtcIsoDateTime("2026-07-31T07:00:00Z"),
+    );
+    const decision = determineIssueState(
+      createInput({
+        ...createOpenIssue(),
+        events: [botActivity],
+      }),
+    );
+
+    expect(decision.status).toBe("waiting_for_assessment");
+  });
+
+  it("ラベルが付いた未アサインIssueを担当決め待ちにする", () => {
+    const decision = determineIssueState(
+      createInput({
+        ...createOpenIssue(),
+        labels: ["要検討"],
+      }),
+    );
+
+    expect(decision.status).toBe("waiting_for_owner");
+  });
+
+  it("過去にassigneeがいた未アサインIssueを担当決め待ちにする", () => {
+    const assignment = createAssigneeEvent(
+      "past-assignment",
+      firstAssignee,
+      createUtcIsoDateTime("2026-07-31T05:00:00Z"),
+    );
+    const unassignment = createUnassignEvent(
+      "past-unassignment",
+      firstAssignee,
+      createUtcIsoDateTime("2026-07-31T06:00:00Z"),
+    );
+    const decision = determineIssueState(
+      createInput({
+        ...createOpenIssue(),
+        events: [assignment, unassignment],
+      }),
+    );
+
+    expect(decision.status).toBe("waiting_for_owner");
   });
 
   it("2 repositoryでauthorのmembershipに関係なく設定済みmaintainer teamへ解決する", () => {
@@ -678,7 +728,7 @@ describe("Issueのblockerとterminal", () => {
       ],
     });
 
-    expect(decision.status).toBe("blocked");
+    expect(decision.status).toBe("waiting_for_unblock");
     expect(decision.waitingOn.map((value) => value.candidateId)).toEqual(["VOICEVOX/core#1"]);
     expect(decision.determination).toBe("determined");
   });
@@ -788,7 +838,7 @@ describe("Issueの明示依頼候補", () => {
       explicitRequestCandidates: [createRequestCandidate(requestEvent)],
     });
 
-    expect(decision.status).toBe("waiting_for_assignee");
+    expect(decision.status).toBe("waiting_for_work");
     expect(decision.waitingOn[0]?.candidateId).toBe(firstAssignee.login);
     expect(decision.determination).toBe("codex_candidate");
     expect(decision.confidence).toBeLessThanOrEqual(0.65);
@@ -802,7 +852,7 @@ describe("Issueの明示依頼候補", () => {
     });
   });
 
-  it("外部判定を与えると明示依頼先をassigneeより優先する", () => {
+  it("コメントで名指しされた第三者を返答待ちの回答者としてassigneeより優先する", () => {
     const requestEvent = createCommentEvent(
       "confirmed-request",
       author,
@@ -839,11 +889,12 @@ describe("Issueの明示依頼候補", () => {
       },
     });
 
-    expect(decision.status).toBe("waiting_for_assignee");
+    expect(decision.status).toBe("waiting_for_reply");
     expect(decision.waitingOn).toEqual([
       expect.objectContaining({
         kind: "user",
         candidateId: requestedUser.login,
+        role: "respondent",
       }),
     ]);
     expect(decision.determination).toBe("determined");
@@ -852,6 +903,136 @@ describe("Issueの明示依頼候補", () => {
       occurredAt: requestEvent.occurredAt,
       precision: "inferred",
     });
+  });
+
+  it("名指しされた相手がassignee本人でも返答待ちの回答者とする", () => {
+    const requestEvent = createCommentEvent(
+      "assignee-request",
+      author,
+      createUtcIsoDateTime("2026-07-31T06:00:00Z"),
+    );
+    const assignment = createAssigneeEvent(
+      "assigned-request-target",
+      firstAssignee,
+      createUtcIsoDateTime("2026-07-31T05:00:00Z"),
+    );
+    const decision = determineIssueState({
+      ...createInput({
+        ...createOpenIssue(),
+        assignees: [firstAssignee],
+        events: [assignment, requestEvent],
+      }),
+      explicitRequestCandidates: [createRequestCandidate(requestEvent)],
+      explicitRequestAssessment: {
+        status: "assessed",
+        candidateSourceIds: [requestEvent.sourceId],
+        verdict: "unanswered_request",
+        requestSourceId: requestEvent.sourceId,
+        targets: [
+          {
+            kind: "user",
+            candidateId: firstAssignee.login,
+            role: "assignee",
+            sourceIds: [requestEvent.sourceId],
+            confidence: 0.95,
+          },
+        ],
+        confidence: 0.95,
+        sourceIds: [requestEvent.sourceId],
+      },
+    });
+
+    expect(decision.status).toBe("waiting_for_reply");
+    expect(decision.waitingOn).toEqual([
+      expect.objectContaining({
+        kind: "user",
+        candidateId: firstAssignee.login,
+        role: "respondent",
+      }),
+    ]);
+  });
+
+  it("明示依頼先がmaintainer役割だけなら方針判断待ちを維持する", () => {
+    const requestEvent = createCommentEvent(
+      "maintainer-role-request",
+      author,
+      createUtcIsoDateTime("2026-07-31T06:00:00Z"),
+    );
+    const decision = determineIssueState({
+      ...createInput({
+        ...createOpenIssue(),
+        events: [requestEvent],
+      }),
+      explicitRequestCandidates: [createRequestCandidate(requestEvent)],
+      explicitRequestAssessment: {
+        status: "assessed",
+        candidateSourceIds: [requestEvent.sourceId],
+        verdict: "unanswered_request",
+        requestSourceId: requestEvent.sourceId,
+        targets: [
+          {
+            kind: "role",
+            candidateId: "maintainer",
+            role: "maintainer",
+            sourceIds: [requestEvent.sourceId],
+            confidence: 0.95,
+          },
+        ],
+        confidence: 0.95,
+        sourceIds: [requestEvent.sourceId],
+      },
+    });
+
+    expect(decision.status).toBe("waiting_for_decision");
+    expect(decision.waitingOn).toEqual([
+      expect.objectContaining({
+        kind: "team",
+        candidateId: "VOICEVOX/maintainers",
+        role: "maintainer",
+      }),
+    ]);
+  });
+
+  it("名指しの根拠に選定した依頼のsourceがなければ回答者にしない", () => {
+    const requestEvent = createCommentEvent(
+      "request-without-target-source",
+      author,
+      createUtcIsoDateTime("2026-07-31T06:00:00Z"),
+    );
+    const unrelatedEvent = createCommentEvent(
+      "unrelated-target-source",
+      requestedUser,
+      createUtcIsoDateTime("2026-07-31T07:00:00Z"),
+    );
+
+    expect(() =>
+      determineIssueState({
+        ...createInput({
+          ...createOpenIssue(),
+          events: [requestEvent, unrelatedEvent],
+        }),
+        explicitRequestCandidates: [createRequestCandidate(requestEvent)],
+        explicitRequestAssessment: {
+          status: "assessed",
+          candidateSourceIds: [requestEvent.sourceId],
+          verdict: "unanswered_request",
+          requestSourceId: requestEvent.sourceId,
+          targets: [
+            {
+              kind: "user",
+              candidateId: requestedUser.login,
+              role: "unknown",
+              sourceIds: [unrelatedEvent.sourceId],
+              confidence: 0.95,
+            },
+          ],
+          confidence: 0.95,
+          sourceIds: [requestEvent.sourceId, unrelatedEvent.sourceId],
+        },
+      }),
+    ).toThrowError(
+      `明示依頼先の根拠に選定した依頼のsource IDがありません。対象: ${requestedUser.login}`,
+    );
   });
 
   it("低信頼の外部判定では明示依頼先へ責務を移さない", () => {

@@ -109,7 +109,7 @@ function itemRowPresentation(row: ItemTableRow): ResponsiveListRowPresentation {
   };
 }
 
-/** 指定したGitHubアカウントを待っている項目を表示する。 */
+/** 指定したGitHubアカウントの対応を待っている項目を表示する。 */
 export function PersonPage({
   createItemHref,
   isViewerIdentity,
@@ -198,7 +198,7 @@ export function PersonPage({
       cellKind: "data",
       headerClassName: "",
       key: "status",
-      label: "status",
+      label: "状態",
       onSort: () => {
         onSortChange("status");
       },
@@ -235,7 +235,7 @@ export function PersonPage({
     {
       className: "",
       key: "status",
-      label: "status",
+      label: "状態",
       renderValue: (row: ItemTableRow) => statusLabel(row.item.status),
       valueClassName: "font-semibold text-text-primary",
     },
