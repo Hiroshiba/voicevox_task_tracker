@@ -2391,11 +2391,24 @@ describe("Web UI", () => {
       "この項目と現在有効な依存関係で直接つながる項目だけを、中心項目を含めて3件表示します。",
     );
     expect(graphSection.textContent).not.toContain("表示上限外の隣接項目");
-    expect(requiredElement<HTMLElement>(".graph-node-size-description").textContent).toBe(
-      "ノードの大きさは、停滞の長さと、その項目がブロックしている項目の広がりで決まります。",
+    expect(graphSection.querySelector(".graph-node-size-description")).toBeNull();
+    expect(requiredElement<HTMLElement>(".dependency-graph-legend").textContent).toContain(
+      "ノードの形IssuePull Request外部参照",
+    );
+    expect(requiredElement<HTMLElement>(".graph-legend-edges").textContent).toBe(
+      "線種確定関係推定関係",
+    );
+    expect(requiredElement<HTMLElement>(".graph-legend-direction").textContent).toBe(
+      "矢印の向き矢印は依存関係の始点から終点へ向き、ブロック関係はブロック元からブロックされる項目へ向きます。",
+    );
+    expect(requiredElement<SVGDescElement>("#item-dependency-graph-description").textContent).toBe(
+      "VOICEVOX/sample-engine#204を中心項目として示します。",
     );
     expect(centerNode.dataset["central"]).toBe("true");
-    expect(centerNode.textContent).toContain("中心項目");
+    expect(centerNode.querySelector(".graph-central-label")).toBeNull();
+    expect(centerNode.querySelector("rect")?.getAttribute("class")).toContain(
+      "stroke-graph-node-central-accent",
+    );
     expect(centerNode.getAttribute("aria-label")).toContain("中心項目");
     const neighborLink = requiredElement<SVGAElement>(
       '.item-dependency-graph a[href="/voicevox_task_tracker/items/sample-editor/103"]',
@@ -2443,6 +2456,7 @@ describe("Web UI", () => {
     await flushUi();
 
     expect(currentContainer().querySelector(".item-dependency-graph")).toBeNull();
+    expect(currentContainer().querySelector(".dependency-graph-legend")).toBeNull();
   });
 
   it("重要度の内訳で決定論とCodex判定の加点要因を区別する", async () => {

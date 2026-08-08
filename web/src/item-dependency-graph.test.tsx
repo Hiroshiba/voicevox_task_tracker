@@ -13,7 +13,7 @@ import {
 } from "../../src/pages/public-dto.js";
 import { assertNonNullable } from "../../src/util/index.js";
 import { DependencyGraphDiagram } from "./dependency-graph-diagram.js";
-import { calculateGraphNodeSize, createItemGraphView, MAX_GRAPH_NODE_SIZE } from "./graph-model.js";
+import { createItemGraphView } from "./graph-model.js";
 
 const NOW = new Date("2026-08-01T00:00:00.000Z");
 const sampleSummary = createPublicSummaryDto(sampleSummarySource);
@@ -66,7 +66,9 @@ function trackedGraphNode(item: PublicItemSummaryDto): PublicGraphNodeDto {
   };
 }
 
-function externalGraphNode(nodeId: string): PublicGraphNodeDto {
+function externalGraphNode(
+  nodeId: string,
+): Extract<PublicGraphNodeDto, Readonly<{ kind: "external_reference" }>> {
   return {
     nodeId,
     kind: "external_reference",
@@ -163,20 +165,47 @@ afterEach(() => {
 });
 
 describe("項目詳細の依存グラフ", () => {
-  it("停滞1日、10日、30日の順で大きくし上限を超えない", () => {
-    const oneDay = calculateGraphNodeSize(1, 0, 0);
-    const tenDays = calculateGraphNodeSize(10, 0, 0);
-    const thirtyDays = calculateGraphNodeSize(30, 0, 0);
-    const oneImpactedItem = calculateGraphNodeSize(1, 1, 0);
-    const oneImpactedRepository = calculateGraphNodeSize(1, 0, 1);
-    const extreme = calculateGraphNodeSize(1_000_000, 1_000_000, 1_000_000);
+  it("追跡項目を240×112、外部参照を360×112で表示する", () => {
+    const center = createItem("node:fixed-center", "issue", 31, "2026-08-01T00:00:00.000Z");
+    const highImpact = {
+      ...createItem("node:fixed-high-impact", "pull_request", 32, "2020-01-01T00:00:00.000Z"),
+      downstreamImpact: {
+        nodeId: "node:fixed-high-impact",
+        openNodeCount: 1_000,
+        repositoryCount: 100,
+      },
+    } satisfies PublicItemSummaryDto;
+    const external = externalGraphNode("node:fixed-external");
+    const fixture = createGraphFixture({
+      items: [center, highImpact],
+      nodes: [trackedGraphNode(center), trackedGraphNode(highImpact), external],
+      edges: [
+        createEdge("edge:fixed-high-impact", highImpact.nodeId, center.nodeId, "blocks", "native"),
+        createEdge(
+          "edge:fixed-external",
+          external.nodeId,
+          center.nodeId,
+          "related_to",
+          "explicit_text",
+        ),
+      ],
+      frontierNodeIds: [],
+      maxNodes: 10,
+    });
 
-    expect(oneDay).toBeLessThan(tenDays);
-    expect(tenDays).toBeLessThan(thirtyDays);
-    expect(oneDay).toBeLessThan(oneImpactedItem);
-    expect(oneDay).toBeLessThan(oneImpactedRepository);
-    expect(thirtyDays).toBeLessThanOrEqual(MAX_GRAPH_NODE_SIZE);
-    expect(extreme).toBe(MAX_GRAPH_NODE_SIZE);
+    const view = createItemGraphView(fixture.summary, fixture.details, center.nodeId, NOW);
+
+    expect(view.displayNodes).toHaveLength(3);
+    expect(
+      view.displayNodes
+        .filter((node) => node.kind !== "external_reference")
+        .every((node) => node.width === 240 && node.height === 112),
+    ).toBe(true);
+    expect(
+      view.displayNodes
+        .filter((node) => node.kind === "external_reference")
+        .every((node) => node.width === 360 && node.height === 112),
+    ).toBe(true);
   });
 
   it("中心項目を識別して1 hop表示へ必ず含める", () => {
@@ -265,10 +294,8 @@ describe("項目詳細の依存グラフ", () => {
         type: edge.type,
       })),
     ).toEqual(edges.map(({ fromNodeId, toNodeId, type }) => ({ fromNodeId, toNodeId, type })));
-    expect(view.sourceEdges[0]?.authorityLabel).toBe("確定関係");
-    expect(view.sourceEdges.slice(1).every((edge) => edge.authorityLabel === "推定関係")).toBe(
-      true,
-    );
+    expect(view.sourceEdges[0]?.authoritative).toBe(true);
+    expect(view.sourceEdges.slice(1).every((edge) => !edge.authoritative)).toBe(true);
   });
 
   it("表示上限を超えても中心項目を残してseverityが高い隣接項目を選ぶ", () => {
@@ -316,14 +343,66 @@ describe("項目詳細の依存グラフ", () => {
     expect(view.omittedSourceNodeCount).toBe(2);
   });
 
+  it("指標がすべて0でも追跡対象を外部参照より優先して選ぶ", () => {
+    const center = createItem("node:center-priority", "issue", 65, "2026-08-01T00:00:00.000Z");
+    const tracked = {
+      ...createItem("node:z-tracked", "issue", 66, "2026-08-01T00:00:00.000Z"),
+      severity: "none",
+      downstreamImpact: {
+        nodeId: "node:z-tracked",
+        openNodeCount: 0,
+        repositoryCount: 0,
+      },
+    } satisfies PublicItemSummaryDto;
+    const external = externalGraphNode("node:a-external");
+    const fixture = createGraphFixture({
+      items: [center, tracked],
+      nodes: [trackedGraphNode(center), trackedGraphNode(tracked), external],
+      edges: [
+        createEdge("edge:priority-tracked", tracked.nodeId, center.nodeId, "blocks", "native"),
+        createEdge("edge:priority-external", external.nodeId, center.nodeId, "blocks", "native"),
+      ],
+      frontierNodeIds: [],
+      maxNodes: 2,
+    });
+
+    const view = createItemGraphView(fixture.summary, fixture.details, center.nodeId, NOW);
+
+    expect(view.displayNodes.map((node) => node.id)).toEqual([center.nodeId, tracked.nodeId]);
+  });
+
+  it("短縮できない外部参照名をそのまま表示用モデルへ残す", () => {
+    const center = createItem("node:center-reference", "issue", 67, "2026-08-01T00:00:00.000Z");
+    const external = {
+      ...externalGraphNode("node:external-reference"),
+      displayReference: "形式外の外部参照",
+    } satisfies PublicGraphNodeDto;
+    const fixture = createGraphFixture({
+      items: [center],
+      nodes: [trackedGraphNode(center), external],
+      edges: [
+        createEdge("edge:external-reference", external.nodeId, center.nodeId, "blocks", "native"),
+      ],
+      frontierNodeIds: [],
+      maxNodes: 2,
+    });
+
+    const view = createItemGraphView(fixture.summary, fixture.details, center.nodeId, NOW);
+    const externalViewNode = view.displayNodes.find((node) => node.id === external.nodeId);
+
+    expect(externalViewNode?.shortReference).toBe(external.displayReference);
+  });
+
   it("Issue、Pull Request、外部参照を形とテキストで区別し着手可能を表示する", async () => {
     const center = createItem("node:center-ui", "issue", 71, "2026-07-31T00:00:00.000Z");
-    const pullRequest = createItem(
-      "node:pull-request-ui",
-      "pull_request",
-      72,
-      "2026-07-20T00:00:00.000Z",
-    );
+    const pullRequest = {
+      ...createItem("node:pull-request-ui", "pull_request", 72, "2026-07-20T00:00:00.000Z"),
+      downstreamImpact: {
+        nodeId: "node:pull-request-ui",
+        openNodeCount: 2,
+        repositoryCount: 999,
+      },
+    } satisfies PublicItemSummaryDto;
     const external = externalGraphNode("node:external-ui");
     const fixture = createGraphFixture({
       items: [center, pullRequest],
@@ -336,6 +415,13 @@ describe("項目詳細の依存グラフ", () => {
           center.nodeId,
           "related_to",
           "explicit_text",
+        ),
+        createEdge(
+          "edge:ui-external-implements",
+          external.nodeId,
+          center.nodeId,
+          "implements",
+          "closing_keyword",
         ),
       ],
       frontierNodeIds: [pullRequest.nodeId],
@@ -357,9 +443,52 @@ describe("項目詳細の依存グラフ", () => {
       />,
       currentContainer(),
     );
+    expect(currentContainer().querySelector(".dependency-graph-legend")).toBeNull();
     await vi.waitFor(() => {
       expect(currentContainer().querySelector('[data-layout-status="ready"]')).not.toBeNull();
     });
+
+    const graphSvg = currentContainer().querySelector<SVGSVGElement>(".dependency-graph-svg");
+    assertNonNullable(graphSvg, "依存グラフのSVGがありません");
+    const viewBoxWidth = graphSvg.getAttribute("viewBox")?.split(" ")[2];
+    const viewBoxHeight = graphSvg.getAttribute("viewBox")?.split(" ")[3];
+    assertNonNullable(viewBoxWidth, "依存グラフのviewBox幅がありません");
+    assertNonNullable(viewBoxHeight, "依存グラフのviewBox高さがありません");
+    expect(graphSvg.getAttribute("width")).toBe(viewBoxWidth);
+    expect(graphSvg.getAttribute("height")).toBe(viewBoxHeight);
+    expect(graphSvg.classList).not.toContain("max-w-full");
+    expect(graphSvg.classList).not.toContain("h-auto");
+    expect(graphSvg.classList).not.toContain("max-w-none");
+
+    const legend = currentContainer().querySelector<HTMLElement>(".dependency-graph-legend");
+    assertNonNullable(legend, "依存グラフの凡例がありません");
+    expect(legend.closest("svg")).toBeNull();
+    expect(legend.querySelector("h5")?.textContent).toBe("凡例");
+    const issueLegend = legend.querySelector('[data-legend-node-kind="issue"]');
+    const pullRequestLegend = legend.querySelector('[data-legend-node-kind="pull_request"]');
+    const externalReferenceLegend = legend.querySelector(
+      '[data-legend-node-kind="external_reference"]',
+    );
+    expect(issueLegend?.textContent).toBe("Issue");
+    expect(issueLegend?.querySelector("svg > rect")).not.toBeNull();
+    expect(pullRequestLegend?.textContent).toBe("Pull Request");
+    expect(pullRequestLegend?.querySelector("svg > polygon")).not.toBeNull();
+    expect(externalReferenceLegend?.textContent).toBe("外部参照");
+    expect(externalReferenceLegend?.querySelector("svg > polygon")).not.toBeNull();
+    expect(externalReferenceLegend?.querySelector("polygon")?.getAttribute("class")).toContain(
+      "stroke-dasharray:7_3",
+    );
+    const legendEdgeItems = [...legend.querySelectorAll(".graph-legend-edges li")];
+    expect(legendEdgeItems.map((item) => item.textContent)).toEqual(["確定関係", "推定関係"]);
+    expect(legendEdgeItems[0]?.querySelector("line")?.getAttribute("class")).not.toContain(
+      "stroke-dasharray",
+    );
+    expect(legendEdgeItems[1]?.querySelector("line")?.getAttribute("class")).toContain(
+      "stroke-dasharray:8_6",
+    );
+    expect(legend.querySelector(".graph-legend-direction")?.textContent).toBe(
+      "矢印の向き矢印は依存関係の始点から終点へ向き、ブロック関係はブロック元からブロックされる項目へ向きます。",
+    );
 
     const issue = currentContainer().querySelector('[data-node-kind="issue"]');
     const pr = currentContainer().querySelector('[data-node-kind="pull_request"]');
@@ -369,22 +498,58 @@ describe("項目詳細の依存グラフ", () => {
     expect(externalNode?.querySelector("polygon")).not.toBeNull();
     expect(currentContainer().querySelector('[class*="graph-severity-"]')).toBeNull();
     expect(pr?.textContent).toContain("PR");
-    expect(pr?.textContent).toContain("着手可能");
+    expect(pr?.querySelector(".graph-frontier-label")?.textContent).toBe("▶ 着手可能");
     expect(externalNode?.textContent).toContain("外部");
-    expect(currentContainer().querySelector(".graph-node-size-description")?.textContent).toBe(
-      "ノードの大きさは、停滞の長さと、その項目がブロックしている項目の広がりで決まります。",
+    expect(issue?.querySelector(".graph-node-reference")?.textContent).toBe("sample-editor#71");
+    expect(pr?.querySelector(".graph-node-reference")?.textContent).toBe("sample-editor#72");
+    expect(externalNode?.querySelector(".graph-node-reference")?.textContent).toBe("example#9");
+    expect(issue?.querySelector("title")?.textContent).toContain("VOICEVOX/sample-editor#71");
+    expect(issue?.getAttribute("aria-label")).toContain("VOICEVOX/sample-editor#71");
+    expect(issue?.querySelector(".graph-node-metrics")?.textContent).toBe("停滞1日・影響1件");
+    expect(pr?.querySelector(".graph-node-metrics")?.textContent).toBe("停滞12日・影響2件");
+    expect(pr?.getAttribute("aria-label")).toContain("停滞日数12日、影響するopen項目2件");
+    expect(pr?.textContent).not.toContain("999");
+    expect(externalNode?.querySelector(".graph-node-metrics")).toBeNull();
+    expect(issue?.querySelector(".graph-central-label")).toBeNull();
+    expect(issue?.querySelector("rect")?.getAttribute("class")).toContain(
+      "stroke-graph-node-central-accent",
     );
-    expect(currentContainer().querySelector(".graph-edge-authoritative")?.textContent).toContain(
-      "ブロック確定関係",
+    expect(currentContainer().querySelector(".graph-node-size-description")).toBeNull();
+    const authoritativeEdge = currentContainer().querySelector(".graph-edge-authoritative");
+    const inferredEdge = currentContainer().querySelector(".graph-edge-inferred");
+    expect(authoritativeEdge?.textContent).toBe("ブロック");
+    expect(authoritativeEdge?.getAttribute("aria-label")).toBe("ブロック、確定関係");
+    expect(inferredEdge?.textContent).toBe("関連");
+    expect(inferredEdge?.getAttribute("aria-label")).toBe("関連、推定関係");
+    expect(authoritativeEdge?.querySelectorAll("tspan")).toHaveLength(0);
+    expect(authoritativeEdge?.querySelector("text")?.classList).toContain("text-graph-label");
+    const authoritativePath = currentContainer().querySelector(
+      ".graph-edge-authoritative path[marker-end]",
     );
-    expect(currentContainer().querySelector(".graph-edge-inferred")?.textContent).toContain(
-      "関連推定関係",
+    const inferredPaths = [
+      ...currentContainer().querySelectorAll(".graph-edge-inferred path[marker-end]"),
+    ];
+    expect(authoritativePath?.getAttribute("class")).not.toContain("stroke-dasharray");
+    expect(authoritativePath?.getAttribute("marker-end")).toBe(
+      "url(#item-graph-fixture-arrow-authoritative)",
     );
+    expect(inferredPaths).toHaveLength(2);
     expect(
-      currentContainer().querySelector(".graph-edge-authoritative path[marker-end]"),
-    ).not.toBeNull();
+      inferredPaths.every((path) => path.getAttribute("class")?.includes("stroke-dasharray:8_6")),
+    ).toBe(true);
     expect(
-      currentContainer().querySelector(".graph-edge-inferred path[marker-end]"),
-    ).not.toBeNull();
+      inferredPaths.every(
+        (path) => path.getAttribute("marker-end") === "url(#item-graph-fixture-arrow-inferred)",
+      ),
+    ).toBe(true);
+    expect(
+      currentContainer().querySelector("#item-graph-fixture-arrow-authoritative path")?.classList,
+    ).toContain("fill-graph-edge-authoritative");
+    expect(
+      currentContainer().querySelector("#item-graph-fixture-arrow-inferred path")?.classList,
+    ).toContain("fill-graph-edge-inferred");
+    expect(issue?.querySelector(".graph-node-reference")?.classList).toContain("text-ellipsis");
+    expect(issue?.querySelector(".graph-node-title")?.classList).toContain("text-ellipsis");
+    expect(issue?.querySelector(".graph-node-metrics")?.classList).toContain("text-ellipsis");
   });
 });

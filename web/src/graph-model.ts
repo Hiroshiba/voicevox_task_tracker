@@ -8,30 +8,38 @@ import {
 import { assertNonNullable, UnreachableError } from "../../src/util/index.js";
 
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
-const BASE_GRAPH_NODE_SIZE = 72;
-
-/** グラフnodeの表示サイズ上限。 */
-export const MAX_GRAPH_NODE_SIZE = 132;
+const GRAPH_NODE_WIDTH = 240;
+const GRAPH_EXTERNAL_REFERENCE_NODE_WIDTH = 360;
+const GRAPH_NODE_HEIGHT = 112;
 
 type GraphNodeKind = PublicGraphNodeDto["kind"];
 type GraphNodeSeverity = PublicItemSummaryDto["severity"];
 type RelationType = PublicGraphEdgeDto["type"];
 
-/** 項目の部分グラフで描画するnode。 */
-export type GraphViewNode = Readonly<{
+type GraphViewNodeFields = Readonly<{
   id: string;
-  kind: GraphNodeKind;
-  reference: string;
+  fullReference: string;
+  shortReference: string;
   title: string;
   central: boolean;
   frontier: boolean;
-  stallDays: number;
-  impactOpenNodeCount: number;
-  impactRepositoryCount: number;
-  size: number;
   width: number;
   height: number;
 }>;
+
+/** 項目の部分グラフで描画するnode。 */
+export type GraphViewNode =
+  | (GraphViewNodeFields &
+      Readonly<{
+        kind: "issue" | "pull_request";
+        stallDays: number;
+        impactOpenNodeCount: number;
+        impactRepositoryCount: number;
+      }>)
+  | (GraphViewNodeFields &
+      Readonly<{
+        kind: "external_reference";
+      }>);
 
 /** 自動レイアウトへ渡すedge表現。 */
 export type GraphViewEdge = Readonly<{
@@ -40,7 +48,6 @@ export type GraphViewEdge = Readonly<{
   toNodeId: string;
   type: RelationType;
   typeLabel: string;
-  authorityLabel: "確定関係" | "推定関係";
   authoritative: boolean;
 }>;
 
@@ -69,25 +76,18 @@ function finiteNonNegative(value: number, name: string): void {
   }
 }
 
-/** 停滞日数と影響範囲から単調増加かつ上限付きのnodeサイズを返す。 */
-export function calculateGraphNodeSize(
-  stallDays: number,
-  impactOpenNodeCount: number,
-  impactRepositoryCount: number,
-): number {
-  finiteNonNegative(stallDays, "停滞日数");
-  finiteNonNegative(impactOpenNodeCount, "影響項目数");
-  finiteNonNegative(impactRepositoryCount, "影響リポジトリ数");
-  const stallContribution = Math.log2(stallDays + 1) * 8;
-  const itemImpactContribution = Math.log2(impactOpenNodeCount + 1) * 5;
-  const repositoryImpactContribution = Math.log2(impactRepositoryCount + 1) * 4;
-  return Math.min(
-    MAX_GRAPH_NODE_SIZE,
-    BASE_GRAPH_NODE_SIZE +
-      stallContribution +
-      itemImpactContribution +
-      repositoryImpactContribution,
-  );
+function createShortReference(fullReference: string): string {
+  const repositorySeparatorIndex = fullReference.lastIndexOf("/");
+  const numberSeparatorIndex = fullReference.lastIndexOf("#");
+  const numberText = fullReference.slice(numberSeparatorIndex + 1);
+  if (
+    repositorySeparatorIndex <= 0 ||
+    numberSeparatorIndex <= repositorySeparatorIndex + 1 ||
+    !/^[1-9]\d*$/u.test(numberText)
+  ) {
+    return fullReference;
+  }
+  return fullReference.slice(repositorySeparatorIndex + 1);
 }
 
 /** graph node種別の色に依存しない表示名を返す。 */
@@ -151,24 +151,19 @@ function createTrackedGraphNode(
   }
   const stallDays = (now.getTime() - Date.parse(item.stallSince)) / MILLISECONDS_PER_DAY;
   finiteNonNegative(stallDays, `graph node ${node.nodeId}の停滞日数`);
-  const size = calculateGraphNodeSize(
-    stallDays,
-    item.downstreamImpact.openNodeCount,
-    item.downstreamImpact.repositoryCount,
-  );
   return {
     id: node.nodeId,
     kind: node.kind,
-    reference: item.displayReference,
+    fullReference: item.displayReference,
+    shortReference: createShortReference(item.displayReference),
     title: item.title,
     central: centralNodeIds.has(node.nodeId),
     frontier: frontierNodeIds.has(node.nodeId),
     stallDays,
     impactOpenNodeCount: item.downstreamImpact.openNodeCount,
     impactRepositoryCount: item.downstreamImpact.repositoryCount,
-    size,
-    width: size * 2.15,
-    height: size,
+    width: GRAPH_NODE_WIDTH,
+    height: GRAPH_NODE_HEIGHT,
   };
 }
 
@@ -177,20 +172,16 @@ function createExternalGraphNode(
   centralNodeIds: ReadonlySet<string>,
   frontierNodeIds: ReadonlySet<string>,
 ): GraphViewNode {
-  const size = calculateGraphNodeSize(0, 0, 0);
   return {
     id: node.nodeId,
     kind: node.kind,
-    reference: node.displayReference,
+    fullReference: node.displayReference,
+    shortReference: createShortReference(node.displayReference),
     title: node.title,
     central: centralNodeIds.has(node.nodeId),
     frontier: frontierNodeIds.has(node.nodeId),
-    stallDays: 0,
-    impactOpenNodeCount: 0,
-    impactRepositoryCount: 0,
-    size,
-    width: size * 1.55,
-    height: size * 1.15,
+    width: GRAPH_EXTERNAL_REFERENCE_NODE_WIDTH,
+    height: GRAPH_NODE_HEIGHT,
   };
 }
 
@@ -202,7 +193,6 @@ function createEdgeView(edge: PublicGraphEdgeDto): GraphViewEdge {
     toNodeId: edge.toNodeId,
     type: edge.type,
     typeLabel: relationTypeLabel(edge.type),
-    authorityLabel: authoritative ? "確定関係" : "推定関係",
     authoritative,
   };
 }
@@ -232,6 +222,14 @@ function compareNodePriority(
     graphNodeSeverityRank(right, itemsByNodeId) - graphNodeSeverityRank(left, itemsByNodeId);
   if (severityOrder !== 0) {
     return severityOrder;
+  }
+  const externalReferenceOrder =
+    Number(left.kind === "external_reference") - Number(right.kind === "external_reference");
+  if (externalReferenceOrder !== 0) {
+    return externalReferenceOrder;
+  }
+  if (left.kind === "external_reference" || right.kind === "external_reference") {
+    return compareStrings(left.id, right.id);
   }
   const repositoryImpactOrder = right.impactRepositoryCount - left.impactRepositoryCount;
   if (repositoryImpactOrder !== 0) {

@@ -50,17 +50,16 @@ const GRAPH_NODE_STROKE_CLASS_NAMES = {
   pull_request: "stroke-graph-node-pull-request-border",
 } satisfies Readonly<Record<GraphViewNode["kind"], string>>;
 
-const GRAPH_EDGE_PATTERN_CLASS_NAMES = {
-  blocks: "",
-  duplicates: "[stroke-dasharray:14_4_3_4]",
-  implements: "[stroke-dasharray:4_4]",
-  parent_of: "[stroke-dasharray:12_4]",
-  related_to: "[stroke-dasharray:2_7]",
-} satisfies Readonly<Record<GraphViewEdge["type"], string>>;
-
-const GRAPH_NODE_TEXT_CLASS_NAME = "fill-text-primary [text-anchor:middle] pointer-events-none";
+const GRAPH_NODE_TEXT_CLASS_NAME =
+  "fill-text-primary [dominant-baseline:central] [text-anchor:middle] pointer-events-none";
+const GRAPH_NODE_FITTED_TEXT_CLASS_NAME =
+  "h-full overflow-hidden text-ellipsis whitespace-nowrap text-center text-text-primary text-graph-label leading-5";
 const GRAPH_EDGE_TEXT_CLASS_NAME =
-  "fill-text-secondary stroke-surface-sunken [stroke-width:var(--stroke-width-graph-edge-label)] [paint-order:stroke] [text-anchor:middle] text-graph font-bold";
+  "fill-text-secondary stroke-surface-sunken [stroke-width:var(--stroke-width-graph-edge-label)] [paint-order:stroke] [text-anchor:middle] text-graph-label font-bold";
+const GRAPH_NODE_TEXT_LINE_HEIGHT = 20;
+const GRAPH_NODE_TEXT_HORIZONTAL_PADDING = 16;
+
+type GraphNodeRow = "icon" | "reference" | "title" | "metrics" | "frontier";
 
 function graphNodeShapeClassName(node: GraphViewNode, linked: boolean): string {
   const strokeClassName = node.central
@@ -72,27 +71,19 @@ function graphNodeShapeClassName(node: GraphViewNode, linked: boolean): string {
   return `${GRAPH_NODE_FILL_CLASS_NAMES[node.kind]} ${strokeClassName} ${linkedClassName}`;
 }
 
-function graphEdgePathClassName(edge: GraphViewEdge): string {
-  const colorClassName = edge.authoritative
+function graphEdgePathClassName(authoritative: boolean): string {
+  const colorClassName = authoritative
     ? "stroke-graph-edge-authoritative"
     : "stroke-graph-edge-inferred";
-  let widthClassName: string;
-  if (edge.authoritative) {
-    widthClassName = "[stroke-width:var(--stroke-width-graph-edge-authoritative)]";
-  } else if (edge.type === "related_to") {
-    widthClassName = "stroke-2";
-  } else {
-    widthClassName = "[stroke-width:var(--stroke-width-graph-edge)]";
-  }
-  return `fill-none ${colorClassName} ${widthClassName} ${GRAPH_EDGE_PATTERN_CLASS_NAMES[edge.type]}`;
+  const widthClassName = authoritative
+    ? "[stroke-width:var(--stroke-width-graph-edge-authoritative)]"
+    : "[stroke-width:var(--stroke-width-graph-edge)]";
+  const patternClassName = authoritative ? "" : "[stroke-dasharray:8_6]";
+  return `fill-none ${colorClassName} ${widthClassName} ${patternClassName}`;
 }
 
-function truncateGraphText(value: string, maximumLength: number): string {
-  const characters = [...value];
-  if (characters.length <= maximumLength) {
-    return value;
-  }
-  return `${characters.slice(0, maximumLength - 1).join("")}…`;
+function graphEdgeAuthorityLabel(edge: GraphViewEdge): "確定関係" | "推定関係" {
+  return edge.authoritative ? "確定関係" : "推定関係";
 }
 
 function nodeIcon(node: GraphViewNode): string {
@@ -104,38 +95,43 @@ function nodeIcon(node: GraphViewNode): string {
     case "external_reference":
       return "外部";
     default:
-      throw new UnreachableError(node.kind);
+      throw new UnreachableError(node);
   }
 }
 
-function nodeShape(nodeLayout: LayoutedGraphNode, linked: boolean): VNode {
-  const { node, x, y } = nodeLayout;
-  const left = x - node.width / 2;
-  const top = y - node.height / 2;
-  const className = graphNodeShapeClassName(node, linked);
-  switch (node.kind) {
+function GraphNodeShape({
+  className,
+  height,
+  kind,
+  width,
+  x,
+  y,
+}: Readonly<{
+  className: string;
+  height: number;
+  kind: GraphViewNode["kind"];
+  width: number;
+  x: number;
+  y: number;
+}>): VNode {
+  const left = x - width / 2;
+  const top = y - height / 2;
+  switch (kind) {
     case "issue":
       return (
-        <rect
-          class={className}
-          x={left}
-          y={top}
-          width={node.width}
-          height={node.height}
-          rx={node.height * 0.2}
-        />
+        <rect class={className} x={left} y={top} width={width} height={height} rx={height * 0.2} />
       );
     case "pull_request": {
-      const corner = node.height * 0.22;
+      const corner = height * 0.22;
       return (
         <polygon
           class={className}
           points={[
             `${left + corner},${top}`,
-            `${left + node.width - corner},${top}`,
-            `${left + node.width},${y}`,
-            `${left + node.width - corner},${top + node.height}`,
-            `${left + corner},${top + node.height}`,
+            `${left + width - corner},${top}`,
+            `${left + width},${y}`,
+            `${left + width - corner},${top + height}`,
+            `${left + corner},${top + height}`,
             `${left},${y}`,
           ].join(" ")}
         />
@@ -147,15 +143,64 @@ function nodeShape(nodeLayout: LayoutedGraphNode, linked: boolean): VNode {
           class={className}
           points={[
             `${x},${top}`,
-            `${left + node.width},${y}`,
-            `${x},${top + node.height}`,
+            `${left + width},${y}`,
+            `${x},${top + height}`,
             `${left},${y}`,
           ].join(" ")}
         />
       );
     default:
-      throw new UnreachableError(node.kind);
+      throw new UnreachableError(kind);
   }
+}
+
+function nodeShape(nodeLayout: LayoutedGraphNode, linked: boolean): VNode {
+  const { node, x, y } = nodeLayout;
+  return (
+    <GraphNodeShape
+      className={graphNodeShapeClassName(node, linked)}
+      height={node.height}
+      kind={node.kind}
+      width={node.width}
+      x={x}
+      y={y}
+    />
+  );
+}
+
+function GraphLegendNodeSample({ kind }: Readonly<{ kind: GraphViewNode["kind"] }>): VNode {
+  return (
+    <svg
+      class="graph-legend-node-sample block h-7 w-12 shrink-0"
+      viewBox="0 0 48 28"
+      width="48"
+      height="28"
+      aria-hidden="true"
+    >
+      <GraphNodeShape
+        className={`${GRAPH_NODE_FILL_CLASS_NAMES[kind]} ${GRAPH_NODE_STROKE_CLASS_NAMES[kind]} [stroke-width:var(--stroke-width-graph-node)]`}
+        height={24}
+        kind={kind}
+        width={44}
+        x={24}
+        y={14}
+      />
+    </svg>
+  );
+}
+
+function GraphLegendEdgeSample({ authoritative }: Readonly<{ authoritative: boolean }>): VNode {
+  return (
+    <svg
+      class="graph-legend-edge-sample block h-4 w-16 shrink-0"
+      viewBox="0 0 64 16"
+      width="64"
+      height="16"
+      aria-hidden="true"
+    >
+      <line class={graphEdgePathClassName(authoritative)} x1="2" y1="8" x2="62" y2="8" />
+    </svg>
+  );
 }
 
 function graphPath(points: GraphLayout["edges"][number]["points"]): string {
@@ -167,6 +212,70 @@ function graphPath(points: GraphLayout["edges"][number]["points"]): string {
   ].join(" ");
 }
 
+function graphNodeTextWidth(node: GraphViewNode, verticalOffset: number): number {
+  const offsetRatio = Math.abs(verticalOffset) / (node.height / 2);
+  let shapeInset: number;
+  switch (node.kind) {
+    case "issue":
+      shapeInset = 0;
+      break;
+    case "pull_request":
+      shapeInset = node.height * 0.22 * offsetRatio;
+      break;
+    case "external_reference":
+      shapeInset = (node.width / 2) * offsetRatio;
+      break;
+    default:
+      throw new UnreachableError(node);
+  }
+  return node.width - 2 * (GRAPH_NODE_TEXT_HORIZONTAL_PADDING + shapeInset);
+}
+
+function graphNodeRows(node: GraphViewNode): readonly GraphNodeRow[] {
+  const rows: GraphNodeRow[] = ["icon", "reference", "title"];
+  if (node.kind !== "external_reference") {
+    rows.push("metrics");
+  }
+  if (node.frontier) {
+    rows.push("frontier");
+  }
+  return rows;
+}
+
+function graphNodeRowOffset(row: GraphNodeRow, rows: readonly GraphNodeRow[]): number {
+  const rowIndex = rows.indexOf(row);
+  if (rowIndex === -1) {
+    throw new TypeError(`graph nodeに${row}行がありません`);
+  }
+  return (rowIndex - (rows.length - 1) / 2) * GRAPH_NODE_TEXT_LINE_HEIGHT;
+}
+
+function FittedGraphNodeText({
+  className,
+  value,
+  width,
+  x,
+  y,
+}: Readonly<{
+  className: string;
+  value: string;
+  width: number;
+  x: number;
+  y: number;
+}>): VNode {
+  return (
+    <foreignObject
+      class="pointer-events-none overflow-hidden"
+      x={x - width / 2}
+      y={y - GRAPH_NODE_TEXT_LINE_HEIGHT / 2}
+      width={width}
+      height={GRAPH_NODE_TEXT_LINE_HEIGHT}
+    >
+      <div class={`${className} ${GRAPH_NODE_FITTED_TEXT_CLASS_NAME}`}>{value}</div>
+    </foreignObject>
+  );
+}
+
 function GraphSvgNode({
   navigation,
   nodeLayout,
@@ -176,8 +285,24 @@ function GraphSvgNode({
 }>) {
   const { node, x, y } = nodeLayout;
   const linked = !node.central && (node.kind === "issue" || node.kind === "pull_request");
-  const frontierLabel = node.frontier ? "、着手可能な項目" : "";
-  const centralLabel = node.central ? "、中心項目" : "";
+  const ariaLabelParts = [graphNodeKindLabel(node.kind), node.fullReference, node.title];
+  if (node.central) {
+    ariaLabelParts.push("中心項目");
+  }
+  if (node.frontier) {
+    ariaLabelParts.push("着手可能な項目");
+  }
+  if (node.kind !== "external_reference") {
+    ariaLabelParts.push(
+      `停滞日数${Math.floor(node.stallDays).toString()}日`,
+      `影響するopen項目${node.impactOpenNodeCount.toString()}件`,
+    );
+  }
+  const ariaLabel = ariaLabelParts.join("、");
+  const rows = graphNodeRows(node);
+  const iconOffset = graphNodeRowOffset("icon", rows);
+  const referenceOffset = graphNodeRowOffset("reference", rows);
+  const titleOffset = graphNodeRowOffset("title", rows);
   const content = (
     <g
       class={`graph-node graph-node-${node.kind} ${node.central ? "graph-node-central" : ""}`}
@@ -186,47 +311,47 @@ function GraphSvgNode({
       data-central={node.central ? "true" : "false"}
       data-frontier={node.frontier ? "true" : "false"}
       role="group"
-      aria-label={`${graphNodeKindLabel(node.kind)}、${node.reference}、${node.title}${centralLabel}${frontierLabel}`}
+      aria-label={ariaLabel}
     >
       <title>
-        {node.reference} {node.title}
+        {node.fullReference} {node.title}
       </title>
       {nodeShape(nodeLayout, linked)}
-      {node.central && (
-        <text
-          class={`graph-central-label ${GRAPH_NODE_TEXT_CLASS_NAME} fill-graph-node-central-accent text-graph-label font-extrabold`}
-          x={x}
-          y={y - node.height / 2 - 8}
-        >
-          中心項目
-        </text>
-      )}
       <text
-        class={`graph-node-icon ${GRAPH_NODE_TEXT_CLASS_NAME} text-graph font-extrabold tracking-widest`}
+        class={`graph-node-icon ${GRAPH_NODE_TEXT_CLASS_NAME} text-graph-label font-extrabold tracking-widest`}
         x={x}
-        y={y - node.height * 0.25}
+        y={y + iconOffset}
       >
         {nodeIcon(node)}
       </text>
-      <text
-        class={`graph-node-reference ${GRAPH_NODE_TEXT_CLASS_NAME} text-graph-label font-extrabold`}
+      <FittedGraphNodeText
+        className="graph-node-reference font-extrabold"
+        value={node.shortReference}
+        width={graphNodeTextWidth(node, referenceOffset)}
         x={x}
-        y={y - 2}
-      >
-        {truncateGraphText(node.reference, 28)}
-      </text>
-      <text
-        class={`graph-node-title ${GRAPH_NODE_TEXT_CLASS_NAME} text-graph`}
+        y={y + referenceOffset}
+      />
+      <FittedGraphNodeText
+        className="graph-node-title"
+        value={node.title}
+        width={graphNodeTextWidth(node, titleOffset)}
         x={x}
-        y={y + node.height * 0.2}
-      >
-        {truncateGraphText(node.title, 32)}
-      </text>
+        y={y + titleOffset}
+      />
+      {node.kind !== "external_reference" && (
+        <FittedGraphNodeText
+          className="graph-node-metrics font-semibold"
+          value={`停滞${Math.floor(node.stallDays).toString()}日・影響${node.impactOpenNodeCount.toString()}件`}
+          width={graphNodeTextWidth(node, graphNodeRowOffset("metrics", rows))}
+          x={x}
+          y={y + graphNodeRowOffset("metrics", rows)}
+        />
+      )}
       {node.frontier && (
         <text
-          class={`graph-frontier-label ${GRAPH_NODE_TEXT_CLASS_NAME} fill-graph-frontier-text text-graph font-extrabold`}
+          class={`graph-frontier-label ${GRAPH_NODE_TEXT_CLASS_NAME} fill-graph-frontier-text text-graph-label font-extrabold`}
           x={x}
-          y={y + node.height * 0.39}
+          y={y + graphNodeRowOffset("frontier", rows)}
         >
           ▶ 着手可能
         </text>
@@ -240,7 +365,7 @@ function GraphSvgNode({
     <a
       class="graph-node-link group cursor-pointer"
       href={navigation.createItemHref(node.id)}
-      aria-label={`${node.reference} ${node.title}の詳細ページへ`}
+      aria-label={`${ariaLabel}、詳細ページへ`}
       onClick={(event) => {
         if (!shouldHandleClientNavigation(event)) {
           return;
@@ -267,71 +392,137 @@ function GraphSvg({
   navigation: GraphDiagramNavigation;
   title: string;
 }>) {
+  const nodeKinds = [
+    "issue",
+    "pull_request",
+    "external_reference",
+  ] satisfies readonly GraphViewNode["kind"][];
   return (
-    <div
-      class="graph-viewport max-h-200 overflow-auto rounded-xl border border-border-subtle bg-surface-sunken"
-      data-layout-status="ready"
-    >
-      <svg
-        class="dependency-graph-svg mx-auto block max-w-none bg-dependency-grid [background-size:2rem_2rem]"
-        viewBox={`0 0 ${layout.width.toString()} ${layout.height.toString()}`}
-        width={Math.max(layout.width, 760)}
-        height={Math.max(layout.height, 360)}
-        role="group"
-        aria-labelledby={`${idPrefix}-title ${idPrefix}-description`}
-        data-rendered-node-count={layout.nodes.length}
+    <>
+      <section
+        class="dependency-graph-legend grid gap-3 rounded-xl border border-border-subtle bg-surface-sunken p-3 text-sm text-text-secondary"
+        aria-labelledby={`${idPrefix}-legend-title`}
       >
-        <title id={`${idPrefix}-title`}>{title}</title>
-        <desc id={`${idPrefix}-description`}>{description}</desc>
-        <defs>
-          <marker
-            id={`${idPrefix}-arrow`}
-            viewBox="0 0 10 10"
-            refX="9"
-            refY="5"
-            markerWidth="7"
-            markerHeight="7"
-            orient="auto-start-reverse"
-          >
-            <path class="fill-graph-edge-authoritative" d="M 0 0 L 10 5 L 0 10 z" />
-          </marker>
-        </defs>
-        <g class="graph-edges">
-          {layout.edges.map(({ edge, points, labelPoint }) => (
-            <g
-              key={edge.id}
-              class={`graph-edge graph-edge-${edge.type} ${
-                edge.authoritative ? "graph-edge-authoritative" : "graph-edge-inferred"
-              }`}
-              data-edge-id={edge.id}
-              data-edge-type={edge.type}
-              data-authority={edge.authoritative ? "authoritative" : "inferred"}
+        <h5 id={`${idPrefix}-legend-title`} class="m-0 text-base font-bold text-text-primary">
+          凡例
+        </h5>
+        <dl class="m-0 grid gap-3 lg:grid-cols-3">
+          <div class="graph-legend-nodes grid content-start gap-2">
+            <dt class="font-bold text-text-primary">ノードの形</dt>
+            <dd class="m-0">
+              <ul class="m-0 flex list-none flex-wrap gap-x-4 gap-y-2 p-0">
+                {nodeKinds.map((kind) => (
+                  <li class="flex items-center gap-2" data-legend-node-kind={kind} key={kind}>
+                    <GraphLegendNodeSample kind={kind} />
+                    <span>{graphNodeKindLabel(kind)}</span>
+                  </li>
+                ))}
+              </ul>
+            </dd>
+          </div>
+          <div class="graph-legend-edges grid content-start gap-2">
+            <dt class="font-bold text-text-primary">線種</dt>
+            <dd class="m-0">
+              <ul class="m-0 grid list-none gap-2 p-0">
+                <li class="flex items-center gap-2">
+                  <GraphLegendEdgeSample authoritative={true} />
+                  <span>確定関係</span>
+                </li>
+                <li class="flex items-center gap-2">
+                  <GraphLegendEdgeSample authoritative={false} />
+                  <span>推定関係</span>
+                </li>
+              </ul>
+            </dd>
+          </div>
+          <div class="graph-legend-direction grid content-start gap-2">
+            <dt class="font-bold text-text-primary">矢印の向き</dt>
+            <dd class="m-0">
+              矢印は依存関係の始点から終点へ向き、ブロック関係はブロック元からブロックされる項目へ向きます。
+            </dd>
+          </div>
+        </dl>
+      </section>
+      <div
+        class="graph-viewport min-w-0 max-h-200 overflow-auto rounded-xl border border-border-subtle bg-surface-sunken"
+        data-layout-status="ready"
+      >
+        <svg
+          class="dependency-graph-svg mx-auto block bg-dependency-grid [background-size:2rem_2rem]"
+          viewBox={`0 0 ${layout.width.toString()} ${layout.height.toString()}`}
+          width={layout.width}
+          height={layout.height}
+          role="group"
+          aria-labelledby={`${idPrefix}-title ${idPrefix}-description`}
+          data-rendered-node-count={layout.nodes.length}
+        >
+          <title id={`${idPrefix}-title`}>{title}</title>
+          <desc id={`${idPrefix}-description`}>{description}</desc>
+          <defs>
+            <marker
+              id={`${idPrefix}-arrow-authoritative`}
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="7"
+              markerHeight="7"
+              orient="auto-start-reverse"
             >
-              <path
-                class={graphEdgePathClassName(edge)}
-                d={graphPath(points)}
-                marker-end={`url(#${idPrefix}-arrow)`}
+              <path class="fill-graph-edge-authoritative" d="M 0 0 L 10 5 L 0 10 z" />
+            </marker>
+            <marker
+              id={`${idPrefix}-arrow-inferred`}
+              viewBox="0 0 10 10"
+              refX="9"
+              refY="5"
+              markerWidth="7"
+              markerHeight="7"
+              orient="auto-start-reverse"
+            >
+              <path class="fill-graph-edge-inferred" d="M 0 0 L 10 5 L 0 10 z" />
+            </marker>
+          </defs>
+          <g class="graph-edges">
+            {layout.edges.map(({ edge, points, labelPoint }) => {
+              const authorityLabel = graphEdgeAuthorityLabel(edge);
+              return (
+                <g
+                  key={edge.id}
+                  class={`graph-edge graph-edge-${edge.type} ${
+                    edge.authoritative ? "graph-edge-authoritative" : "graph-edge-inferred"
+                  }`}
+                  data-edge-id={edge.id}
+                  data-edge-type={edge.type}
+                  data-authority={edge.authoritative ? "authoritative" : "inferred"}
+                  role="group"
+                  aria-label={`${edge.typeLabel}、${authorityLabel}`}
+                >
+                  <path
+                    class={graphEdgePathClassName(edge.authoritative)}
+                    d={graphPath(points)}
+                    marker-end={`url(#${idPrefix}-arrow-${
+                      edge.authoritative ? "authoritative" : "inferred"
+                    })`}
+                  />
+                  <text class={GRAPH_EDGE_TEXT_CLASS_NAME} x={labelPoint.x} y={labelPoint.y}>
+                    {edge.typeLabel}
+                  </text>
+                </g>
+              );
+            })}
+          </g>
+          <g class="graph-nodes">
+            {layout.nodes.map((nodeLayout) => (
+              <GraphSvgNode
+                key={nodeLayout.node.id}
+                nodeLayout={nodeLayout}
+                navigation={navigation}
               />
-              <text class={GRAPH_EDGE_TEXT_CLASS_NAME} x={labelPoint.x} y={labelPoint.y - 5}>
-                <tspan x={labelPoint.x}>{edge.typeLabel}</tspan>
-                <tspan x={labelPoint.x} dy="1.15em">
-                  {edge.authorityLabel}
-                </tspan>
-              </text>
-            </g>
-          ))}
-        </g>
-        <g class="graph-nodes">
-          {layout.nodes.map((nodeLayout) => (
-            <GraphSvgNode
-              key={nodeLayout.node.id}
-              nodeLayout={nodeLayout}
-              navigation={navigation}
-            />
-          ))}
-        </g>
-      </svg>
-    </div>
+            ))}
+          </g>
+        </svg>
+      </div>
+    </>
   );
 }
 
@@ -412,12 +603,5 @@ export function DependencyGraphDiagram({
       throw new UnreachableError(layoutState);
   }
 
-  return (
-    <div class="dependency-graph-diagram grid gap-3">
-      <p class="graph-node-size-description m-0 text-text-secondary">
-        ノードの大きさは、停滞の長さと、その項目がブロックしている項目の広がりで決まります。
-      </p>
-      {graph}
-    </div>
-  );
+  return <div class="dependency-graph-diagram grid min-w-0 gap-3">{graph}</div>;
 }
