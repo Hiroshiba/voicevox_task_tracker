@@ -1,6 +1,6 @@
 export const STATE_SCHEMA_ENUM_LOCK = {
   snapshot: {
-    schemaVersion: "7",
+    schemaVersion: "8",
     Status: [
       "waiting_for_assessment",
       "waiting_for_owner",

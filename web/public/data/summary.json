@@ -99,6 +99,10 @@
         "score": 63,
         "level": "high"
       },
+      "attention": {
+        "score": 25,
+        "level": "medium"
+      },
       "priorityWeight": 25,
       "aiAnalysis": {
         "status": "failed"
@@ -155,9 +159,13 @@
         "selectionReason": "waitingOnの先頭候補をprimaryとして選びました"
       },
       "nextAction": "レビューチームが変更内容を確認する",
-      "severity": "critical",
+      "severity": "none",
       "importance": {
         "score": 39,
+        "level": "medium"
+      },
+      "attention": {
+        "score": 32,
         "level": "medium"
       },
       "priorityWeight": 12,
@@ -165,8 +173,8 @@
         "status": "deferred"
       },
       "confidence": 1,
-      "githubUpdatedAt": "2026-07-29T06:00:00.000Z",
-      "stallSince": "2026-07-15T00:00:00.000Z",
+      "githubUpdatedAt": "2026-07-30T06:00:00.000Z",
+      "stallSince": "2026-07-30T00:05:00.000Z",
       "observedAt": "2026-07-31T00:00:00.000Z",
       "repositoryFreshness": "fresh",
       "blockerNodeIds": [],
@@ -221,13 +229,17 @@
         "score": 41,
         "level": "high"
       },
+      "attention": {
+        "score": 29,
+        "level": "medium"
+      },
       "priorityWeight": 25,
       "aiAnalysis": {
         "status": "failed"
       },
       "confidence": 0.95,
-      "githubUpdatedAt": "2026-07-28T05:00:00.000Z",
-      "stallSince": "2026-07-10T00:00:00.000Z",
+      "githubUpdatedAt": "2026-07-29T05:00:00.000Z",
+      "stallSince": "2026-07-29T00:05:00.000Z",
       "observedAt": "2026-07-31T00:00:00.000Z",
       "repositoryFreshness": "fresh",
       "blockerNodeIds": [],
@@ -283,6 +295,10 @@
       "severity": "watch",
       "importance": {
         "score": 12,
+        "level": "low"
+      },
+      "attention": {
+        "score": 0,
         "level": "low"
       },
       "priorityWeight": 12,
@@ -346,13 +362,17 @@
         "score": 44,
         "level": "high"
       },
+      "attention": {
+        "score": 24,
+        "level": "medium"
+      },
       "priorityWeight": 25,
       "aiAnalysis": {
         "status": "deferred"
       },
       "confidence": 0.9,
       "githubUpdatedAt": "2026-07-27T08:00:00.000Z",
-      "stallSince": "2026-07-05T00:00:00.000Z",
+      "stallSince": "2026-07-25T00:05:00.000Z",
       "observedAt": "2026-07-28T00:00:00.000Z",
       "repositoryFreshness": "stale",
       "blockerNodeIds": [],
@@ -398,6 +418,10 @@
       "nextAction": "メンテナーが要件の内容を確認する",
       "severity": "none",
       "importance": {
+        "score": 0,
+        "level": "low"
+      },
+      "attention": {
         "score": 0,
         "level": "low"
       },
@@ -456,6 +480,10 @@
         "score": 0,
         "level": "low"
       },
+      "attention": {
+        "score": 0,
+        "level": "low"
+      },
       "priorityWeight": 0,
       "aiAnalysis": {
         "status": "used"
@@ -508,6 +536,10 @@
       "nextAction": "回答者が質問へ返答する",
       "severity": "none",
       "importance": {
+        "score": 0,
+        "level": "low"
+      },
+      "attention": {
         "score": 0,
         "level": "low"
       },
@@ -572,6 +604,10 @@
         "score": 0,
         "level": "low"
       },
+      "attention": {
+        "score": 0,
+        "level": "low"
+      },
       "priorityWeight": 0,
       "aiAnalysis": {
         "status": "used"
@@ -633,6 +669,10 @@
         "score": 0,
         "level": "low"
       },
+      "attention": {
+        "score": 0,
+        "level": "low"
+      },
       "priorityWeight": 0,
       "aiAnalysis": {
         "status": "used"
@@ -688,6 +728,10 @@
         "score": 0,
         "level": "low"
       },
+      "attention": {
+        "score": 0,
+        "level": "low"
+      },
       "priorityWeight": 0,
       "aiAnalysis": {
         "status": "used"
@@ -740,6 +784,10 @@
       "nextAction": "メンテナーが次の対応者を確認する",
       "severity": "none",
       "importance": {
+        "score": 0,
+        "level": "low"
+      },
+      "attention": {
         "score": 0,
         "level": "low"
       },

@@ -6,7 +6,7 @@ import {
   STATE_HISTORY_SCHEMA_VERSION_2,
   STATE_HISTORY_STATUS_VALUES,
 } from "../src/persistence/history.js";
-import { SNAPSHOT_SCHEMA_VERSION_7 } from "../src/persistence/snapshot.js";
+import { SNAPSHOT_SCHEMA_VERSION_8 } from "../src/persistence/snapshot.js";
 import {
   NOTIFICATION_LEDGER_REASON_CODE_VALUES,
   NOTIFICATION_LEDGER_SCHEMA_VERSION_2,
@@ -57,12 +57,12 @@ describe("永続stateの列挙値ロック", () => {
   it("現行schema versionと永続化する列挙値をロック定義に一致させる", () => {
     const snapshotDefinition = parseSnapshotPersistentEnums();
     expect(snapshotDefinition.properties.schemaVersion.const, LOCK_UPDATE_INSTRUCTIONS).toBe(
-      SNAPSHOT_SCHEMA_VERSION_7,
+      SNAPSHOT_SCHEMA_VERSION_8,
     );
 
     const actual = {
       snapshot: {
-        schemaVersion: SNAPSHOT_SCHEMA_VERSION_7,
+        schemaVersion: SNAPSHOT_SCHEMA_VERSION_8,
         Status: snapshotDefinition.$defs.item.properties.status.enum,
         WaitClass:
           snapshotDefinition.$defs.item.properties.severityContext.properties.waitClass.enum,

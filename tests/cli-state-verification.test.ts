@@ -17,7 +17,7 @@ const GENERATED_AT = "2026-08-01T00:00:00.000Z";
 
 function createEmptySnapshot(): StateSnapshot {
   return createStateSnapshot({
-    schemaVersion: "7",
+    schemaVersion: "8",
     generatedAt: GENERATED_AT,
     trackingStartAt: {
       status: "fixed",
@@ -97,7 +97,7 @@ describe("永続state検証", () => {
         snapshot: {
           verifiedCount: 1,
           sourceSchemaVersions: ["6"],
-          migratedSchemaVersions: ["7"],
+          migratedSchemaVersions: ["8"],
         },
         notificationLedger: {
           verifiedCount: 1,
@@ -136,7 +136,7 @@ describe("永続state検証", () => {
 
       expect(outputs).toEqual([
         [
-          "snapshot: 1件、schema version 6 -> 7",
+          "snapshot: 1件、schema version 6 -> 8",
           "notification ledger: 1件、schema version 1 -> 2",
           "history: 1件、schema version 1 -> 2",
           "",

@@ -27,6 +27,7 @@ import { type Config, type loadConfig } from "../config/index.js";
 import {
   aggregatePullRequestCheckState,
   aggregatePullRequestReviewState,
+  calculateAttention,
   calculateImportance,
   combineImportance,
   classifyTrackingNotification,
@@ -383,6 +384,7 @@ type ReducedItemAnalysis = Readonly<{
 }>;
 
 type TrackedItemStaleness = Readonly<{
+  elapsedHours: number;
   severity: Severity;
   waitClass: StalenessWaitClass;
   severityContext: StalenessSeverityContext;
@@ -3265,6 +3267,7 @@ function blockedParentContext(
 
 function trackedItemStaleness(staleness: StalenessResult): TrackedItemStaleness {
   return Object.freeze({
+    elapsedHours: staleness.elapsedHours.stall,
     severity: staleness.severity,
     waitClass: staleness.waitClass,
     severityContext: staleness.severityContext,
@@ -3291,6 +3294,7 @@ function recalculateTrackedItemStaleness(
     severityContext: item.severityContext,
   });
   return Object.freeze({
+    elapsedHours: recalculated.elapsedHours,
     severity: recalculated.severity,
     waitClass: recalculated.waitClass,
     severityContext: recalculated.severityContext,
@@ -4237,7 +4241,7 @@ function validateRunCompleteness(
   const persistedAnalysisRulesFingerprintNodeIds = new Set<string>();
   const persistedDeterministicRulesVersionNodeIds = new Set<string>();
   const snapshot = createStateSnapshot({
-    schemaVersion: "7",
+    schemaVersion: "8",
     generatedAt: collection.evaluatedAt,
     trackingStartAt: pendingSnapshotTrackingStartAt(configuration, state, collection.evaluatedAt),
     ai: snapshotAiState(configuration.config, codexAnalysis),
@@ -4287,6 +4291,14 @@ function validateRunCompleteness(
       assertNonNullable(staleness, `追跡項目 ${item.nodeId}のseverity再計算結果がありません`);
       return {
         ...item,
+        attention: calculateAttention({
+          importanceScore: item.importance.score,
+          elapsedHours: staleness.elapsedHours,
+          waitClass: staleness.waitClass,
+          thresholdsHours: configuration.config.staleness.thresholdsHours,
+          recencyFloor: configuration.config.attention.recencyFloor,
+          levels: configuration.config.attention.levels,
+        }),
         severity: staleness.severity,
         severityContext: staleness.severityContext,
       };

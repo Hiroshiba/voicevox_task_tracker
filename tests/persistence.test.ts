@@ -189,7 +189,7 @@ function createRelations(edge: EdgeFixture): readonly unknown[] {
 
 function createSnapshot(options: SnapshotFixtureOptions): StateSnapshot {
   return createStateSnapshot({
-    schemaVersion: "7",
+    schemaVersion: "8",
     generatedAt: options.generatedAt,
     trackingStartAt: {
       status: "fixed",
@@ -234,6 +234,10 @@ function createSnapshot(options: SnapshotFixtureOptions): StateSnapshot {
               detail: "優先度ラベルの重みで25点を加算します",
             },
           ],
+        },
+        attention: {
+          score: 25,
+          level: "medium",
         },
         importanceAssessment: {
           status: "not_available",
@@ -557,6 +561,10 @@ describe("state schema version", () => {
       severityContext: {
         waitClass: "reply",
       },
+      attention: {
+        score: 25,
+        level: "medium",
+      },
     });
   });
 
@@ -622,7 +630,7 @@ describe("state schema version", () => {
 
     const migrated = parseStateSnapshot(source);
 
-    expect(migrated.schemaVersion).toBe("7");
+    expect(migrated.schemaVersion).toBe("8");
     expect(migrated.repositories.map((repository) => repository.id)).toEqual([
       publicRepositoryId,
       "R_SECOND",
@@ -641,6 +649,10 @@ describe("state schema version", () => {
       score: 0,
       level: "low",
       factors: [],
+    });
+    expect(migrated.items[0]?.attention).toEqual({
+      score: 0,
+      level: "low",
     });
     expect(migrated.items[0]?.aiAnalysis).toEqual({
       status: "not_recorded",
@@ -713,7 +725,7 @@ describe("state schema version", () => {
 
     const migrated = parseStateSnapshot(source);
 
-    expect(migrated.schemaVersion).toBe("7");
+    expect(migrated.schemaVersion).toBe("8");
     expect(migrated.collection.repositories[0]?.items[0]?.analysisRulesFingerprint).toEqual({
       status: "unavailable",
     });
@@ -768,7 +780,7 @@ describe("state schema version", () => {
 
     const migrated = parseStateSnapshot(source);
 
-    expect(migrated.schemaVersion).toBe("7");
+    expect(migrated.schemaVersion).toBe("8");
     expect(migrated.items[0]?.milestone).toBeNull();
     expect(migrated.items[0]?.importance).toEqual({
       score: 0,
@@ -820,7 +832,7 @@ describe("state schema version", () => {
 
     const migrated = parseStateSnapshot(source);
 
-    expect(migrated.schemaVersion).toBe("7");
+    expect(migrated.schemaVersion).toBe("8");
     expect(migrated.items[0]?.importance).toEqual({
       score: 0,
       level: "low",
@@ -883,7 +895,7 @@ describe("state schema version", () => {
     const migratedNotUsed = parseStateSnapshot(notUsedSource);
     const migratedUsed = parseStateSnapshot(usedSource);
 
-    expect(migratedNotUsed.schemaVersion).toBe("7");
+    expect(migratedNotUsed.schemaVersion).toBe("8");
     expect(migratedNotUsed.items[0]?.aiAnalysis).toEqual({
       status: "not_recorded",
     });
@@ -893,7 +905,45 @@ describe("state schema version", () => {
     });
   });
 
-  it("version 6の旧列挙値をversion 7へmigrationする", () => {
+  it("version 7のsnapshotへattention未計算値を追加して現行形式へmigrationする", () => {
+    const snapshot = createSnapshot({
+      runId: "run-schema-version-7",
+      generatedAt: "2026-08-01T00:00:00.000Z",
+      repositoryIds: [publicRepositoryId],
+      responsibility: {
+        status: "waiting_for_assessment",
+        kind: "role",
+        candidateId: "role:maintainer",
+        role: "maintainer",
+      },
+      severity: "watch",
+      edge: {
+        status: "absent",
+      },
+    });
+    const item = snapshot.items[0];
+    assertNonNullable(item, "version 7のitem fixtureがありません");
+    const { attention, ...version7Item } = item;
+    expect(attention).toEqual({
+      score: 25,
+      level: "medium",
+    });
+    const source = serializeCanonicalJson({
+      ...snapshot,
+      schemaVersion: "7",
+      items: [version7Item],
+    });
+
+    const migrated = parseStateSnapshot(source);
+
+    expect(migrated.schemaVersion).toBe("8");
+    expect(migrated.items[0]?.attention).toEqual({
+      score: 0,
+      level: "low",
+    });
+  });
+
+  it("version 6の旧列挙値をversion 7経由で現行形式へmigrationする", () => {
     const snapshot = createSnapshot({
       runId: "run-schema-version-6",
       generatedAt: "2026-08-01T00:00:00.000Z",
@@ -911,6 +961,11 @@ describe("state schema version", () => {
     });
     const item = snapshot.items[0];
     assertNonNullable(item, "version 6のitem fixtureがありません");
+    const { attention, ...version6Item } = item;
+    expect(attention).toEqual({
+      score: 25,
+      level: "medium",
+    });
     const fixtures = [
       {
         legacyStatus: "new_untriaged",
@@ -973,10 +1028,10 @@ describe("state schema version", () => {
         schemaVersion: "6",
         items: [
           {
-            ...item,
+            ...version6Item,
             status: fixture.legacyStatus,
             severityContext: {
-              ...item.severityContext,
+              ...version6Item.severityContext,
               waitClass: fixture.legacyWaitClass,
             },
           },
@@ -985,8 +1040,12 @@ describe("state schema version", () => {
 
       const migrated = parseStateSnapshot(source);
 
-      expect(migrated.schemaVersion).toBe("7");
+      expect(migrated.schemaVersion).toBe("8");
       expect(migrated.items[0]).toMatchObject({
+        attention: {
+          score: 0,
+          level: "low",
+        },
         status: fixture.status,
         severityContext: {
           waitClass: fixture.waitClass,
