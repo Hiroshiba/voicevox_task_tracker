@@ -1,26 +1,27 @@
 import { useMemo } from "preact/hooks";
 
 import { type PublicSummaryDto } from "../../src/pages/public-dto.js";
-import { AiAnalysisNoticeIcon } from "./ai-analysis-notice-icon.js";
 import { shouldHandleClientNavigation } from "./client-navigation.js";
 import { AttentionBadge, ImportanceBadge } from "./importance-badge.js";
-import { ItemDetailsLink } from "./item-details.js";
+import { ItemListHeading } from "./item-list-heading.js";
 import { ContentState, PageSection } from "./layout.js";
 import { ListCountSummary } from "./list-count-summary.js";
 import {
-  aiAnalysisNotice,
   collectWaitingTeamIds,
   createEmptyTableFilters,
   createItemTableRows,
   filterAndSortTableRows,
   formatStallDuration,
+  resolveWaitingSubjects,
   selectWaitingSubjectItemNodeIds,
   selectWaitingSubjectReasons,
   statusLabel,
   waitingSubjectKey,
+  waitingSubjectLabel,
   type ItemSort,
   type ItemSortKey,
   type ItemTableRow,
+  type WaitingSubject,
 } from "./model.js";
 import {
   ResponsiveTableCardList,
@@ -28,9 +29,8 @@ import {
   type ResponsiveListRowPresentation,
   type ResponsiveTableColumn,
 } from "./responsive-table-card-list.js";
-import { SafeGitHubLink } from "./safe-link.js";
 import { ITEM_SORT_OPTIONS, SortControls } from "./sort-controls.js";
-import { ActionButton, Pill } from "./ui.js";
+import { ActionButton } from "./ui.js";
 
 type PersonPageProps = Readonly<{
   createItemHref: (nodeId: string) => string;
@@ -50,27 +50,53 @@ type PersonPageProps = Readonly<{
   viewerIdentityAvailable: boolean;
 }>;
 
-function waitingReason(row: ItemTableRow, login: string, teamIds: readonly string[]): string {
-  return selectWaitingSubjectReasons(row.item, login, teamIds).join("、");
+function selectWaitingDestinations(
+  row: ItemTableRow,
+  login: string,
+  teamIds: readonly string[],
+): readonly WaitingSubject[] {
+  const selectedSubjectKeys = new Set([
+    waitingSubjectKey({ kind: "user", login }),
+    ...teamIds.map((teamId) => waitingSubjectKey({ kind: "team", teamId })),
+  ]);
+  const destinations = resolveWaitingSubjects(row.item).filter((subject) =>
+    selectedSubjectKeys.has(waitingSubjectKey(subject)),
+  );
+  if (destinations.length === 0) {
+    throw new TypeError(`項目 ${row.item.nodeId} に選択中の待ち相手がありません`);
+  }
+  return destinations;
 }
 
-function ItemTitleLink({
-  createItemHref,
-  onSelectItem,
+function waitingDestinationLabel(subject: WaitingSubject): string {
+  return subject.kind === "user"
+    ? `本人 ${waitingSubjectLabel(subject)}`
+    : `選択した${waitingSubjectLabel(subject)}`;
+}
+
+function PersonWaitingOn({
+  login,
   row,
+  teamIds,
 }: Readonly<{
-  createItemHref: (nodeId: string) => string;
-  onSelectItem: (nodeId: string) => void;
+  login: string;
   row: ItemTableRow;
+  teamIds: readonly string[];
 }>) {
+  const destinations = selectWaitingDestinations(row, login, teamIds);
+  const reasons = selectWaitingSubjectReasons(row.item, login, teamIds);
+  if (reasons.length === 0) {
+    throw new TypeError(`項目 ${row.item.nodeId} に選択中の待ち理由がありません`);
+  }
   return (
-    <ItemDetailsLink
-      href={createItemHref(row.item.nodeId)}
-      nodeId={row.item.nodeId}
-      onSelect={onSelectItem}
-    >
-      {row.item.title}
-    </ItemDetailsLink>
+    <div class="person-waiting-on grid gap-1">
+      <strong class="person-waiting-destinations wrap-anywhere">
+        {destinations.map(waitingDestinationLabel).join("、")}
+      </strong>
+      <span class="person-waiting-reasons text-sm text-text-muted wrap-anywhere">
+        {reasons.join("、")}
+      </span>
+    </div>
   );
 }
 
@@ -144,45 +170,14 @@ export function PersonPage({
       key: "item",
       label: "項目",
       renderCell: (row: ItemTableRow) => (
-        <div class="grid min-w-0 gap-1.5">
-          <span class="item-list-meta text-xs leading-5 text-text-muted wrap-anywhere">
-            {row.item.displayReference}・{row.typeText}
-          </span>
-          <span class="item-title-with-scores flex min-w-0 flex-wrap items-start gap-1.5 wrap-anywhere">
-            <AttentionBadge
-              attention={row.item.attention}
-              showLabel={true}
-              showLow={true}
-              showScore={true}
-            />
-            <ImportanceBadge
-              importance={row.item.importance}
-              showLabel={true}
-              showLow={false}
-              showScore={false}
-            />
-            <span class="min-w-0 wrap-anywhere">
-              <ItemTitleLink
-                createItemHref={createItemHref}
-                onSelectItem={onSelectItem}
-                row={row}
-              />
-            </span>
-          </span>
-          <span class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm font-normal">
-            <SafeGitHubLink href={row.item.url} variant="subtle">
-              GitHubで開く
-            </SafeGitHubLink>
-            {row.item.repositoryFreshness === "stale" && (
-              <Pill className="freshness-badge freshness-stale" tone="warning">
-                古い観測値
-              </Pill>
-            )}
-            <AiAnalysisNoticeIcon notice={aiAnalysisNotice(row.item.aiAnalysis.status)} />
-          </span>
-        </div>
+        <ItemListHeading
+          createItemHref={createItemHref}
+          onSelectItem={onSelectItem}
+          row={row}
+          showFreshnessBadge={true}
+        />
       ),
-      widthClassName: "w-[52%]",
+      widthClassName: "w-[32%]",
     },
     {
       ariaSort: undefined,
@@ -192,7 +187,49 @@ export function PersonPage({
       key: "status",
       label: "状態",
       renderCell: (row: ItemTableRow) => statusLabel(row.item.status),
-      widthClassName: "w-[14%]",
+      widthClassName: "w-[12%]",
+    },
+    {
+      ariaSort: sort.key === "attention" ? sort.direction : "none",
+      cellClassName: "attention-cell whitespace-nowrap",
+      cellKind: "data",
+      headerClassName: "whitespace-nowrap",
+      key: "attention",
+      label: "要対応度",
+      onSort: () => {
+        onSortChange("attention");
+      },
+      renderCell: (row: ItemTableRow) => (
+        <AttentionBadge attention={row.item.attention} showLabel={false} showScore={false} />
+      ),
+      widthClassName: "w-[11%]",
+    },
+    {
+      ariaSort: sort.key === "importance" ? sort.direction : "none",
+      cellClassName: "importance-cell whitespace-nowrap",
+      cellKind: "data",
+      headerClassName: "whitespace-nowrap",
+      key: "importance",
+      label: "重要度",
+      onSort: () => {
+        onSortChange("importance");
+      },
+      renderCell: (row: ItemTableRow) => (
+        <ImportanceBadge importance={row.item.importance} showLabel={false} showScore={false} />
+      ),
+      widthClassName: "w-[10%]",
+    },
+    {
+      ariaSort: undefined,
+      cellClassName: "leading-6 wrap-anywhere",
+      cellKind: "data",
+      headerClassName: "whitespace-nowrap",
+      key: "waitingOn",
+      label: "待ち相手",
+      renderCell: (row: ItemTableRow) => (
+        <PersonWaitingOn login={login} row={row} teamIds={selectedTeamIds} />
+      ),
+      widthClassName: "w-[23%]",
     },
     {
       ariaSort: sort.key === "stall" ? sort.direction : "none",
@@ -209,16 +246,6 @@ export function PersonPage({
       ),
       widthClassName: "w-[12%]",
     },
-    {
-      ariaSort: undefined,
-      cellClassName: "leading-6 wrap-anywhere",
-      cellKind: "data",
-      headerClassName: "whitespace-nowrap",
-      key: "reason",
-      label: "待ち理由",
-      renderCell: (row: ItemTableRow) => waitingReason(row, login, selectedTeamIds),
-      widthClassName: "w-[22%]",
-    },
   ] satisfies readonly ResponsiveTableColumn<ItemTableRow>[];
   const cardFields = [
     {
@@ -230,17 +257,37 @@ export function PersonPage({
     },
     {
       className: "",
+      key: "attention",
+      label: "要対応度",
+      renderValue: (row: ItemTableRow) => (
+        <AttentionBadge attention={row.item.attention} showLabel={false} showScore={false} />
+      ),
+      valueClassName: "font-semibold text-text-primary",
+    },
+    {
+      className: "",
+      key: "importance",
+      label: "重要度",
+      renderValue: (row: ItemTableRow) => (
+        <ImportanceBadge importance={row.item.importance} showLabel={false} showScore={false} />
+      ),
+      valueClassName: "font-semibold text-text-primary",
+    },
+    {
+      className: "col-span-full border-t border-border-subtle pt-3",
+      key: "waitingOn",
+      label: "待ち相手",
+      renderValue: (row: ItemTableRow) => (
+        <PersonWaitingOn login={login} row={row} teamIds={selectedTeamIds} />
+      ),
+      valueClassName: "leading-6 text-text-primary",
+    },
+    {
+      className: "",
       key: "stall",
       label: "停滞時間",
       renderValue: (row: ItemTableRow) => formatStallDuration(row.item.stallSince, now),
       valueClassName: "font-semibold text-text-primary tabular-nums",
-    },
-    {
-      className: "col-span-full border-t border-border-subtle pt-3",
-      key: "reason",
-      label: "待ち理由",
-      renderValue: (row: ItemTableRow) => waitingReason(row, login, selectedTeamIds),
-      valueClassName: "leading-6 text-text-primary",
     },
   ] satisfies readonly ResponsiveCardField<ItemTableRow>[];
 
@@ -251,14 +298,6 @@ export function PersonPage({
         teamOptions.length > 0 ? "所属チームを選ぶと、そのチーム宛の待ちも加わります。" : undefined
       }
       heading={`@${login} を待っている項目`}
-      headingAccessory={
-        <ListCountSummary
-          className="person-item-count"
-          count={rows.length}
-          locale={locale}
-          sort={sort}
-        />
-      }
       headingId="person-page-heading"
     >
       <div class="person-identity-action mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -320,13 +359,21 @@ export function PersonPage({
           ))}
         </fieldset>
       )}
-      <SortControls
-        className="person-sort-controls mb-4 grid grid-cols-[minmax(0,1fr)_auto] gap-2 sm:max-w-sm"
-        onSortChange={onSortChange}
-        options={ITEM_SORT_OPTIONS}
-        selectId="person-sort-key"
-        sort={sort}
-      />
+      <div class="item-list-controls mb-4 flex flex-wrap items-end justify-between gap-4">
+        <ListCountSummary
+          className="item-list-count person-item-count"
+          count={rows.length}
+          locale={locale}
+          sort={sort}
+        />
+        <SortControls
+          className="item-list-sort-controls person-sort-controls grid w-full grid-cols-[minmax(0,1fr)_auto] gap-2 sm:w-auto sm:min-w-64"
+          onSortChange={onSortChange}
+          options={ITEM_SORT_OPTIONS}
+          selectId="person-sort-key"
+          sort={sort}
+        />
+      </div>
       {rows.length === 0 ? (
         <ContentState
           className="empty-state"
@@ -335,6 +382,7 @@ export function PersonPage({
         />
       ) : (
         <ResponsiveTableCardList
+          breakpoint="lg"
           cardAriaLabel="待っている項目一覧"
           cardFields={cardFields}
           cardListClassName=""
@@ -343,58 +391,15 @@ export function PersonPage({
           rows={rows}
           tableCaption={`@${login} を待っている項目の一覧`}
           tableClassName="items-table person-items-table"
-          renderCardHeading={(row) => {
-            const showsFreshnessBadge = row.item.repositoryFreshness === "stale";
-            const aiNotice = aiAnalysisNotice(row.item.aiAnalysis.status);
-            const showsAiAnalysisNotice = aiNotice.kind === "outdated";
-            return (
-              <div class="grid min-w-0 gap-2">
-                <div class="flex min-w-0 flex-wrap items-start justify-between gap-2">
-                  <p class="item-list-meta m-0 min-w-0 flex-1 text-sm leading-5 text-text-muted wrap-anywhere">
-                    {row.item.displayReference}・{row.typeText}
-                  </p>
-                  {(showsFreshnessBadge || showsAiAnalysisNotice) && (
-                    <span class="flex flex-wrap justify-end gap-1.5">
-                      {showsFreshnessBadge && (
-                        <Pill className="freshness-badge freshness-stale" tone="warning">
-                          古い観測値
-                        </Pill>
-                      )}
-                      <AiAnalysisNoticeIcon notice={aiNotice} />
-                    </span>
-                  )}
-                </div>
-                <h3 class="item-title-with-scores m-0 flex min-w-0 flex-wrap items-start gap-1.5 text-base leading-6 font-bold">
-                  <AttentionBadge
-                    attention={row.item.attention}
-                    showLabel={true}
-                    showLow={true}
-                    showScore={true}
-                  />
-                  <ImportanceBadge
-                    importance={row.item.importance}
-                    showLabel={true}
-                    showLow={false}
-                    showScore={false}
-                  />
-                  <span class="min-w-0 wrap-anywhere">
-                    <ItemTitleLink
-                      createItemHref={createItemHref}
-                      onSelectItem={onSelectItem}
-                      row={row}
-                    />
-                  </span>
-                </h3>
-              </div>
-            );
-          }}
-          renderCardFooter={(row) => (
-            <div class="border-t border-border-subtle pt-3">
-              <SafeGitHubLink href={row.item.url} variant="button">
-                GitHubで開く
-              </SafeGitHubLink>
-            </div>
+          renderCardHeading={(row) => (
+            <ItemListHeading
+              createItemHref={createItemHref}
+              onSelectItem={onSelectItem}
+              row={row}
+              showFreshnessBadge={true}
+            />
           )}
+          renderCardFooter={() => null}
         />
       )}
     </PageSection>

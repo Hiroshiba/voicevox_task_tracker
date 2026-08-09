@@ -2,14 +2,12 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 
 import { type PublicSummaryDto } from "../../src/pages/public-dto.js";
 import { UnreachableError } from "../../src/util/index.js";
-import { AiAnalysisNoticeIcon } from "./ai-analysis-notice-icon.js";
 import { type PublicDetailsLoader } from "./details-loader.js";
 import { AttentionBadge, ImportanceBadge } from "./importance-badge.js";
-import { ItemDetailsLink } from "./item-details.js";
+import { ItemListHeading } from "./item-list-heading.js";
 import { ContentState, PageSection } from "./layout.js";
 import { ListCountSummary } from "./list-count-summary.js";
 import {
-  aiAnalysisNotice,
   createItemDetailsMap,
   createItemTableRows,
   filterAndSortTableRows,
@@ -31,7 +29,6 @@ import {
   type ResponsiveListRowPresentation,
   type ResponsiveTableColumn,
 } from "./responsive-table-card-list.js";
-import { SafeGitHubLink } from "./safe-link.js";
 import { ITEM_SORT_OPTIONS, SortControls } from "./sort-controls.js";
 import { ActionButton, FORM_CONTROL_CLASS_NAME, Pill } from "./ui.js";
 
@@ -125,7 +122,7 @@ const TABLE_FILTERS: readonly TableFilterDefinition[] = [
   },
   {
     key: "waitingOn",
-    label: "次の担当",
+    label: "待ち相手",
   },
   {
     key: "stall",
@@ -136,26 +133,6 @@ const TABLE_FILTERS: readonly TableFilterDefinition[] = [
     label: "AI利用状況",
   },
 ];
-
-function ItemTitleLink({
-  createItemHref,
-  onSelectItem,
-  row,
-}: Readonly<{
-  createItemHref: (nodeId: string) => string;
-  onSelectItem: (nodeId: string) => void;
-  row: ItemTableRow;
-}>) {
-  return (
-    <ItemDetailsLink
-      href={createItemHref(row.item.nodeId)}
-      nodeId={row.item.nodeId}
-      onSelect={onSelectItem}
-    >
-      {row.item.title}
-    </ItemDetailsLink>
-  );
-}
 
 function ItemSearch({
   onClearSearch,
@@ -312,24 +289,46 @@ function ItemTable({
 
   const tableColumns = [
     {
+      ariaSort: undefined,
+      cellClassName: "min-w-0",
+      cellKind: "row_header",
+      headerClassName: "whitespace-nowrap",
+      key: "item",
+      label: "項目",
+      renderCell: (row: ItemTableRow) => (
+        <ItemListHeading
+          createItemHref={createItemHref}
+          onSelectItem={onSelectItem}
+          row={row}
+          showFreshnessBadge={true}
+        />
+      ),
+      widthClassName: "w-[32%]",
+    },
+    {
+      ariaSort: undefined,
+      cellClassName: "whitespace-nowrap",
+      cellKind: "data",
+      headerClassName: "whitespace-nowrap",
+      key: "status",
+      label: "状態",
+      renderCell: (row: ItemTableRow) => statusLabel(row.item.status),
+      widthClassName: "w-[12%]",
+    },
+    {
       ariaSort: sort.key === "attention" ? sort.direction : "none",
       cellClassName: "attention-cell whitespace-nowrap",
       cellKind: "data",
       headerClassName: "whitespace-nowrap",
       key: "attention",
-      label: "要対応",
+      label: "要対応度",
       onSort: () => {
         updateSort("attention");
       },
       renderCell: (row: ItemTableRow) => (
-        <AttentionBadge
-          attention={row.item.attention}
-          showLabel={false}
-          showLow={true}
-          showScore={true}
-        />
+        <AttentionBadge attention={row.item.attention} showLabel={false} showScore={false} />
       ),
-      widthClassName: "w-[14%]",
+      widthClassName: "w-[11%]",
     },
     {
       ariaSort: sort.key === "importance" ? sort.direction : "none",
@@ -342,54 +341,9 @@ function ItemTable({
         updateSort("importance");
       },
       renderCell: (row: ItemTableRow) => (
-        <ImportanceBadge
-          importance={row.item.importance}
-          showLabel={false}
-          showLow={false}
-          showScore={false}
-        />
+        <ImportanceBadge importance={row.item.importance} showLabel={false} showScore={false} />
       ),
       widthClassName: "w-[10%]",
-    },
-    {
-      ariaSort: undefined,
-      cellClassName: "min-w-0",
-      cellKind: "row_header",
-      headerClassName: "whitespace-nowrap",
-      key: "item",
-      label: "項目",
-      renderCell: (row: ItemTableRow) => (
-        <div class="grid min-w-0 gap-1.5">
-          <span class="item-list-meta text-xs leading-5 text-text-muted wrap-anywhere">
-            {row.item.displayReference}・{row.typeText}
-          </span>
-          <span class="min-w-0 wrap-anywhere">
-            <ItemTitleLink createItemHref={createItemHref} onSelectItem={onSelectItem} row={row} />
-          </span>
-          <span class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm font-normal">
-            <SafeGitHubLink href={row.item.url} variant="subtle">
-              GitHubで開く
-            </SafeGitHubLink>
-            {row.item.repositoryFreshness === "stale" && (
-              <Pill className="freshness-badge freshness-stale" tone="warning">
-                古い観測値
-              </Pill>
-            )}
-            <AiAnalysisNoticeIcon notice={aiAnalysisNotice(row.item.aiAnalysis.status)} />
-          </span>
-        </div>
-      ),
-      widthClassName: "w-[27%]",
-    },
-    {
-      ariaSort: undefined,
-      cellClassName: "whitespace-nowrap",
-      cellKind: "data",
-      headerClassName: "whitespace-nowrap",
-      key: "status",
-      label: "状態",
-      renderCell: (row: ItemTableRow) => statusLabel(row.item.status),
-      widthClassName: "w-[14%]",
     },
     {
       ariaSort: undefined,
@@ -397,7 +351,7 @@ function ItemTable({
       cellKind: "data",
       headerClassName: "whitespace-nowrap",
       key: "waitingOn",
-      label: "次の担当",
+      label: "待ち相手",
       renderCell: (row: ItemTableRow) => formatWaitingOn(row.item, summary),
       widthClassName: "w-[23%]",
     },
@@ -427,17 +381,35 @@ function ItemTable({
     },
     {
       className: "",
-      key: "stall",
-      label: "停滞時間",
-      renderValue: (row: ItemTableRow) => formatStallDuration(row.item.stallSince, now),
-      valueClassName: "font-semibold text-text-primary tabular-nums",
+      key: "attention",
+      label: "要対応度",
+      renderValue: (row: ItemTableRow) => (
+        <AttentionBadge attention={row.item.attention} showLabel={false} showScore={false} />
+      ),
+      valueClassName: "font-semibold text-text-primary",
+    },
+    {
+      className: "",
+      key: "importance",
+      label: "重要度",
+      renderValue: (row: ItemTableRow) => (
+        <ImportanceBadge importance={row.item.importance} showLabel={false} showScore={false} />
+      ),
+      valueClassName: "font-semibold text-text-primary",
     },
     {
       className: "col-span-full border-t border-border-subtle pt-3",
       key: "waitingOn",
-      label: "次の担当",
+      label: "待ち相手",
       renderValue: (row: ItemTableRow) => formatWaitingOn(row.item, summary),
       valueClassName: "leading-6 text-text-primary",
+    },
+    {
+      className: "",
+      key: "stall",
+      label: "停滞時間",
+      renderValue: (row: ItemTableRow) => formatStallDuration(row.item.stallSince, now),
+      valueClassName: "font-semibold text-text-primary tabular-nums",
     },
   ] satisfies readonly ResponsiveCardField<ItemTableRow>[];
 
@@ -446,41 +418,26 @@ function ItemTable({
       className="item-workspace scroll-mt-4"
       description="追跡中のすべての項目を検索、絞り込み、並び替えできます。"
       heading="全項目一覧"
-      headingAccessory={
-        <ListCountSummary
-          className="items-item-count"
-          count={filteredRows.length}
-          locale={locale}
-          sort={sort}
-        />
-      }
       headingId="items-heading"
     >
-      <div class="item-list-toolbar mb-4 grid gap-4 rounded-xl border border-border-subtle bg-surface-sunken p-4 md:grid-cols-[minmax(0,1fr)_auto]">
+      <div class="item-list-toolbar mb-4 grid gap-4 rounded-xl border border-border-subtle bg-surface-sunken p-4">
         <ItemSearch
           searchQuery={searchQuery}
           onClearSearch={onClearSearch}
           onSearchQueryChange={onSearchQueryChange}
         />
-        <SortControls
-          className="item-sort-controls grid grid-cols-[minmax(0,1fr)_auto] content-end gap-2 md:min-w-64"
-          onSortChange={updateSort}
-          options={ITEM_SORT_OPTIONS}
-          selectId="item-sort-key"
-          sort={sort}
-        />
-        <details class="item-filters border-t border-border-subtle pt-2 md:col-span-2">
+        <details class="item-filters border-t border-border-subtle pt-2">
           <summary class="min-h-11 cursor-pointer py-2 text-sm font-bold text-text-secondary marker:text-text-muted">
             <span class="ml-1 inline-flex max-w-[calc(100%_-_2rem)] flex-wrap items-center gap-x-3 gap-y-1 align-middle">
               <span>列ごとの絞り込み</span>
-              <Pill className="filter-summary-count" tone="neutral">
+              <Pill className="filter-summary-count" tone="neutral" variant="filled">
                 {activeFilterCount === 0 ? "条件なし" : `${activeFilterCount.toString()}件適用中`}
               </Pill>
             </span>
           </summary>
           <div class="item-filter-content pt-3">
             <p class="mt-0 mb-3 text-sm text-text-muted">
-              列の値を選択します。次の担当は入力した文字を含む項目を表示します。
+              列の値を選択します。待ち相手は入力した文字を含む項目を表示します。
             </p>
             <div class="item-filter-grid grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {TABLE_FILTERS.map((filter) => (
@@ -521,11 +478,27 @@ function ItemTable({
           </div>
         </details>
       </div>
+      <div class="item-list-controls mb-4 flex flex-wrap items-end justify-between gap-4">
+        <ListCountSummary
+          className="item-list-count items-item-count"
+          count={filteredRows.length}
+          locale={locale}
+          sort={sort}
+        />
+        <SortControls
+          className="item-list-sort-controls item-sort-controls grid w-full grid-cols-[minmax(0,1fr)_auto] gap-2 sm:w-auto sm:min-w-64"
+          onSortChange={updateSort}
+          options={ITEM_SORT_OPTIONS}
+          selectId="item-sort-key"
+          sort={sort}
+        />
+      </div>
       {filteredRows.length === 0 ? (
         <ItemsEmptyState searchState={searchState} onRetryDetails={onRetryDetails} />
       ) : (
         <>
           <ResponsiveTableCardList
+            breakpoint="lg"
             cardAriaLabel="項目一覧"
             cardFields={cardFields}
             cardListClassName=""
@@ -534,58 +507,15 @@ function ItemTable({
             rows={visibleRows}
             tableCaption="追跡中の全項目の一覧"
             tableClassName="items-table"
-            renderCardHeading={(row) => {
-              const showsFreshnessBadge = row.item.repositoryFreshness === "stale";
-              const aiNotice = aiAnalysisNotice(row.item.aiAnalysis.status);
-              const showsAiAnalysisNotice = aiNotice.kind === "outdated";
-              return (
-                <div class="grid min-w-0 gap-2">
-                  <div class="flex min-w-0 flex-wrap items-start justify-between gap-2">
-                    <p class="item-list-meta m-0 min-w-0 flex-1 text-sm leading-5 text-text-muted wrap-anywhere">
-                      {row.item.displayReference}・{row.typeText}
-                    </p>
-                    {(showsFreshnessBadge || showsAiAnalysisNotice) && (
-                      <span class="flex flex-wrap justify-end gap-1.5">
-                        {showsFreshnessBadge && (
-                          <Pill className="freshness-badge freshness-stale" tone="warning">
-                            古い観測値
-                          </Pill>
-                        )}
-                        <AiAnalysisNoticeIcon notice={aiNotice} />
-                      </span>
-                    )}
-                  </div>
-                  <h3 class="item-title-with-scores m-0 flex min-w-0 flex-wrap items-start gap-1.5 text-base leading-6 font-bold">
-                    <AttentionBadge
-                      attention={row.item.attention}
-                      showLabel={true}
-                      showLow={true}
-                      showScore={true}
-                    />
-                    <ImportanceBadge
-                      importance={row.item.importance}
-                      showLabel={true}
-                      showLow={false}
-                      showScore={false}
-                    />
-                    <span class="min-w-0 wrap-anywhere">
-                      <ItemTitleLink
-                        createItemHref={createItemHref}
-                        onSelectItem={onSelectItem}
-                        row={row}
-                      />
-                    </span>
-                  </h3>
-                </div>
-              );
-            }}
-            renderCardFooter={(row) => (
-              <div class="border-t border-border-subtle pt-3">
-                <SafeGitHubLink href={row.item.url} variant="button">
-                  GitHubで開く
-                </SafeGitHubLink>
-              </div>
+            renderCardHeading={(row) => (
+              <ItemListHeading
+                createItemHref={createItemHref}
+                onSelectItem={onSelectItem}
+                row={row}
+                showFreshnessBadge={true}
+              />
             )}
+            renderCardFooter={() => null}
           />
           <nav
             aria-label="一覧のページ送り"
