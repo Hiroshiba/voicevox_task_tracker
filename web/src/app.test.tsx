@@ -379,13 +379,13 @@ describe("Web UI", () => {
     const observedTime = requiredElement<HTMLTimeElement>(".site-observed-time time");
     expect(observedTime.closest(".site-header")).not.toBeNull();
     expect(observedTime.dateTime).toBe(sampleSummary.observedAt);
-    expect(observedTime.textContent).toBe("1 日前");
+    expect(observedTime.textContent).toBe("1日前");
     expect(observedTime.title).toContain("JST");
     expect(requiredElement<HTMLElement>(".time-label").textContent).toBe("最新更新");
     expect(currentContainer().querySelector(".attention-section")).toBeNull();
   });
 
-  it("項目一覧の個人loginから人ごとのページへ遷移しチームはリンクにしない", () => {
+  it("項目一覧の個人loginとアバターから人ごとのページへ遷移しチームはリンクにしない", () => {
     renderApp(sampleSummary);
 
     const personLink = requiredElement<HTMLAnchorElement>(
@@ -397,7 +397,7 @@ describe("Web UI", () => {
     assertNonNullable(personWaitingOn, "個人の待ち相手表示がありません");
     expect(personWaitingOn.textContent).toBe("推定: 作成者 @sample-bug-author");
     const avatar = expectGitHubAvatar(personWaitingOn, "sample-bug-author", 20, "size-5");
-    expect(avatar.nextElementSibling).toBe(personLink);
+    expect(avatar.parentElement).toBe(personLink);
     const teamWaitingOn = requiredElement<HTMLElement>(
       '.items-table tr[data-node-id="sample-item-engine-202"] .item-primary-waiting-on',
     );
@@ -406,7 +406,7 @@ describe("Web UI", () => {
     expect(teamWaitingOn.querySelector("img")).toBeNull();
 
     act(() => {
-      personLink.click();
+      avatar.click();
     });
 
     expect(window.location.pathname).toBe("/voicevox_task_tracker/people/sample-bug-author");
@@ -523,7 +523,7 @@ describe("Web UI", () => {
     expect(observedTime.closest(".site-header")).not.toBeNull();
     expect(currentContainer().querySelector("main .site-observed-time")).toBeNull();
     expect(observedTime.dateTime).toBe(sampleSummary.observedAt);
-    expect(observedTime.textContent).toBe("1 日前");
+    expect(observedTime.textContent).toBe("1日前");
     expect(observedTime.title).toContain("JST");
   });
 
@@ -685,12 +685,13 @@ describe("Web UI", () => {
     expect(
       requiredElement<HTMLTableRowElement>(".people-table tbody tr:last-child").querySelector("a"),
     ).toBeNull();
-    const hihoRow = requiredElement<HTMLAnchorElement>(
+    const hihoLink = requiredElement<HTMLAnchorElement>(
       '.people-table a[href="/voicevox_task_tracker/people/HiHo"]',
-    ).closest<HTMLTableRowElement>("tr");
+    );
+    const hihoRow = hihoLink.closest<HTMLTableRowElement>("tr");
     assertNonNullable(hihoRow, "HiHoの担当者行がありません");
-    const hihoAvatar = expectGitHubAvatar(hihoRow, "HiHo", 24, "size-6");
-    expect(hihoAvatar.nextElementSibling?.textContent).toBe("@HiHo");
+    const hihoAvatar = expectGitHubAvatar(hihoRow, "HiHo", 20, "size-5");
+    expect(hihoAvatar.parentElement).toBe(hihoLink);
     expect(
       requiredElement<HTMLTableRowElement>(".people-table tbody tr:last-child").querySelector(
         "img",
@@ -865,14 +866,22 @@ describe("Web UI", () => {
     const directWaitingOn = requiredElement<HTMLElement>(
       '.person-items-table tr[data-node-id="sample-item-editor-101"] .item-waiting-on-status',
     );
-    expect(directWaitingOn.querySelector(".item-primary-waiting-on")?.textContent).toBe(
-      "レビュワー @HiHo",
-    );
-    expect(directWaitingOn.querySelector(".item-other-waiting-on")?.textContent).toBe("ほか1件");
+    const directWaitingOnCandidates = [
+      ...directWaitingOn.querySelectorAll<HTMLElement>(".item-waiting-on-candidate"),
+    ];
+    expect(
+      directWaitingOnCandidates.map(
+        (candidate) => candidate.querySelector(".item-waiting-on-candidate-label")?.textContent,
+      ),
+    ).toEqual(["レビュワー @HiHo", "レビュワー @aoirint"]);
+    expect(
+      directWaitingOnCandidates.map(
+        (candidate) => candidate.querySelector(".item-waiting-reason")?.textContent,
+      ),
+    ).toEqual(["HiHoさんの確認を待っています", "aoirintさんの確認を待っています"]);
+    expect(directWaitingOnCandidates[0]?.querySelector(".item-primary-waiting-on")).not.toBeNull();
+    expect(directWaitingOnCandidates[1]?.querySelector(".item-primary-waiting-on")).toBeNull();
     expect(directWaitingOn.querySelector(".item-waiting-status")?.textContent).toBe("マージ待ち");
-    expect(directWaitingOn.querySelector(".item-waiting-reason")?.textContent).toBe(
-      "HiHoさんの確認を待っています",
-    );
     expect(currentContainer().querySelector(".person-item-count")).toBeNull();
     const personControls = requiredElement<HTMLElement>(".person-page > .person-sort-controls");
     expect(requiredElement<HTMLElement>(".person-team-selection").nextElementSibling).toBe(
@@ -965,7 +974,7 @@ describe("Web UI", () => {
     expect(highTableAttentionBadge.textContent).toBe("25点");
     expect(highTableAttentionBadge.classList).toContain("bg-importance-medium-background");
     expect(highTableBadge.textContent).toBe("63点");
-    expect(highTableBadge.classList).not.toContain("bg-importance-high-background");
+    expect(highTableBadge.classList).toContain("bg-importance-high-background");
     expect(
       requiredElement<HTMLElement>(
         '.person-items-table tr[data-node-id="sample-item-engine-204"] .attention-badge',
@@ -1460,7 +1469,7 @@ describe("Web UI", () => {
     const observedTime = requiredElement<HTMLTimeElement>(
       `.site-observed-time time[datetime="${newYorkFixture.observedAt}"]`,
     );
-    expect(observedTime.textContent).toBe("1 日前");
+    expect(observedTime.textContent).toBe("1日前");
     expect(observedTime.title).toBe("2026/07/30 20:00:00 GMT-4");
     expect(currentContainer().querySelector(".absolute-time")).toBeNull();
   });
@@ -1692,17 +1701,36 @@ describe("Web UI", () => {
     const multipleWaitingOn = requiredElement<HTMLElement>(
       '.items-table tr[data-node-id="sample-item-engine-204"] .item-waiting-on-status',
     );
+    const waitingOnCandidates = [
+      ...multipleWaitingOn.querySelectorAll<HTMLElement>(".item-waiting-on-candidate"),
+    ];
+    expect(
+      waitingOnCandidates.map(
+        (candidate) => candidate.querySelector(".item-waiting-on-candidate-label")?.textContent,
+      ),
+    ).toEqual(["VOICEVOX/sample-editor#103", "推定: example/sample-distribution#42"]);
+    expect(
+      waitingOnCandidates.map(
+        (candidate) => candidate.querySelector(".item-waiting-reason")?.textContent,
+      ),
+    ).toEqual(["配布方針の決定を待っています", "外部配布ツールの対応を待っています"]);
+    expect(waitingOnCandidates[0]?.querySelector(".item-primary-waiting-on")).not.toBeNull();
+    expect(waitingOnCandidates[1]?.querySelector(".item-primary-waiting-on")).toBeNull();
+    expect(
+      waitingOnCandidates.map((candidate) =>
+        candidate.querySelector(".item-waiting-reason")?.classList.contains("line-clamp-2"),
+      ),
+    ).toEqual([true, true]);
+    expect(
+      waitingOnCandidates.map(
+        (candidate) => candidate.querySelector<HTMLElement>(".item-waiting-reason")?.title,
+      ),
+    ).toEqual(["配布方針の決定を待っています", "外部配布ツールの対応を待っています"]);
+    expect(multipleWaitingOn.querySelectorAll(".item-waiting-reason")).toHaveLength(2);
+    expect(multipleWaitingOn.querySelector(".item-waiting-on-list")).not.toBeNull();
     expect(multipleWaitingOn.querySelector(".item-primary-waiting-on")?.textContent).toBe(
       "VOICEVOX/sample-editor#103",
     );
-    expect(multipleWaitingOn.querySelector(".item-other-waiting-on")?.textContent).toBe("ほか1件");
-    expect(multipleWaitingOn.querySelector(".item-waiting-reason")?.textContent).toBe(
-      "配布方針の決定を待っています",
-    );
-    expect(multipleWaitingOn.querySelector(".item-waiting-reason")?.classList).toContain(
-      "line-clamp-2",
-    );
-    expect(multipleWaitingOn.textContent).not.toContain("example/sample-distribution#42");
     expect(
       requiredElement<HTMLElement>(
         '.items-table tr[data-node-id="sample-item-engine-204"] .attention-badge',
@@ -1712,7 +1740,7 @@ describe("Web UI", () => {
       requiredElement<HTMLElement>(
         '.items-table tr[data-node-id="sample-item-engine-204"] .importance-badge',
       ).classList,
-    ).toContain("border-importance-low-border");
+    ).toContain("bg-importance-low-background");
     expect(
       [...currentContainer().querySelectorAll(".items-table .importance-badge")].every(
         (badge) => badge.textContent?.endsWith("点") === true,
@@ -1733,12 +1761,19 @@ describe("Web UI", () => {
         '.items-card-list li[data-node-id="sample-item-engine-204"] .attention-badge',
       ).textContent,
     ).toBe("0点");
-    const filterDetails = requiredElement<HTMLDetailsElement>(".item-filters");
+    const filterDetails = requiredElement<HTMLDetailsElement>(".item-list-toolbar");
+    expect(filterDetails.tagName).toBe("DETAILS");
     expect(filterDetails.open).toBe(false);
+    expect(filterDetails.querySelector("details")).toBeNull();
     expect(filterDetails.querySelectorAll("select")).toHaveLength(6);
-    expect(filterDetails.querySelectorAll('input[type="search"]')).toHaveLength(1);
+    expect(filterDetails.querySelectorAll('input[type="search"]')).toHaveLength(2);
+    expect(filterDetails.querySelector("#item-search-heading")).toBeNull();
+    expect(requiredElement<HTMLElement>(".item-list-toolbar > summary").textContent).toContain(
+      "検索と絞り込み",
+    );
+    expect(requiredElement<HTMLElement>(".filter-summary-count").textContent).toBe("条件なし");
     act(() => {
-      requiredElement<HTMLElement>(".item-filters > summary").click();
+      requiredElement<HTMLElement>(".item-list-toolbar > summary").click();
     });
     expect(filterDetails.open).toBe(true);
     const repositoryFilter = requiredElement<HTMLSelectElement>(
@@ -1851,15 +1886,26 @@ describe("Web UI", () => {
       repositoryFilter.dispatchEvent(new Event("change", { bubbles: true }));
     });
     expect(itemRowNodeIds()).toEqual(["sample-item-core-305"]);
+    expect(filterDetails.open).toBe(true);
+    expect(requiredElement<HTMLElement>(".filter-summary-count").textContent).toBe("1件適用中");
+
+    act(() => {
+      requiredElement<HTMLElement>(".item-list-toolbar > summary").click();
+    });
+    expect(filterDetails.open).toBe(false);
 
     act(() => {
       repositoryFilter.value = "";
       repositoryFilter.dispatchEvent(new Event("change", { bubbles: true }));
     });
+    expect(filterDetails.open).toBe(false);
+    expect(requiredElement<HTMLElement>(".filter-summary-count").textContent).toBe("条件なし");
     act(() => {
       aiAnalysisFilter.value = "outdated";
       aiAnalysisFilter.dispatchEvent(new Event("change", { bubbles: true }));
     });
+    expect(filterDetails.open).toBe(false);
+    expect(requiredElement<HTMLElement>(".filter-summary-count").textContent).toBe("1件適用中");
     expect(itemRowNodeIds()).toEqual([
       "sample-item-engine-202",
       "sample-item-editor-103",
@@ -2800,6 +2846,9 @@ describe("Web UI", () => {
     renderApp(sampleSummary);
     await flushUi();
 
+    const filterDetails = requiredElement<HTMLDetailsElement>(".item-list-toolbar");
+    expect(filterDetails.open).toBe(true);
+    expect(requiredElement<HTMLElement>(".filter-summary-count").textContent).toBe("3件適用中");
     expect(requiredElement<HTMLInputElement>("#item-search-input").value).toBe("blocked");
     expect(
       requiredElement<HTMLSelectElement>('select[aria-label="リポジトリで絞り込み"]').value,
@@ -2819,6 +2868,7 @@ describe("Web UI", () => {
     renderApp(sampleSummary);
     await flushUi();
 
+    expect(requiredElement<HTMLDetailsElement>(".item-list-toolbar").open).toBe(true);
     expect(requiredElement<HTMLInputElement>("#item-search-input").value).toBe("blocked");
     expect(itemRowNodeIds()).toEqual(["sample-item-engine-204"]);
   });
@@ -2828,6 +2878,8 @@ describe("Web UI", () => {
     window.history.replaceState({}, "", deepLink);
     renderApp(sampleSummary);
 
+    expect(requiredElement<HTMLDetailsElement>(".item-list-toolbar").open).toBe(true);
+    expect(requiredElement<HTMLElement>(".filter-summary-count").textContent).toBe("1件適用中");
     expect(requiredElement<HTMLSelectElement>('select[aria-label="重要度で絞り込み"]').value).toBe(
       "high",
     );
@@ -3009,7 +3061,7 @@ describe("Web UI", () => {
   it("keyboard focusで全列を絞り込み、link activationで詳細を開いて閉じる", async () => {
     window.history.replaceState({}, "", "/voicevox_task_tracker/");
     renderApp(sampleSummary);
-    const filterDetails = requiredElement<HTMLDetailsElement>(".item-filters");
+    const filterDetails = requiredElement<HTMLDetailsElement>(".item-list-toolbar");
     act(() => {
       filterDetails.open = true;
     });
