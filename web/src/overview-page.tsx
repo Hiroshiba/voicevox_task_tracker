@@ -1,9 +1,9 @@
-import { type PublicItemSummaryDto, type PublicSummaryDto } from "../../src/pages/public-dto.js";
-import { assertNonNullable } from "../../src/util/index.js";
+import { type PublicSummaryDto } from "../../src/pages/public-dto.js";
 import { AiAnalysisNoticeIcon } from "./ai-analysis-notice-icon.js";
 import { AttentionBadge, ImportanceBadge } from "./importance-badge.js";
 import { ItemDetailsLink } from "./item-details.js";
 import { ContentState, PageSection } from "./layout.js";
+import { ListCountSummary } from "./list-count-summary.js";
 import {
   aiAnalysisNotice,
   createEmptyTableFilters,
@@ -18,6 +18,7 @@ import {
   selectPrimaryWaitingOnCandidate,
   type ItemSort,
   type ItemSortKey,
+  type ItemTableRow,
 } from "./model.js";
 import { SafeGitHubLink } from "./safe-link.js";
 import { ITEM_SORT_OPTIONS, SortControls } from "./sort-controls.js";
@@ -80,14 +81,14 @@ function sortAttentionItems(
   summary: PublicSummaryDto,
   now: Date,
   sort: ItemSort,
-): readonly PublicItemSummaryDto[] {
+): readonly ItemTableRow[] {
   const attentionItems = filterAttentionItems(summary.items);
   const attentionItemNodeIds = new Set(attentionItems.map((item) => item.nodeId));
   return filterAndSortTableRows(
     createItemTableRows(summary, now).filter((row) => attentionItemNodeIds.has(row.item.nodeId)),
     createEmptyTableFilters(),
     sort,
-  ).map((row) => row.item);
+  );
 }
 
 function AttentionQueue({
@@ -101,14 +102,8 @@ function AttentionQueue({
   summary,
 }: OverviewPageProps &
   Readonly<{
-    attentionItems: readonly PublicItemSummaryDto[];
+    attentionItems: readonly ItemTableRow[];
   }>) {
-  const repositoriesById = new Map(
-    summary.repositories.map((repository) => [repository.id, repository]),
-  );
-  const selectedSortOption = ITEM_SORT_OPTIONS.find((option) => option.key === sort.key);
-  assertNonNullable(selectedSortOption, "選択中の並び順がありません");
-
   return (
     <PageSection
       className="attention-section"
@@ -125,12 +120,12 @@ function AttentionQueue({
               locale={locale}
             />
           </p>
-          <p class="attention-summary m-0 grid justify-items-end text-right max-shell:justify-items-start max-shell:text-left">
-            <strong class="text-xl leading-tight text-text-primary">
-              {attentionItems.length.toLocaleString(locale)}件
-            </strong>
-            <span class="text-xs">{selectedSortOption.label}</span>
-          </p>
+          <ListCountSummary
+            className="attention-summary"
+            count={attentionItems.length}
+            locale={locale}
+            sort={sort}
+          />
         </div>
       }
       headingId="attention-heading"
@@ -150,9 +145,8 @@ function AttentionQueue({
         />
       ) : (
         <ol class="attention-list m-0 grid list-none gap-3 p-0">
-          {attentionItems.map((item) => {
-            const repository = repositoriesById.get(item.repositoryId);
-            assertNonNullable(repository, `項目 ${item.nodeId} のrepositoryがありません`);
+          {attentionItems.map((row) => {
+            const { item } = row;
             const primaryWaitingOn = selectPrimaryWaitingOnCandidate(item);
             const primaryWaitingOnLabel =
               primaryWaitingOn == null
@@ -162,7 +156,10 @@ function AttentionQueue({
             return (
               <li key={item.nodeId} data-node-id={item.nodeId}>
                 <article class="attention-item grid min-w-0 grid-cols-[minmax(14rem,0.8fr)_minmax(22rem,1.4fr)_auto] items-start gap-4 rounded-xl border border-border-subtle bg-surface-card p-4 max-shell:grid-cols-1 max-shell:gap-3">
-                  <div class="attention-title min-w-0">
+                  <div class="attention-title grid min-w-0 gap-2">
+                    <p class="item-list-meta m-0 min-w-0 text-sm leading-5 text-text-muted wrap-anywhere">
+                      {item.displayReference}・{row.typeText}
+                    </p>
                     <h3 class="item-title-with-scores m-0 grid grid-cols-[auto_minmax(0,1fr)] items-start gap-2 text-lg leading-snug font-bold max-narrow:grid-cols-1 max-narrow:text-base">
                       <span class="attention-score-badges mt-0.5 flex min-h-5 flex-wrap items-start gap-1.5">
                         <AttentionBadge
@@ -189,9 +186,6 @@ function AttentionQueue({
                         <AiAnalysisNoticeIcon notice={aiAnalysisNotice(item.aiAnalysis.status)} />
                       </span>
                     </h3>
-                    <p class="item-reference mt-1.5 mb-0 text-xs text-text-muted">
-                      {repository.fullName} #{item.number.toString()}
-                    </p>
                   </div>
                   <dl class="attention-primary-details m-0 grid min-w-0 grid-cols-[minmax(0,1fr)_8rem] gap-3 max-narrow:gap-2">
                     <div class="attention-waiting-on relative min-w-0 border-l-2 border-border-default pl-3">
@@ -224,8 +218,8 @@ function AttentionQueue({
                       </dd>
                     </div>
                   </dl>
-                  <div class="item-actions grid justify-self-end gap-2 text-sm whitespace-nowrap max-shell:justify-self-end">
-                    <SafeGitHubLink href={item.url} variant="action">
+                  <div class="item-actions grid justify-self-end gap-2 text-sm whitespace-nowrap max-shell:w-full max-shell:justify-self-stretch">
+                    <SafeGitHubLink href={item.url} variant="responsive-button">
                       GitHubで開く
                     </SafeGitHubLink>
                   </div>

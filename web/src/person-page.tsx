@@ -1,11 +1,14 @@
 import { useMemo } from "preact/hooks";
 
 import { type PublicSummaryDto } from "../../src/pages/public-dto.js";
+import { AiAnalysisNoticeIcon } from "./ai-analysis-notice-icon.js";
 import { shouldHandleClientNavigation } from "./client-navigation.js";
 import { AttentionBadge, ImportanceBadge } from "./importance-badge.js";
 import { ItemDetailsLink } from "./item-details.js";
 import { ContentState, PageSection } from "./layout.js";
+import { ListCountSummary } from "./list-count-summary.js";
 import {
+  aiAnalysisNotice,
   collectWaitingTeamIds,
   createEmptyTableFilters,
   createItemTableRows,
@@ -25,6 +28,7 @@ import {
   type ResponsiveListRowPresentation,
   type ResponsiveTableColumn,
 } from "./responsive-table-card-list.js";
+import { SafeGitHubLink } from "./safe-link.js";
 import { ITEM_SORT_OPTIONS, SortControls } from "./sort-controls.js";
 import { ActionButton, Pill } from "./ui.js";
 
@@ -136,7 +140,7 @@ export function PersonPage({
       ariaSort: undefined,
       cellClassName: "min-w-0",
       cellKind: "row_header",
-      headerClassName: "",
+      headerClassName: "whitespace-nowrap",
       key: "item",
       label: "項目",
       renderCell: (row: ItemTableRow) => (
@@ -165,22 +169,26 @@ export function PersonPage({
               />
             </span>
           </span>
-          {row.item.repositoryFreshness === "stale" && (
-            <span class="flex">
+          <span class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm font-normal">
+            <SafeGitHubLink href={row.item.url} variant="subtle">
+              GitHubで開く
+            </SafeGitHubLink>
+            {row.item.repositoryFreshness === "stale" && (
               <Pill className="freshness-badge freshness-stale" tone="warning">
                 古い観測値
               </Pill>
-            </span>
-          )}
+            )}
+            <AiAnalysisNoticeIcon notice={aiAnalysisNotice(row.item.aiAnalysis.status)} />
+          </span>
         </div>
       ),
       widthClassName: "w-[52%]",
     },
     {
       ariaSort: undefined,
-      cellClassName: "wrap-anywhere",
+      cellClassName: "whitespace-nowrap",
       cellKind: "data",
-      headerClassName: "",
+      headerClassName: "whitespace-nowrap",
       key: "status",
       label: "状態",
       renderCell: (row: ItemTableRow) => statusLabel(row.item.status),
@@ -203,9 +211,9 @@ export function PersonPage({
     },
     {
       ariaSort: undefined,
-      cellClassName: "wrap-anywhere",
+      cellClassName: "leading-6 wrap-anywhere",
       cellKind: "data",
-      headerClassName: "",
+      headerClassName: "whitespace-nowrap",
       key: "reason",
       label: "待ち理由",
       renderCell: (row: ItemTableRow) => waitingReason(row, login, selectedTeamIds),
@@ -238,52 +246,55 @@ export function PersonPage({
 
   return (
     <PageSection
-      className="person-page [&>.section-heading]:flex-col [&>.section-heading]:items-start [&>.section-heading]:gap-2"
+      className="person-page"
+      description={
+        teamOptions.length > 0 ? "所属チームを選ぶと、そのチーム宛の待ちも加わります。" : undefined
+      }
       heading={`@${login} を待っている項目`}
       headingAccessory={
-        <div class="grid w-full gap-3">
-          <p class="person-item-count m-0 max-w-3xl text-text-muted" aria-live="polite">
-            {rows.length.toLocaleString(locale)}
-            件を表示しています。所属チームを選ぶと、そのチーム宛の待ちも加わります。
-          </p>
-          <div class="person-identity-action flex flex-wrap items-center gap-x-4 gap-y-2">
-            <ActionButton
-              aria-describedby={
-                viewerIdentityAvailable ? undefined : "person-identity-unavailable-reason"
-              }
-              className="person-identity-button max-narrow:w-full"
-              type="button"
-              disabled={!viewerIdentityAvailable}
-              onClick={onViewerIdentityToggle}
-            >
-              {isViewerIdentity ? "自分の記憶を解除する" : "自分として記憶する"}
-            </ActionButton>
-            <a
-              class="person-back-link inline-flex min-h-11 items-center"
-              href={peopleHref}
-              onClick={(event) => {
-                if (!shouldHandleClientNavigation(event)) {
-                  return;
-                }
-                event.preventDefault();
-                onSelectPeople();
-              }}
-            >
-              担当者一覧へ戻る
-            </a>
-            {!viewerIdentityAvailable && (
-              <p
-                class="m-0 w-full text-sm text-state-warning-text"
-                id="person-identity-unavailable-reason"
-              >
-                このブラウザーでは記憶を利用できません。
-              </p>
-            )}
-          </div>
-        </div>
+        <ListCountSummary
+          className="person-item-count"
+          count={rows.length}
+          locale={locale}
+          sort={sort}
+        />
       }
       headingId="person-page-heading"
     >
+      <div class="person-identity-action mb-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <ActionButton
+          aria-describedby={
+            viewerIdentityAvailable ? undefined : "person-identity-unavailable-reason"
+          }
+          className="person-identity-button max-narrow:w-full"
+          type="button"
+          disabled={!viewerIdentityAvailable}
+          onClick={onViewerIdentityToggle}
+        >
+          {isViewerIdentity ? "自分の記憶を解除する" : "自分として記憶する"}
+        </ActionButton>
+        <a
+          class="person-back-link inline-flex min-h-11 items-center"
+          href={peopleHref}
+          onClick={(event) => {
+            if (!shouldHandleClientNavigation(event)) {
+              return;
+            }
+            event.preventDefault();
+            onSelectPeople();
+          }}
+        >
+          担当者一覧へ戻る
+        </a>
+        {!viewerIdentityAvailable && (
+          <p
+            class="m-0 w-full text-sm text-state-warning-text"
+            id="person-identity-unavailable-reason"
+          >
+            このブラウザーでは記憶を利用できません。
+          </p>
+        )}
+      </div>
       {teamOptions.length > 0 && (
         <fieldset class="person-team-selection mb-4 flex flex-wrap gap-2 rounded-xl border border-border-default bg-surface-sunken px-3 pt-2 pb-3 text-text-secondary">
           <legend class="px-1 font-bold">所属チーム</legend>
@@ -332,42 +343,58 @@ export function PersonPage({
           rows={rows}
           tableCaption={`@${login} を待っている項目の一覧`}
           tableClassName="items-table person-items-table"
-          renderCardHeading={(row) => (
-            <div class="grid min-w-0 gap-2">
-              <div class="flex min-w-0 flex-wrap items-start justify-between gap-2">
-                <p class="item-list-meta m-0 min-w-0 flex-1 text-sm leading-5 text-text-muted wrap-anywhere">
-                  {row.item.displayReference}・{row.typeText}
-                </p>
-                {row.item.repositoryFreshness === "stale" && (
-                  <Pill className="freshness-badge freshness-stale" tone="warning">
-                    古い観測値
-                  </Pill>
-                )}
-              </div>
-              <h3 class="item-title-with-scores m-0 flex min-w-0 flex-wrap items-start gap-1.5 text-base leading-6 font-bold">
-                <AttentionBadge
-                  attention={row.item.attention}
-                  showLabel={true}
-                  showLow={true}
-                  showScore={true}
-                />
-                <ImportanceBadge
-                  importance={row.item.importance}
-                  showLabel={true}
-                  showLow={false}
-                  showScore={false}
-                />
-                <span class="min-w-0 wrap-anywhere">
-                  <ItemTitleLink
-                    createItemHref={createItemHref}
-                    onSelectItem={onSelectItem}
-                    row={row}
+          renderCardHeading={(row) => {
+            const showsFreshnessBadge = row.item.repositoryFreshness === "stale";
+            const aiNotice = aiAnalysisNotice(row.item.aiAnalysis.status);
+            const showsAiAnalysisNotice = aiNotice.kind === "outdated";
+            return (
+              <div class="grid min-w-0 gap-2">
+                <div class="flex min-w-0 flex-wrap items-start justify-between gap-2">
+                  <p class="item-list-meta m-0 min-w-0 flex-1 text-sm leading-5 text-text-muted wrap-anywhere">
+                    {row.item.displayReference}・{row.typeText}
+                  </p>
+                  {(showsFreshnessBadge || showsAiAnalysisNotice) && (
+                    <span class="flex flex-wrap justify-end gap-1.5">
+                      {showsFreshnessBadge && (
+                        <Pill className="freshness-badge freshness-stale" tone="warning">
+                          古い観測値
+                        </Pill>
+                      )}
+                      <AiAnalysisNoticeIcon notice={aiNotice} />
+                    </span>
+                  )}
+                </div>
+                <h3 class="item-title-with-scores m-0 flex min-w-0 flex-wrap items-start gap-1.5 text-base leading-6 font-bold">
+                  <AttentionBadge
+                    attention={row.item.attention}
+                    showLabel={true}
+                    showLow={true}
+                    showScore={true}
                   />
-                </span>
-              </h3>
+                  <ImportanceBadge
+                    importance={row.item.importance}
+                    showLabel={true}
+                    showLow={false}
+                    showScore={false}
+                  />
+                  <span class="min-w-0 wrap-anywhere">
+                    <ItemTitleLink
+                      createItemHref={createItemHref}
+                      onSelectItem={onSelectItem}
+                      row={row}
+                    />
+                  </span>
+                </h3>
+              </div>
+            );
+          }}
+          renderCardFooter={(row) => (
+            <div class="border-t border-border-subtle pt-3">
+              <SafeGitHubLink href={row.item.url} variant="button">
+                GitHubで開く
+              </SafeGitHubLink>
             </div>
           )}
-          renderCardFooter={() => null}
         />
       )}
     </PageSection>

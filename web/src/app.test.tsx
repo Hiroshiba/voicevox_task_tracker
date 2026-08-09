@@ -701,7 +701,14 @@ describe("Web UI", () => {
   it("人ごとのページを描画してloginのURL表現を正規化する", () => {
     window.history.replaceState({}, "", "/voicevox_task_tracker/people/%68iho");
 
-    renderApp(createPersonPageSummary());
+    const personSummary = createPersonPageSummary();
+    const personItem = personSummary.items.find((item) => item.nodeId === "sample-item-editor-101");
+    assertNonNullable(personItem, "担当者ページのAI推定表示テスト用項目がありません");
+    const aiNotice = aiAnalysisNotice(personItem.aiAnalysis.status);
+    if (aiNotice.kind !== "outdated") {
+      throw new TypeError("担当者ページのAI推定が最新です");
+    }
+    renderApp(personSummary);
 
     expect(requiredElement<HTMLHeadingElement>("#person-page-heading").textContent).toBe(
       "@hiho を待っている項目",
@@ -721,14 +728,23 @@ describe("Web UI", () => {
     );
     expect(itemCell.querySelector(".attention-badge")?.textContent).toBe("要対応度中25点");
     expect(itemCell.querySelector(".importance-badge")?.textContent).toBe("重要度高");
+    const tableAiNoticeIcon = itemCell.querySelector<HTMLElement>(".ai-analysis-notice-icon");
+    assertNonNullable(tableAiNoticeIcon, "担当者ページの表にAI推定の警告アイコンがありません");
+    const tableGitHubLink = requiredElement<HTMLAnchorElement>(
+      '.person-items-table tr[data-node-id="sample-item-editor-101"] a[target="_blank"]',
+    );
+    expect(tableGitHubLink.textContent).toBe("GitHubで開く");
+    expect(tableGitHubLink.href).toBe("https://github.com/VOICEVOX/sample-editor/pull/101");
     expect(
       requiredElement<HTMLTableCellElement>(
         '.person-items-table tr[data-node-id="sample-item-editor-101"] td:last-child',
       ).textContent,
     ).toBe("HiHoさんの確認を待っています");
-    expect(requiredElement<HTMLElement>(".person-item-count").textContent).toBe(
-      "1件を表示しています。所属チームを選ぶと、そのチーム宛の待ちも加わります。",
-    );
+    expect(requiredElement<HTMLElement>(".person-item-count strong").textContent).toBe("1件");
+    expect(requiredElement<HTMLElement>(".person-item-count span").textContent).toBe("要対応");
+    expect(
+      requiredElement<HTMLElement>(".person-page .section-heading > div > p").textContent,
+    ).toBe("所属チームを選ぶと、そのチーム宛の待ちも加わります。");
     expect(
       requiredElement<HTMLAnchorElement>(
         '.person-items-table tr[data-node-id="sample-item-editor-101"] a',
@@ -739,6 +755,19 @@ describe("Web UI", () => {
         '.items-card-list li[data-node-id="sample-item-editor-101"] .item-list-meta',
       ).textContent,
     ).toBe("VOICEVOX/sample-editor#101・Pull Request");
+    const itemCard = requiredElement<HTMLElement>(
+      '.items-card-list li[data-node-id="sample-item-editor-101"]',
+    );
+    const cardAiNoticeIcon = itemCard.querySelector<HTMLElement>(".ai-analysis-notice-icon");
+    assertNonNullable(cardAiNoticeIcon, "担当者ページのカードにAI推定の警告アイコンがありません");
+    for (const icon of [tableAiNoticeIcon, cardAiNoticeIcon]) {
+      expect(icon.title).toBe(aiNotice.description);
+      expect(icon.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+      expect(icon.querySelector(".sr-only")?.textContent).toBe(aiNotice.description);
+    }
+    const cardGitHubLink = itemCard.querySelector<HTMLAnchorElement>('a[target="_blank"]');
+    expect(cardGitHubLink?.textContent).toBe("GitHubで開く");
+    expect(cardGitHubLink?.href).toBe("https://github.com/VOICEVOX/sample-editor/pull/101");
     expect(currentContainer().querySelector(".url-state-notice")).toBeNull();
     expect(window.location.pathname).toBe("/voicevox_task_tracker/people/hiho");
     expect(window.location.search).toBe("");
@@ -809,6 +838,10 @@ describe("Web UI", () => {
         '.items-card-list li[data-node-id="sample-item-engine-204"] .importance-badge',
       ),
     ).toBeNull();
+    const normalCardMeta = requiredElement<HTMLElement>(
+      '.items-card-list li[data-node-id="sample-item-engine-204"] .item-list-meta',
+    );
+    expect(normalCardMeta.nextElementSibling).toBeNull();
   });
 
   it("担当者ページの表ヘッダで並び替え、同じ列の再操作で方向を反転する", () => {
@@ -987,9 +1020,7 @@ describe("Web UI", () => {
     expect(itemRowNodeIds()).toEqual(["sample-item-engine-202", "sample-item-editor-101"]);
     expect(new URL(window.location.href).searchParams.get("teams")).toBe("VOICEVOX/Maintainers");
     expect(window.history.length).toBe(historyLength);
-    expect(requiredElement<HTMLElement>(".person-item-count").textContent).toBe(
-      "2件を表示しています。所属チームを選ぶと、そのチーム宛の待ちも加わります。",
-    );
+    expect(requiredElement<HTMLElement>(".person-item-count strong").textContent).toBe("2件");
   });
 
   it("自分を記憶するとヘッダーから所属チーム付きの自分のページへ移動できる", () => {
@@ -1339,9 +1370,9 @@ describe("Web UI", () => {
     );
     expect(titleLink.textContent).toBe("サンプル辞書更新をマージする");
     expect(titleLink.getAttribute("href")).toBe("/voicevox_task_tracker/items/sample-editor/101");
-    expect(firstItem.querySelector(".item-reference")?.textContent).toContain(
-      "VOICEVOX/sample-editor #101",
-    );
+    const itemMeta = firstItem.querySelector(".item-list-meta");
+    expect(itemMeta?.textContent).toBe("VOICEVOX/sample-editor#101・Pull Request");
+    expect(itemMeta?.nextElementSibling?.tagName).toBe("H3");
     expect(firstItem.querySelector(".attention-primary-waiting-on")?.textContent).toBe(
       "マージ判断者の誰か",
     );
@@ -1608,7 +1639,12 @@ describe("Web UI", () => {
       [...currentContainer().querySelectorAll(".items-table thead th")].map(
         (heading) => heading.textContent,
       ),
-    ).toEqual(["要対応↓", "重要度", "項目", "状態", "次の担当", "停滞"]);
+    ).toEqual(["要対応↓", "重要度", "項目", "状態", "次の担当", "停滞時間"]);
+    expect(
+      [...currentContainer().querySelectorAll(".items-card-list li:first-child dt")].map(
+        (heading) => heading.textContent,
+      ),
+    ).toEqual(["状態", "停滞時間", "次の担当"]);
     const attentionCell = requiredElement<HTMLTableCellElement>(
       '.items-table tr[data-node-id="sample-item-editor-101"] .attention-cell',
     );
@@ -1869,7 +1905,7 @@ describe("Web UI", () => {
     expect(
       requiredElement<HTMLTableCellElement>('.items-table thead th[aria-sort="descending"]')
         .textContent,
-    ).toBe("停滞↓");
+    ).toBe("停滞時間↓");
 
     act(() => {
       requiredElement<HTMLButtonElement>(".items-table thead th:nth-child(6) button").click();
@@ -1878,7 +1914,7 @@ describe("Web UI", () => {
     expect(
       requiredElement<HTMLTableCellElement>('.items-table thead th[aria-sort="ascending"]')
         .textContent,
-    ).toBe("停滞↑");
+    ).toBe("停滞時間↑");
   });
 
   it("項目一覧の表ヘッダで並び替え、同じ列の再操作で方向を反転する", () => {
@@ -2062,6 +2098,23 @@ describe("Web UI", () => {
         '.items-card-list li[data-node-id="sample-item-engine-204"]',
       ).querySelector(".ai-analysis-notice-icon"),
     ).toBeNull();
+  });
+
+  it("表示対象が0件なら一覧とページ送りを描画しない", () => {
+    window.history.replaceState({}, "", "/voicevox_task_tracker/items");
+    renderApp({
+      ...sampleSummary,
+      items: [],
+    });
+
+    expect(currentContainer().querySelector(".items-table")).toBeNull();
+    expect(currentContainer().querySelector(".items-card-list")).toBeNull();
+    expect(
+      currentContainer().querySelector('.pagination[aria-label="一覧のページ送り"]'),
+    ).toBeNull();
+    expect(requiredElement<HTMLElement>(".item-workspace .empty-state").textContent).toBe(
+      "条件に一致する項目はありません。",
+    );
   });
 
   it("AI推定が最新でない状態以外では一覧アイコンを表示しない", () => {
@@ -2628,7 +2681,7 @@ describe("Web UI", () => {
     expect(itemRowNodeIds()).toEqual(["sample-item-engine-204"]);
   });
 
-  it("検索一致件数と絞り込み後の表示対象件数を一つにまとめる", async () => {
+  it("検索一致件数を見出し脇へ表示する", async () => {
     window.history.replaceState({}, "", "/voicevox_task_tracker/items");
     renderApp(sampleSummary);
 
@@ -2636,8 +2689,10 @@ describe("Web UI", () => {
 
     const itemsSection = requiredElement<HTMLElement>('[aria-labelledby="items-heading"]');
     expect(itemsSection.querySelector(".section-heading > div > p")?.textContent).toBe(
-      "1件を表示対象にしています。",
+      "追跡中のすべての項目を検索、絞り込み、並び替えできます。",
     );
+    expect(requiredElement<HTMLElement>(".items-item-count strong").textContent).toBe("1件");
+    expect(requiredElement<HTMLElement>(".items-item-count span").textContent).toBe("要対応");
     expect(currentContainer().querySelector(".search-status")).toBeNull();
     expect(currentContainer().textContent).not.toContain("件が検索条件に一致しました。");
   });
