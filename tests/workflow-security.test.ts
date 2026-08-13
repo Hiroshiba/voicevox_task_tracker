@@ -202,9 +202,10 @@ describe("日次workflow", () => {
         contents: "read",
       },
       "collect-analyze": {
+        actions: "read",
         contents: "read",
       },
-      "persist-state": {
+      "persist-cache": {
         contents: "write",
       },
       "build-pages": {
@@ -215,10 +216,10 @@ describe("日次workflow", () => {
         "id-token": "write",
       },
       "notify-discord": {
-        contents: "write",
+        contents: "read",
       },
       "notify-operations": {
-        contents: "write",
+        contents: "read",
       },
       "report-workflow": {
         contents: "read",
@@ -244,7 +245,7 @@ describe("日次workflow", () => {
       [
         "test-eval",
         "collect-analyze",
-        "persist-state",
+        "persist-cache",
         "build-pages",
         "deploy-pages",
         "notify-discord",
@@ -262,7 +263,21 @@ describe("日次workflow", () => {
     expect(workflowReportUpload.with?.["path"]).toBe("artifacts/run-reports/workflow.json");
     expect(workflowReportUpload.with?.["name"]).toContain("${{ github.run_id }}");
     expect(workflowReportUpload.with?.["name"]).toContain("${{ github.run_attempt }}");
-    expect(JSON.stringify(workflow.jobs["persist-state"])).not.toContain(
+    const summaryStep = requiredStep(reportJob, "workflow結果をjob summaryへ追加");
+    expect(summaryStep.if).toBe("always()");
+    expect(summaryStep.run).toContain("GITHUB_STEP_SUMMARY");
+    for (const resultName of [
+      "TEST_EVAL_RESULT",
+      "COLLECT_ANALYZE_RESULT",
+      "BUILD_PAGES_RESULT",
+      "DEPLOY_PAGES_RESULT",
+      "NOTIFY_DISCORD_RESULT",
+      "PERSIST_CACHE_RESULT",
+      "NOTIFY_OPERATIONS_RESULT",
+    ]) {
+      expect(summaryStep.run).toContain(resultName);
+    }
+    expect(JSON.stringify(workflow.jobs["persist-cache"])).not.toContain(
       "artifacts/run-reports/workflow.json",
     );
     expect(JSON.stringify(workflow.jobs["build-pages"])).not.toContain(
@@ -274,15 +289,64 @@ describe("日次workflow", () => {
     const workflow = await readDailyWorkflow();
     const notifyJob = workflow.jobs["notify-discord"];
     const deployJob = workflow.jobs["deploy-pages"];
+    const buildJob = workflow.jobs["build-pages"];
+    const persistCacheJob = workflow.jobs["persist-cache"];
 
     expect(notifyJob).toBeDefined();
     expect(deployJob).toBeDefined();
-    if (notifyJob == null || deployJob == null) {
+    expect(buildJob).toBeDefined();
+    expect(persistCacheJob).toBeDefined();
+    if (notifyJob == null || deployJob == null || buildJob == null || persistCacheJob == null) {
       throw new TypeError("Pages deployまたはDiscord通知jobがありません");
     }
-    expect(needs(notifyJob)).toContain("deploy-pages");
+    expect(needs(buildJob)).toEqual(["collect-analyze"]);
+    expect(needs(deployJob)).toEqual(["build-pages"]);
+    expect(needs(notifyJob)).toEqual(["collect-analyze", "deploy-pages"]);
     expect(notifyJob.if).toContain("success()");
-    expect(needs(deployJob)).toContain("build-pages");
+    expect(notifyJob.if).toContain("workflow_dispatch");
+    expect(notifyJob.if).not.toContain("github.run_attempt");
+    expect(needs(persistCacheJob)).toEqual(["notify-discord"]);
+    expect(persistCacheJob.if).toBeUndefined();
+  });
+
+  it("artifactからPages deploy、Discord、cache保存、reportまでを順序付けmanualとrerunでも通知jobを起動する", async () => {
+    const workflow = await readDailyWorkflow();
+    const collectJob = workflow.jobs["collect-analyze"];
+    const buildJob = workflow.jobs["build-pages"];
+    const deployJob = workflow.jobs["deploy-pages"];
+    const notifyJob = workflow.jobs["notify-discord"];
+    const persistCacheJob = workflow.jobs["persist-cache"];
+    const reportJob = workflow.jobs["report-workflow"];
+    if (
+      collectJob == null ||
+      buildJob == null ||
+      deployJob == null ||
+      notifyJob == null ||
+      persistCacheJob == null ||
+      reportJob == null
+    ) {
+      throw new TypeError("日次workflowの公開処理jobがありません");
+    }
+
+    const artifactUpload = requiredStep(collectJob, "公開可能なrun artifactを保存");
+    const buildArtifactDownload = requiredStep(buildJob, "公開可能なrun artifactを取得");
+    const notifyArtifactDownload = requiredStep(notifyJob, "公開可能なrun artifactを取得");
+    const persistArtifactDownload = requiredStep(persistCacheJob, "公開可能なrun artifactを取得");
+    expect(artifactUpload.with?.["name"]).toBe("validated-public-run");
+    expect(buildArtifactDownload.with?.["name"]).toBe("validated-public-run");
+    expect(notifyArtifactDownload.with?.["name"]).toBe("validated-public-run");
+    expect(persistArtifactDownload.with?.["name"]).toBe("validated-public-run");
+
+    expect(needs(buildJob)).toEqual(["collect-analyze"]);
+    expect(needs(deployJob)).toEqual(["build-pages"]);
+    expect(needs(notifyJob)).toEqual(["collect-analyze", "deploy-pages"]);
+    expect(needs(persistCacheJob)).toEqual(["notify-discord"]);
+    expect(needs(reportJob)).toContain("persist-cache");
+    expect(notifyJob.if).toContain("github.event_name == 'schedule'");
+    expect(notifyJob.if).toContain("github.event_name == 'workflow_dispatch'");
+    expect(notifyJob.if).not.toContain("github.run_attempt");
+    expect(persistCacheJob.if).toBeUndefined();
+    expect(reportJob.if).toContain("always()");
   });
 
   it("各jobが検証済みartifactを対応するCLI stageへ渡す", async () => {
@@ -291,7 +355,7 @@ describe("日次workflow", () => {
       workflow.jobs["collect-analyze"] ?? { permissions: {}, steps: [] },
     ).join("\n");
     const persistCommands = runCommands(
-      workflow.jobs["persist-state"] ?? { permissions: {}, steps: [] },
+      workflow.jobs["persist-cache"] ?? { permissions: {}, steps: [] },
     ).join("\n");
     const buildCommands = runCommands(
       workflow.jobs["build-pages"] ?? { permissions: {}, steps: [] },
@@ -307,35 +371,80 @@ describe("日次workflow", () => {
     expect(collectCommands).toContain('--scheduled-for "$scheduled_for"');
     expect(collectCommands).toContain('"$GITHUB_EVENT_NAME" == "schedule"');
     expect(collectCommands).toContain('"$GITHUB_EVENT_NAME" == "workflow_dispatch"');
-    expect(collectCommands).toContain("today 23:00");
     expect(collectCommands).toContain("pnpm build:workflow-cli");
     expect(collectCommands).toContain(
       "git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state",
     );
-    expect(persistCommands).toContain("tracker-run.mjs persist-state");
+    expect(persistCommands).toContain("tracker-run.mjs persist-cache");
     expect(persistCommands).toContain(
       "git push origin refs/heads/tracker-state:refs/heads/tracker-state",
     );
     expect(buildCommands).toContain("tracker-run.mjs build-pages");
-    expect(buildCommands).toContain(
-      "git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state",
-    );
+    expect(buildCommands).not.toContain("git fetch");
     expect(notifyCommands).toContain("tracker-run.mjs notify-discord");
     expect(notifyCommands).not.toContain("curl");
     expect(operationsCommands).toContain("tracker:run notify-operations");
-    expect(operationsCommands).toContain("git ls-remote --exit-code --heads origin tracker-state");
-    expect(operationsCommands).toContain(
-      "git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state",
-    );
-    expect(operationsCommands).toContain('elif [[ "$state_branch_status" -ne 2 ]]');
+    expect(operationsCommands).not.toContain("git fetch");
+    expect(operationsCommands).not.toContain("git ls-remote");
     expect(operationsCommands).toContain("incident_kind=collection");
     expect(operationsCommands).toContain("incident_kind=pages");
     expect(operationsCommands).toContain("incident_kind=discord");
+    expect(JSON.stringify(workflow.jobs["notify-operations"])).toContain("PERSIST_CACHE_RESULT");
+    expect(operationsCommands).not.toContain(
+      "git push origin refs/heads/tracker-state:refs/heads/tracker-state",
+    );
     expect(operationsCommands).not.toContain("curl");
-    for (const jobName of ["persist-state", "build-pages", "notify-discord"] as const) {
+    for (const jobName of ["persist-cache", "build-pages", "notify-discord"] as const) {
       expect(JSON.stringify(workflow.jobs[jobName])).toContain("actions/download-artifact@");
       expect(JSON.stringify(workflow.jobs[jobName])).toContain("validated-public-run");
     }
+    expect(persistCommands).toContain("git fetch --no-tags origin refs/heads/tracker-state");
+    expect(notifyCommands).not.toContain("git fetch");
+    expect(
+      runCommands(workflow.jobs["report-workflow"] ?? { permissions: {}, steps: [] }).join("\n"),
+    ).not.toContain("git fetch");
+    for (const [jobName, job] of Object.entries(workflow.jobs)) {
+      if (jobName !== "collect-analyze" && jobName !== "persist-cache") {
+        expect(JSON.stringify(job), jobName).not.toContain(
+          "git fetch --no-tags origin refs/heads/tracker-state",
+        );
+      }
+    }
+  });
+
+  it("scheduleの基準時刻をActions APIのrun作成時刻から固定する", async () => {
+    const workflow = await readDailyWorkflow();
+    const collectJob = workflow.jobs["collect-analyze"];
+    if (collectJob == null) {
+      throw new TypeError("収集jobがありません");
+    }
+    const collectStep = requiredStep(collectJob, "収集と解析を実行");
+    const collectRun = collectStep.run;
+    if (collectRun == null) {
+      throw new TypeError("収集stepにrunがありません");
+    }
+    const scheduleStart = collectRun.indexOf('if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]');
+    const manualStart = collectRun.indexOf(
+      'elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]',
+    );
+    if (scheduleStart < 0 || manualStart <= scheduleStart) {
+      throw new TypeError("scheduleとworkflow_dispatchの分岐がありません");
+    }
+    const scheduleBranch = collectRun.slice(scheduleStart, manualStart);
+
+    expect(collectJob.permissions).toEqual({ actions: "read", contents: "read" });
+    expect(collectStep.env?.["GH_TOKEN"]).toBe("${{ github.token }}");
+    expect(scheduleBranch).toContain("gh api");
+    expect(scheduleBranch).toContain('"/repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"');
+    expect(scheduleBranch).toContain("--jq '.created_at'");
+    expect(scheduleBranch).toContain("run_created_at");
+    expect(scheduleBranch).toContain("scheduled_for_epoch");
+    expect(scheduleBranch).toContain("23:00:00 UTC");
+    expect(scheduleBranch).toContain("86400");
+    expect(scheduleBranch).not.toContain("current_time");
+    expect(scheduleBranch).toContain('if [[ -z "$run_created_at" ]]; then');
+    expect(scheduleBranch).toContain("exit 1");
+    expect(collectRun).toContain('scheduled_for="$current_time"');
   });
 
   it("Codex CLIをexact versionで固定して収集jobへinstallする", async () => {
@@ -406,6 +515,7 @@ describe("日次workflow", () => {
       "CODEX_HOME",
       "GH_APP_ID",
       "GH_APP_PRIVATE_KEY",
+      "GH_TOKEN",
       "REPOSITORY_FILTER",
     ]);
     expect(collectionStep.env["CODEX_HOME"]).toBe(authenticationDirectory);
@@ -506,7 +616,7 @@ describe("日次workflow", () => {
     const workflow = await readDailyWorkflow();
     const workflowSource = await readFile(DAILY_WORKFLOW_PATH, "utf8");
     const collectSource = JSON.stringify(workflow.jobs["collect-analyze"]);
-    const persistSource = JSON.stringify(workflow.jobs["persist-state"]);
+    const persistSource = JSON.stringify(workflow.jobs["persist-cache"]);
     const buildSource = JSON.stringify(workflow.jobs["build-pages"]);
     const notifySource = JSON.stringify(workflow.jobs["notify-discord"]);
     const operationsSource = JSON.stringify(workflow.jobs["notify-operations"]);
@@ -626,16 +736,23 @@ describe("workflow security", () => {
       "collect-analyze",
     );
     const operationsJob = dailyWorkflow.jobs["notify-operations"];
+    expect(needs(operationsJob ?? { permissions: {}, steps: [] })).toContain("test-eval");
     expect(needs(operationsJob ?? { permissions: {}, steps: [] })).toContain("collect-analyze");
     expect(needs(operationsJob ?? { permissions: {}, steps: [] })).toContain("build-pages");
     expect(needs(operationsJob ?? { permissions: {}, steps: [] })).toContain("deploy-pages");
     expect(needs(operationsJob ?? { permissions: {}, steps: [] })).toContain("notify-discord");
+    expect(needs(operationsJob ?? { permissions: {}, steps: [] })).toContain("persist-cache");
     expect(operationsJob?.if).toContain("needs.collect-analyze.result == 'failure'");
+    expect(operationsJob?.if).toContain("needs.test-eval.result == 'failure'");
     expect(operationsJob?.if).toContain("needs.build-pages.result == 'failure'");
     expect(operationsJob?.if).toContain("needs.deploy-pages.result == 'failure'");
     expect(operationsJob?.if).toContain("needs.notify-discord.result == 'failure'");
+    expect(operationsJob?.if).toContain("needs.persist-cache.result == 'failure'");
     expect(JSON.stringify(operationsJob)).toContain(
       '"NOTIFY_DISCORD_RESULT":"${{ needs.notify-discord.result }}"',
+    );
+    expect(JSON.stringify(operationsJob)).toContain(
+      '"TEST_EVAL_RESULT":"${{ needs.test-eval.result }}"',
     );
   });
 
@@ -666,7 +783,7 @@ describe("workflow security", () => {
     expect(allCiStep.with?.["self"]).toBe("merge_gatekeeper");
   });
 
-  it("CIのqualityと実state検証を権限分離する", async () => {
+  it("CIのqualityとcache-only state検証を権限分離する", async () => {
     const workflow = await readWorkflow(CI_WORKFLOW_PATH);
     const qualityJob = workflow.jobs["quality"];
     const verifyStateJob = workflow.jobs["verify-state"];
@@ -689,8 +806,9 @@ describe("workflow security", () => {
     }
     expect(qualityJob.permissions).toEqual({ contents: "read" });
     expect(verifyStateJob.permissions).toEqual({ contents: "read" });
+    expect(verifyStateJob.if).toBe("github.event_name == 'workflow_dispatch'");
 
-    const stateCheckout = requiredStep(verifyStateJob, "永続stateを取得");
+    const stateCheckout = requiredStep(verifyStateJob, "cache-only stateを取得");
     expect(stateCheckout.uses).toBe("actions/checkout@11d5960a326750d5838078e36cf38b85af677262");
     expect(stateCheckout.with).toMatchObject({
       ref: "tracker-state",

@@ -18,8 +18,14 @@ import {
   REVIEW_THREAD_COMMENT_PAGE_QUERY,
   REVIEW_THREAD_PAGE_QUERY,
   SUB_ISSUE_PAGE_QUERY,
+  USER_CONTENT_EDIT_PAGE_QUERY,
 } from "../src/github/item-detail-queries.js";
 import { type GitHubItemDetailCapabilities } from "../src/github/item-detail-types.js";
+import {
+  CHECK_CONTEXT_PAGE_QUERY as VOLATILE_CHECK_CONTEXT_PAGE_QUERY,
+  PULL_REQUEST_VOLATILE_PROBE_QUERY,
+  REVIEW_REQUEST_PAGE_QUERY as VOLATILE_REVIEW_REQUEST_PAGE_QUERY,
+} from "../src/github/item-volatile-probe.js";
 
 type QueryCase = Readonly<{
   name: string;
@@ -86,6 +92,22 @@ const fixedQueryCases = [
     name: "チェックコンテキスト次ページ",
     query: CHECK_CONTEXT_PAGE_QUERY,
   },
+  {
+    name: "UserContentEdit次ページ",
+    query: USER_CONTENT_EDIT_PAGE_QUERY,
+  },
+  {
+    name: "Pull Request volatile probe",
+    query: PULL_REQUEST_VOLATILE_PROBE_QUERY,
+  },
+  {
+    name: "Pull Request volatile review request次ページ",
+    query: VOLATILE_REVIEW_REQUEST_PAGE_QUERY,
+  },
+  {
+    name: "Pull Request volatile check context次ページ",
+    query: VOLATILE_CHECK_CONTEXT_PAGE_QUERY,
+  },
 ] satisfies readonly QueryCase[];
 const itemDetailQueryCases = capabilityAvailabilities.flatMap((nativeDependencies) =>
   capabilityAvailabilities.map((nativeHierarchy) => ({
@@ -112,12 +134,25 @@ const queryCases: readonly QueryCase[] = [
 ];
 
 describe("GitHub GraphQLクエリ", () => {
-  it("送信しうる19件を列挙する", () => {
-    expect(fixedQueryCases).toHaveLength(11);
+  it("送信しうる23件を列挙する", () => {
+    expect(fixedQueryCases).toHaveLength(15);
     expect(itemDetailQueryCases).toHaveLength(4);
     expect(timelineQueryCases).toHaveLength(2);
     expect(dependencyQueryCases).toHaveLength(2);
-    expect(queryCases).toHaveLength(19);
+    expect(queryCases).toHaveLength(23);
+  });
+
+  it("IssueとPull Requestのtimeline queryに依存関係イベント4種を含める", () => {
+    const queries = [
+      ...itemDetailQueryCases.map(({ query }) => query),
+      ...timelineQueryCases.map(({ query }) => query),
+    ];
+    for (const query of queries) {
+      expect(query).toContain("... on BlockedByAddedEvent");
+      expect(query).toContain("... on BlockedByRemovedEvent");
+      expect(query).toContain("... on BlockingAddedEvent");
+      expect(query).toContain("... on BlockingRemovedEvent");
+    }
   });
 
   it.each(queryCases)("$nameを公式schemaで検証できる", ({ query }) => {

@@ -8,7 +8,9 @@ import { hashCanonicalJson, type Sha256Hash } from "../src/persistence/canonical
 const REPOSITORY_ROOT = join(import.meta.dirname, "..");
 const HASH_RECORD_PATH = "tests/rules-version-hash.test.ts";
 const DETERMINISTIC_RULES_HASH =
-  "sha256:a9643fadf43b9d86bc747e01b04543b4ecc9f552bf8b4ab81c2851b4da6c1fb7";
+  "sha256:b50ecad6e04f2b9068da6ae0477d63806298b1b6d9d3c87b826f850fc85cf651";
+const DISCORD_NOTIFICATION_RULES_HASH =
+  "sha256:87cf742220e72b8bda3c4153289461abb8753997a1fa22124cf0690222d0b15a";
 const PROMPT_FILES_HASH = "sha256:3e26584e471eca79aecff884c79a48557cfc7d570300e09838c4fd8e063d1f1e";
 
 async function listRelativeFiles(
@@ -75,5 +77,14 @@ describe("判定規則versionの更新", () => {
         `記録hashの更新場所: ${HASH_RECORD_PATH} の PROMPT_FILES_HASH`,
       ].join("\n"),
     ).toBe(PROMPT_FILES_HASH);
+  });
+
+  it("Discord通知の決定論的判定内容を記録hashと一致させる", async () => {
+    const notificationFiles = [
+      "src/discord/deterministic-notification-windows.ts",
+      "src/discord/notification-selection.ts",
+    ];
+    const actualHash = await hashRelativeFiles(notificationFiles);
+    expect(actualHash).toBe(DISCORD_NOTIFICATION_RULES_HASH);
   });
 });

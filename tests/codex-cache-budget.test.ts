@@ -11,7 +11,6 @@ import {
   createCodexAnalysisInput,
   createFileAiCacheStore,
   determineAiCacheReuse,
-  determinePreviousAiResultReuse,
   estimateAiInputCost,
   hashCanonicalJson,
   prepareAiAnalysisCandidate as prepareCandidateWithIdentity,
@@ -92,6 +91,73 @@ function createInput(id: string, body: string): CodexAnalysisInput {
   return createInputAt(id, body, "2026-07-30T23:00:00Z");
 }
 
+function createSchemaValidOutput(nodeId: string): Record<string, unknown> {
+  return {
+    schemaVersion: "2",
+    item: {
+      nodeId,
+      url: "https://github.com/VOICEVOX/example/issues/1",
+    },
+    status: "terminal_completed",
+    waitingOn: [],
+    nextAction: "確認する",
+    relations: [],
+    progress: {
+      latestMeaningfulSourceId: null,
+      reasonSummary: "進捗を確認する",
+      confidence: 0.8,
+    },
+    importance: {
+      significantFeature: false,
+      explicitDeadline: false,
+      futureRisk: false,
+      rationale: "cache fixture",
+    },
+    evidence: [
+      {
+        sourceId: "body:current",
+        supports: "uncertainty",
+        summary: "cache fixture",
+      },
+    ],
+    confidence: 0.8,
+    uncertainties: [],
+    notification: {
+      recommended: false,
+      reasonCode: "none",
+      reasonSummary: "通知しません",
+    },
+  };
+}
+
+function createMemoryCacheEntry(
+  nodeId: string,
+  input: string,
+): ReturnType<typeof createAiCacheEntry> {
+  const identity = {
+    ...runIdentity,
+    inputHash: hashCanonicalJson({ input }),
+  } satisfies AiCacheIdentity;
+  const output = createSchemaValidOutput(nodeId);
+  return createAiCacheEntry({
+    cacheKey: createAiCacheKey(identity),
+    sourceHash: hashCanonicalJson({ source: input }),
+    graphNeighborhoodHash: hashCanonicalJson({ graph: input }),
+    repository: {
+      repositoryId: "R_cache_budget",
+      owner: "VOICEVOX",
+      name: "cache-budget",
+    },
+    nodeId,
+    metadata: {
+      ...identity,
+      outputHash: hashCanonicalJson(output),
+      executedAt: fixedExecutedAt,
+    },
+    output,
+  });
+}
+
 function createPriority(
   kind: "deferred" | "severity" | "owner" | "blocker" | "impact" | "ordinary",
 ): AiAnalysisPriority {
@@ -118,6 +184,11 @@ function createCandidate(options: {
 }): AiAnalysisCandidate {
   return Object.freeze({
     id: options.id,
+    repository: Object.freeze({
+      repositoryId: "R_cache_budget",
+      owner: "VOICEVOX",
+      name: "cache-budget",
+    }),
     deterministicResolution: options.deterministicResolution,
     input: createInput(options.id, options.body),
     graphNeighborhood: {
@@ -430,6 +501,90 @@ describe("Codex分析対象の絞り込み", () => {
 });
 
 describe("content-addressed AI cache", () => {
+  it("MemoryAiCacheStoreのnode ID indexを上書き時もcache key順で保持する", async () => {
+    const cache = new MemoryAiCacheStore();
+    const first = createMemoryCacheEntry("I_memory_index_first", "same-key");
+    const second = createMemoryCacheEntry("I_memory_index_second", "same-key");
+    const third = createMemoryCacheEntry("I_memory_index_second", "other-key");
+
+    await cache.write(first);
+    await cache.write(third);
+    await cache.write(second);
+
+    const expectedKeys = [first.cacheKey, third.cacheKey].sort();
+    expect(cache.get(first.cacheKey)).toEqual(second);
+    expect(cache.entries().map((entry) => entry.cacheKey)).toEqual(expectedKeys);
+    expect(cache.entriesForNodeId(first.nodeId)).toEqual([]);
+    expect(cache.entriesForNodeId(second.nodeId).map((entry) => entry.cacheKey)).toEqual(
+      expectedKeys,
+    );
+  });
+
+  it("AI cache entryのoutputはstrictなCodex schemaを必須にする", () => {
+    const inputHash = hashCanonicalJson({ input: "invalid-output" });
+    expect(() =>
+      createAiCacheEntry({
+        cacheKey: createAiCacheKey({
+          deterministicRulesVersion: "rules-v1",
+          model: "model-a",
+          reasoningEffort: "medium",
+          backendVersion: "backend-a",
+          promptVersion: "prompt-a",
+          schemaVersion: "schema-a",
+          inputHash,
+        }),
+        sourceHash: hashCanonicalJson({ source: "invalid-output" }),
+        graphNeighborhoodHash: hashCanonicalJson({ graph: "invalid-output" }),
+        repository: {
+          repositoryId: "R_cache_budget",
+          owner: "VOICEVOX",
+          name: "cache-budget",
+        },
+        nodeId: "I_invalid_output",
+        metadata: {
+          deterministicRulesVersion: "rules-v1",
+          model: "model-a",
+          reasoningEffort: "medium",
+          backendVersion: "backend-a",
+          promptVersion: "prompt-a",
+          schemaVersion: "schema-a",
+          inputHash,
+          outputHash: hashCanonicalJson({ result: "invalid" }),
+          executedAt: fixedExecutedAt,
+        },
+        output: { result: "invalid" },
+      }),
+    ).toThrow("Codex出力がJSON Schemaに適合しません");
+  });
+
+  it("AI cache entryのnode IDとoutput itemのnode ID不一致を拒否する", () => {
+    const identity = {
+      ...runIdentity,
+      inputHash: hashCanonicalJson({ input: "node-mismatch" }),
+    } satisfies AiCacheIdentity;
+    const output = createSchemaValidOutput("I_cache_output");
+
+    expect(() =>
+      createAiCacheEntry({
+        cacheKey: createAiCacheKey(identity),
+        sourceHash: hashCanonicalJson({ source: "node-mismatch" }),
+        graphNeighborhoodHash: hashCanonicalJson({ graph: "node-mismatch" }),
+        repository: {
+          repositoryId: "R_cache_budget",
+          owner: "VOICEVOX",
+          name: "cache-budget",
+        },
+        nodeId: "I_cache_entry",
+        metadata: {
+          ...identity,
+          outputHash: hashCanonicalJson(output),
+          executedAt: fixedExecutedAt,
+        },
+        output,
+      }),
+    ).toThrow("AI cache entryのnode IDが出力項目と一致しません");
+  });
+
   it("JSONのキー順に依存せず同じhashを生成する", () => {
     const left = {
       nested: {
@@ -500,15 +655,20 @@ describe("content-addressed AI cache", () => {
     const cache = new MemoryAiCacheStore();
     const baseCacheKey = cacheKeys.at(0);
     assertNonNullable(baseCacheKey, "基準となるAI cache keyがありません");
-    const output = {
-      result: "cached",
-    };
+    const output = createSchemaValidOutput("I_cache_fixture");
     await cache.write(
       createAiCacheEntry({
         cacheKey: baseCacheKey,
         sourceHash: hashCanonicalJson({
           sources: "same",
         }),
+        graphNeighborhoodHash: hashCanonicalJson({ graph: "same" }),
+        repository: {
+          repositoryId: "R_cache_budget",
+          owner: "VOICEVOX",
+          name: "cache-budget",
+        },
+        nodeId: "I_cache_fixture",
         metadata: {
           deterministicRulesVersion: base.deterministicRulesVersion,
           model: base.model,
@@ -566,12 +726,17 @@ describe("content-addressed AI cache", () => {
     const sourceHash = hashCanonicalJson({
       sources: "same",
     });
-    const output = {
-      result: "cached",
-    };
+    const output = createSchemaValidOutput("I_cache_fixture");
     const entry = createAiCacheEntry({
       cacheKey: createAiCacheKey(identity),
       sourceHash,
+      graphNeighborhoodHash: hashCanonicalJson({ graph: "same" }),
+      repository: {
+        repositoryId: "R_cache_budget",
+        owner: "VOICEVOX",
+        name: "cache-budget",
+      },
+      nodeId: "I_cache_fixture",
       metadata: {
         ...identity,
         outputHash: hashCanonicalJson(output),
@@ -631,6 +796,45 @@ describe("content-addressed AI cache", () => {
     expect(execute).toHaveBeenCalledTimes(1);
   });
 
+  it("prepared candidateとrepositoryが異なるcache entryを再利用しない", async () => {
+    const candidate = createCandidate({
+      id: "I_cache_repository_mismatch",
+      body: "同一入力",
+      deterministicResolution: "ambiguous",
+      previousFingerprint: unavailablePreviousFingerprint,
+      priority: createPriority("ordinary"),
+      graphVersion: 1,
+      estimatedCostUsd: 0.1,
+    });
+    const configuration = createConfiguration(10, 1_000_000, 10, 1);
+    const seedCache = new MemoryAiCacheStore();
+    await runAiAnalyses([candidate], configuration, {
+      cache: seedCache,
+      execute: createExecutor(),
+      executedAt: () => fixedExecutedAt,
+    });
+    const entry = seedCache.entries()[0];
+    assertNonNullable(entry, "repository不一致fixtureのAI cache entryがありません");
+    const mismatchedEntry = createAiCacheEntry({
+      ...entry,
+      repository: {
+        repositoryId: "R_other_cache_budget",
+        owner: "VOICEVOX",
+        name: "other-cache-budget",
+      },
+    });
+    const cache = new MemoryAiCacheStore();
+    await cache.write(mismatchedEntry);
+
+    await expect(
+      runAiAnalyses([candidate], configuration, {
+        cache,
+        execute: createExecutor(),
+        executedAt: () => fixedExecutedAt,
+      }),
+    ).rejects.toThrow("AI cache entryの項目またはrepositoryが分析候補と一致しません");
+  });
+
   it("同一入力はcacheから再利用し、本文1文字の変更後は旧結果を使わない", async () => {
     const cache = new MemoryAiCacheStore();
     const execute = createExecutor();
@@ -678,70 +882,6 @@ describe("content-addressed AI cache", () => {
     expect(cached.results[0]?.origin).toBe("cache");
     expect(changed.results[0]?.origin).toBe("executed");
     expect(changed.results[0]?.metadata.inputHash).not.toBe(first.results[0]?.metadata.inputHash);
-  });
-
-  it("sourceと入力hashが一致する前回結果だけを再利用する", () => {
-    const original = prepareAiAnalysisCandidate(
-      createCandidate({
-        id: "I_previous",
-        body: "本文",
-        deterministicResolution: "ambiguous",
-        previousFingerprint: unavailablePreviousFingerprint,
-        priority: createPriority("ordinary"),
-        graphVersion: 1,
-        estimatedCostUsd: 0.1,
-      }),
-    );
-    const changed = prepareAiAnalysisCandidate(
-      createCandidate({
-        id: "I_previous",
-        body: "本文!",
-        deterministicResolution: "ambiguous",
-        previousFingerprint: unavailablePreviousFingerprint,
-        priority: createPriority("ordinary"),
-        graphVersion: 1,
-        estimatedCostUsd: 0.1,
-      }),
-    );
-    const graphChanged = prepareAiAnalysisCandidate(
-      createCandidate({
-        id: "I_previous",
-        body: "本文",
-        deterministicResolution: "ambiguous",
-        previousFingerprint: unavailablePreviousFingerprint,
-        priority: createPriority("ordinary"),
-        graphVersion: 2,
-        estimatedCostUsd: 0.1,
-      }),
-    );
-
-    expect(
-      determinePreviousAiResultReuse(original.fingerprint, original.fingerprint, {
-        status: "再利用可能",
-      }),
-    ).toEqual({
-      status: "reusable",
-      result: {
-        status: "再利用可能",
-      },
-    });
-
-    expect(
-      determinePreviousAiResultReuse(changed.fingerprint, original.fingerprint, {
-        status: "古い断定",
-      }),
-    ).toEqual({
-      status: "stale",
-      reason: "source_hash_changed",
-    });
-    expect(
-      determinePreviousAiResultReuse(graphChanged.fingerprint, original.fingerprint, {
-        status: "古い断定",
-      }),
-    ).toEqual({
-      status: "stale",
-      reason: "input_hash_changed",
-    });
   });
 
   it("本文変更後に予算がなければ旧結果を返さずdeferredにする", async () => {

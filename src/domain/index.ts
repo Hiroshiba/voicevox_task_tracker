@@ -63,8 +63,15 @@ export {
   type MeaningfulProgressResult,
   type NaturalLanguageProgressAssessment,
   type NaturalLanguageProgressCandidate,
-  type PreviousActivityState,
 } from "./meaningful-progress.js";
+export {
+  replayItemHistory,
+  type ReplayCurrentItem,
+  type ReplayEvent,
+  type ReplayHistory,
+  type ReplayItemHistoryInput,
+  type ReplayItemHistoryResult,
+} from "./event-replay.js";
 export {
   determineIssueState,
   ISSUE_DETERMINISTIC_RULES_VERSION,
@@ -109,7 +116,6 @@ export {
   type BlockedParentSeverityReason,
   type BlockerRanking,
   type CalculateStalenessInput,
-  type PreviousStalenessState,
   type RecalculatedStalenessSeverity,
   type RecalculateStalenessSeverityInput,
   type StalenessElapsedHours,
@@ -130,20 +136,16 @@ export {
   determineTerminalRetention,
   determineTrackedItemWork,
   isRetryableTrackedItemAiAnalysisStatus,
-  resolveTrackingStartAt,
   type CodexAnalysisWorkDecision,
   type ClassifyTrackingNotificationInput,
-  type ConfiguredTrackingStartAt,
   type DefaultDigestDecision,
   type DetermineTerminalRetentionInput,
   type DetermineTrackedItemWorkInput,
   type PreviousTrackedItemObservation,
-  type ResolveTrackingStartAtInput,
   type RetentionItemState,
   type StallNotificationWorkDecision,
   type TerminalRetentionDecision,
   type TrackedItemWorkDecision,
-  type TrackingRunCompletion,
   type TrackingStartAtState,
 } from "./tracking-lifecycle.js";
 export {

@@ -17,7 +17,6 @@ export {
   type AiAnalysisRunResult,
 } from "./analysis-runner.js";
 export {
-  determinePreviousAiResultReuse,
   prepareAiAnalysisCandidate,
   selectAiAnalysisCandidates,
   type AiAnalysisCandidate,
@@ -29,7 +28,6 @@ export {
   type DeterministicAnalysisResolution,
   type PreparedAiAnalysisCandidate,
   type PreviousAiAnalysisFingerprint,
-  type PreviousAiResultReuseDecision,
 } from "./analysis-selection.js";
 export {
   estimateAiInputCost,
@@ -94,6 +92,27 @@ export {
   type CodexAnalysisInput,
 } from "./input.js";
 export {
+  createImportanceCacheCandidate,
+  createImportanceCacheEntry,
+  createImportanceCacheEntryFromAiResult,
+  createImportanceCacheEntryFromCacheContext,
+  createImportanceCacheEntryFromLatest,
+  resolveImportance,
+  selectLatestImportanceCacheEntry,
+  type CreateImportanceCacheCandidateInput,
+  type ImportanceAiRunState,
+  type ImportanceCacheContext,
+  type ImportanceCacheEntry,
+  type ImportanceCacheFingerprint,
+  type ImportanceCacheRepository,
+  type ImportanceCacheRepositoryAllowlist,
+  type ImportanceCacheState,
+  type LatestImportanceCacheEntrySelection,
+  type ImportanceResolution,
+  type ResolveImportanceInput,
+  type VerifiedImportanceResult,
+} from "./importance-cache-fallback.js";
+export {
   type SchemaValidCodexAnalysisOutput,
   type SchemaValidCodexEvidence,
   type SchemaValidCodexImportance,
@@ -114,9 +133,11 @@ export {
 export {
   classifyCodexUnavailableReason,
   executeValidatedCodexAnalysis,
+  reduceCachedCodexAnalysis,
   reduceCodexAnalysis,
   reduceCodexInputValidationFailure,
   runCodexAnalysisWithFallback,
+  selectCodexImportanceAssessment,
   type CodexAnalysisAttempt,
   type CodexAnalysisReduction,
   type CodexRelationCoverage,
@@ -129,7 +150,11 @@ export {
 } from "./reducer.js";
 export { validateCodexAnalysisSchema } from "./schema-validation.js";
 export {
+  createCodexCacheValidationContext,
   listNativeRelationConstraints,
+  parseCodexCacheValidationContext,
+  validateCodexAnalysisOutputAgainstCacheContext,
   validateCodexAnalysisSemantics,
+  type CodexCacheValidationContext,
   type NativeRelationConstraint,
 } from "./semantic-validation.js";
