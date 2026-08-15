@@ -21,7 +21,7 @@ import {
 import { StateFormatError, StatePersistenceError, StatePublicSafetyError } from "./errors.js";
 
 /** cache文書schemaのversion。 */
-export const CACHE_DOCUMENT_SCHEMA_VERSION = "2";
+export const CACHE_DOCUMENT_SCHEMA_VERSION = "3";
 /** terminal itemを保持する日数。 */
 export const CACHE_TERMINAL_RETENTION_DAYS = 180;
 const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -663,6 +663,7 @@ const cacheRelationMutationUnknownBaseShape = {
     "deleted_edit",
     "unsupported_diff_format",
     "markdown_reference_definition",
+    "repository_public_boundary_unverified",
   ]),
 };
 

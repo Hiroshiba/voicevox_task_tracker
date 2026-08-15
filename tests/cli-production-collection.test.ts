@@ -651,6 +651,64 @@ function createInboundCrossReference(
   });
 }
 
+function createExternalRelationCandidate(
+  target: EnumeratedGitHubItem,
+  eventSourceId: GitHubInboundCrossReferenceCandidate["eventSourceId"],
+): GitHubInboundCrossReferenceCandidate {
+  const externalNodeId = createGitHubNodeId("I_external_relation_proof");
+  const externalRepositoryName = "external-relation-proof";
+  const sourceItem = Object.freeze({
+    sourceId: buildSourceId("github_item", externalNodeId),
+    nodeId: externalNodeId,
+    repositoryId: createGitHubRepositoryId("R_external_relation_proof"),
+    repositoryOwner: "external-owner",
+    repositoryName: externalRepositoryName,
+    repositoryArchived: false,
+    repositoryDisabled: false,
+    type: "issue",
+    number: 2,
+    url: `https://github.com/external-owner/${externalRepositoryName}/issues/2`,
+    createdAt: target.createdAt,
+    state: "open",
+  } satisfies GitHubReferencedItem);
+  return Object.freeze({
+    sourceId: buildSourceId("github_inbound_cross_reference", `${target.nodeId}:${externalNodeId}`),
+    candidateOnly: true,
+    provenance: "cross_reference",
+    eventSourceId,
+    sourceItem,
+    willCloseTarget: false,
+  });
+}
+
+function createExternalRelationCrossReference(
+  target: EnumeratedGitHubItem,
+  observedAt: UtcIsoDateTime,
+): Readonly<{
+  event: GitHubTimelineEvent;
+  candidate: GitHubInboundCrossReferenceCandidate;
+}> {
+  const eventNodeId = createGitHubNodeId(`CRE_external_relation_${target.nodeId}`);
+  const eventSourceId = buildSourceId("github_timeline_event", eventNodeId);
+  const candidate = createExternalRelationCandidate(target, eventSourceId);
+  return Object.freeze({
+    event: Object.freeze({
+      sourceId: eventSourceId,
+      nodeId: eventNodeId,
+      sequence: 0,
+      occurredAt: observedAt,
+      actor: Object.freeze({
+        status: "unavailable",
+        reason: "github_did_not_return_actor",
+      }),
+      kind: "cross_referenced",
+      source: candidate.sourceItem,
+      willCloseTarget: false,
+    } satisfies GitHubTimelineEvent),
+    candidate,
+  });
+}
+
 function createIssueDetailWithInboundCrossReferences(
   item: EnumeratedGitHubItem,
   sources: readonly EnumeratedGitHubItem[],
@@ -2307,7 +2365,9 @@ describe("本番収集の接続", () => {
       discordAttempted: false,
       artifactWritten: false,
     });
-    expect(await harness.stateAdapter.resolveHead("tracker-state")).toEqual({ status: "missing" });
+    expect(await harness.stateAdapter.resolveHead("tracker-state-v3")).toEqual({
+      status: "missing",
+    });
   });
 
   it("AI対象がない正常runを利用可能として保存する", async () => {
@@ -3076,11 +3136,11 @@ describe("本番収集の接続", () => {
       ...secondArtifact.cacheOnlyPayload,
       knownSecrets: [],
     });
-    const head = await harness.stateAdapter.resolveHead("tracker-state");
+    const head = await harness.stateAdapter.resolveHead("tracker-state-v3");
     if (head.status !== "present") {
       throw new TypeError("stale latest index fixtureのstate branchがありません");
     }
-    const files = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const files = await harness.stateAdapter.readBranchFiles("tracker-state-v3");
     const latestPath = [...files.keys()].find((path) =>
       path.startsWith("state/ai-latest-importance/"),
     );
@@ -3088,7 +3148,7 @@ describe("本番収集の接続", () => {
       throw new TypeError("stale latest index fixtureのlatest文書がありません");
     }
     await harness.stateAdapter.commit({
-      branch: "tracker-state",
+      branch: "tracker-state-v3",
       expectedHead: head,
       updates: [
         {
@@ -3171,11 +3231,11 @@ describe("本番収集の接続", () => {
     });
 
     expect((await harness.runDaily(FIRST_RUN_AT)).exitCode).toBe(0);
-    const head = await harness.stateAdapter.resolveHead("tracker-state");
+    const head = await harness.stateAdapter.resolveHead("tracker-state-v3");
     if (head.status !== "present") {
       throw new TypeError("latest importance再構築fixtureのstate branchがありません");
     }
-    const files = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const files = await harness.stateAdapter.readBranchFiles("tracker-state-v3");
     const latestPaths = [...files.keys()].filter((path) =>
       path.startsWith("state/ai-latest-importance/"),
     );
@@ -3183,7 +3243,7 @@ describe("本番収集の接続", () => {
       throw new TypeError("latest importance再構築fixtureのindexが1件ではありません");
     }
     await harness.stateAdapter.commit({
-      branch: "tracker-state",
+      branch: "tracker-state-v3",
       expectedHead: head,
       updates: [],
       deletions: latestPaths,
@@ -6031,7 +6091,7 @@ describe("本番収集の接続", () => {
 
     const firstResult = await harness.runDaily(FIRST_RUN_AT);
     expect(firstResult.exitCode).toBe(0);
-    const stateBefore = new Map(await harness.stateAdapter.readBranchFiles("tracker-state"));
+    const stateBefore = new Map(await harness.stateAdapter.readBranchFiles("tracker-state-v3"));
     const publicDataCountBefore = harness.publicData.length;
     const normalDiscordCallCountBefore = harness.normalDiscordCallCount();
     harness.individualCalls.length = 0;
@@ -6076,7 +6136,7 @@ describe("本番収集の接続", () => {
     );
 
     const secondResult = await harness.runDaily(SECOND_RUN_AT);
-    const stateAfter = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const stateAfter = await harness.stateAdapter.readBranchFiles("tracker-state-v3");
     if (secondResult.command !== "daily") {
       throw new TypeError("関係先展開上限fixtureがdaily結果ではありません");
     }
@@ -6391,7 +6451,9 @@ describe("本番収集の接続", () => {
     expect(harness.artifacts).toEqual([]);
     expect(harness.publicData).toEqual([]);
     expect(harness.normalDiscordCallCount()).toBe(0);
-    expect(await harness.stateAdapter.resolveHead("tracker-state")).toEqual({ status: "missing" });
+    expect(await harness.stateAdapter.resolveHead("tracker-state-v3")).toEqual({
+      status: "missing",
+    });
   });
 
   it.each([
@@ -6456,7 +6518,7 @@ describe("本番収集の接続", () => {
       const harness = createCollectionHarness({ repositories: [fixture], config });
 
       expect((await harness.runDaily(FIRST_RUN_AT)).exitCode).toBe(0);
-      const headBefore = await harness.stateAdapter.resolveHead("tracker-state");
+      const headBefore = await harness.stateAdapter.resolveHead("tracker-state-v3");
       const normalDiscordCallsBefore = harness.normalDiscordCallCount();
       const invalidRepository: Repository = Object.freeze({
         ...repository,
@@ -6475,7 +6537,7 @@ describe("本番収集の接続", () => {
       expect(harness.artifacts).toEqual([]);
       expect(harness.publicData).toEqual([]);
       expect(harness.normalDiscordCallCount()).toBe(normalDiscordCallsBefore);
-      expect(await harness.stateAdapter.resolveHead("tracker-state")).toEqual(headBefore);
+      expect(await harness.stateAdapter.resolveHead("tracker-state-v3")).toEqual(headBefore);
     },
   );
 
@@ -6506,11 +6568,11 @@ describe("本番収集の接続", () => {
       });
       const harness = createCollectionHarness({ repositories: [fixture], config });
       expect((await harness.runDaily(FIRST_RUN_AT)).exitCode).toBe(0);
-      const head = await harness.stateAdapter.resolveHead("tracker-state");
+      const head = await harness.stateAdapter.resolveHead("tracker-state-v3");
       if (head.status !== "present") {
         throw new TypeError("stale不整合fixtureのstate branchがありません");
       }
-      const files = await harness.stateAdapter.readBranchFiles("tracker-state");
+      const files = await harness.stateAdapter.readBranchFiles("tracker-state-v3");
       const itemPath = [...files.keys()].find((path) => path.startsWith("state/github-items/"));
       const repositoryFile = [...files].find(([path]) =>
         path.startsWith("state/github-repositories/"),
@@ -6519,7 +6581,7 @@ describe("本番収集の接続", () => {
       assertNonNullable(repositoryFile, "stale不整合fixtureのrepository cacheがありません");
       if (failureKind === "item cache欠落") {
         await harness.stateAdapter.commit({
-          branch: "tracker-state",
+          branch: "tracker-state-v3",
           expectedHead: head,
           updates: [],
           deletions: [itemPath],
@@ -6545,7 +6607,7 @@ describe("本番収集の接続", () => {
           ],
         });
         await harness.stateAdapter.commit({
-          branch: "tracker-state",
+          branch: "tracker-state-v3",
           expectedHead: head,
           updates: [
             {
@@ -6558,7 +6620,7 @@ describe("本番収集の接続", () => {
           committedAt: FIRST_RUN_AT,
         });
       }
-      const corruptedHead = await harness.stateAdapter.resolveHead("tracker-state");
+      const corruptedHead = await harness.stateAdapter.resolveHead("tracker-state-v3");
       fixture.enumerationFailsWith503 = true;
       harness.artifacts.length = 0;
       harness.publicData.length = 0;
@@ -6568,7 +6630,7 @@ describe("本番収集の接続", () => {
       expect(result.exitCode).toBe(1);
       expect(harness.artifacts).toEqual([]);
       expect(harness.publicData).toEqual([]);
-      expect(await harness.stateAdapter.resolveHead("tracker-state")).toEqual(corruptedHead);
+      expect(await harness.stateAdapter.resolveHead("tracker-state-v3")).toEqual(corruptedHead);
     },
   );
 
@@ -6933,7 +6995,7 @@ describe("本番収集の接続", () => {
     const warmCodexExecutionCount = warmHarness.codexExecutionCount();
     expect(warmCodexExecutionCount).toBe(1);
     const persistedPaths = [
-      ...(await warmHarness.stateAdapter.readBranchFiles("tracker-state")).keys(),
+      ...(await warmHarness.stateAdapter.readBranchFiles("tracker-state-v3")).keys(),
     ];
     expect(
       persistedPaths.every(
@@ -7431,7 +7493,7 @@ describe("本番収集の接続", () => {
     });
 
     const result = await harness.runCollectAnalyze(FIRST_RUN_AT);
-    const head = await harness.stateAdapter.resolveHead("tracker-state");
+    const head = await harness.stateAdapter.resolveHead("tracker-state-v3");
     if (result.command !== "collect-analyze") {
       throw new TypeError("責務再生retry number不一致fixtureがcollect-analyze結果ではありません");
     }
@@ -7485,7 +7547,7 @@ describe("本番収集の接続", () => {
     });
 
     const result = await harness.runCollectAnalyze(FIRST_RUN_AT);
-    const head = await harness.stateAdapter.resolveHead("tracker-state");
+    const head = await harness.stateAdapter.resolveHead("tracker-state-v3");
     if (result.command !== "collect-analyze") {
       throw new TypeError("volatile retry exhaustion fixtureがcollect-analyze結果ではありません");
     }
@@ -7566,7 +7628,7 @@ describe("本番収集の接続", () => {
     });
 
     const result = await harness.runCollectAnalyze(FIRST_RUN_AT);
-    const head = await harness.stateAdapter.resolveHead("tracker-state");
+    const head = await harness.stateAdapter.resolveHead("tracker-state-v3");
 
     if (result.command !== "collect-analyze") {
       throw new TypeError("責務再生retry上限fixtureがcollect-analyze結果ではありません");
@@ -7641,7 +7703,7 @@ describe("本番収集の接続", () => {
     });
 
     const result = await harness.runCollectAnalyze(FIRST_RUN_AT);
-    const head = await harness.stateAdapter.resolveHead("tracker-state");
+    const head = await harness.stateAdapter.resolveHead("tracker-state-v3");
     if (result.command !== "collect-analyze") {
       throw new TypeError("volatile identity mismatch fixtureがcollect-analyze結果ではありません");
     }
@@ -8264,11 +8326,11 @@ describe("本番収集の接続", () => {
 
     expect((await harness.runDaily(FIRST_RUN_AT)).exitCode).toBe(0);
     expect(harness.codexExecutionCount()).toBe(1);
-    const head = await harness.stateAdapter.resolveHead("tracker-state");
+    const head = await harness.stateAdapter.resolveHead("tracker-state-v3");
     if (head.status !== "present") {
       throw new TypeError("AI cache不整合fixtureのstate branchがありません");
     }
-    const files = await harness.stateAdapter.readBranchFiles("tracker-state");
+    const files = await harness.stateAdapter.readBranchFiles("tracker-state-v3");
     const aiCacheFiles = [...files].filter(([path]) => path.startsWith("state/ai-results/"));
     if (aiCacheFiles.length !== 1) {
       throw new TypeError(
@@ -8303,7 +8365,7 @@ describe("本番収集の接続", () => {
       output: invalidOutput,
     });
     await harness.stateAdapter.commit({
-      branch: "tracker-state",
+      branch: "tracker-state-v3",
       expectedHead: head,
       updates: [
         {
@@ -10613,6 +10675,189 @@ describe("本番収集の接続", () => {
     }
   });
 
+  it("同一item同一content sourceで確認済みexternal public参照を許可する", async () => {
+    const repository = createRepository(
+      "R_external_relation_allowed",
+      "external-relation-allowed",
+      FIRST_RUN_AT,
+    );
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const source = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "external-relation-allowed-source",
+      updatedAt: observedAt,
+      observedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const externalUrl = "https://github.com/external-owner/external-relation-proof/issues/2";
+    const externalRelation = createExternalRelationCrossReference(source, observedAt);
+    const bodySourceId = buildSourceId("github_item_body", source.nodeId);
+    fixture.openItems = [source];
+    fixture.details.set(
+      source.nodeId,
+      Object.freeze({
+        ...createIssueDetail({
+          item: source,
+          body: `- [ ] ${externalUrl}`,
+          observedAt,
+          nativeDependencies: Object.freeze([]),
+          duplicateComments: false,
+        }),
+        bodyUserContentEdits: Object.freeze({
+          availability: "available",
+          edits: Object.freeze([]),
+        }),
+        timeline: Object.freeze([externalRelation.event]),
+        inboundCrossReferences: Object.freeze([externalRelation.candidate]),
+      }),
+    );
+    const baseConfig = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: true,
+    });
+    const config = configWithBudget(baseConfig, 50, baseConfig.ai.budget.maxEstimatedCostUsdPerRun);
+    const harness = createCollectionHarness({
+      repositories: [fixture],
+      config,
+      executeCodexAnalysis: executeSuccessfulCodexAnalysis,
+    });
+
+    const result = await harness.runCollectAnalyze(FIRST_RUN_AT);
+
+    if (result.command !== "collect-analyze") {
+      throw new TypeError("external relation proof fixtureがcollect-analyze結果ではありません");
+    }
+    expect(result.exitCode).toBe(0);
+    expect(result.result.report).toMatchObject({ status: "success", complete: true });
+    expect(result.result.report.diagnostics).not.toContainEqual(
+      expect.stringContaining("publicBoundaryViolation"),
+    );
+    expect(harness.codexExecutionCount()).toBeGreaterThan(0);
+    const artifact = requireCollectAnalyzeArtifact(harness.artifacts);
+    const itemCache = artifact.cacheOnlyPayload.itemCaches.find(
+      (candidate) => candidate.nodeId === source.nodeId,
+    );
+    if (itemCache == null) {
+      throw new TypeError("external relation proofのitem cacheがありません");
+    }
+    expect(
+      itemCache.relationCandidates.some(
+        (candidate) =>
+          candidate.provenance === "checklist" && candidate.sourceIds.includes(bodySourceId),
+      ),
+    ).toBe(true);
+    expect(
+      itemCache.relationMutations.some(
+        (mutation) => mutation.contentSourceId === bodySourceId && mutation.status === "available",
+      ),
+    ).toBe(true);
+  });
+
+  it("別itemのexternal public参照証明を流用せずAI実行前に停止する", async () => {
+    const repository = createRepository(
+      "R_external_relation_other_item",
+      "external-relation-other-item",
+      FIRST_RUN_AT,
+    );
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const source = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "external-relation-other-item-source",
+      updatedAt: observedAt,
+      observedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const proofItem = createIssueItem({
+      repository: publicRepository,
+      number: 2,
+      fingerprint: "external-relation-other-item-proof",
+      updatedAt: observedAt,
+      observedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const externalUrl = "https://github.com/external-owner/external-relation-proof/issues/2";
+    const proofRelation = createExternalRelationCrossReference(proofItem, observedAt);
+    fixture.openItems = [source, proofItem];
+    fixture.details.set(
+      source.nodeId,
+      Object.freeze({
+        ...createIssueDetail({
+          item: source,
+          body: `- [ ] ${externalUrl}`,
+          observedAt,
+          nativeDependencies: Object.freeze([]),
+          duplicateComments: false,
+        }),
+        bodyUserContentEdits: Object.freeze({
+          availability: "available",
+          edits: Object.freeze([]),
+        }),
+      }),
+    );
+    fixture.details.set(
+      proofItem.nodeId,
+      Object.freeze({
+        ...createIssueDetail({
+          item: proofItem,
+          body: "本文",
+          observedAt,
+          nativeDependencies: Object.freeze([]),
+          duplicateComments: false,
+        }),
+        bodyUserContentEdits: Object.freeze({
+          availability: "available",
+          edits: Object.freeze([]),
+        }),
+        timeline: Object.freeze([proofRelation.event]),
+        inboundCrossReferences: Object.freeze([proofRelation.candidate]),
+      }),
+    );
+    const baseConfig = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: true,
+    });
+    const config = configWithBudget(baseConfig, 50, baseConfig.ai.budget.maxEstimatedCostUsdPerRun);
+    const harness = createCollectionHarness({ repositories: [fixture], config });
+
+    const result = await harness.runCollectAnalyze(FIRST_RUN_AT);
+
+    if (result.command !== "collect-analyze") {
+      throw new TypeError("別item external relation fixtureがcollect-analyze結果ではありません");
+    }
+    expect(result.exitCode).toBe(1);
+    expect(result.result.report).toMatchObject({
+      status: "failure",
+      failedStage: "incremental_collection",
+      complete: false,
+    });
+    expect(result.result.report.diagnostics).toContainEqual(
+      expect.stringContaining(
+        `publicBoundaryViolationKind=cache_relation_mutation publicBoundaryViolationCount=1 sourceItemNodeId=${source.nodeId}`,
+      ),
+    );
+    expect(harness.codexExecutionCount()).toBe(0);
+    expect(harness.artifacts).toEqual([]);
+    expect(harness.publicData).toEqual([]);
+    expect(await harness.stateAdapter.resolveHead("tracker-state-v3")).toEqual({
+      status: "missing",
+    });
+    const serializedFailure = JSON.stringify({
+      report: result.result.report,
+      artifacts: harness.artifacts,
+      publicData: harness.publicData,
+    });
+    expect(serializedFailure).not.toContain(externalUrl);
+    expect(serializedFailure).not.toContain("external-owner");
+  });
+
   it("fresh itemのrelation mutation公開境界違反をAI実行前に停止する", async () => {
     const repository = createRepository(
       "R_fresh_relation_boundary",
@@ -10675,7 +10920,135 @@ describe("本番収集の接続", () => {
     expect(harness.codexExecutionCount()).toBe(0);
     expect(harness.artifacts).toEqual([]);
     expect(harness.publicData).toEqual([]);
-    expect(await harness.stateAdapter.resolveHead("tracker-state")).toEqual({ status: "missing" });
+    expect(await harness.stateAdapter.resolveHead("tracker-state-v3")).toEqual({
+      status: "missing",
+    });
+  });
+
+  it("current候補を残して過去の未allowlist参照だけをunknownにする", async () => {
+    const repository = createRepository(
+      "R_relation_history_boundary",
+      "relation-history-boundary",
+      FIRST_RUN_AT,
+    );
+    const publicRepository = requirePublicRepository(repository);
+    const fixture = createRepositoryFixture(repository);
+    const observedAt = createUtcIsoDateTime(FIRST_RUN_AT);
+    const source = createIssueItem({
+      repository: publicRepository,
+      number: 1,
+      fingerprint: "relation-history-boundary-source",
+      updatedAt: observedAt,
+      observedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const target = createIssueItem({
+      repository: publicRepository,
+      number: 2,
+      fingerprint: "relation-history-boundary-target",
+      updatedAt: observedAt,
+      observedAt,
+      state: Object.freeze({ state: "open" }),
+    });
+    const currentBody = `対応先は ${target.url} です`;
+    const historicalTypo = "https://github.com/VOICEVOX/relation-history-boundary-typo/issues/99";
+    const createEdit = (
+      id: string,
+      sequence: number,
+      editedAt: UtcIsoDateTime,
+      diff: string,
+    ): GitHubUserContentEdit =>
+      Object.freeze({
+        sourceId: buildSourceId("github_user_content_edit", id),
+        sequence,
+        createdAt: source.createdAt,
+        deletedAt: null,
+        diff,
+        editedAt,
+        editor: Object.freeze({
+          status: "unavailable",
+          reason: "github_did_not_return_actor",
+        }),
+        updatedAt: editedAt,
+      } satisfies GitHubUserContentEdit);
+    const historicalAddedAt = createUtcIsoDateTime("2026-07-01T01:00:00.000Z");
+    const historicalRemovedAt = createUtcIsoDateTime("2026-07-01T02:00:00.000Z");
+    fixture.openItems = [source, target];
+    fixture.details.set(
+      source.nodeId,
+      Object.freeze({
+        ...createIssueDetail({
+          item: source,
+          body: currentBody,
+          observedAt,
+          nativeDependencies: Object.freeze([]),
+          duplicateComments: false,
+        }),
+        bodyUserContentEdits: Object.freeze({
+          availability: "available",
+          edits: Object.freeze([
+            createEdit(`${source.nodeId}:empty`, 0, source.createdAt, ""),
+            createEdit(`${source.nodeId}:historical-typo`, 1, historicalAddedAt, historicalTypo),
+            createEdit(`${source.nodeId}:current`, 2, historicalRemovedAt, currentBody),
+          ]),
+        }),
+      }),
+    );
+    fixture.details.set(
+      target.nodeId,
+      createIssueDetail({
+        item: target,
+        body: "対象項目の本文です",
+        observedAt,
+        nativeDependencies: Object.freeze([]),
+        duplicateComments: false,
+      }),
+    );
+    const baseConfig = await createTestConfig({
+      explicitIncludes: [],
+      retentionDays: 180,
+      aiEnabled: true,
+    });
+    const config = configWithBudget(baseConfig, 50, baseConfig.ai.budget.maxEstimatedCostUsdPerRun);
+    const harness = createCollectionHarness({
+      repositories: [fixture],
+      config,
+      executeCodexAnalysis: executeSuccessfulCodexAnalysis,
+    });
+
+    const result = await harness.runCollectAnalyze(FIRST_RUN_AT);
+    const artifact = requireCollectAnalyzeArtifact(harness.artifacts);
+    const itemCache = artifact.cacheOnlyPayload.itemCaches.find(
+      (candidate) => candidate.nodeId === source.nodeId,
+    );
+    if (itemCache == null) {
+      throw new TypeError("relation historyのitem cacheがありません");
+    }
+    const bodyMutation = itemCache.relationMutations.find(
+      (candidate) => candidate.contentSourceId === buildSourceId("github_item_body", source.nodeId),
+    );
+    if (bodyMutation == null) {
+      throw new TypeError("relation historyの本文mutationがありません");
+    }
+
+    expect(result.exitCode).toBe(0);
+    expect(harness.codexExecutionCount()).toBeGreaterThan(0);
+    expect(bodyMutation).toEqual({
+      status: "unknown",
+      contentSourceId: buildSourceId("github_item_body", source.nodeId),
+      reason: "repository_public_boundary_unverified",
+    });
+    expect(
+      itemCache.relationCandidates.some((candidate) =>
+        candidate.sourceIds.includes(buildSourceId("github_item_body", source.nodeId)),
+      ),
+    ).toBe(true);
+    const serializedArtifact = JSON.stringify(artifact);
+    expect(serializedArtifact).toContain(
+      `relationMutationUnknown sourceItemNodeId=${source.nodeId} reason=repository_public_boundary_unverified count=1`,
+    );
+    expect(serializedArtifact).not.toContain("relation-history-boundary-typo");
+    expect(serializedArtifact).not.toContain("historical-typo");
   });
 
   it("外部ghostをtemporal graphとblocker判定から除外する", async () => {
