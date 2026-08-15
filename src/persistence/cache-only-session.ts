@@ -6,7 +6,10 @@ import {
   type Repository,
   type UtcIsoDateTime,
 } from "../domain/index.js";
-import { PublicRepositoryAllowlist } from "../github/public-repository-allowlist.js";
+import {
+  assertCacheItemRelationPublicBoundary,
+  PublicRepositoryAllowlist,
+} from "../github/public-repository-allowlist.js";
 import { GitHubPublicBoundaryViolationError } from "../github/errors.js";
 import {
   assertCacheDocumentPublicSafety,
@@ -263,110 +266,11 @@ function assertRepositoryAllowlisted(
 ): void {
   const publicRepository = allowlist.require(repositoryId);
   if (publicRepository.owner !== owner || publicRepository.name !== name) {
-    throw new GitHubPublicBoundaryViolationError(1);
-  }
-}
-
-type CacheRelationCandidateRelation =
-  GitHubItemCacheDocument["relationCandidates"][number]["relation"];
-type CacheRelationCandidateNodeFor<Relation> = Relation extends {
-  blocker: infer Node;
-}
-  ? Node
-  : Relation extends { parent: infer Node }
-    ? Node
-    : Relation extends { implementation: infer Node }
-      ? Node
-      : Relation extends { referencing: infer Node }
-        ? Node
-        : never;
-type CacheRelationCandidateNode = CacheRelationCandidateNodeFor<CacheRelationCandidateRelation>;
-type CacheRelationReference = Extract<
-  GitHubItemCacheDocument["relationMutations"][number],
-  { status: "available" }
->["currentReferences"][number];
-
-function isAllowlistedRepository(
-  allowlist: PublicRepositoryAllowlist,
-  owner: string,
-  name: string,
-): boolean {
-  return allowlist.repositories.some(
-    (repository) =>
-      repository.owner.toLowerCase() === owner.toLowerCase() &&
-      repository.name.toLowerCase() === name.toLowerCase(),
-  );
-}
-
-function isAllowlistedOrganizationOwner(
-  allowlist: PublicRepositoryAllowlist,
-  owner: string,
-): boolean {
-  return allowlist.repositories.some(
-    (repository) => repository.owner.toLowerCase() === owner.toLowerCase(),
-  );
-}
-
-function relationCandidateNodes(
-  relation: CacheRelationCandidateRelation,
-): readonly CacheRelationCandidateNode[] {
-  switch (relation.type) {
-    case "blocks":
-      return [relation.blocker, relation.blocked];
-    case "parent_of":
-      return [relation.parent, relation.subtask];
-    case "implements":
-      return [relation.implementation, relation.target];
-    case "unclassified":
-      return [relation.referencing, relation.referenced];
-  }
-}
-
-function relationMutationReferences(
-  result: Extract<GitHubItemCacheDocument["relationMutations"][number], { status: "available" }>,
-): readonly CacheRelationReference[] {
-  const references: CacheRelationReference[] = [
-    ...result.currentReferences,
-    ...result.replayedReferences,
-    ...result.mutations.map((mutation) => mutation.relation),
-    ...result.unmatchedRemovals.map((mutation) => mutation.relation),
-  ];
-  if (result.temporalKnowledge.status === "exact") {
-    references.push(...result.temporalKnowledge.intervals.map((interval) => interval.relation));
-  }
-  return references;
-}
-
-function assertRelationPublicBoundary(
-  document: GitHubItemCacheDocument,
-  allowlist: PublicRepositoryAllowlist,
-): void {
-  let violationCount = 0;
-  for (const candidate of document.relationCandidates) {
-    for (const node of relationCandidateNodes(candidate.relation)) {
-      if (
-        node.scope === "organization" &&
-        !isAllowlistedRepository(allowlist, node.repositoryOwner, node.repositoryName)
-      ) {
-        violationCount += 1;
-      }
-    }
-  }
-  for (const result of document.relationMutations) {
-    if (result.status !== "available") {
-      continue;
-    }
-    for (const reference of relationMutationReferences(result)) {
-      if (
-        isAllowlistedOrganizationOwner(allowlist, reference.repositoryOwner) &&
-        !isAllowlistedRepository(allowlist, reference.repositoryOwner, reference.repositoryName)
-      ) {
-        violationCount += 1;
-      }
-    }
-  }
-  if (violationCount > 0) {
-    throw new GitHubPublicBoundaryViolationError(violationCount);
+    throw new GitHubPublicBoundaryViolationError({
+      scope: "generic",
+      violationKind: "cache_repository_identity_mismatch",
+      violationCount: 1,
+    });
   }
 }
 
@@ -411,7 +315,11 @@ function parseItemCache(
     document.repository.owner,
     document.repository.name,
   );
-  assertRelationPublicBoundary(document, allowlist);
+  assertCacheItemRelationPublicBoundary(allowlist, {
+    sourceItemNodeId: document.nodeId,
+    relationCandidates: document.relationCandidates,
+    relationMutations: document.relationMutations,
+  });
   assertDocumentSafety(document, knownSecrets);
   return document;
 }
