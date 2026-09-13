@@ -1491,6 +1491,38 @@ function normalizeTrackedItemAiAnalysis(aiAnalysis: TrackedItemAiAnalysis): Trac
   });
 }
 
+/** personal reminderの根拠参照がsnapshot内で閉じていることを検証する。 */
+export function assertPersonalReminderEvidenceClosure(snapshot: StateSnapshot): void {
+  const evidenceSourceIds = new Set([
+    ...snapshot.items.flatMap((item) => item.evidence.map((evidence) => evidence.sourceId)),
+    ...snapshot.relations.flatMap((relation) =>
+      relation.evidence.map((evidence) => evidence.sourceId),
+    ),
+  ]);
+  for (const item of snapshot.items) {
+    for (const cause of item.personalReminderCauses) {
+      for (const sourceId of cause.evidenceSourceIds) {
+        if (!evidenceSourceIds.has(sourceId)) {
+          throw new StateSnapshotSemanticError(
+            `personal reminder causeのevidence sourceをsnapshotのevidenceへ解決できません。item: ${item.nodeId} cause: ${cause.causeId} source: ${sourceId}`,
+          );
+        }
+      }
+      const assessment = currentPersonalReminderAssessment(cause);
+      if (assessment.status !== "available") {
+        continue;
+      }
+      for (const sourceId of assessment.result.references.sourceIds) {
+        if (!evidenceSourceIds.has(sourceId)) {
+          throw new StateSnapshotSemanticError(
+            `personal reminder assessmentのevidence sourceをsnapshotのevidenceへ解決できません。item: ${item.nodeId} cause: ${cause.causeId} source: ${sourceId}`,
+          );
+        }
+      }
+    }
+  }
+}
+
 function parseStateSnapshotVersion11Value(value: unknown): StateSnapshotVersion11 {
   snapshotSchemaVersion11Schema.parse(value);
   if (!validateSnapshotVersion11Schema(value)) {

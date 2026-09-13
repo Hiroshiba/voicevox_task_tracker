@@ -207,6 +207,7 @@ export type PersonalReminderRuntimeContext = Readonly<{
   state: PersonalReminderRuntimeState;
   items: readonly PersonalReminderRuntimeContextItem[];
   graph: PersonalReminderRuntimeGraph;
+  snapshotEvidenceSourceIds: ReadonlySet<SourceId>;
 }>;
 
 type PersonalReminderRuntimeContextItem = Omit<
@@ -1289,6 +1290,7 @@ export function createPersonalReminderRuntimeContext(
     state: PersonalReminderRuntimeState;
     collection: PersonalReminderRuntimeCollection;
     graph: PersonalReminderRuntimeGraph;
+    snapshotEvidenceSourceIds: ReadonlySet<SourceId>;
   }>,
 ): PersonalReminderRuntimeContext {
   const items: PersonalReminderRuntimeContextItem[] = [];
@@ -1389,6 +1391,7 @@ export function createPersonalReminderRuntimeContext(
     state: input.state,
     items: Object.freeze(items),
     graph: input.graph,
+    snapshotEvidenceSourceIds: input.snapshotEvidenceSourceIds,
   });
 }
 
@@ -2854,6 +2857,44 @@ function createGlobalItemContextIndex(
   return itemContextsByNodeId;
 }
 
+function createCauseSourceEvidence(
+  item: PersonalReminderRuntimeContextItem,
+  globalSourcesById: ReadonlyMap<SourceId, PersonalReminderRuntimeSource>,
+  semanticInput: PersonalReminderCauseSemanticInput,
+  snapshotEvidenceSourceIds: ReadonlySet<SourceId>,
+  seed: PersonalReminderCauseSeed,
+): readonly Evidence[] {
+  const evidenceByIdentity = new Map<string, Evidence>();
+  const existingSourceIds = new Set<SourceId>([...snapshotEvidenceSourceIds]);
+  for (const evidence of item.seedEvidence) {
+    evidenceByIdentity.set(evidenceIdentity(evidence), evidence);
+    existingSourceIds.add(evidence.sourceId);
+  }
+  const semanticSourceIds = new Set(semanticInput.sources.map((source) => source.sourceId));
+  for (const sourceId of [...new Set(seed.evidenceSourceIds)].sort(compareStrings)) {
+    if (existingSourceIds.has(sourceId)) {
+      continue;
+    }
+    if (!globalSourcesById.has(sourceId) && !semanticSourceIds.has(sourceId)) {
+      throw new TypeError(
+        `個人催促causeのsource evidenceに必要なruntime sourceがありません。item: ${item.item.nodeId} cause: ${seed.causeId} source: ${sourceId}`,
+      );
+    }
+    const evidence: Evidence = Object.freeze({
+      sourceId,
+      supports: "waiting_on",
+      summary: `担当する対応: ${seed.action.summary}`,
+    });
+    evidenceByIdentity.set(evidenceIdentity(evidence), evidence);
+    existingSourceIds.add(sourceId);
+  }
+  return Object.freeze(
+    [...evidenceByIdentity.values()].sort((left, right) =>
+      compareStrings(evidenceIdentity(left), evidenceIdentity(right)),
+    ),
+  );
+}
+
 /** fresh itemのcause候補をgraphと前回causeへreconcileする。 */
 export function planPersonalReminderCauses(
   context: PersonalReminderRuntimeContext,
@@ -3030,6 +3071,13 @@ export function planPersonalReminderCauses(
         additionalItemContexts,
         additionalMissing,
       );
+      const sourceEvidence = createCauseSourceEvidence(
+        item,
+        globalSourcesById,
+        semanticInput,
+        context.snapshotEvidenceSourceIds,
+        seed,
+      );
       if (pendingRelations.length !== 0) {
         pendingCauseIds.add(seed.causeId);
       }
@@ -3044,7 +3092,7 @@ export function planPersonalReminderCauses(
             currentSeed.origin,
           ),
           previousCause: currentSeed.previousCause,
-          sourceEvidence: Object.freeze([...item.seedEvidence]),
+          sourceEvidence,
           activity: activityProjection.activity,
           repositoryFullName: item.repositoryFullName,
           currentLabels: item.currentLabels,
@@ -3242,21 +3290,6 @@ function createCauseEvidence(
 ): readonly Evidence[] {
   const evidenceByIdentity = new Map<string, Evidence>();
   for (const evidence of entry.sourceEvidence) {
-    evidenceByIdentity.set(evidenceIdentity(evidence), evidence);
-  }
-  const existingSourceIds = new Set(entry.sourceEvidence.map((evidence) => evidence.sourceId));
-  for (const sourceId of entry.seed.evidenceSourceIds) {
-    if (
-      existingSourceIds.has(sourceId) ||
-      !entry.semanticInput.sources.some((source) => source.sourceId === sourceId)
-    ) {
-      continue;
-    }
-    const evidence = Object.freeze({
-      sourceId,
-      supports: "waiting_on",
-      summary: `担当する対応: ${entry.seed.action.summary}`,
-    });
     evidenceByIdentity.set(evidenceIdentity(evidence), evidence);
   }
   if (assessment.status === "available") {
