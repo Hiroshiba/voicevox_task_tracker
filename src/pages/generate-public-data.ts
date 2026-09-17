@@ -5,6 +5,9 @@ import {
   determineDeadlineLevel,
   isTerminalStatus,
   PERSONAL_REMINDER_CAUSE_PLANNING_VERSION,
+  PERSONAL_REMINDER_ASSESSMENT_RULES_VERSION,
+  type AiAnalysisDependency,
+  type CurrentPersonalReminderAssessment,
   type Evidence,
   type LabelRule,
   type NaturalLanguageDeadlineAssessmentState,
@@ -25,12 +28,13 @@ import {
   createStateSnapshot,
   parseStateHistoryRecords,
   serializeStateHistoryRecords,
+  snapshotEffectiveGraphStateByNodeId,
   type SnapshotRepository,
   type StateHistoryRecord,
   type StateHistoryResponsibility,
   type StateSnapshot,
 } from "../persistence/index.js";
-import { assertNonNullable } from "../util/index.js";
+import { assertNonNullable, UnreachableError } from "../util/index.js";
 import {
   createEvidenceSourceUrlMap,
   resolveEvidenceSourceUrlForItem,
@@ -43,6 +47,8 @@ import {
   comparePublicNotificationHistoryEntries,
   createPublicSummaryDto,
   PUBLIC_DTO_SCHEMA_VERSION,
+  type PublicCurrentResponseSubjectChangesDto,
+  type PublicCurrentResponseSubjectDto,
   type PublicDetailsDto,
   type PublicGraphEdgeDto,
   type PublicGraphNodeDto,
@@ -91,6 +97,13 @@ type PublicCurrentImplementation = PublicItemSummaryDto["currentImplementations"
 type PublicPersonalReminderCausePlanningStatus =
   PublicItemSummaryDto["personalReminderCausePlanningStatus"];
 type PublicPersonalReminderResponse = PublicPersonalReminderResponseDto;
+type PublicPersonalReminderUnverifiedValue =
+  PublicPersonalReminderResponse["unverifiedValues"][number];
+type PublicPersonalReminderResponses = Readonly<{
+  responses: readonly PublicPersonalReminderResponse[];
+  currentResponsesUnverified: boolean;
+  currentResponseSubjectChanges: PublicCurrentResponseSubjectChangesDto;
+}>;
 type EvidenceSourceItem = Readonly<Pick<TrackedItem, "nodeId" | "url">>;
 type EvidenceBySourceId = ReadonlyMap<SourceId, readonly Evidence[]>;
 
@@ -104,6 +117,211 @@ type PublicGraph = Readonly<{
   edges: readonly PublicGraphEdgeDto[];
 }>;
 
+type PublicAiAnalysis = PublicItemSummaryDto["aiAnalysis"];
+type PublicUnverifiedValue = PublicAiAnalysis["unverifiedValues"][number];
+type PublicAiCurrentness = PublicGraphEdgeDto["aiCurrentness"];
+type PublicBlockerUnverifiedReason =
+  PublicDetailsDto["items"][number]["blockerUnverifiedReasons"][number]["reasons"][number];
+type PublicBlockerUnverifiedReasonEntry = Readonly<{
+  nodeId: string;
+  reasons: readonly PublicBlockerUnverifiedReason[];
+}>;
+
+const PUBLIC_BLOCKER_UNVERIFIED_REASON_ORDER: readonly PublicBlockerUnverifiedReason[] = [
+  "relation_support",
+  "retained_waiting",
+  "waiting_value",
+];
+
+function isUnverifiedAiDependency(dependency: AiAnalysisDependency): boolean {
+  switch (dependency.status) {
+    case "not_dependent":
+    case "current":
+      return false;
+    case "unverified":
+    case "unknown":
+      return true;
+    default:
+      throw new UnreachableError(dependency);
+  }
+}
+
+function hasUnverifiedAiDependency(dependencies: readonly AiAnalysisDependency[]): boolean {
+  let unverified = false;
+  for (const dependency of dependencies) {
+    if (isUnverifiedAiDependency(dependency)) {
+      unverified = true;
+    }
+  }
+  return unverified;
+}
+
+function createPersonalReminderUnverifiedValues(
+  cause: PersonalReminderCause,
+  assessment: CurrentPersonalReminderAssessment,
+  hasCurrentAssessmentEvidence: boolean,
+): PublicPersonalReminderResponse["unverifiedValues"] {
+  const values: PublicPersonalReminderUnverifiedValue[] = [];
+  const statusDependencies = [cause.aiDependencies.presence];
+  if (assessment.status === "available") {
+    statusDependencies.push(cause.currentInput.aiDependency);
+  }
+  if (hasUnverifiedAiDependency(statusDependencies)) {
+    values.push("status");
+  }
+  if (isUnverifiedAiDependency(cause.aiDependencies.responsible)) {
+    values.push("responsible");
+  }
+  if (isUnverifiedAiDependency(cause.aiDependencies.action)) {
+    values.push("action");
+  }
+  if (
+    isUnverifiedAiDependency(cause.aiDependencies.evidence) ||
+    (hasCurrentAssessmentEvidence && isUnverifiedAiDependency(cause.currentInput.aiDependency))
+  ) {
+    values.push("evidence");
+  }
+  if (
+    assessment.status === "available" &&
+    assessment.result.verdict === "waiting" &&
+    isUnverifiedAiDependency(cause.currentInput.aiDependency)
+  ) {
+    values.push("waitingFor");
+  }
+  return values;
+}
+
+function personalReminderMembershipAssessmentUnverified(
+  cause: PersonalReminderCause,
+  assessment: CurrentPersonalReminderAssessment,
+): boolean {
+  switch (cause.responseMembershipAssessmentRequirement.status) {
+    case "not_required":
+      return false;
+    case "required":
+      return assessment.status !== "available";
+    case "unknown":
+      return true;
+    default:
+      throw new UnreachableError(cause.responseMembershipAssessmentRequirement);
+  }
+}
+
+function personalReminderResponseMembershipUnverified(
+  cause: PersonalReminderCause,
+  assessment: CurrentPersonalReminderAssessment,
+): boolean {
+  return (
+    personalReminderMembershipAssessmentUnverified(cause, assessment) ||
+    hasUnverifiedAiDependency([
+      cause.aiDependencies.presence,
+      cause.aiDependencies.responseMembership,
+      cause.aiDependencies.responsible,
+    ])
+  );
+}
+
+function createPersonalReminderSubjectMembershipUnverified(
+  cause: PersonalReminderCause,
+  assessment: CurrentPersonalReminderAssessment,
+): boolean {
+  return (
+    cause.responsible.some((responsible) => responsible.kind !== "role") &&
+    personalReminderResponseMembershipUnverified(cause, assessment)
+  );
+}
+
+function createPublicAiAnalysis(
+  item: StateSnapshot["items"][number],
+  effectiveBlockerNodeIds: readonly string[],
+  retainedOnlyBlockerNodeIds: readonly string[],
+): PublicAiAnalysis {
+  const applications = [
+    item.aiAnalysis.applications.status,
+    item.aiAnalysis.applications.waitingOn,
+    item.aiAnalysis.applications.nextAction,
+    item.aiAnalysis.applications.relations,
+    item.aiAnalysis.applications.progress,
+    item.aiAnalysis.applications.importance,
+    item.aiAnalysis.applications.deadline,
+    item.aiAnalysis.applications.notification,
+    item.aiAnalysis.applications.selfCommitment,
+  ];
+  const notRequiredApplicationCount = applications.filter(
+    (application) => application.status === "not_required",
+  ).length;
+  let omission: PublicAiAnalysis["omission"];
+  if (notRequiredApplicationCount === 0) {
+    omission = "none";
+  } else if (notRequiredApplicationCount === applications.length) {
+    omission = "all";
+  } else {
+    omission = "partial";
+  }
+
+  const unverifiedValues: PublicUnverifiedValue[] = [];
+  const dependencies = item.aiDependencies;
+  const primaryWaitingOn = item.waitingOn[0];
+  const primaryBlockerRetainedOnly =
+    item.status === "waiting_for_unblock" &&
+    primaryWaitingOn?.kind === "item" &&
+    primaryWaitingOn.role === "dependency" &&
+    retainedOnlyBlockerNodeIds.includes(primaryWaitingOn.candidateId);
+  if (
+    hasUnverifiedAiDependency([dependencies.status]) ||
+    (retainedOnlyBlockerNodeIds.length > 0 && effectiveBlockerNodeIds.length === 0)
+  ) {
+    unverifiedValues.push("status");
+  }
+  if (
+    hasUnverifiedAiDependency([dependencies.waitingOn]) ||
+    retainedOnlyBlockerNodeIds.length > 0
+  ) {
+    unverifiedValues.push("waitingOn");
+  }
+  if (hasUnverifiedAiDependency([dependencies.primaryWaitingOn]) || primaryBlockerRetainedOnly) {
+    unverifiedValues.push("primaryWaitingOn");
+  }
+  if (hasUnverifiedAiDependency([dependencies.nextAction]) || primaryBlockerRetainedOnly) {
+    unverifiedValues.push("nextAction");
+  }
+  if (hasUnverifiedAiDependency([dependencies.confidence])) {
+    unverifiedValues.push("confidence");
+  }
+  if (hasUnverifiedAiDependency([dependencies.evidence])) {
+    unverifiedValues.push("evidence");
+  }
+  if (hasUnverifiedAiDependency([dependencies.uncertainties])) {
+    unverifiedValues.push("uncertainties");
+  }
+  if (hasUnverifiedAiDependency([dependencies.deadline, dependencies.deadlineLevel])) {
+    unverifiedValues.push("deadline");
+  }
+  if (hasUnverifiedAiDependency([dependencies.stallSince])) {
+    unverifiedValues.push("staleness");
+  }
+  if (hasUnverifiedAiDependency([dependencies.downstreamImpact])) {
+    unverifiedValues.push("downstreamImpact");
+  }
+  if (hasUnverifiedAiDependency([dependencies.importance])) {
+    unverifiedValues.push("importance");
+  }
+  if (hasUnverifiedAiDependency([dependencies.attention])) {
+    unverifiedValues.push("attention");
+  }
+  if (hasUnverifiedAiDependency([dependencies.blockers])) {
+    unverifiedValues.push("blockers");
+  }
+  if (hasUnverifiedAiDependency([dependencies.relationSet])) {
+    unverifiedValues.push("relations");
+  }
+  return {
+    runStatus: item.aiAnalysis.status,
+    omission,
+    unverifiedValues,
+  };
+}
+
 function compareStrings(left: string, right: string): number {
   if (left < right) {
     return -1;
@@ -112,6 +330,114 @@ function compareStrings(left: string, right: string): number {
     return 1;
   }
   return 0;
+}
+
+interface PublicCurrentResponseSubjectChangesAccumulator {
+  addableSubjects: Map<string, PublicCurrentResponseSubjectDto>;
+  removableSubjects: Map<string, PublicCurrentResponseSubjectDto>;
+  unbounded: boolean;
+}
+
+function publicCurrentResponseSubjectKey(subject: PublicCurrentResponseSubjectDto): string {
+  return `${subject.kind}\u0000${subject.candidateId.toLowerCase()}`;
+}
+
+function addPublicCurrentResponseSubject(
+  accumulator: PublicCurrentResponseSubjectChangesAccumulator,
+  change: "addable" | "removable",
+  subject: PublicCurrentResponseSubjectDto,
+): void {
+  const subjects =
+    change === "addable" ? accumulator.addableSubjects : accumulator.removableSubjects;
+  const key = publicCurrentResponseSubjectKey(subject);
+  const existing = subjects.get(key);
+  if (existing == null || compareStrings(subject.candidateId, existing.candidateId) < 0) {
+    subjects.set(key, subject);
+  }
+}
+
+function createPublicCurrentResponseSubjectChangesAccumulator(
+  changes: PublicCurrentResponseSubjectChangesDto,
+): PublicCurrentResponseSubjectChangesAccumulator {
+  const accumulator: PublicCurrentResponseSubjectChangesAccumulator = {
+    addableSubjects: new Map(),
+    removableSubjects: new Map(),
+    unbounded: changes.scope === "unbounded",
+  };
+  if (changes.scope === "unbounded") {
+    return accumulator;
+  }
+  for (const subject of changes.addableSubjects) {
+    addPublicCurrentResponseSubject(accumulator, "addable", subject);
+  }
+  for (const subject of changes.removableSubjects) {
+    addPublicCurrentResponseSubject(accumulator, "removable", subject);
+  }
+  return accumulator;
+}
+
+function addResponsibleCurrentResponseSubjectChanges(
+  accumulator: PublicCurrentResponseSubjectChangesAccumulator,
+  change: "addable" | "removable",
+  responsibleValues: PersonalReminderCause["responsible"],
+): void {
+  for (const responsible of responsibleValues) {
+    const responsibleKind = responsible.kind;
+    switch (responsibleKind) {
+      case "user":
+      case "team":
+        addPublicCurrentResponseSubject(accumulator, change, {
+          kind: responsibleKind,
+          candidateId: responsible.candidateId,
+        });
+        break;
+      case "role":
+        break;
+      default:
+        throw new UnreachableError(responsibleKind);
+    }
+  }
+}
+
+function finalizePublicCurrentResponseSubjectChanges(
+  accumulator: PublicCurrentResponseSubjectChangesAccumulator,
+  responses: readonly PublicPersonalReminderResponse[],
+): PublicCurrentResponseSubjectChangesDto {
+  if (accumulator.unbounded) {
+    return {
+      scope: "unbounded",
+    };
+  }
+  const verifiedSubjectKeys = new Set<string>();
+  for (const response of responses) {
+    if (response.subjectMembershipUnverified) {
+      continue;
+    }
+    for (const responsible of response.responsible) {
+      if (responsible.kind === "role") {
+        continue;
+      }
+      verifiedSubjectKeys.add(
+        publicCurrentResponseSubjectKey({
+          kind: responsible.kind,
+          candidateId: responsible.candidateId,
+        }),
+      );
+    }
+  }
+  for (const key of verifiedSubjectKeys) {
+    accumulator.removableSubjects.delete(key);
+  }
+  const compareSubjects = (
+    left: PublicCurrentResponseSubjectDto,
+    right: PublicCurrentResponseSubjectDto,
+  ): number =>
+    compareStrings(publicCurrentResponseSubjectKey(left), publicCurrentResponseSubjectKey(right));
+  return {
+    scope: "bounded",
+    addableSubjects: [...accumulator.addableSubjects.values()].sort(compareSubjects),
+    removableSubjects: [...accumulator.removableSubjects.values()].sort(compareSubjects),
+  };
 }
 
 function compareHistoryRecords(left: StateHistoryRecord, right: StateHistoryRecord): number {
@@ -409,6 +735,7 @@ function createAnalysisEdge(relation: Relation, index: number): ReconciledGraphE
     })),
     firstSeenAt: relation.firstSeenAt,
     lastConfirmedAt: relation.lastConfirmedAt,
+    aiDependency: relation.aiDependency,
   };
   if (relation.active) {
     return {
@@ -440,14 +767,32 @@ function createPublicEvidenceEntry(
   };
 }
 
+type PublicEvidence = PublicDetailsDto["items"][number]["evidence"][number];
+
+function publicEvidenceIdentity(evidence: PublicEvidence): string {
+  return JSON.stringify([evidence.summary, evidence.sourceUrl]);
+}
+
+function uniquePublicEvidence(evidence: readonly PublicEvidence[]): PublicEvidence[] {
+  const evidenceByIdentity = new Map<string, PublicEvidence>();
+  for (const entry of evidence) {
+    evidenceByIdentity.set(publicEvidenceIdentity(entry), entry);
+  }
+  return [...evidenceByIdentity.entries()]
+    .sort(([left], [right]) => compareStrings(left, right))
+    .map(([, entry]) => entry);
+}
+
 function createPublicEvidence(
   evidence: readonly Evidence[],
   currentSourceItem: EvidenceSourceItem,
   allSourceItems: readonly EvidenceSourceItem[],
   sourceOwnersById: EvidenceSourceUrlMap,
 ): PublicDetailsDto["items"][number]["evidence"] {
-  return evidence.map((entry) =>
-    createPublicEvidenceEntry(entry, currentSourceItem, allSourceItems, sourceOwnersById),
+  return uniquePublicEvidence(
+    evidence.map((entry) =>
+      createPublicEvidenceEntry(entry, currentSourceItem, allSourceItems, sourceOwnersById),
+    ),
   );
 }
 
@@ -486,37 +831,44 @@ function createPersonalReminderResponseEvidence(
   evidenceBySourceId: EvidenceBySourceId,
 ): PublicPersonalReminderResponse["evidence"] {
   const uniqueSourceIds = [...new Set(sourceIds)].sort(compareStrings);
-  return uniqueSourceIds.map((sourceId) => {
-    if (assessmentReferences?.sourceIds.includes(sourceId) === true) {
-      const sourceEvidence = evidenceBySourceId.get(sourceId);
-      if (sourceEvidence == null || sourceEvidence.length === 0) {
+  return uniquePublicEvidence(
+    uniqueSourceIds.map((sourceId) => {
+      if (assessmentReferences?.sourceIds.includes(sourceId) === true) {
+        const sourceEvidence = evidenceBySourceId.get(sourceId);
+        if (sourceEvidence == null || sourceEvidence.length === 0) {
+          throw new PublicDtoSemanticError(
+            `personal reminder causeのassessment evidence sourceを公開根拠へ解決できません。対象: ${sourceId}`,
+          );
+        }
+        return createPublicEvidenceEntry(
+          {
+            sourceId,
+            supports: "notification",
+            summary: assessmentReferences.reasonSummary,
+          },
+          currentSourceItem,
+          allSourceItems,
+          sourceOwnersById,
+        );
+      }
+      const currentEvidence = currentSourceItem.evidence.find(
+        (evidence) => evidence.sourceId === sourceId,
+      );
+      const fallbackEvidence = evidenceBySourceId.get(sourceId)?.[0];
+      const evidence = currentEvidence ?? fallbackEvidence;
+      if (evidence == null) {
         throw new PublicDtoSemanticError(
-          `personal reminder causeのassessment evidence sourceを公開根拠へ解決できません。対象: ${sourceId}`,
+          `personal reminder causeのevidence sourceを公開根拠へ解決できません。対象: ${sourceId}`,
         );
       }
       return createPublicEvidenceEntry(
-        {
-          sourceId,
-          supports: "notification",
-          summary: assessmentReferences.reasonSummary,
-        },
+        evidence,
         currentSourceItem,
         allSourceItems,
         sourceOwnersById,
       );
-    }
-    const currentEvidence = currentSourceItem.evidence.find(
-      (evidence) => evidence.sourceId === sourceId,
-    );
-    const fallbackEvidence = evidenceBySourceId.get(sourceId)?.[0];
-    const evidence = currentEvidence ?? fallbackEvidence;
-    if (evidence == null) {
-      throw new PublicDtoSemanticError(
-        `personal reminder causeのevidence sourceを公開根拠へ解決できません。対象: ${sourceId}`,
-      );
-    }
-    return createPublicEvidenceEntry(evidence, currentSourceItem, allSourceItems, sourceOwnersById);
-  });
+    }),
+  );
 }
 
 function personalReminderUnknownReason(
@@ -526,9 +878,17 @@ function personalReminderUnknownReason(
     case "not_evaluated":
       return "not_evaluated";
     case "failed":
-      return "failed";
+      return cause.currentInput.rulesVersion === PERSONAL_REMINDER_ASSESSMENT_RULES_VERSION &&
+        cause.latestAttempt.inputFingerprint === cause.currentInput.fingerprint &&
+        cause.latestAttempt.rulesVersion === cause.currentInput.rulesVersion
+        ? "failed"
+        : "input_mismatch";
     case "deferred":
-      return "deferred";
+      return cause.currentInput.rulesVersion === PERSONAL_REMINDER_ASSESSMENT_RULES_VERSION &&
+        cause.latestAttempt.inputFingerprint === cause.currentInput.fingerprint &&
+        cause.latestAttempt.rulesVersion === cause.currentInput.rulesVersion
+        ? "deferred"
+        : "input_mismatch";
     case "completed":
       return "input_mismatch";
   }
@@ -537,7 +897,10 @@ function personalReminderUnknownReason(
 function createPersonalReminderResponseBase(
   cause: PersonalReminderCause,
   evidence: PublicPersonalReminderResponse["evidence"],
-): Omit<PublicPersonalReminderResponse, "status" | "waitingFor" | "reason"> {
+): Omit<
+  PublicPersonalReminderResponse,
+  "status" | "waitingFor" | "reason" | "unverifiedValues" | "subjectMembershipUnverified"
+> {
   return {
     causeId: cause.causeId,
     responsible: cause.responsible.map((responsible) => ({
@@ -555,12 +918,12 @@ function createPersonalReminderResponseBase(
 
 function createPersonalReminderResponse(
   cause: PersonalReminderCause,
+  assessment: CurrentPersonalReminderAssessment,
   currentSourceItem: StateSnapshot["items"][number],
   allSourceItems: readonly EvidenceSourceItem[],
   sourceOwnersById: EvidenceSourceUrlMap,
   evidenceBySourceId: EvidenceBySourceId,
 ): PublicPersonalReminderResponse | undefined {
-  const assessment = currentPersonalReminderAssessment(cause);
   if (assessment.status === "available") {
     if (assessment.result.verdict === "duplicate" || assessment.result.verdict === "not_required") {
       return undefined;
@@ -580,12 +943,25 @@ function createPersonalReminderResponse(
     sourceOwnersById,
     evidenceBySourceId,
   );
+  const hasCurrentAssessmentEvidence =
+    assessmentReferences != null && assessmentReferences.sourceIds.length > 0;
+  const unverifiedValues = createPersonalReminderUnverifiedValues(
+    cause,
+    assessment,
+    hasCurrentAssessmentEvidence,
+  );
+  const subjectMembershipUnverified = createPersonalReminderSubjectMembershipUnverified(
+    cause,
+    assessment,
+  );
   const base = createPersonalReminderResponseBase(cause, evidence);
   if (assessment.status !== "available") {
     return {
       ...base,
       status: "unknown",
       reason: personalReminderUnknownReason(cause),
+      unverifiedValues,
+      subjectMembershipUnverified,
     };
   }
   switch (assessment.result.verdict) {
@@ -593,6 +969,8 @@ function createPersonalReminderResponse(
       return {
         ...base,
         status: "actionable",
+        unverifiedValues,
+        subjectMembershipUnverified,
       };
     case "waiting":
       return {
@@ -602,12 +980,16 @@ function createPersonalReminderResponse(
           itemNodeId: assessment.result.waitingFor.itemNodeId,
           action: assessment.result.waitingFor.action,
         },
+        unverifiedValues,
+        subjectMembershipUnverified,
       };
     case "unknown":
       return {
         ...base,
         status: "unknown",
         reason: assessment.result.reason,
+        unverifiedValues,
+        subjectMembershipUnverified,
       };
     case "duplicate":
     case "not_required":
@@ -631,14 +1013,40 @@ function createPersonalReminderResponses(
   allSourceItems: readonly EvidenceSourceItem[],
   sourceOwnersById: EvidenceSourceUrlMap,
   evidenceBySourceId: EvidenceBySourceId,
-): readonly PublicPersonalReminderResponse[] {
-  if (personalReminderCausePlanningStatus(item) !== "completed") {
-    return Object.freeze([]);
+): PublicPersonalReminderResponses {
+  const planning = item.personalReminderCausePlanning;
+  if (
+    planning.status !== "completed" ||
+    planning.planningVersion !== PERSONAL_REMINDER_CAUSE_PLANNING_VERSION
+  ) {
+    const currentResponseSubjectChanges: PublicCurrentResponseSubjectChangesDto = {
+      scope: "bounded",
+      addableSubjects: [],
+      removableSubjects: [],
+    };
+    return Object.freeze({
+      responses: Object.freeze([]),
+      currentResponsesUnverified: false,
+      currentResponseSubjectChanges,
+    });
   }
   const responses: PublicPersonalReminderResponse[] = [];
+  let currentResponsesUnverified = isUnverifiedAiDependency(planning.causeSetAiDependency);
+  const subjectChanges = createPublicCurrentResponseSubjectChangesAccumulator(
+    planning.causeSetSubjectChanges,
+  );
   for (const cause of item.personalReminderCauses) {
+    const assessment = currentPersonalReminderAssessment(cause);
+    const responseMembershipUnverified = personalReminderResponseMembershipUnverified(
+      cause,
+      assessment,
+    );
+    if (responseMembershipUnverified) {
+      currentResponsesUnverified = true;
+    }
     const response = createPersonalReminderResponse(
       cause,
+      assessment,
       item,
       allSourceItems,
       sourceOwnersById,
@@ -646,11 +1054,51 @@ function createPersonalReminderResponses(
     );
     if (response != null) {
       responses.push(response);
+      if (response.subjectMembershipUnverified) {
+        addResponsibleCurrentResponseSubjectChanges(subjectChanges, "removable", cause.responsible);
+      }
+      if (isUnverifiedAiDependency(cause.aiDependencies.responsible)) {
+        subjectChanges.unbounded = true;
+      }
+      continue;
+    }
+    if (responseMembershipUnverified) {
+      addResponsibleCurrentResponseSubjectChanges(subjectChanges, "addable", cause.responsible);
+      if (isUnverifiedAiDependency(cause.aiDependencies.responsible)) {
+        subjectChanges.unbounded = true;
+      }
     }
   }
-  return Object.freeze(
-    responses.sort((left, right) => compareStrings(left.causeId, right.causeId)),
+  const sortedResponses = responses.sort((left, right) =>
+    compareStrings(left.causeId, right.causeId),
   );
+  return Object.freeze({
+    responses: Object.freeze(sortedResponses),
+    currentResponsesUnverified,
+    currentResponseSubjectChanges: finalizePublicCurrentResponseSubjectChanges(
+      subjectChanges,
+      sortedResponses,
+    ),
+  });
+}
+
+function createPublicAiCurrentness(relation: Relation): PublicAiCurrentness {
+  if (relation.provenance === "native" && relation.aiDependency.status !== "not_dependent") {
+    throw new PublicDtoSemanticError(
+      `native relation ${relation.id}のAI依存はnot_dependentでなければなりません`,
+    );
+  }
+  switch (relation.aiDependency.status) {
+    case "not_dependent":
+      return "not_dependent";
+    case "current":
+      return "current";
+    case "unverified":
+    case "unknown":
+      return "unverified";
+    default:
+      throw new UnreachableError(relation.aiDependency);
+  }
 }
 
 function createPublicGraphEdge(relation: Relation): PublicGraphEdgeDto {
@@ -661,6 +1109,7 @@ function createPublicGraphEdge(relation: Relation): PublicGraphEdgeDto {
     type: relation.type,
     provenance: relation.provenance,
     confidence: relation.confidence,
+    aiCurrentness: createPublicAiCurrentness(relation),
   };
   if (relation.active) {
     return {
@@ -674,7 +1123,10 @@ function createPublicGraphEdge(relation: Relation): PublicGraphEdgeDto {
   };
 }
 
-function createPublicGraph(snapshot: StateSnapshot): PublicGraph {
+function createPublicGraph(
+  snapshot: StateSnapshot,
+  effectiveStateByNodeId: ReadonlyMap<string, TrackedItem["state"]>,
+): PublicGraph {
   const graphNodeIds = new Set([
     ...snapshot.items.map((item) => item.nodeId),
     ...snapshot.externalReferences.map((reference) => reference.nodeId),
@@ -689,15 +1141,17 @@ function createPublicGraph(snapshot: StateSnapshot): PublicGraph {
 
   const analysisEdges = snapshot.relations.map(createAnalysisEdge);
   const analysisNodes: GraphAnalysisNode[] = [
-    ...snapshot.items.map((item) =>
-      Object.freeze({
+    ...snapshot.items.map((item) => {
+      const state = effectiveStateByNodeId.get(item.nodeId);
+      assertNonNullable(state, `graph node ${item.nodeId}のeffective stateがありません`);
+      return Object.freeze({
         kind: item.type,
         nodeId: item.nodeId,
         repositoryId: item.repositoryId,
-        state: item.state,
+        state,
         directNotification: "eligible",
-      } satisfies GraphAnalysisNode),
-    ),
+      } satisfies GraphAnalysisNode);
+    }),
     ...snapshot.externalReferences.map((reference) =>
       Object.freeze({
         kind: reference.kind,
@@ -717,14 +1171,18 @@ function createPublicGraph(snapshot: StateSnapshot): PublicGraph {
       availability: "unavailable",
     },
   });
-  const nodes: PublicGraphNodeDto[] = snapshot.items.map((item) => ({
-    nodeId: item.nodeId,
-    kind: item.type,
-    repositoryId: item.repositoryId,
-    state: item.state,
-    status: item.status,
-    severity: item.severity,
-  }));
+  const nodes: PublicGraphNodeDto[] = snapshot.items.map((item) => {
+    const state = effectiveStateByNodeId.get(item.nodeId);
+    assertNonNullable(state, `公開graph node ${item.nodeId}のeffective stateがありません`);
+    return {
+      nodeId: item.nodeId,
+      kind: item.type,
+      repositoryId: item.repositoryId,
+      state,
+      status: item.status,
+      severity: item.severity,
+    };
+  });
   nodes.push(
     ...snapshot.externalReferences.map((reference) => ({
       nodeId: reference.nodeId,
@@ -745,42 +1203,171 @@ function createPublicGraph(snapshot: StateSnapshot): PublicGraph {
   });
 }
 
-function createBlockersByNodeId(snapshot: StateSnapshot): ReadonlyMap<string, readonly string[]> {
+type PublicBlockerLists = Readonly<{
+  blockerNodeIdsByNodeId: ReadonlyMap<string, readonly string[]>;
+  blockerUnverifiedReasonsByNodeId: ReadonlyMap<
+    string,
+    readonly PublicBlockerUnverifiedReasonEntry[]
+  >;
+  effectiveBlockerNodeIdsByNodeId: ReadonlyMap<string, readonly string[]>;
+  retainedOnlyBlockerNodeIdsByNodeId: ReadonlyMap<string, readonly string[]>;
+}>;
+
+function createBlockerLists(
+  snapshot: StateSnapshot,
+  effectiveStateByNodeId: ReadonlyMap<string, TrackedItem["state"]>,
+): PublicBlockerLists {
   const itemByNodeId = new Map<string, TrackedItem>(
     snapshot.items.map((item) => [item.nodeId, item]),
   );
-  const graphStateByNodeId = new Map<string, TrackedItem["state"]>();
-  for (const item of snapshot.items) {
-    graphStateByNodeId.set(item.nodeId, item.state);
-  }
-  for (const reference of snapshot.externalReferences) {
-    graphStateByNodeId.set(reference.nodeId, reference.state);
-  }
-  const blockersByNodeId = new Map<string, Set<string>>();
+  const supportsByMeaning = new Map<string, Relation[]>();
   for (const relation of snapshot.relations) {
     if (!relation.active || relation.type !== "blocks") {
       continue;
     }
-    const blockerState = graphStateByNodeId.get(relation.fromNodeId);
+    const blockerState = effectiveStateByNodeId.get(relation.fromNodeId);
+    const blockedState = effectiveStateByNodeId.get(relation.toNodeId);
     const blocked = itemByNodeId.get(relation.toNodeId);
     assertNonNullable(blockerState, `blocks relation ${relation.id}のblockerがありません`);
+    assertNonNullable(blockedState, `blocks relation ${relation.id}のblocked状態がありません`);
     assertNonNullable(blocked, `blocks relation ${relation.id}のblocked itemがありません`);
-    if (blockerState !== "open" || blocked.state !== "open") {
+    if (blockerState !== "open" || blockedState !== "open") {
       continue;
     }
-    const blockers = blockersByNodeId.get(blocked.nodeId);
-    if (blockers == null) {
-      blockersByNodeId.set(blocked.nodeId, new Set([relation.fromNodeId]));
+    const meaningKey = JSON.stringify([relation.type, relation.fromNodeId, relation.toNodeId]);
+    const existing = supportsByMeaning.get(meaningKey);
+    if (existing == null) {
+      supportsByMeaning.set(meaningKey, [relation]);
     } else {
-      blockers.add(relation.fromNodeId);
+      existing.push(relation);
     }
   }
-  return new Map(
-    [...blockersByNodeId.entries()].map(([nodeId, blockerNodeIds]) => [
+  const blockersByNodeId = new Map<string, Set<string>>();
+  const effectiveBlockersByNodeId = new Map<string, Set<string>>();
+  const blockerUnverifiedReasonsByNodeId = new Map<
+    string,
+    Map<string, Set<PublicBlockerUnverifiedReason>>
+  >();
+  const retainedOnlyBlockersByNodeId = new Map<string, Set<string>>();
+  const addBlockerUnverifiedReason = (
+    blockedNodeId: string,
+    blockerNodeId: string,
+    reason: PublicBlockerUnverifiedReason,
+  ): void => {
+    let reasonsByBlockerNodeId = blockerUnverifiedReasonsByNodeId.get(blockedNodeId);
+    if (reasonsByBlockerNodeId == null) {
+      reasonsByBlockerNodeId = new Map();
+      blockerUnverifiedReasonsByNodeId.set(blockedNodeId, reasonsByBlockerNodeId);
+    }
+    let reasons = reasonsByBlockerNodeId.get(blockerNodeId);
+    if (reasons == null) {
+      reasons = new Set();
+      reasonsByBlockerNodeId.set(blockerNodeId, reasons);
+    }
+    reasons.add(reason);
+  };
+  const staleRepositoryIds = new Set(
+    snapshot.repositories
+      .filter((repository) => repository.freshness === "stale")
+      .map((repository) => repository.id),
+  );
+  for (const supports of supportsByMeaning.values()) {
+    const firstSupport = supports[0];
+    assertNonNullable(firstSupport, "blocks supportがありません");
+    const blockers = blockersByNodeId.get(firstSupport.toNodeId);
+    if (blockers == null) {
+      blockersByNodeId.set(firstSupport.toNodeId, new Set([firstSupport.fromNodeId]));
+    } else {
+      blockers.add(firstSupport.fromNodeId);
+    }
+    const effectiveBlockers = effectiveBlockersByNodeId.get(firstSupport.toNodeId);
+    if (effectiveBlockers == null) {
+      effectiveBlockersByNodeId.set(firstSupport.toNodeId, new Set([firstSupport.fromNodeId]));
+    } else {
+      effectiveBlockers.add(firstSupport.fromNodeId);
+    }
+    let allUnverified = true;
+    for (const support of supports) {
+      if (createPublicAiCurrentness(support) !== "unverified") {
+        allUnverified = false;
+      }
+    }
+    if (!allUnverified) {
+      continue;
+    }
+    addBlockerUnverifiedReason(firstSupport.toNodeId, firstSupport.fromNodeId, "relation_support");
+  }
+  for (const item of snapshot.items) {
+    if (item.status !== "waiting_for_unblock") {
+      continue;
+    }
+    const effectiveBlockers = effectiveBlockersByNodeId.get(item.nodeId) ?? new Set<string>();
+    const waitingOnUnverified = isUnverifiedAiDependency(item.aiDependencies.waitingOn);
+    for (const waitingOn of item.waitingOn) {
+      if (waitingOn.kind !== "item" || waitingOn.role !== "dependency") {
+        continue;
+      }
+      if (!effectiveStateByNodeId.has(waitingOn.candidateId)) {
+        throw new PublicDtoSemanticError(
+          `waitingOn項目 ${waitingOn.candidateId}を公開項目またはexternal referenceへ解決できません`,
+        );
+      }
+      const blockers = blockersByNodeId.get(item.nodeId);
+      if (blockers == null) {
+        blockersByNodeId.set(item.nodeId, new Set([waitingOn.candidateId]));
+      } else {
+        blockers.add(waitingOn.candidateId);
+      }
+      if (waitingOnUnverified) {
+        addBlockerUnverifiedReason(item.nodeId, waitingOn.candidateId, "waiting_value");
+      }
+      if (effectiveBlockers.has(waitingOn.candidateId)) {
+        continue;
+      }
+      if (!staleRepositoryIds.has(item.repositoryId)) {
+        continue;
+      }
+      const retainedOnlyBlockers = retainedOnlyBlockersByNodeId.get(item.nodeId);
+      if (retainedOnlyBlockers == null) {
+        retainedOnlyBlockersByNodeId.set(item.nodeId, new Set([waitingOn.candidateId]));
+      } else {
+        retainedOnlyBlockers.add(waitingOn.candidateId);
+      }
+      addBlockerUnverifiedReason(item.nodeId, waitingOn.candidateId, "retained_waiting");
+    }
+  }
+  const sortBlockerMap = (
+    blockersByNode: ReadonlyMap<string, Set<string>>,
+  ): ReadonlyMap<string, readonly string[]> =>
+    new Map(
+      [...blockersByNode.entries()].map(([nodeId, blockerNodeIds]) => [
+        nodeId,
+        Object.freeze([...blockerNodeIds].sort(compareStrings)),
+      ]),
+    );
+  const sortedBlockerUnverifiedReasonsByNodeId = new Map(
+    [...blockerUnverifiedReasonsByNodeId.entries()].map(([nodeId, reasonsByBlockerNodeId]) => [
       nodeId,
-      Object.freeze([...blockerNodeIds].sort(compareStrings)),
+      Object.freeze(
+        [...reasonsByBlockerNodeId.entries()]
+          .sort(([leftNodeId], [rightNodeId]) => compareStrings(leftNodeId, rightNodeId))
+          .map(([blockerNodeId, reasons]) =>
+            Object.freeze({
+              nodeId: blockerNodeId,
+              reasons: Object.freeze(
+                PUBLIC_BLOCKER_UNVERIFIED_REASON_ORDER.filter((reason) => reasons.has(reason)),
+              ),
+            }),
+          ),
+      ),
     ]),
   );
+  return Object.freeze({
+    blockerNodeIdsByNodeId: sortBlockerMap(blockersByNodeId),
+    blockerUnverifiedReasonsByNodeId: sortedBlockerUnverifiedReasonsByNodeId,
+    effectiveBlockerNodeIdsByNodeId: sortBlockerMap(effectiveBlockersByNodeId),
+    retainedOnlyBlockerNodeIdsByNodeId: sortBlockerMap(retainedOnlyBlockersByNodeId),
+  });
 }
 
 function createDisplayReferencesByNodeId(snapshot: StateSnapshot): ReadonlyMap<string, string> {
@@ -916,9 +1503,13 @@ function createItemSummary(
   repository: SnapshotRepository,
   currentImplementations: readonly PublicCurrentImplementation[],
   currentResponses: readonly PublicPersonalReminderResponse[],
+  currentResponsesUnverified: boolean,
+  currentResponseSubjectChanges: PublicCurrentResponseSubjectChangesDto,
   personalReminderCausePlanningStatus: PublicPersonalReminderCausePlanningStatus,
   displayReferencesByNodeId: ReadonlyMap<string, string>,
   blockerNodeIds: readonly string[],
+  effectiveBlockerNodeIds: readonly string[],
+  retainedOnlyBlockerNodeIds: readonly string[],
   downstreamImpact: AnalyzeGraphResult["downstreamImpacts"][number],
   priorityWeight: number,
   evaluatedAt: UtcIsoDateTime,
@@ -964,9 +1555,7 @@ function createItemSummary(
       level: item.attention.level,
     },
     priorityWeight,
-    aiAnalysis: {
-      status: item.aiAnalysis.status,
-    },
+    aiAnalysis: createPublicAiAnalysis(item, effectiveBlockerNodeIds, retainedOnlyBlockerNodeIds),
     confidence: item.confidence,
     githubUpdatedAt: item.githubUpdatedAt,
     stallSince: item.stallSince,
@@ -978,8 +1567,65 @@ function createItemSummary(
     },
     currentImplementations: [...currentImplementations],
     currentResponses: [...currentResponses],
+    currentResponsesUnverified,
+    currentResponseSubjectChanges:
+      currentResponseSubjectChanges.scope === "unbounded"
+        ? { scope: "unbounded" }
+        : {
+            scope: "bounded",
+            addableSubjects: currentResponseSubjectChanges.addableSubjects.map((subject) => ({
+              ...subject,
+            })),
+            removableSubjects: currentResponseSubjectChanges.removableSubjects.map((subject) => ({
+              ...subject,
+            })),
+          },
     personalReminderCausePlanningStatus,
   };
+}
+
+function assertPublicSummaryDetailsCurrentResponses(
+  summary: PublicSummaryDto,
+  details: PublicDetailsDto,
+): void {
+  const detailsSummariesByNodeId = new Map<string, PublicItemSummaryDto>(
+    details.items.map((item) => [item.summary.nodeId, item.summary]),
+  );
+  for (const item of summary.items) {
+    const detailsSummary = detailsSummariesByNodeId.get(item.nodeId);
+    assertNonNullable(detailsSummary, `item ${item.nodeId}のdetails summaryがありません`);
+    if (item.currentResponsesUnverified !== detailsSummary.currentResponsesUnverified) {
+      throw new PublicDtoSemanticError(
+        `item ${item.nodeId}のsummaryとdetailsでcurrentResponsesUnverifiedが一致しません`,
+      );
+    }
+    if (
+      JSON.stringify(item.currentResponseSubjectChanges) !==
+      JSON.stringify(detailsSummary.currentResponseSubjectChanges)
+    ) {
+      throw new PublicDtoSemanticError(
+        `item ${item.nodeId}のsummaryとdetailsでcurrentResponseSubjectChangesが一致しません`,
+      );
+    }
+    if (item.currentResponses.length !== detailsSummary.currentResponses.length) {
+      throw new PublicDtoSemanticError(
+        `item ${item.nodeId}のsummaryとdetailsでcurrentResponsesの件数が一致しません`,
+      );
+    }
+    for (const response of item.currentResponses) {
+      const detailsResponse: PublicPersonalReminderResponse | undefined =
+        detailsSummary.currentResponses.find((candidate) => candidate.causeId === response.causeId);
+      assertNonNullable(detailsResponse, `item ${item.nodeId}のdetails responseがありません`);
+      if (
+        response.causeId !== detailsResponse.causeId ||
+        response.subjectMembershipUnverified !== detailsResponse.subjectMembershipUnverified
+      ) {
+        throw new PublicDtoSemanticError(
+          `item ${item.nodeId}のsummaryとdetailsでcurrent responseが一致しません`,
+        );
+      }
+    }
+  }
 }
 
 function createPublicDeadlineSummary(
@@ -1193,7 +1839,8 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
     ),
   );
   const evidenceBySourceId = createEvidenceBySourceId(snapshot);
-  const graph = createPublicGraph(snapshot);
+  const effectiveStateByNodeId = snapshotEffectiveGraphStateByNodeId(snapshot);
+  const graph = createPublicGraph(snapshot, effectiveStateByNodeId);
   const repositoriesById = new Map(
     snapshot.repositories.map((repository) => [repository.id, repository]),
   );
@@ -1203,7 +1850,7 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
     repositoriesById,
     displayReferencesByNodeId,
   );
-  const blockersByNodeId = createBlockersByNodeId(snapshot);
+  const blockerLists = createBlockerLists(snapshot, effectiveStateByNodeId);
   const resolveLabelEffects = createLabelEffectsResolver(input.options.labelRules);
   const impactByNodeId = new Map(
     graph.analysis.downstreamImpacts.map((impact) => [impact.nodeId, impact]),
@@ -1213,14 +1860,24 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
     const impact = impactByNodeId.get(item.nodeId);
     assertNonNullable(repository, `item ${item.nodeId}のrepositoryがありません`);
     assertNonNullable(impact, `item ${item.nodeId}のdownstream impactがありません`);
+    const personalReminderResponses = createPersonalReminderResponses(
+      item,
+      snapshot.items,
+      sourceOwnersById,
+      evidenceBySourceId,
+    );
     return createItemSummary(
       item,
       repository,
       currentImplementationsByIssueNodeId.get(item.nodeId) ?? Object.freeze([]),
-      createPersonalReminderResponses(item, snapshot.items, sourceOwnersById, evidenceBySourceId),
+      personalReminderResponses.responses,
+      personalReminderResponses.currentResponsesUnverified,
+      personalReminderResponses.currentResponseSubjectChanges,
       personalReminderCausePlanningStatus(item),
       displayReferencesByNodeId,
-      blockersByNodeId.get(item.nodeId) ?? Object.freeze([]),
+      blockerLists.blockerNodeIdsByNodeId.get(item.nodeId) ?? Object.freeze([]),
+      blockerLists.effectiveBlockerNodeIdsByNodeId.get(item.nodeId) ?? Object.freeze([]),
+      blockerLists.retainedOnlyBlockerNodeIdsByNodeId.get(item.nodeId) ?? Object.freeze([]),
       impact,
       resolveLabelEffects(`${repository.owner}/${repository.name}`, item.labels).priorityWeight,
       snapshot.generatedAt,
@@ -1260,6 +1917,12 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
       assertNonNullable(summaryItem, `item ${item.nodeId}のsummaryがありません`);
       return {
         summary: summaryItem,
+        blockerUnverifiedReasons: (
+          blockerLists.blockerUnverifiedReasonsByNodeId.get(item.nodeId) ?? Object.freeze([])
+        ).map((entry) => ({
+          nodeId: entry.nodeId,
+          reasons: [...entry.reasons],
+        })),
         deadline: createPublicDeadlineDetails(
           item.deadlineAssessment,
           snapshot.generatedAt,
@@ -1288,6 +1951,7 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
       frontierNodeIds: [...graph.analysis.actionableFrontier],
     },
   });
+  assertPublicSummaryDetailsCurrentResponses(summary, details);
   const summarySize = assertPublicSummarySize(summary, input.options.maxSummaryGzipBytes);
 
   return Object.freeze({

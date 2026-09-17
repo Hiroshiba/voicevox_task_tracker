@@ -5,6 +5,13 @@ import {
   aiAnalysisElementMetadataSchema,
 } from "./ai-analysis-elements.js";
 import {
+  aiAnalysisDependencySchema,
+  aiAnalysisDependencyMayContainProducerlessUnrecordedInput,
+  combineAiAnalysisDependencies,
+  migratedAiAnalysisDependency,
+  type AiAnalysisDependency,
+} from "./ai-analysis-dependencies.js";
+import {
   type AiCacheEntryId,
   type GitHubNodeId,
   type GraphNodeId,
@@ -28,11 +35,15 @@ export const PERSONAL_REMINDER_AI_REVISION = 1;
 /** 個人催促意味判定の規則version。 */
 export const PERSONAL_REMINDER_ASSESSMENT_RULES_VERSION = "personal-reminder-assessment-v1";
 
+/** 個人催促意味判定の移行評価を識別するversion。 */
+export const PERSONAL_REMINDER_ASSESSMENT_MIGRATION_RULES_VERSION =
+  "personal-reminder-assessment-migration";
+
 /** 個人催促AI promptのversion。 */
 export const PERSONAL_REMINDER_AI_PROMPT_VERSION = "1";
 
 /** 個人催促原因の列挙計画version。 */
-export const PERSONAL_REMINDER_CAUSE_PLANNING_VERSION = "personal-reminder-planning-v1";
+export const PERSONAL_REMINDER_CAUSE_PLANNING_VERSION = "personal-reminder-planning-v2";
 
 const opaqueIdSchema = z
   .string()
@@ -71,6 +82,54 @@ const aiCacheEntryIdSchema = z.custom<AiCacheEntryId>(
   "AI cache entry IDはSHA-256形式にしてください",
 );
 
+/** 個人催促原因の表示フィールドごとのAI依存。 */
+export const personalReminderCauseAiDependenciesSchema = z.strictObject({
+  presence: aiAnalysisDependencySchema,
+  responseMembership: aiAnalysisDependencySchema,
+  responsible: aiAnalysisDependencySchema,
+  action: aiAnalysisDependencySchema,
+  evidence: aiAnalysisDependencySchema,
+});
+
+/** 個人催促原因の表示フィールドごとのAI依存。 */
+export type PersonalReminderCauseAiDependencies = Readonly<{
+  presence: AiAnalysisDependency;
+  responseMembership: AiAnalysisDependency;
+  responsible: AiAnalysisDependency;
+  action: AiAnalysisDependency;
+  evidence: AiAnalysisDependency;
+}>;
+
+/** 個人催促原因の表示フィールドごとのAI依存を移行unknownで作る。 */
+export function migratedPersonalReminderCauseAiDependencies(): PersonalReminderCauseAiDependencies {
+  const dependency = migratedAiAnalysisDependency();
+  return Object.freeze({
+    presence: dependency,
+    responseMembership: dependency,
+    responsible: dependency,
+    action: dependency,
+    evidence: dependency,
+  });
+}
+
+/** 個人催促原因の表示フィールドごとのAI依存を合成する。 */
+export function combinePersonalReminderCauseAiDependencies(
+  values: readonly PersonalReminderCauseAiDependencies[],
+): PersonalReminderCauseAiDependencies {
+  if (values.length === 0) {
+    throw new TypeError("個人催促原因のAI依存の合成対象がありません");
+  }
+  return Object.freeze({
+    presence: combineAiAnalysisDependencies(values.map((value) => value.presence)),
+    responseMembership: combineAiAnalysisDependencies(
+      values.map((value) => value.responseMembership),
+    ),
+    responsible: combineAiAnalysisDependencies(values.map((value) => value.responsible)),
+    action: combineAiAnalysisDependencies(values.map((value) => value.action)),
+    evidence: combineAiAnalysisDependencies(values.map((value) => value.evidence)),
+  });
+}
+
 /** 個人催促原因を識別するID。 */
 export const personalReminderCauseIdSchema = opaqueIdSchema.brand<"PersonalReminderCauseId">();
 
@@ -86,6 +145,71 @@ export type PersonalReminderResponsibilityId = z.output<
   typeof personalReminderResponsibilityIdSchema
 >;
 
+/** 個人催促一覧の集計主体。 */
+export const personalReminderSubjectSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("user"),
+    candidateId: opaqueIdSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("team"),
+    candidateId: opaqueIdSchema,
+  }),
+]);
+
+/** 個人催促一覧の集計主体。 */
+export type PersonalReminderSubject = z.output<typeof personalReminderSubjectSchema>;
+
+/** 個人催促原因集合の未検証な変化範囲。 */
+export const personalReminderCauseSetSubjectChangesSchema = z.discriminatedUnion("scope", [
+  z.strictObject({
+    scope: z.literal("bounded"),
+    addableSubjects: z.array(personalReminderSubjectSchema),
+    removableSubjects: z.array(personalReminderSubjectSchema),
+  }),
+  z.strictObject({
+    scope: z.literal("unbounded"),
+  }),
+]);
+
+/** 個人催促原因集合の未検証な変化範囲。 */
+export type PersonalReminderCauseSetSubjectChanges = z.output<
+  typeof personalReminderCauseSetSubjectChangesSchema
+>;
+
+/** 個人催促原因集合の主体変化が範囲不明になるか判定する。 */
+export function personalReminderCauseSetSubjectChangesAreUnbounded(
+  input: Readonly<{
+    causeSetDependency: AiAnalysisDependency;
+    presenceDependency: AiAnalysisDependency;
+    negativeCandidateSubjectCount: number;
+    inputUnbounded: boolean;
+  }>,
+): boolean {
+  if (
+    !Number.isInteger(input.negativeCandidateSubjectCount) ||
+    input.negativeCandidateSubjectCount < 0
+  ) {
+    throw new TypeError("個人催促原因集合のnegative候補主体数は0以上の整数にしてください");
+  }
+  if (
+    input.inputUnbounded ||
+    aiAnalysisDependencyMayContainProducerlessUnrecordedInput(input.causeSetDependency)
+  ) {
+    return true;
+  }
+  if (
+    input.causeSetDependency.status !== "unknown" ||
+    input.causeSetDependency.reason !== "proof_unknown"
+  ) {
+    return false;
+  }
+  const presenceIsProofUnknown =
+    input.presenceDependency.status === "unknown" &&
+    input.presenceDependency.reason === "proof_unknown";
+  return input.negativeCandidateSubjectCount > (presenceIsProofUnknown ? 0 : 1);
+}
+
 /** 個人催促原因の列挙計画状態。 */
 export const personalReminderCausePlanningSchema = z.discriminatedUnion("status", [
   z.strictObject({
@@ -96,6 +220,8 @@ export const personalReminderCausePlanningSchema = z.discriminatedUnion("status"
     status: z.literal("completed"),
     planningVersion: opaqueIdSchema,
     observedAt: utcIsoDateTimeSchema,
+    causeSetAiDependency: aiAnalysisDependencySchema,
+    causeSetSubjectChanges: personalReminderCauseSetSubjectChangesSchema,
   }),
   z.strictObject({
     status: z.literal("excluded"),
@@ -161,6 +287,28 @@ export type PersonalReminderResponsibility = Readonly<{
         ];
       }>;
 }>;
+
+/** 個人催促の人物所属を意味判定で確定する必要性。 */
+export const personalReminderResponseMembershipAssessmentRequirementSchema = z.discriminatedUnion(
+  "status",
+  [
+    z.strictObject({
+      status: z.literal("not_required"),
+    }),
+    z.strictObject({
+      status: z.literal("required"),
+    }),
+    z.strictObject({
+      status: z.literal("unknown"),
+      reason: z.literal("migration"),
+    }),
+  ],
+);
+
+/** 個人催促の人物所属を意味判定で確定する必要性。 */
+export type PersonalReminderResponseMembershipAssessmentRequirement = z.output<
+  typeof personalReminderResponseMembershipAssessmentRequirementSchema
+>;
 
 /** 個人催促の対象となる行動種別。 */
 export const personalReminderActionKindSchema = z.enum([
@@ -284,6 +432,7 @@ export const personalReminderCauseSeedSchema = z.strictObject({
   evidenceSourceIds: z.array(sourceIdSchema).nonempty().max(30),
   obligationSince: personalReminderTimeBasisSchema,
   lastConfirmedActionability: personalReminderLastConfirmedActionabilitySchema,
+  aiDependencies: personalReminderCauseAiDependenciesSchema,
 });
 
 /** 個人催促原因の初期識別情報。 */
@@ -447,12 +596,14 @@ export const personalReminderEvaluationAttemptSchema = z.discriminatedUnion("sta
   z.strictObject({
     status: z.literal("failed"),
     inputFingerprint: aiAnalysisElementFingerprintSchema,
+    rulesVersion: opaqueIdSchema,
     failedAt: utcIsoDateTimeSchema,
     reason: z.string().min(1).max(300),
   }),
   z.strictObject({
     status: z.literal("deferred"),
     inputFingerprint: aiAnalysisElementFingerprintSchema,
+    rulesVersion: opaqueIdSchema,
     deferredAt: utcIsoDateTimeSchema,
     reason: personalReminderDeferredReasonSchema,
   }),
@@ -516,10 +667,13 @@ const personalReminderReasonToAction: Readonly<
 /** 個人催促原因の保存schema。 */
 export const personalReminderCauseSchema = personalReminderCauseSeedSchema
   .extend({
+    responseMembershipAssessmentRequirement:
+      personalReminderResponseMembershipAssessmentRequirementSchema,
     currentInput: z.strictObject({
       fingerprint: aiAnalysisElementFingerprintSchema,
       rulesVersion: opaqueIdSchema,
       completeness: personalReminderInputCompletenessSchema,
+      aiDependency: aiAnalysisDependencySchema,
     }),
     latestAttempt: personalReminderEvaluationAttemptSchema,
     adoptedAssessment: personalReminderAdoptedAssessmentSchema,
@@ -531,6 +685,16 @@ export const personalReminderCauseSchema = personalReminderCauseSeedSchema
         code: "custom",
         path: ["action", "kind"],
         message: "個人催促原因の理由コードと行動種別が一致しません",
+      });
+    }
+    if (
+      cause.responsibility.authority === "semantic" &&
+      cause.responseMembershipAssessmentRequirement.status !== "required"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["responseMembershipAssessmentRequirement", "status"],
+        message: "semanticな個人催促原因の人物所属には意味判定が必要です",
       });
     }
   });
@@ -548,9 +712,14 @@ export type CurrentPersonalReminderAssessment =
       status: "not_available";
     }>;
 
+type PersonalReminderAssessmentInput = Readonly<{
+  currentInput: Pick<PersonalReminderCause["currentInput"], "fingerprint" | "rulesVersion">;
+  adoptedAssessment: PersonalReminderCause["adoptedAssessment"];
+}>;
+
 /** 現在の入力と規則へ適合する採用済み意味判定を取得する。 */
 export function currentPersonalReminderAssessment(
-  cause: PersonalReminderCause,
+  cause: PersonalReminderAssessmentInput,
 ): CurrentPersonalReminderAssessment {
   if (cause.adoptedAssessment.status === "not_available") {
     return Object.freeze({ status: "not_available" });

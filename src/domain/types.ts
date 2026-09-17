@@ -13,11 +13,16 @@ import { type SourceId } from "./source-id.js";
 import type { StalenessWaitClass } from "./staleness.js";
 import type {
   AiAnalysisElement,
+  AiAnalysisElementApplications,
   AiAnalysisElementMetadata,
   AiAnalysisElementMigrationResult,
   AiAnalysisElementReuseProof,
 } from "./ai-analysis-elements.js";
 import type { AiAnalysisElementSourceGeneration } from "./ai-analysis-source-generations.js";
+import type {
+  TrackedItemAiDependencies,
+  AiAnalysisDependency,
+} from "./ai-analysis-dependencies.js";
 
 export type {
   AiAnalysisElement,
@@ -595,6 +600,27 @@ export type PrimaryWaitingOn =
       selectionReason: string;
     }>;
 
+/** 状態機械がblocker判定で実際に評価した候補と選択結果。 */
+export type BlockerDecisionTrace =
+  | Readonly<{
+      status: "not_evaluated";
+    }>
+  | Readonly<{
+      status: "evaluated";
+      result: "fallthrough";
+      uncertainBlockerIds: readonly string[];
+    }>
+  | Readonly<{
+      status: "evaluated";
+      result: "blocked";
+      confirmedBlockers: readonly Readonly<{
+        candidateId: string;
+        authority: "authoritative" | "inferred";
+      }>[];
+      uncertainBlockerIds: readonly string[];
+      primaryBlockerId: string;
+    }>;
+
 /** リポジトリの公開範囲。 */
 export type RepositoryVisibility = "public" | "private" | "internal";
 
@@ -686,6 +712,9 @@ export type TrackedItemAiAnalysisMigrationAdoptedElements = Readonly<{
 type TrackedItemAiAnalysisStatus =
   "used" | "failed" | "deferred" | "not_required" | "disabled" | "not_recorded";
 
+/** 追跡項目へ保存するAI判定要素ごとの最終適用元。 */
+export type TrackedItemAiAnalysisApplications = AiAnalysisElementApplications;
+
 /** 追跡項目へ保存する要素別AI分析結果と生成元。 */
 export type TrackedItemAiAnalysis =
   | Readonly<{
@@ -693,12 +722,14 @@ export type TrackedItemAiAnalysis =
       status: TrackedItemAiAnalysisStatus;
       elements: TrackedItemAiAnalysisCurrentElements;
       adoptedElements: TrackedItemAiAnalysisCurrentAdoptedElements;
+      applications: TrackedItemAiAnalysisApplications;
     }>
   | Readonly<{
       origin: "migration";
       status: TrackedItemAiAnalysisStatus;
       elements: TrackedItemAiAnalysisCurrentElements;
       adoptedElements: TrackedItemAiAnalysisMigrationAdoptedElements;
+      applications: TrackedItemAiAnalysisApplications;
     }>;
 
 export type TrackedItemInputEvent = Readonly<{
@@ -771,6 +802,7 @@ type TrackedItemFields = Readonly<{
   reviewState: ReviewState;
   checkState: CheckState;
   aiAnalysis: TrackedItemAiAnalysis;
+  aiDependencies: TrackedItemAiDependencies;
   personalReminderCauses: readonly PersonalReminderCause[];
   personalReminderCausePlanning: PersonalReminderCausePlanning;
   inputEvents: readonly TrackedItemInputEvent[];
@@ -803,6 +835,7 @@ type RelationFields = Readonly<{
   contradictions: readonly RelationContradictionSummary[];
   firstSeenAt: UtcIsoDateTime;
   lastConfirmedAt: UtcIsoDateTime;
+  aiDependency: AiAnalysisDependency;
 }>;
 
 /** blocksではfromNodeIdをblocker、toNodeIdをblocked itemとするRelation。 */

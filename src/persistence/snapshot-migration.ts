@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import {
   aiAnalysisElementEvidenceSchema,
+  aiAnalysisElementApplicationsSchema,
   aiAnalysisImportanceSchema,
   aiAnalysisNextActionSchema,
   aiAnalysisNotificationSchema,
@@ -16,19 +17,34 @@ import {
   createAiAnalysisMigrationElementResultSchema,
   createAiAnalysisElementValueSchema,
   type AiAnalysisElement,
+  type AiAnalysisElementApplications,
   type AiAnalysisElementMigrationResult,
   type AiAnalysisRelation,
 } from "../domain/ai-analysis-elements.js";
 import {
   createGitHubNodeId,
+  AI_ANALYSIS_ELEMENTS,
+  aiAnalysisDependencyForApplication,
+  migratedAiAnalysisDependency,
+  migratedPersonalReminderCauseAiDependencies,
+  migratedTrackedItemAiDependencies,
+  PERSONAL_REMINDER_ASSESSMENT_MIGRATION_RULES_VERSION,
+  personalReminderCausePlanningSchema,
+  personalReminderCauseSchema,
+  personalReminderEvaluationAttemptSchema,
   type TrackedItemAiAnalysisCurrentElements,
   type TrackedItemAiAnalysisMigrationAdoptedElements,
-  PERSONAL_REMINDER_CAUSE_PLANNING_VERSION,
+  type TrackedItemAiDependencies,
   isTerminalStatus,
   parseSourceId,
   type GitHubNodeId,
+  type AiAnalysisDependency,
+  type RelationProvenance,
+  type RelationType,
   type TrackedItemInputEvent,
+  type TrackedItemState,
   type PersonalReminderCausePlanning,
+  type PersonalReminderCause,
 } from "../domain/index.js";
 import {
   AI_ANALYSIS_ELEMENTS_V6,
@@ -49,17 +65,250 @@ import {
   parseStateSnapshotVersion13,
   parseStateSnapshotVersion14,
   parseStateSnapshotVersion15,
+  parseStateSnapshotVersion16,
+  parseStateSnapshotVersion17,
+  type LegacyPersonalReminderCause,
+  type LegacyPersonalReminderCausePlanning,
   type SnapshotAnalysisPlanFingerprint,
   type StateSnapshot,
 } from "./snapshot.js";
 
 const legacyStatusSchema = aiAnalysisStatusSchema;
 
+function migratedRelationAiDependency(provenance: RelationProvenance): AiAnalysisDependency {
+  if (provenance === "native") {
+    return Object.freeze({ status: "not_dependent" });
+  }
+  return migratedAiAnalysisDependency();
+}
+
+const legacyMigrationItemEndpointSchema = z.object({
+  nodeId: z.string().min(1),
+  type: z.enum(["issue", "pull_request"]),
+});
+
+const legacyMigrationExternalEndpointSchema = z.object({
+  nodeId: z.string().min(1),
+  url: z.string().min(1),
+});
+
+type LegacyMigratableRelation = Readonly<{
+  fromNodeId: string;
+  toNodeId: string;
+  type: RelationType;
+  provenance: RelationProvenance;
+}>;
+
+type LegacyMigrationGraphNode = Readonly<{
+  nodeId: string;
+  state: TrackedItemState;
+}>;
+
+type ActiveLegacyMigratableRelation = LegacyMigratableRelation &
+  Readonly<{
+    active: boolean;
+  }>;
+
+type MigratedLegacyRelation<RelationValue extends LegacyMigratableRelation> = Readonly<
+  Omit<RelationValue, "type" | "aiDependency"> & {
+    type: RelationType;
+    aiDependency: AiAnalysisDependency;
+  }
+>;
+
+function legacyExternalReferenceItemType(urlValue: string): "issue" | "pull_request" | undefined {
+  let url: URL;
+  try {
+    url = new URL(urlValue);
+  } catch {
+    return undefined;
+  }
+  const pathSegments = url.pathname.split("/").filter((segment) => segment.length !== 0);
+  const itemPathKind = pathSegments[2];
+  const itemNumber = pathSegments[3];
+  if (
+    url.hostname !== "github.com" ||
+    pathSegments.length < 4 ||
+    itemNumber == null ||
+    !/^[1-9][0-9]*$/u.test(itemNumber)
+  ) {
+    return undefined;
+  }
+  if (itemPathKind === "issues") {
+    return "issue";
+  }
+  if (itemPathKind === "pull") {
+    return "pull_request";
+  }
+  return undefined;
+}
+
+function legacyMigrationNodeTypes(
+  items: readonly unknown[],
+  externalReferences: readonly unknown[],
+): ReadonlyMap<string, "issue" | "pull_request"> {
+  const nodeTypes = new Map<string, "issue" | "pull_request">();
+  for (const value of items) {
+    const item = legacyMigrationItemEndpointSchema.safeParse(value);
+    if (item.success) {
+      nodeTypes.set(item.data.nodeId, item.data.type);
+    }
+  }
+  for (const value of externalReferences) {
+    const reference = legacyMigrationExternalEndpointSchema.safeParse(value);
+    if (!reference.success || nodeTypes.has(reference.data.nodeId)) {
+      continue;
+    }
+    const itemType = legacyExternalReferenceItemType(reference.data.url);
+    if (itemType != null) {
+      nodeTypes.set(reference.data.nodeId, itemType);
+    }
+  }
+  return nodeTypes;
+}
+
+function migrateLegacyRelations<RelationValue extends LegacyMigratableRelation>(
+  relations: readonly RelationValue[],
+  items: readonly unknown[],
+  externalReferences: readonly unknown[],
+): readonly MigratedLegacyRelation<RelationValue>[] {
+  const nodeTypes = legacyMigrationNodeTypes(items, externalReferences);
+  return Object.freeze(
+    relations.map((relation) => {
+      const type =
+        relation.type === "implements" &&
+        (nodeTypes.get(relation.fromNodeId) !== "pull_request" ||
+          nodeTypes.get(relation.toNodeId) !== "issue")
+          ? "related_to"
+          : relation.type;
+      return Object.freeze({
+        ...relation,
+        type,
+        aiDependency: migratedRelationAiDependency(relation.provenance),
+      });
+    }),
+  );
+}
+
+function createLegacyGraphMigration<RelationValue extends ActiveLegacyMigratableRelation>(
+  relations: readonly RelationValue[],
+  items: readonly LegacyMigrationGraphNode[],
+  externalReferences: readonly LegacyMigrationGraphNode[],
+): Readonly<{
+  relations: readonly MigratedLegacyRelation<RelationValue>[];
+  nativeOpenBlockerTargetNodeIds: ReadonlySet<string>;
+}> {
+  const migratedRelations = migrateLegacyRelations(relations, items, externalReferences);
+  const openNodeIds = new Set(
+    [...items, ...externalReferences]
+      .filter((node) => node.state === "open")
+      .map((node) => node.nodeId),
+  );
+  const nativeOpenBlockerTargetNodeIds = new Set<string>();
+  for (const relation of migratedRelations) {
+    if (
+      relation.active &&
+      relation.type === "blocks" &&
+      relation.provenance === "native" &&
+      openNodeIds.has(relation.fromNodeId) &&
+      openNodeIds.has(relation.toNodeId)
+    ) {
+      nativeOpenBlockerTargetNodeIds.add(relation.toNodeId);
+    }
+  }
+  return Object.freeze({
+    relations: migratedRelations,
+    nativeOpenBlockerTargetNodeIds,
+  });
+}
+
 function legacyReuseProof() {
   return aiAnalysisElementReuseProofSchema.parse({
     status: "unknown",
     reuseSchemaVersion: AI_ANALYSIS_REUSE_PROOF_SCHEMA_VERSION,
     reason: "legacy_migration",
+  });
+}
+
+function migratedAiAnalysisElementApplications(): AiAnalysisElementApplications {
+  return Object.freeze(
+    aiAnalysisElementApplicationsSchema.parse(
+      Object.fromEntries(
+        AI_ANALYSIS_ELEMENTS.map((element) => [
+          element,
+          Object.freeze({
+            status: "unknown",
+            reason: "migration",
+          }),
+        ]),
+      ),
+    ),
+  );
+}
+
+function migratedTrackedItemAiDependenciesForApplications(
+  nodeId: GitHubNodeId,
+  applications: AiAnalysisElementApplications,
+): TrackedItemAiDependencies {
+  const migrated = migratedTrackedItemAiDependencies();
+  const status = aiAnalysisDependencyForApplication(nodeId, "status", applications.status);
+  const waitingOn = aiAnalysisDependencyForApplication(nodeId, "waitingOn", applications.waitingOn);
+  const nextAction = aiAnalysisDependencyForApplication(
+    nodeId,
+    "nextAction",
+    applications.nextAction,
+  );
+  const deadline = aiAnalysisDependencyForApplication(nodeId, "deadline", applications.deadline);
+  return Object.freeze({
+    ...migrated,
+    status,
+    waitingOn,
+    primaryWaitingOn: waitingOn,
+    nextAction,
+    deadline,
+    deadlineLevel: deadline,
+  });
+}
+
+function migrateTrackedItemAiStateForNativeBlocker(
+  nodeId: GitHubNodeId,
+  applications: AiAnalysisElementApplications,
+  nativeOpenBlockerTargetNodeIds: ReadonlySet<string>,
+): Readonly<{
+  applications: AiAnalysisElementApplications;
+  aiDependencies: TrackedItemAiDependencies;
+}> {
+  if (!nativeOpenBlockerTargetNodeIds.has(nodeId)) {
+    return Object.freeze({
+      applications,
+      aiDependencies: migratedTrackedItemAiDependenciesForApplications(nodeId, applications),
+    });
+  }
+  const normalizedApplications = Object.freeze(
+    aiAnalysisElementApplicationsSchema.parse({
+      ...applications,
+      status: { status: "deterministic_fallback" },
+      waitingOn: { status: "deterministic_fallback" },
+      nextAction: { status: "deterministic_fallback" },
+    }),
+  );
+  const dependencies = migratedTrackedItemAiDependenciesForApplications(
+    nodeId,
+    normalizedApplications,
+  );
+  const migrationDependency = migratedAiAnalysisDependency();
+  const deterministicDependency = Object.freeze({
+    status: "not_dependent",
+  } satisfies AiAnalysisDependency);
+  return Object.freeze({
+    applications: normalizedApplications,
+    aiDependencies: Object.freeze({
+      ...dependencies,
+      status: deterministicDependency,
+      waitingOn: migrationDependency,
+      primaryWaitingOn: migrationDependency,
+      nextAction: deterministicDependency,
+    }),
   });
 }
 const legacyWaitingOnSchema = z
@@ -747,6 +996,7 @@ function migrateAiAnalysis(
   status: "used" | "failed" | "deferred" | "not_required" | "disabled" | "not_recorded";
   elements: TrackedItemAiAnalysisCurrentElements;
   adoptedElements: TrackedItemAiAnalysisMigrationAdoptedElements;
+  applications: AiAnalysisElementApplications;
 } {
   const aiAnalysis = z
     .object({
@@ -767,6 +1017,7 @@ function migrateAiAnalysis(
       aiAnalysis.origin,
       elementSchemaVersion,
     ),
+    applications: migratedAiAnalysisElementApplications(),
   };
 }
 
@@ -1156,6 +1407,7 @@ function migrateTrackedItem(
     }
     output = parseLegacyOutput(cacheEntry, item);
   }
+  const applications = migratedAiAnalysisElementApplications();
   return {
     ...item,
     aiAnalysis: {
@@ -1163,11 +1415,77 @@ function migrateTrackedItem(
       status: item.aiAnalysis.status,
       elements: {},
       adoptedElements: createLegacyAdoptedElements(item, output, legacyRelationsById),
+      applications,
     },
+    aiDependencies: migratedTrackedItemAiDependenciesForApplications(
+      createGitHubNodeId(item.nodeId),
+      applications,
+    ),
     personalReminderCauses: [],
     personalReminderCausePlanning: migratedPersonalReminderCausePlanning(item.status),
   };
 }
+
+function migratePersonalReminderCause(cause: LegacyPersonalReminderCause): PersonalReminderCause {
+  return personalReminderCauseSchema.parse({
+    ...cause,
+    responseMembershipAssessmentRequirement:
+      cause.responsibility.authority === "semantic"
+        ? { status: "required" }
+        : { status: "unknown", reason: "migration" },
+    aiDependencies: migratedPersonalReminderCauseAiDependencies(),
+    currentInput: {
+      ...cause.currentInput,
+      aiDependency: migratedAiAnalysisDependency(),
+    },
+    latestAttempt: migratePersonalReminderEvaluationAttempt(cause.latestAttempt),
+  });
+}
+
+function migratePersonalReminderEvaluationAttempt(
+  attempt: LegacyPersonalReminderCause["latestAttempt"],
+): PersonalReminderCause["latestAttempt"] {
+  switch (attempt.status) {
+    case "not_evaluated":
+    case "completed":
+      return attempt;
+    case "failed":
+      return personalReminderEvaluationAttemptSchema.parse({
+        ...attempt,
+        rulesVersion: PERSONAL_REMINDER_ASSESSMENT_MIGRATION_RULES_VERSION,
+      });
+    case "deferred":
+      return personalReminderEvaluationAttemptSchema.parse({
+        ...attempt,
+        rulesVersion: PERSONAL_REMINDER_ASSESSMENT_MIGRATION_RULES_VERSION,
+      });
+    default:
+      throw new UnreachableError(attempt);
+  }
+}
+
+function migratePersonalReminderCauses(
+  causes: readonly LegacyPersonalReminderCause[],
+): readonly PersonalReminderCause[] {
+  return causes.map(migratePersonalReminderCause);
+}
+
+function migratePersonalReminderCausePlanning(
+  planning: LegacyPersonalReminderCausePlanning,
+): PersonalReminderCausePlanning {
+  if (planning.status !== "completed") {
+    return planning;
+  }
+  return personalReminderCausePlanningSchema.parse({
+    ...planning,
+    causeSetAiDependency: migratedAiAnalysisDependency(),
+    causeSetSubjectChanges: {
+      scope: "unbounded",
+    },
+  });
+}
+
+const LEGACY_PERSONAL_REMINDER_CAUSE_PLANNING_VERSION = "personal-reminder-planning-v1";
 
 function migratedPersonalReminderCausePlanning(
   status: LegacyTrackedItem["status"],
@@ -1175,13 +1493,13 @@ function migratedPersonalReminderCausePlanning(
   if (isTerminalStatus(status)) {
     return {
       status: "excluded",
-      planningVersion: PERSONAL_REMINDER_CAUSE_PLANNING_VERSION,
+      planningVersion: LEGACY_PERSONAL_REMINDER_CAUSE_PLANNING_VERSION,
       reason: "terminal_without_cause",
     };
   }
   return {
     status: "pending",
-    planningVersion: PERSONAL_REMINDER_CAUSE_PLANNING_VERSION,
+    planningVersion: LEGACY_PERSONAL_REMINDER_CAUSE_PLANNING_VERSION,
   };
 }
 
@@ -1190,12 +1508,14 @@ function migrationCollectionAiAnalysis(): Readonly<{
   status: "not_recorded";
   elements: Readonly<Record<string, never>>;
   adoptedElements: Readonly<Record<string, never>>;
+  applications: AiAnalysisElementApplications;
 }> {
   return {
     origin: "migration",
     status: "not_recorded",
     elements: {},
     adoptedElements: {},
+    applications: migratedAiAnalysisElementApplications(),
   };
 }
 
@@ -1215,9 +1535,15 @@ function createLegacyRelationsById(
 function migrateVersion11StateSnapshot(source: string): StateSnapshot {
   try {
     const value = parseStateSnapshotVersion11(source);
+    const graphMigration = createLegacyGraphMigration(
+      value.relations,
+      value.items,
+      value.externalReferences,
+    );
     return createStateSnapshot({
       ...value,
-      schemaVersion: "16",
+      schemaVersion: "18",
+      graphNodeStateObservations: [],
       collection: {
         repositories: value.collection.repositories.map((repository) => ({
           ...repository,
@@ -1227,12 +1553,25 @@ function migrateVersion11StateSnapshot(source: string): StateSnapshot {
           })),
         })),
       },
-      items: value.items.map((item) => ({
-        ...item,
-        aiAnalysis: migrateAiAnalysis(item.aiAnalysis, false, "5"),
-        personalReminderCauses: [],
-        personalReminderCausePlanning: migratedPersonalReminderCausePlanning(item.status),
-      })),
+      items: value.items.map((item) => {
+        const aiAnalysis = migrateAiAnalysis(item.aiAnalysis, false, "5");
+        const aiState = migrateTrackedItemAiStateForNativeBlocker(
+          item.nodeId,
+          aiAnalysis.applications,
+          graphMigration.nativeOpenBlockerTargetNodeIds,
+        );
+        return {
+          ...item,
+          aiAnalysis: {
+            ...aiAnalysis,
+            applications: aiState.applications,
+          },
+          aiDependencies: aiState.aiDependencies,
+          personalReminderCauses: [],
+          personalReminderCausePlanning: migratedPersonalReminderCausePlanning(item.status),
+        };
+      }),
+      relations: graphMigration.relations,
     });
   } catch (error: unknown) {
     throw migrationFormatError(error);
@@ -1242,9 +1581,15 @@ function migrateVersion11StateSnapshot(source: string): StateSnapshot {
 function migrateVersion12StateSnapshot(source: string): StateSnapshot {
   try {
     const value = parseStateSnapshotVersion12(source);
+    const graphMigration = createLegacyGraphMigration(
+      value.relations,
+      value.items,
+      value.externalReferences,
+    );
     return createStateSnapshot({
       ...value,
-      schemaVersion: "16",
+      schemaVersion: "18",
+      graphNodeStateObservations: [],
       collection: {
         repositories: value.collection.repositories.map((repository) => ({
           ...repository,
@@ -1254,12 +1599,25 @@ function migrateVersion12StateSnapshot(source: string): StateSnapshot {
           })),
         })),
       },
-      items: value.items.map((item) => ({
-        ...item,
-        aiAnalysis: migrateAiAnalysis(item.aiAnalysis, false, "5"),
-        personalReminderCauses: [],
-        personalReminderCausePlanning: migratedPersonalReminderCausePlanning(item.status),
-      })),
+      items: value.items.map((item) => {
+        const aiAnalysis = migrateAiAnalysis(item.aiAnalysis, false, "5");
+        const aiState = migrateTrackedItemAiStateForNativeBlocker(
+          item.nodeId,
+          aiAnalysis.applications,
+          graphMigration.nativeOpenBlockerTargetNodeIds,
+        );
+        return {
+          ...item,
+          aiAnalysis: {
+            ...aiAnalysis,
+            applications: aiState.applications,
+          },
+          aiDependencies: aiState.aiDependencies,
+          personalReminderCauses: [],
+          personalReminderCausePlanning: migratedPersonalReminderCausePlanning(item.status),
+        };
+      }),
+      relations: graphMigration.relations,
     });
   } catch (error: unknown) {
     throw migrationFormatError(error);
@@ -1269,9 +1627,15 @@ function migrateVersion12StateSnapshot(source: string): StateSnapshot {
 function migrateVersion13StateSnapshot(source: string): StateSnapshot {
   try {
     const value = parseStateSnapshotVersion13(source);
+    const graphMigration = createLegacyGraphMigration(
+      value.relations,
+      value.items,
+      value.externalReferences,
+    );
     return createStateSnapshot({
       ...value,
-      schemaVersion: "16",
+      schemaVersion: "18",
+      graphNodeStateObservations: [],
       collection: {
         repositories: value.collection.repositories.map((repository) => ({
           ...repository,
@@ -1281,12 +1645,25 @@ function migrateVersion13StateSnapshot(source: string): StateSnapshot {
           })),
         })),
       },
-      items: value.items.map((item) => ({
-        ...item,
-        aiAnalysis: migrateAiAnalysis(item.aiAnalysis, true, "6"),
-        personalReminderCauses: [],
-        personalReminderCausePlanning: migratedPersonalReminderCausePlanning(item.status),
-      })),
+      items: value.items.map((item) => {
+        const aiAnalysis = migrateAiAnalysis(item.aiAnalysis, true, "6");
+        const aiState = migrateTrackedItemAiStateForNativeBlocker(
+          item.nodeId,
+          aiAnalysis.applications,
+          graphMigration.nativeOpenBlockerTargetNodeIds,
+        );
+        return {
+          ...item,
+          aiAnalysis: {
+            ...aiAnalysis,
+            applications: aiState.applications,
+          },
+          aiDependencies: aiState.aiDependencies,
+          personalReminderCauses: [],
+          personalReminderCausePlanning: migratedPersonalReminderCausePlanning(item.status),
+        };
+      }),
+      relations: graphMigration.relations,
     });
   } catch (error: unknown) {
     throw migrationFormatError(error);
@@ -1324,7 +1701,7 @@ function migrateLegacyStateSnapshot(
       }),
     }));
     return createStateSnapshot({
-      schemaVersion: "16",
+      schemaVersion: "18",
       generatedAt: value.generatedAt,
       trackingStartAt: value.trackingStartAt,
       ai: value.ai,
@@ -1333,9 +1710,99 @@ function migrateLegacyStateSnapshot(
       },
       repositories: value.repositories,
       items: migratedItems,
+      graphNodeStateObservations: [],
       externalReferences: value.externalReferences,
-      relations: value.relations,
+      relations: migrateLegacyRelations(value.relations, value.items, value.externalReferences),
       run: value.run,
+    });
+  } catch (error: unknown) {
+    throw migrationFormatError(error);
+  }
+}
+
+function migrateVersion16StateSnapshot(source: string): StateSnapshot {
+  try {
+    const value = parseStateSnapshotVersion16(source);
+    const graphMigration = createLegacyGraphMigration(
+      value.relations,
+      value.items,
+      value.externalReferences,
+    );
+    return createStateSnapshot({
+      ...value,
+      schemaVersion: "18",
+      graphNodeStateObservations: [],
+      collection: {
+        repositories: value.collection.repositories.map((repository) => ({
+          ...repository,
+          items: repository.items.map((item) => ({
+            ...item,
+            aiAnalysis: {
+              ...item.aiAnalysis,
+              applications: migratedAiAnalysisElementApplications(),
+            },
+          })),
+        })),
+      },
+      items: value.items.map((item) => {
+        const applications = migratedAiAnalysisElementApplications();
+        const aiState = migrateTrackedItemAiStateForNativeBlocker(
+          item.nodeId,
+          applications,
+          graphMigration.nativeOpenBlockerTargetNodeIds,
+        );
+        return {
+          ...item,
+          aiAnalysis: {
+            ...item.aiAnalysis,
+            applications: aiState.applications,
+          },
+          aiDependencies: aiState.aiDependencies,
+          personalReminderCauses: migratePersonalReminderCauses(item.personalReminderCauses),
+          personalReminderCausePlanning: migratePersonalReminderCausePlanning(
+            item.personalReminderCausePlanning,
+          ),
+        };
+      }),
+      relations: graphMigration.relations,
+    });
+  } catch (error: unknown) {
+    throw migrationFormatError(error);
+  }
+}
+
+function migrateVersion17StateSnapshot(source: string): StateSnapshot {
+  try {
+    const value = parseStateSnapshotVersion17(source);
+    const graphMigration = createLegacyGraphMigration(
+      value.relations,
+      value.items,
+      value.externalReferences,
+    );
+    return createStateSnapshot({
+      ...value,
+      schemaVersion: "18",
+      graphNodeStateObservations: [],
+      items: value.items.map((item) => {
+        const aiState = migrateTrackedItemAiStateForNativeBlocker(
+          item.nodeId,
+          item.aiAnalysis.applications,
+          graphMigration.nativeOpenBlockerTargetNodeIds,
+        );
+        return {
+          ...item,
+          aiAnalysis: {
+            ...item.aiAnalysis,
+            applications: aiState.applications,
+          },
+          aiDependencies: aiState.aiDependencies,
+          personalReminderCauses: migratePersonalReminderCauses(item.personalReminderCauses),
+          personalReminderCausePlanning: migratePersonalReminderCausePlanning(
+            item.personalReminderCausePlanning,
+          ),
+        };
+      }),
+      relations: graphMigration.relations,
     });
   } catch (error: unknown) {
     throw migrationFormatError(error);
@@ -1345,18 +1812,50 @@ function migrateLegacyStateSnapshot(
 function migrateVersion14StateSnapshot(source: string): StateSnapshot {
   try {
     const value = parseStateSnapshotVersion14(source);
+    const graphMigration = createLegacyGraphMigration(
+      value.relations,
+      value.items,
+      value.externalReferences,
+    );
     return createStateSnapshot({
       ...value,
-      schemaVersion: "16",
-      items: value.items.map((item) => ({
-        ...item,
-        inputEvents:
-          item.type === "pull_request"
-            ? migrateVersion14PullRequestInputEvents(item.nodeId, item.inputEvents)
-            : item.inputEvents,
-        personalReminderCauses: [],
-        personalReminderCausePlanning: migratedPersonalReminderCausePlanning(item.status),
-      })),
+      schemaVersion: "18",
+      graphNodeStateObservations: [],
+      collection: {
+        repositories: value.collection.repositories.map((repository) => ({
+          ...repository,
+          items: repository.items.map((item) => ({
+            ...item,
+            aiAnalysis: {
+              ...item.aiAnalysis,
+              applications: migratedAiAnalysisElementApplications(),
+            },
+          })),
+        })),
+      },
+      items: value.items.map((item) => {
+        const applications = migratedAiAnalysisElementApplications();
+        const aiState = migrateTrackedItemAiStateForNativeBlocker(
+          item.nodeId,
+          applications,
+          graphMigration.nativeOpenBlockerTargetNodeIds,
+        );
+        return {
+          ...item,
+          inputEvents:
+            item.type === "pull_request"
+              ? migrateVersion14PullRequestInputEvents(item.nodeId, item.inputEvents)
+              : item.inputEvents,
+          aiAnalysis: {
+            ...item.aiAnalysis,
+            applications: aiState.applications,
+          },
+          personalReminderCauses: [],
+          personalReminderCausePlanning: migratedPersonalReminderCausePlanning(item.status),
+          aiDependencies: aiState.aiDependencies,
+        };
+      }),
+      relations: graphMigration.relations,
     });
   } catch (error: unknown) {
     throw migrationFormatError(error);
@@ -1366,9 +1865,48 @@ function migrateVersion14StateSnapshot(source: string): StateSnapshot {
 function migrateVersion15StateSnapshot(source: string): StateSnapshot {
   try {
     const value = parseStateSnapshotVersion15(source);
+    const graphMigration = createLegacyGraphMigration(
+      value.relations,
+      value.items,
+      value.externalReferences,
+    );
     return createStateSnapshot({
       ...value,
-      schemaVersion: "16",
+      schemaVersion: "18",
+      graphNodeStateObservations: [],
+      collection: {
+        repositories: value.collection.repositories.map((repository) => ({
+          ...repository,
+          items: repository.items.map((item) => ({
+            ...item,
+            aiAnalysis: {
+              ...item.aiAnalysis,
+              applications: migratedAiAnalysisElementApplications(),
+            },
+          })),
+        })),
+      },
+      items: value.items.map((item) => {
+        const applications = migratedAiAnalysisElementApplications();
+        const aiState = migrateTrackedItemAiStateForNativeBlocker(
+          item.nodeId,
+          applications,
+          graphMigration.nativeOpenBlockerTargetNodeIds,
+        );
+        return {
+          ...item,
+          aiAnalysis: {
+            ...item.aiAnalysis,
+            applications: aiState.applications,
+          },
+          aiDependencies: aiState.aiDependencies,
+          personalReminderCauses: migratePersonalReminderCauses(item.personalReminderCauses),
+          personalReminderCausePlanning: migratePersonalReminderCausePlanning(
+            item.personalReminderCausePlanning,
+          ),
+        };
+      }),
+      relations: graphMigration.relations,
     });
   } catch (error: unknown) {
     throw migrationFormatError(error);
@@ -1404,6 +1942,8 @@ export function migrateStateSnapshot(
     throw StateFormatError.fromZodError("snapshot", versionResult.error);
   }
   switch (versionResult.data.schemaVersion) {
+    case "18":
+      return parseStateSnapshot(source);
     case "10":
       return migrateLegacyStateSnapshot(source, legacyEntriesByCacheKey);
     case "11":
@@ -1417,7 +1957,9 @@ export function migrateStateSnapshot(
     case "15":
       return migrateVersion15StateSnapshot(source);
     case "16":
-      return parseStateSnapshot(source);
+      return migrateVersion16StateSnapshot(source);
+    case "17":
+      return migrateVersion17StateSnapshot(source);
     default:
       throw new StateFormatError("snapshot", {
         cause: new TypeError("snapshotのschemaVersionは未対応です"),
