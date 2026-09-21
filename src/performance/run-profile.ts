@@ -20,7 +20,6 @@ async function main(): Promise<void> {
       `github_api_limit=${profile.measurements.githubApi.limit.toString()}`,
       `github_api_used_ratio=${profile.measurements.githubApi.usedRatio.toFixed(6)}`,
       `codex_calls=${profile.measurements.codex.calls.toString()}`,
-      `codex_call_limit=${profile.measurements.codex.configuredMaxCalls.toString()}`,
       `summary_gzip_bytes=${profile.measurements.webInitialSummary.gzipBytes.toString()}`,
       `summary_gzip_limit_bytes=${profile.measurements.webInitialSummary.limitBytes.toString()}`,
       `artifact=${ARTIFACT_PATH}`,

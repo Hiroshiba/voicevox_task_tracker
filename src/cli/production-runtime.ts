@@ -6,6 +6,7 @@ import {
   CODEX_AUTHENTICATION_PREFLIGHT_PROMPT,
   CODEX_ELEMENT_OUTPUT_SCHEMA_VERSION,
   CODEX_PROMPT_BUNDLE_VERSION,
+  CodexAttemptBudget,
   createEmptyAiBudgetUsage,
   createAiAnalysisTarget,
   assessAnalysisImpact,
@@ -57,6 +58,7 @@ import {
   type CodexPreservedElements,
   type CodexAdapterConfiguration,
   type CodexAdapterDependencies,
+  type CodexInitialAttemptTicket,
   type CodexAnalysisReduction,
   type CodexProcessRunner,
   type CodexSemanticGenerationObserver,
@@ -410,6 +412,7 @@ type RuntimeConfiguration = Readonly<{
   credentials: RuntimeCredentials;
   target: RuntimeExecutionTarget;
   ensureCodexReady: () => Promise<void>;
+  codexAttemptBudget: CodexAttemptBudget;
 }>;
 
 function createAiAnalysisRunIdentity(config: Config): AiAnalysisRunIdentity {
@@ -6417,12 +6420,14 @@ function createCodexAdapterConfiguration(config: Config): CodexAdapterConfigurat
 function createCodexAdapterDependencies(
   adapters: ProductionRuntimeAdapters,
   credentials: EnabledCodexCredentials,
+  attemptBudget: CodexAttemptBudget,
   diagnostics: CodexDiagnosticsContext | undefined,
   semanticGenerationObserver: CodexSemanticGenerationObserver | undefined,
 ): CodexAdapterDependencies {
   return Object.freeze({
     environment: credentials.environment,
     processRunner: adapters.codexProcessRunner,
+    attemptBudget,
     runtime: {
       sleep: adapters.sleep,
       random: adapters.random,
@@ -6635,6 +6640,7 @@ async function analyzeCodex(
   const codexDependencies = createCodexAdapterDependencies(
     adapters,
     codexCredentials,
+    configuration.codexAttemptBudget,
     diagnostics,
     semanticGenerationCounter.observer,
   );
@@ -6652,11 +6658,12 @@ async function analyzeCodex(
       : Object.freeze({
           inputCharacters: CODEX_AUTHENTICATION_PREFLIGHT_INPUT_CHARACTERS,
           estimatedCostUsd: preflightInputCost.estimatedCostUsd,
-          execute: () =>
+          execute: (ticket: CodexInitialAttemptTicket) =>
             adapters.executeCodexAuthenticationPreflight(
               codexConfiguration,
               Object.freeze({
                 ...codexDependencies,
+                initialAttemptTicket: ticket,
                 ...(preflightDiagnostics == null
                   ? {}
                   : {
@@ -6676,6 +6683,7 @@ async function analyzeCodex(
     },
     {
       cache: state.session.aiCache,
+      attemptBudget: configuration.codexAttemptBudget,
       ensureReady: configuration.ensureCodexReady,
       ...(preflight == null ? {} : { preflight }),
       ...(diagnostics == null ? {} : { diagnostics }),
@@ -6685,6 +6693,7 @@ async function analyzeCodex(
           codexConfiguration,
           Object.freeze({
             ...codexDependencies,
+            initialAttemptTicket: context.initialAttemptTicket,
             ...(diagnostics == null
               ? {}
               : {
@@ -14784,6 +14793,7 @@ async function analyzePersonalReminders(
     const codexDependencies = createCodexAdapterDependencies(
       adapters,
       codexCredentials,
+      configuration.codexAttemptBudget,
       diagnostics,
       undefined,
     );
@@ -14801,11 +14811,12 @@ async function analyzePersonalReminders(
         : Object.freeze({
             inputCharacters: CODEX_AUTHENTICATION_PREFLIGHT_INPUT_CHARACTERS,
             estimatedCostUsd: preflightInputCost.estimatedCostUsd,
-            execute: () =>
+            execute: (ticket: CodexInitialAttemptTicket) =>
               adapters.executeCodexAuthenticationPreflight(
                 codexConfiguration,
                 Object.freeze({
                   ...codexDependencies,
+                  initialAttemptTicket: ticket,
                   ...(preflightDiagnostics == null
                     ? {}
                     : {
@@ -14829,14 +14840,15 @@ async function analyzePersonalReminders(
       } satisfies PersonalReminderAiRunConfiguration,
       {
         cache: state.session.personalReminderAiCache,
+        attemptBudget: configuration.codexAttemptBudget,
         ensureReady: configuration.ensureCodexReady,
         ...(preflight == null ? {} : { preflight }),
         ...(diagnostics == null ? {} : { diagnostics }),
-        execute: (input) =>
+        execute: (input, ticket) =>
           adapters.executeCodexPersonalReminderAnalysis(
             input,
             codexConfiguration,
-            codexDependencies,
+            Object.freeze({ ...codexDependencies, initialAttemptTicket: ticket }),
           ),
         executedAt: () => collection.evaluatedAt,
       },
@@ -15309,6 +15321,7 @@ function persistedMetrics(
     changedItemCount: metrics.changedItemCount,
     activeEdgeCount: validated.snapshot.relations.filter((relation) => relation.active).length,
     aiCallCount: metrics.aiCallCount,
+    aiProcessAttemptCount: metrics.aiProcessAttemptCount,
     aiCacheHitCount: metrics.aiCacheHitCount,
     aiRetainedResultCount: metrics.aiRetainedResultCount,
     estimatedInputTokens: metrics.estimatedInputTokens,
@@ -15349,7 +15362,7 @@ function createPersistedRunReport(
   finishedAt: UtcIsoDateTime,
 ): StateRunReport {
   return createStateRunReport({
-    schemaVersion: "2",
+    schemaVersion: "3",
     runId: snapshot.run.id,
     date: metadata.startedAt.slice(0, 10),
     status: snapshot.run.status,
@@ -15389,7 +15402,7 @@ function createCollectAnalyzeArtifact(
     throw new TypeError("collect-analyze以外のrunからworkflow artifactを生成できません");
   }
   const artifact = createWorkflowArtifact({
-    schemaVersion: "12",
+    schemaVersion: "13",
     kind: "validated_public_run",
     notificationAction: invocation.command.notificationAction,
     repositoryAllowlist: inventory.allowlist.repositories.map((repository) => ({
@@ -18339,6 +18352,7 @@ function createDailyDependencies(
     ...(adapters.diagnosticsRecorder == null
       ? {}
       : { diagnosticsRecorder: adapters.diagnosticsRecorder }),
+    readAiProcessAttemptCount: (configuration) => configuration.codexAttemptBudget.attemptCount,
     validateConfiguration: async ({ invocation, configPath }) => {
       requireEnvironmentVariables(adapters.environment, ["GH_APP_ID", "GH_APP_PRIVATE_KEY"]);
       const config = await adapters.loadConfig(resolve(adapters.repositoryPath, configPath));
@@ -18379,6 +18393,7 @@ function createDailyDependencies(
         credentials,
         target,
         ensureCodexReady,
+        codexAttemptBudget: new CodexAttemptBudget(config.ai.budget.maxCodexExecAttemptsPerRun),
       });
     },
     loadState: async ({ configuration }) => {

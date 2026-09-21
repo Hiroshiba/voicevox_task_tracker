@@ -79,7 +79,6 @@ const performanceMeasurementSchema = z
     }),
     codex: z.strictObject({
       calls: nonNegativeIntegerSchema,
-      configuredMaxCalls: nonNegativeIntegerSchema,
     }),
     webInitialSummary: z.strictObject({
       gzipBytes: nonNegativeIntegerSchema,
@@ -108,7 +107,7 @@ const performanceMeasurementSchema = z
   });
 
 const performanceProfileSchema = z.strictObject({
-  schemaVersion: z.literal("1"),
+  schemaVersion: z.literal("2"),
   status: z.enum(["passed", "failed"]),
   fixture: z.strictObject({
     itemCount: z.literal(PROFILE_ITEM_COUNT),
@@ -118,14 +117,12 @@ const performanceProfileSchema = z.strictObject({
   thresholds: z.strictObject({
     durationMilliseconds: z.literal(THIRTY_MINUTES_MILLISECONDS),
     githubApiBudgetRatio: z.literal(GITHUB_API_BUDGET_RATIO),
-    codexMaxCalls: nonNegativeIntegerSchema,
     summaryGzipBytes: z.literal(PUBLIC_SUMMARY_GZIP_LIMIT_BYTES),
   }),
   measurements: performanceMeasurementSchema,
   checks: z.strictObject({
     processingWithinThirtyMinutes: z.boolean(),
     githubApiBudgetWithinSeventyPercent: z.boolean(),
-    codexBudgetWithinConfiguredLimit: z.boolean(),
     summaryGzipWithinOneMiB: z.boolean(),
   }),
 });
@@ -515,7 +512,7 @@ async function createPerformanceConfig(repositoryPath: string): Promise<Config> 
       enabled: true,
       budget: Object.freeze({
         ...base.ai.budget,
-        maxCallsPerRun: PROFILE_CHANGED_ITEM_COUNT,
+        maxCodexExecAttemptsPerRun: PROFILE_CHANGED_ITEM_COUNT,
       }),
     }),
     notifications: Object.freeze({
@@ -743,15 +740,13 @@ export function evaluateEndToEndPerformanceMeasurement(
       parsedMeasurement.durationMilliseconds <= THIRTY_MINUTES_MILLISECONDS,
     githubApiBudgetWithinSeventyPercent:
       parsedMeasurement.githubApi.usedRatio <= GITHUB_API_BUDGET_RATIO,
-    codexBudgetWithinConfiguredLimit:
-      parsedMeasurement.codex.calls <= parsedMeasurement.codex.configuredMaxCalls,
     summaryGzipWithinOneMiB:
       parsedMeasurement.webInitialSummary.gzipBytes <=
       parsedMeasurement.webInitialSummary.limitBytes,
   });
   const passed = Object.values(checks).every((value) => value);
   return performanceProfileSchema.parse({
-    schemaVersion: "1",
+    schemaVersion: "2",
     status: passed ? "passed" : "failed",
     fixture: {
       itemCount: PROFILE_ITEM_COUNT,
@@ -761,7 +756,6 @@ export function evaluateEndToEndPerformanceMeasurement(
     thresholds: {
       durationMilliseconds: THIRTY_MINUTES_MILLISECONDS,
       githubApiBudgetRatio: GITHUB_API_BUDGET_RATIO,
-      codexMaxCalls: parsedMeasurement.codex.configuredMaxCalls,
       summaryGzipBytes: PUBLIC_SUMMARY_GZIP_LIMIT_BYTES,
     },
     measurements: parsedMeasurement,
@@ -819,7 +813,6 @@ export async function runEndToEndPerformanceProfile(
       }),
       codex: Object.freeze({
         calls: metrics.aiCallCount,
-        configuredMaxCalls: result.config.ai.budget.maxCallsPerRun,
       }),
       webInitialSummary: Object.freeze({
         gzipBytes: result.generatedPublicData.summarySize.gzipBytes,
