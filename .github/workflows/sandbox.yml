@@ -136,6 +136,7 @@ jobs:
       - name: sandbox日次処理を実行
         if: inputs.operation != 'dispose'
         env:
+          CODEX_AUTH_SYNC_TOKEN_PRESENT: ${{ secrets.CODEX_AUTH_SYNC_TOKEN != '' }}
           CODEX_HOME: ${{ runner.temp }}/codex-home
           GH_APP_ID: ${{ vars.GH_APP_ID }}
           GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
