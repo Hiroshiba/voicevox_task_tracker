@@ -4,6 +4,10 @@ import type { DiagnosticsJsonlRecorder } from "../diagnostics/recorder.js";
 import { createUtcIsoDateTime, type UtcIsoDateTime } from "../domain/index.js";
 import { GitHubRetryExhaustedError } from "../github/index.js";
 import { serializeCanonicalJson } from "../canonical-json/index.js";
+import {
+  StateFormatError,
+  StatePersonalReminderAiDependencyMismatchError,
+} from "../persistence/index.js";
 import { UnreachableError } from "../util/index.js";
 import {
   type BackfillCliCommand,
@@ -528,6 +532,26 @@ function operationsAlertRetryAttempts(error: unknown): number {
   return error instanceof GitHubRetryExhaustedError ? error.attempts : 1;
 }
 
+function personalReminderAiDependencyMismatchError(
+  error: unknown,
+): StatePersonalReminderAiDependencyMismatchError | undefined {
+  if (error instanceof StatePersonalReminderAiDependencyMismatchError) {
+    return error;
+  }
+  if (error instanceof StateFormatError) {
+    if (error.cause instanceof StatePersonalReminderAiDependencyMismatchError) {
+      return error.cause;
+    }
+    if (
+      error.cause instanceof TypeError &&
+      error.cause.cause instanceof StatePersonalReminderAiDependencyMismatchError
+    ) {
+      return error.cause.cause;
+    }
+  }
+  return undefined;
+}
+
 /** Daily transactionを順序保証付きで実行する。 */
 export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
   readonly #coordinator: RunCoordinator<DailyRunExecutionResult>;
@@ -587,6 +611,8 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
     if (recorder == null) {
       return;
     }
+    const mismatchError =
+      event === "cli.stage.failed" ? personalReminderAiDependencyMismatchError(error) : undefined;
     try {
       await recorder.append({
         event,
@@ -594,6 +620,11 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           runId: invocation.runId,
           command: invocation.command.kind,
           stage,
+          ...(mismatchError != null
+            ? {
+                personalReminderAiDependencyMismatch: mismatchError.diagnosticDetails(),
+              }
+            : {}),
         },
         error,
       });
