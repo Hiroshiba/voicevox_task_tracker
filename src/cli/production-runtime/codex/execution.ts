@@ -20,7 +20,7 @@ import {
 import type { DailyRunInvocation } from "../../daily-transaction.js";
 import { safeCodexFallbackDiagnostic } from "../../error-diagnostic.js";
 import type { CodexRuntimeAdapters } from "../adapters.js";
-import { createAiAnalysisRunIdentity } from "../analysis-identity.js";
+import { createAiAnalysisRunIdentity } from "../../../application/tracking-run/stages/collection-analysis-fingerprint.js";
 import { forcedAiAnalysisTarget } from "../ai-analysis-target.js";
 import type {
   CodexAnalysis,

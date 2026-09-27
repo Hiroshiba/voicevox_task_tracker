@@ -3,8 +3,16 @@ import type { GitHubNodeId, TrackingNotificationClass } from "../../../domain/ty
 import { createRunEvaluatedAt, type RunEvaluatedAt } from "../contracts/evaluation-time.js";
 import { createCollectedStageProof } from "../contracts/proofs.js";
 import type { StageState } from "../contracts/run-core.js";
-import type { ClockPort } from "../ports.js";
+import type { ClockPort, CollectionGitHubReadPort, ContentDigestPort } from "../ports.js";
 import type { InventoryCollectedRun } from "./inventory.js";
+import type {
+  CollectionPlanningContext,
+  CollectionPlanningReferences,
+} from "./collection-incremental-plan.js";
+import {
+  collectInitialRepositoryItems,
+  type InitialRepositoryCollection,
+} from "./collection-repositories.js";
 import {
   assertCollectionSourceTimes,
   createCollectionSourceCatalog,
@@ -44,10 +52,13 @@ type CollectionObservation<Collection extends CollectionSource> = Readonly<{
   diagnostics: readonly string[];
 }>;
 
-/** 増分収集と関係端点の閉包を要求する境界。 */
+/** GitHub読取と関係端点の閉包を要求する収集境界。 */
 export type CollectionPort<Collection extends CollectionSource> = Readonly<{
-  collect: (
-    inventory: InventoryCollectedRun,
+  read: CollectionGitHubReadPort;
+  references: CollectionPlanningReferences;
+  completeRelationClosure: (
+    initial: InitialRepositoryCollection,
+    context: CollectionPlanningContext,
     captureEvaluationTime: () => RunEvaluatedAt,
   ) => Promise<CollectionObservation<Collection>>;
 }>;
@@ -75,12 +86,22 @@ export async function collectRunItems<Collection extends CollectionSource>(
   inventory: InventoryCollectedRun,
   port: CollectionPort<Collection>,
   clock: ClockPort,
+  digest: ContentDigestPort,
 ): Promise<CollectedRun<CanonicalCollection<Collection>>> {
+  const context: CollectionPlanningContext = Object.freeze({
+    startedAt: inventory.core.identity.startedAt,
+    config: inventory.core.config,
+    executionPolicy: inventory.core.executionPolicy,
+    previousState: inventory.core.previousState,
+    references: port.references,
+    digest,
+  });
+  const initial = await collectInitialRepositoryItems(inventory, port.read, context);
   const evaluation: {
     current:
       Readonly<{ status: "pending" }> | Readonly<{ status: "captured"; value: RunEvaluatedAt }>;
   } = { current: Object.freeze({ status: "pending" }) };
-  const observation = await port.collect(inventory, () => {
+  const observation = await port.completeRelationClosure(initial, context, () => {
     if (evaluation.current.status === "captured") {
       throw new TypeError("評価時刻は一度だけ取得できます");
     }

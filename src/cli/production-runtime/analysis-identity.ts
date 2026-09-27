@@ -1,13 +1,6 @@
 import { hashCanonicalJson } from "../../canonical-json/index.js";
-import { AI_ANALYSIS_ELEMENT_REVISIONS, CODEX_PROMPT_BUNDLE_VERSION } from "../../codex/index.js";
+import { CODEX_PROMPT_BUNDLE_VERSION } from "../../codex/index.js";
 import type { AiAnalysisRunIdentity } from "../../codex/index.js";
-import type { Config } from "../../config/index.js";
-import { AI_ANALYSIS_ELEMENT_SCHEMA_VERSION } from "../../domain/ai-analysis-elements.js";
-import {
-  ISSUE_DETERMINISTIC_RULES_VERSION,
-  PULL_REQUEST_DETERMINISTIC_RULES_VERSION,
-} from "../../domain/index.js";
-import type { EnumeratedGitHubItem, Sha256Fingerprint } from "../../github/index.js";
 
 import {
   createAiAnalysisElementResultSchema,
@@ -33,48 +26,9 @@ type AnalysisElementExecutionFingerprintMap = Readonly<
   Record<AiAnalysisElement, AiAnalysisElementExecutionFingerprint>
 >;
 
-const CODEX_CLI_VERSION = "0.145.0";
-export const CODEX_BACKEND_VERSION = `codex-cli-${CODEX_CLI_VERSION}`;
 export const CODEX_PROMPT_FINGERPRINT = hashCanonicalJson({
   bundleVersion: CODEX_PROMPT_BUNDLE_VERSION,
 });
-
-/** AI解析の実行識別情報を作る。 */
-export function createAiAnalysisRunIdentity(config: Config): AiAnalysisRunIdentity {
-  return Object.freeze({
-    model: config.ai.model,
-    reasoningEffort: config.ai.execution.reasoningEffort,
-    backendVersion: CODEX_BACKEND_VERSION,
-    schemaVersion: AI_ANALYSIS_ELEMENT_SCHEMA_VERSION,
-  });
-}
-
-function deterministicRulesVersionForItem(item: EnumeratedGitHubItem): string {
-  switch (item.type) {
-    case "issue":
-      return ISSUE_DETERMINISTIC_RULES_VERSION;
-    case "pull_request":
-      return PULL_REQUEST_DETERMINISTIC_RULES_VERSION;
-  }
-}
-
-/** 項目の解析計画fingerprintを作る。 */
-export function analysisPlanFingerprintForItem(
-  item: EnumeratedGitHubItem,
-  identity: AiAnalysisRunIdentity,
-): Sha256Fingerprint {
-  return hashCanonicalJson({
-    itemType: item.type,
-    deterministicRulesVersion: deterministicRulesVersionForItem(item),
-    elementRevisions: AI_ANALYSIS_ELEMENT_REVISIONS,
-    execution: {
-      model: identity.model,
-      reasoningEffort: identity.reasoningEffort,
-      backendVersion: identity.backendVersion,
-      schemaVersion: identity.schemaVersion,
-    },
-  });
-}
 
 export function elementExecutionFingerprints(
   identity: AiAnalysisRunIdentity,

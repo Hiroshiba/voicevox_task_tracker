@@ -24,7 +24,7 @@ import { createTrackingBackfillRequest } from "../../backfill.js";
 import type { DailyRunInvocation } from "../../daily-transaction.js";
 import type { RepositoryInventory, RuntimeConfiguration, RuntimeState } from "../contracts.js";
 import { normalizeLabelRules } from "../label-rules.js";
-import { staleAiAnalysisElementsForLifecycle } from "../previous-state/analysis.js";
+import { staleAiAnalysisElementsForLifecycle } from "../../../application/tracking-run/stages/collection-lifecycle.js";
 import { previousCollectionItemsByNodeId } from "../previous-state/collection.js";
 import { previousSnapshot } from "../previous-state/snapshot.js";
 import { findRepository, repositoryFullName } from "../repository-lookup.js";
@@ -33,7 +33,7 @@ import {
   enumeratedRetentionItemState,
   normalizeTrackingIdentifier,
   shouldKeepPreviousTrackedItemInActiveDataset,
-} from "./incremental-plan.js";
+} from "../../../application/tracking-run/stages/collection-incremental-plan.js";
 
 export type RuntimeTrackingSelection = Readonly<{
   result: ReturnType<typeof selectTrackingItems>;
@@ -273,7 +273,7 @@ export function collectTrackingCandidates(
         const itemState = enumeratedRetentionItemState(currentItem);
         return shouldKeepPreviousTrackedItemInActiveDataset(
           evaluatedAt,
-          configuration,
+          configuration.config,
           currentItem,
           itemState,
         );

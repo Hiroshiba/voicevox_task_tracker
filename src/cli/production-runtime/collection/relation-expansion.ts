@@ -1,13 +1,20 @@
 import { provisionalCollectionEvaluationTime } from "../../../domain/collection-evaluation-time.js";
 import type { RunEvaluatedAt } from "../../../application/tracking-run/contracts/evaluation-time.js";
 import type { GitHubNodeId, GitHubRepositoryId } from "../../../domain/index.js";
+import { collectRepositoryValues } from "../../../application/tracking-run/stages/collection-stale.js";
+import type { RepositoryCollectionResult } from "../../../application/tracking-run/stages/collection-stale.js";
 import {
-  collectRepositoriesWithStaleFallback,
+  collectRepositoryItemObservations,
+  mergeFreshRepositoryRuntimeCollection,
+  type FreshRepositoryRuntimeCollection,
+} from "../../../application/tracking-run/stages/collection-repositories.js";
+import type { CollectionPlanningContext } from "../../../application/tracking-run/stages/collection-incremental-plan.js";
+import type { CollectionGitHubReadPort } from "../../../application/tracking-run/ports.js";
+import {
   type EnumeratedGitHubItem,
   type GitHubClient,
   type PublicRepository,
   type PublicRepositoryAllowlist,
-  type RepositoryCollectionResult,
 } from "../../../github/index.js";
 import { planRelationExpansion, type RelationCandidate } from "../../../graph/index.js";
 import type { SnapshotCollectionRepository } from "../../../persistence/index.js";
@@ -33,11 +40,6 @@ import {
   extractAllRelationCandidates,
   type RelationReferenceRetryBudget,
 } from "./relation-refresh.js";
-import {
-  collectFreshRepositoryItemObservations,
-  mergeFreshRepositoryRuntimeCollection,
-  type FreshRepositoryRuntimeCollection,
-} from "./repository-collection.js";
 import {
   collectTrackingCandidates,
   relationExpansionTrackingState,
@@ -76,9 +78,9 @@ function validateRelationExpansionEnumeration(
 async function collectAdditionalRelationItems(
   adapters: CollectionRuntimeAdapters,
   invocation: DailyRunInvocation,
-  configuration: RuntimeConfiguration,
-  state: RuntimeState,
   authentication: GitHubClient,
+  read: CollectionGitHubReadPort,
+  context: CollectionPlanningContext,
   allowlist: PublicRepositoryAllowlist,
   repository: PublicRepository,
   requestedNodeIds: readonly GitHubNodeId[],
@@ -107,27 +109,24 @@ async function collectAdditionalRelationItems(
     return item;
   });
   validateRelationExpansionEnumeration(repository, requestedNodeIds, detailTargets);
-  const additions = await collectFreshRepositoryItemObservations(
-    adapters,
-    invocation,
-    configuration,
-    state,
-    authentication,
-    allowlist,
+  const additions = await collectRepositoryItemObservations(
+    read,
+    context,
     repository,
     detailTargets,
     new Set(requestedNodeIds),
     new Set(requestedNodeIds),
   );
-  return mergeFreshRepositoryRuntimeCollection(repository, invocation, current, additions);
+  return mergeFreshRepositoryRuntimeCollection(repository, context, current, additions);
 }
 
 async function collectRelationExpansionBatch(
   adapters: CollectionRuntimeAdapters,
   invocation: DailyRunInvocation,
-  configuration: RuntimeConfiguration,
   state: RuntimeState,
   authentication: GitHubClient,
+  read: CollectionGitHubReadPort,
+  context: CollectionPlanningContext,
   allowlist: PublicRepositoryAllowlist,
   targetNodeIdsByRepositoryId: ReadonlyMap<GitHubRepositoryId, readonly GitHubNodeId[]>,
   freshCollectionsByRepositoryId: Map<GitHubRepositoryId, FreshRepositoryRuntimeCollection>,
@@ -143,8 +142,7 @@ async function collectRelationExpansionBatch(
     GitHubRepositoryId,
     FreshRepositoryRuntimeCollection
   >();
-  const results = await collectRepositoriesWithStaleFallback({
-    allowlist,
+  const results = await collectRepositoryValues({
     repositories: targetRepositories,
     observedAt: invocation.startedAt,
     previousValues: previousRepositoryValues(state),
@@ -156,9 +154,9 @@ async function collectRelationExpansionBatch(
       const expanded = await collectAdditionalRelationItems(
         adapters,
         invocation,
-        configuration,
-        state,
         authentication,
+        read,
+        context,
         allowlist,
         repository,
         requestedNodeIds,
@@ -187,6 +185,8 @@ export async function collectRelationExpandedItems(
   configuration: RuntimeConfiguration,
   state: RuntimeState,
   authentication: GitHubClient,
+  read: CollectionGitHubReadPort,
+  context: CollectionPlanningContext,
   repositoryInventory: RepositoryInventory,
   freshCollectionsByRepositoryId: Map<GitHubRepositoryId, FreshRepositoryRuntimeCollection>,
   repositoryResultsById: Map<
@@ -206,8 +206,9 @@ export async function collectRelationExpandedItems(
       adapters,
       invocation,
       configuration,
-      state,
       authentication,
+      read,
+      context,
       freshCollectionsByRepositoryId,
       repositoryResultsById,
       configuration.config,
@@ -383,9 +384,10 @@ export async function collectRelationExpandedItems(
     await collectRelationExpansionBatch(
       adapters,
       invocation,
-      configuration,
       state,
       authentication,
+      read,
+      context,
       repositoryInventory.allowlist,
       targetNodeIdsByRepositoryId,
       freshCollectionsByRepositoryId,

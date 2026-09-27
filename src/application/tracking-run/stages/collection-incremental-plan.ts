@@ -1,4 +1,4 @@
-import type { Config } from "../../../config/index.js";
+import type { Config } from "../../../config/schema.js";
 import {
   currentPersonalReminderAssessment,
   determinePotentialPersonalReminderContinuityConflictNodeIds,
@@ -10,30 +10,73 @@ import {
 } from "../../../domain/index.js";
 import {
   planIncrementalItemCollection,
-  type EnumeratedGitHubItem,
   type IncrementalItemCollectionPlan,
-  type PublicRepository,
-} from "../../../github/index.js";
-import type { SnapshotCollectionItem } from "../../../persistence/index.js";
-import { assertNonNullable } from "../../../util/index.js";
-import { createTrackingBackfillRequest } from "../../backfill.js";
-import type { DailyRunInvocation } from "../../daily-transaction.js";
+} from "../../../github/incremental-item-collection.js";
+import type { EnumeratedGitHubItem } from "../../../github/item-enumeration.js";
+import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
+import type { RunExecutionPolicy } from "../request.js";
+import type { AnalysisPreviousState, PreviousCollectionItem } from "../contracts/previous-state.js";
+import type { ContentDigestPort } from "../ports.js";
 import {
   analysisPlanFingerprintForItem,
   createAiAnalysisRunIdentity,
-} from "../analysis-identity.js";
-import type { RuntimeConfiguration, RuntimeState } from "../contracts.js";
-import {
-  previousCollectionItemsByNodeId,
-  previousItemCollection,
-} from "../previous-state/collection.js";
-import {
-  previousPersonalReminderRelationCandidateConsumerNodeIds,
-  previousStaleRepositoryBlockerTopologyNodeIds,
-  staleAiAnalysisElementsForLifecycle,
-} from "../previous-state/analysis.js";
-import { previousSnapshot } from "../previous-state/snapshot.js";
-import { repositoryFullName } from "../repository-lookup.js";
+} from "./collection-analysis-fingerprint.js";
+import { staleAiAnalysisElementsForLifecycle } from "./collection-lifecycle.js";
+
+export type CollectionPlanningReferences = Readonly<{
+  adjacentNodeIds: ReadonlySet<GitHubNodeId>;
+  personalReminderRelationCandidateConsumerNodeIds: ReadonlySet<GitHubNodeId>;
+  staleBlockerTopologyNodeIds: ReadonlySet<GitHubNodeId>;
+}>;
+
+export type CollectionPlanningContext = Readonly<{
+  startedAt: UtcIsoDateTime;
+  config: Config;
+  executionPolicy: RunExecutionPolicy;
+  previousState: AnalysisPreviousState;
+  references: CollectionPlanningReferences;
+  digest: ContentDigestPort;
+}>;
+
+function previousSnapshot(
+  state: AnalysisPreviousState,
+): Extract<AnalysisPreviousState["snapshot"], { status: "available" }> | undefined {
+  return state.snapshot.status === "available" ? state.snapshot : undefined;
+}
+
+function previousCollectionItemsByNodeId(
+  state: AnalysisPreviousState,
+): ReadonlyMap<GitHubNodeId, PreviousCollectionItem> {
+  return new Map(
+    (previousSnapshot(state)?.collectionRepositories ?? []).flatMap((repository) =>
+      repository.items.map((item) => [item.nodeId, item] as const),
+    ),
+  );
+}
+
+function previousItemCollection(
+  state: AnalysisPreviousState,
+  repository: PublicRepository,
+): Parameters<typeof planIncrementalItemCollection>[0]["previous"] {
+  const previous = previousSnapshot(state)?.collectionRepositories.find(
+    (item) => item.repositoryId === repository.id,
+  );
+  if (previous == null) {
+    return Object.freeze({ status: "none" });
+  }
+  return Object.freeze({
+    status: "successful",
+    items: new Map(
+      previous.items.map((item) => [
+        item.nodeId,
+        Object.freeze({
+          itemFingerprint: item.itemFingerprint,
+          analysisPlanFingerprint: item.analysisPlanFingerprint,
+        }),
+      ]),
+    ),
+  });
+}
 
 /** 追跡対象の識別子を正規化する。 */
 export function normalizeTrackingIdentifier(identifier: string): string {
@@ -52,7 +95,7 @@ function explicitIdentifierMatchesItem(
     .some((identifier) => identifier === item.nodeId || identifier === item.url);
 }
 
-function previousCollectionRetentionItemState(item: SnapshotCollectionItem): RetentionItemState {
+function previousCollectionRetentionItemState(item: PreviousCollectionItem): RetentionItemState {
   if (item.state === "open") {
     return Object.freeze({ state: "open" });
   }
@@ -82,41 +125,41 @@ export function enumeratedRetentionItemState(item: EnumeratedGitHubItem): Retent
 /** 前回追跡項目を今回も保持するか判定する。 */
 export function shouldKeepPreviousTrackedItemInActiveDataset(
   evaluatedAt: UtcIsoDateTime,
-  configuration: RuntimeConfiguration,
+  config: Config,
   item: Readonly<{ nodeId: GitHubNodeId; url: string }>,
   itemState: RetentionItemState,
 ): boolean {
-  if (explicitIdentifierMatchesItem(configuration.config.tracking.include, item)) {
+  if (explicitIdentifierMatchesItem(config.tracking.include, item)) {
     return true;
   }
   const retention = determineTerminalRetention({
     item: itemState,
     evaluatedAt,
-    retentionDays: configuration.config.tracking.retentionDaysAfterTerminal,
+    retentionDays: config.tracking.retentionDaysAfterTerminal,
   });
   return retention.dataset === "active";
 }
 
 /** 前回追跡項目の再取得識別子を返す。 */
 export function previousTrackedItemIdentifiers(
-  invocation: DailyRunInvocation,
-  configuration: RuntimeConfiguration,
-  state: RuntimeState,
+  context: CollectionPlanningContext,
   repository: PublicRepository,
 ): readonly string[] {
-  const collectionItemsByNodeId = previousCollectionItemsByNodeId(state);
+  const collectionItemsByNodeId = previousCollectionItemsByNodeId(context.previousState);
   const identifiers: string[] = [];
-  for (const item of previousSnapshot(state)?.items ?? []) {
+  for (const item of previousSnapshot(context.previousState)?.trackedItems ?? []) {
     if (item.repositoryId !== repository.id) {
       continue;
     }
     const collectionItem = collectionItemsByNodeId.get(item.nodeId);
-    assertNonNullable(collectionItem, `既存追跡項目の収集stateがありません。対象: ${item.nodeId}`);
+    if (collectionItem == null) {
+      throw new TypeError(`既存追跡項目の収集stateがありません。対象: ${item.nodeId}`);
+    }
     const itemState = previousCollectionRetentionItemState(collectionItem);
     if (
       shouldKeepPreviousTrackedItemInActiveDataset(
-        invocation.startedAt,
-        configuration,
+        context.startedAt,
+        context.config,
         item,
         itemState,
       )
@@ -158,33 +201,32 @@ export function missingIdentifiers(
 
 /** 追跡条件に必要な詳細取得対象を返す。 */
 export function requiredTrackingDetailNodeIds(
-  invocation: DailyRunInvocation,
-  configuration: RuntimeConfiguration,
-  state: RuntimeState,
+  context: CollectionPlanningContext,
   repository: PublicRepository,
   enumeratedItems: readonly EnumeratedGitHubItem[],
 ): readonly GitHubNodeId[] {
-  const backfill = createTrackingBackfillRequest(
-    invocation.command,
-    Object.freeze({ status: "start" }),
-  );
+  const backfill =
+    context.executionPolicy.kind === "backfill" ? context.executionPolicy.backfillRange : undefined;
   const includesAllOpenBackfill =
-    backfill.mode === "all-open"
-      ? backfill.repositoryFilter.length === 0 ||
-        backfill.repositoryFilter.includes(repositoryFullName(repository))
+    backfill?.kind === "all-open"
+      ? backfill.repositories.length === 0 ||
+        backfill.repositories.includes(`${repository.owner}/${repository.name}`)
       : false;
   const previouslyTrackedNodeIds = new Set(
-    (previousSnapshot(state)?.items ?? []).map((item) => item.nodeId),
+    (previousSnapshot(context.previousState)?.trackedItems ?? []).map((item) => item.nodeId),
   );
   const previousItemsByNodeId = new Map(
-    (previousSnapshot(state)?.items ?? []).map((item) => [item.nodeId, item]),
+    (previousSnapshot(context.previousState)?.trackedItems ?? []).map((item) => [
+      item.nodeId,
+      item,
+    ]),
   );
   return Object.freeze(
     enumeratedItems
       .filter((item) => {
         if (!previouslyTrackedNodeIds.has(item.nodeId)) {
           return (
-            explicitIdentifierMatchesItem(configuration.config.tracking.include, item) ||
+            explicitIdentifierMatchesItem(context.config.tracking.include, item) ||
             (includesAllOpenBackfill && item.state === "open")
           );
         }
@@ -202,15 +244,14 @@ export function configuredNodeIdentifiers(config: Config): readonly string[] {
 
 /** 個人催促の詳細取得対象を返す。 */
 export function personalReminderDetailNodeIdsForCollection(
-  state: RuntimeState,
+  state: AnalysisPreviousState,
   enumeratedItems: readonly EnumeratedGitHubItem[],
   aiEnabled: boolean,
+  relationCandidateConsumerNodeIds: ReadonlySet<GitHubNodeId>,
 ): ReadonlySet<GitHubNodeId> {
   const previousItemsByNodeId = new Map(
-    (previousSnapshot(state)?.items ?? []).map((item) => [item.nodeId, item]),
+    (previousSnapshot(state)?.trackedItems ?? []).map((item) => [item.nodeId, item]),
   );
-  const relationCandidateConsumerNodeIds =
-    previousPersonalReminderRelationCandidateConsumerNodeIds(state);
   const potentialContinuityConflictNodeIds =
     determinePotentialPersonalReminderContinuityConflictNodeIds(
       [...previousItemsByNodeId.values()].flatMap((item) => item.personalReminderCauses),
@@ -255,11 +296,11 @@ export function personalReminderDetailNodeIdsForCollection(
 
 /** 個人催促の再計画対象を返す。 */
 export function personalReminderReplanNodeIdsForCollection(
-  state: RuntimeState,
+  state: AnalysisPreviousState,
   enumeratedItems: readonly EnumeratedGitHubItem[],
 ): ReadonlySet<GitHubNodeId> {
   const previousItemsByNodeId = new Map(
-    (previousSnapshot(state)?.items ?? []).map((item) => [item.nodeId, item]),
+    (previousSnapshot(state)?.trackedItems ?? []).map((item) => [item.nodeId, item]),
   );
   const potentialContinuityConflictNodeIds =
     determinePotentialPersonalReminderContinuityConflictNodeIds(
@@ -299,27 +340,28 @@ type RepositoryItemDetailPlan = Readonly<{
 
 /** リポジトリ項目の増分詳細取得を計画する。 */
 export function planRepositoryItemDetails(
-  invocation: DailyRunInvocation,
-  configuration: RuntimeConfiguration,
-  state: RuntimeState,
+  context: CollectionPlanningContext,
   repository: PublicRepository,
   enumeratedItems: readonly EnumeratedGitHubItem[],
   adjacentNodeIds: ReadonlySet<GitHubNodeId>,
   forcedDetailNodeIds: ReadonlySet<GitHubNodeId>,
 ): RepositoryItemDetailPlan {
-  const identity = createAiAnalysisRunIdentity(configuration.config);
+  const identity = createAiAnalysisRunIdentity(context.config);
   const currentNodeIds = new Set(enumeratedItems.map((item) => item.nodeId));
   const previousAiAnalysisStatusesByNodeId = new Map(
-    (previousSnapshot(state)?.items ?? []).map(
+    (previousSnapshot(context.previousState)?.trackedItems ?? []).map(
       (item) => [item.nodeId, item.aiAnalysis.status] as const,
     ),
   );
   const currentAnalysisPlanFingerprintsByNodeId = new Map(
-    enumeratedItems.map((item) => [item.nodeId, analysisPlanFingerprintForItem(item, identity)]),
+    enumeratedItems.map((item) => [
+      item.nodeId,
+      analysisPlanFingerprintForItem(item, identity, context.digest),
+    ]),
   );
   const plan = planIncrementalItemCollection({
     items: enumeratedItems,
-    previous: previousItemCollection(state, repository),
+    previous: previousItemCollection(context.previousState, repository),
     previousAiAnalysisStatusesByNodeId,
     currentAnalysisPlanFingerprintsByNodeId,
     adjacentItemNodeIds: new Set(
@@ -327,21 +369,20 @@ export function planRepositoryItemDetails(
     ),
   });
   const personalReminderDetailNodeIds = personalReminderDetailNodeIdsForCollection(
-    state,
+    context.previousState,
     enumeratedItems,
-    configuration.config.ai.enabled,
+    context.config.ai.enabled,
+    context.references.personalReminderRelationCandidateConsumerNodeIds,
   );
   const personalReminderReplanNodeIds = personalReminderReplanNodeIdsForCollection(
-    state,
+    context.previousState,
     enumeratedItems,
   );
-  const staleRepositoryBlockerTopologyNodeIds =
-    previousStaleRepositoryBlockerTopologyNodeIds(state);
   const detailNodeIds = new Set([
     ...plan.detailItemNodeIds,
-    ...requiredTrackingDetailNodeIds(invocation, configuration, state, repository, enumeratedItems),
+    ...requiredTrackingDetailNodeIds(context, repository, enumeratedItems),
     ...personalReminderDetailNodeIds,
-    ...staleRepositoryBlockerTopologyNodeIds,
+    ...context.references.staleBlockerTopologyNodeIds,
     ...forcedDetailNodeIds,
   ]);
   return Object.freeze({

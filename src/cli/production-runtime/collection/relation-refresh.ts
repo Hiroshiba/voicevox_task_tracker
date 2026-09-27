@@ -1,4 +1,12 @@
 import type { Config } from "../../../config/index.js";
+import type { CollectionGitHubReadPort } from "../../../application/tracking-run/ports.js";
+import type { CollectionPlanningContext } from "../../../application/tracking-run/stages/collection-incremental-plan.js";
+import type { RepositoryCollectionResult } from "../../../application/tracking-run/stages/collection-stale.js";
+import {
+  collectRepositoryItemObservations,
+  mergeFreshRepositoryRuntimeCollection,
+  type FreshRepositoryRuntimeCollection,
+} from "../../../application/tracking-run/stages/collection-repositories.js";
 import type { GitHubNodeId, GitHubRepositoryId } from "../../../domain/index.js";
 import {
   type EnumeratedGitHubItem,
@@ -6,7 +14,6 @@ import {
   type GitHubItemDetail,
   type PublicRepository,
   type PublicRepositoryAllowlist,
-  type RepositoryCollectionResult,
 } from "../../../github/index.js";
 import {
   RelationReferenceConflictError,
@@ -16,18 +23,13 @@ import {
 import type { SnapshotCollectionRepository } from "../../../persistence/index.js";
 import type { DailyRunInvocation } from "../../daily-transaction.js";
 import type { CollectionRuntimeAdapters } from "../adapters.js";
-import type { RuntimeConfiguration, RuntimeState } from "../contracts.js";
+import type { RuntimeConfiguration } from "../contracts.js";
 import {
   aggregateFreshRepositoryCollections,
   createPublicRelationItem,
   extractRelationCandidatesOnce,
   type FreshRuntimeCollectionAggregate,
 } from "./relation-candidates.js";
-import {
-  collectFreshRepositoryItemObservations,
-  mergeFreshRepositoryRuntimeCollection,
-  type FreshRepositoryRuntimeCollection,
-} from "./repository-collection.js";
 
 type RelationReferenceRefreshTarget = Readonly<{
   repository: PublicRepository;
@@ -144,9 +146,9 @@ function validateRelationReferenceRefresh(
 async function refreshRelationReferences(
   adapters: CollectionRuntimeAdapters,
   invocation: DailyRunInvocation,
-  configuration: RuntimeConfiguration,
-  state: RuntimeState,
   authentication: GitHubClient,
+  read: CollectionGitHubReadPort,
+  context: CollectionPlanningContext,
   allowlist: PublicRepositoryAllowlist,
   targets: readonly RelationReferenceRefreshTarget[],
   error: RelationReferenceConflictError,
@@ -215,13 +217,9 @@ async function refreshRelationReferences(
         cause: error,
       });
     }
-    const additions = await collectFreshRepositoryItemObservations(
-      adapters,
-      invocation,
-      configuration,
-      state,
-      authentication,
-      allowlist,
+    const additions = await collectRepositoryItemObservations(
+      read,
+      context,
       repository,
       refreshedItems,
       new Set(refreshedItems.map((item) => item.nodeId)),
@@ -229,7 +227,7 @@ async function refreshRelationReferences(
     );
     const refreshedCollection = mergeFreshRepositoryRuntimeCollection(
       repository,
-      invocation,
+      context,
       current,
       additions,
     );
@@ -270,8 +268,9 @@ export async function extractAllRelationCandidates(
   adapters: CollectionRuntimeAdapters,
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
-  state: RuntimeState,
   authentication: GitHubClient,
+  read: CollectionGitHubReadPort,
+  context: CollectionPlanningContext,
   freshCollectionsByRepositoryId: Map<GitHubRepositoryId, FreshRepositoryRuntimeCollection>,
   repositoryResultsById: Map<
     GitHubRepositoryId,
@@ -312,9 +311,9 @@ export async function extractAllRelationCandidates(
       await refreshRelationReferences(
         adapters,
         invocation,
-        configuration,
-        state,
         authentication,
+        read,
+        context,
         allowlist,
         targets,
         error,

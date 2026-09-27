@@ -1,9 +1,9 @@
 import type { UtcIsoDateTime } from "../../../domain/index.js";
+import type { RepositoryCollectionResult } from "../../../application/tracking-run/stages/collection-stale.js";
 import type {
   EnumeratedGitHubItem,
   FreshObservedGitHubItem,
   GitHubItemDetail,
-  RepositoryCollectionResult,
 } from "../../../github/index.js";
 import type {
   SnapshotCollectionItem,

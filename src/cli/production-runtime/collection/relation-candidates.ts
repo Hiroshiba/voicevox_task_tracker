@@ -1,4 +1,6 @@
 import type { Config } from "../../../config/index.js";
+import type { RepositoryCollectionResult } from "../../../application/tracking-run/stages/collection-stale.js";
+import type { FreshRepositoryRuntimeCollection } from "../../../application/tracking-run/stages/collection-repositories.js";
 import type { GitHubNodeId, GitHubRepositoryId } from "../../../domain/index.js";
 import {
   deduplicateByStableId,
@@ -7,7 +9,6 @@ import {
   type GitHubItemDetail,
   type PublicRepository,
   type PublicRepositoryAllowlist,
-  type RepositoryCollectionResult,
 } from "../../../github/index.js";
 import {
   extractRelationCandidatesForItems,
@@ -20,7 +21,6 @@ import type { SnapshotCollectionRepository } from "../../../persistence/index.js
 import { assertNonNullable } from "../../../util/index.js";
 import type { RuntimeState } from "../contracts.js";
 import { previousSnapshot } from "../previous-state/snapshot.js";
-import type { FreshRepositoryRuntimeCollection } from "./repository-collection.js";
 
 export type FreshRuntimeCollectionAggregate = Readonly<{
   enumeratedItems: readonly EnumeratedGitHubItem[];

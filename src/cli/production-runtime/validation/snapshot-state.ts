@@ -1,4 +1,9 @@
 import type { AiAnalysisRunIdentity } from "../../../codex/index.js";
+import {
+  analysisPlanFingerprintForItem,
+  createAiAnalysisRunIdentity,
+} from "../../../application/tracking-run/stages/collection-analysis-fingerprint.js";
+import { nodeContentDigestPort } from "../../../infrastructure/tracking-run/content-digest.js";
 import type { Config } from "../../../config/index.js";
 import { calculateAttention, type GitHubNodeId, type Relation } from "../../../domain/index.js";
 import type { EnumeratedGitHubItem } from "../../../github/index.js";
@@ -17,10 +22,6 @@ import {
 } from "../../../persistence/index.js";
 import { assertNonNullable } from "../../../util/index.js";
 import type { DailyRunInvocation } from "../../daily-transaction.js";
-import {
-  analysisPlanFingerprintForItem,
-  createAiAnalysisRunIdentity,
-} from "../analysis-identity.js";
 import type {
   CodexAnalysis,
   CollectedItems,
@@ -129,7 +130,11 @@ function analysisPlanFingerprintForValidatedCollectionItem(
   trackedNodeIds: ReadonlySet<GitHubNodeId>,
   plannedNodeIds: ReadonlySet<GitHubNodeId>,
 ): SnapshotAnalysisPlanFingerprint {
-  const currentFingerprint = analysisPlanFingerprintForItem(currentItem, identity);
+  const currentFingerprint = analysisPlanFingerprintForItem(
+    currentItem,
+    identity,
+    nodeContentDigestPort,
+  );
   if (
     previousItem != null &&
     previousItem.itemFingerprint !== item.itemFingerprint &&

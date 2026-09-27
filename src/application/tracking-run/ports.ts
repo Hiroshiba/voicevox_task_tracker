@@ -2,6 +2,10 @@ import type { Sha256Hash } from "../../canonical-json/sha256.js";
 import type { BotPredicate } from "../../domain/actor-resolution.js";
 import type { GitHubNodeId, GitHubRepositoryId, UtcIsoDateTime } from "../../domain/types.js";
 import type { PublicRepository } from "../../github/public-repository-allowlist.js";
+import type { EnumeratedGitHubItem } from "../../github/item-enumeration.js";
+import type { GitHubItemDetail } from "../../github/item-detail-types.js";
+import type { FreshObservedGitHubItem } from "../../github/item-normalization.js";
+import type { GitHubRateLimitSnapshot } from "../../github/errors.js";
 
 /** canonical bytesのSHA-256計算を副作用層へ委ねる。 */
 export type ContentDigestPort = Readonly<{
@@ -48,3 +52,11 @@ export type GitHubReadPort<
   ) => Promise<Readonly<{ details: readonly Detail[]; observedItems: readonly ObservedItem[] }>>;
   rateLimitSnapshot: () => RateLimitSnapshot | undefined;
 }>;
+
+/** 収集段階が使う正規化済みGitHub読取境界。 */
+export type CollectionGitHubReadPort = GitHubReadPort<
+  EnumeratedGitHubItem,
+  GitHubItemDetail,
+  FreshObservedGitHubItem,
+  GitHubRateLimitSnapshot
+>;

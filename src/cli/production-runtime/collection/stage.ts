@@ -2,11 +2,15 @@ import { type GitHubNodeId, type GitHubRepositoryId } from "../../../domain/inde
 import { collectRunItems } from "../../../application/tracking-run/stages/collection.js";
 import type { RunEvaluatedAt } from "../../../application/tracking-run/contracts/evaluation-time.js";
 import {
-  collectRepositoriesWithStaleFallback,
-  markObservedGitHubItemsStale,
-  type GitHubClient,
+  retainStaleObservedItems,
   type StaleObservedGitHubItem,
-} from "../../../github/index.js";
+} from "../../../application/tracking-run/stages/collection-stale.js";
+import type { GitHubClient } from "../../../github/client.js";
+import type { InitialRepositoryCollection } from "../../../application/tracking-run/stages/collection-repositories.js";
+import type { CollectionPlanningContext } from "../../../application/tracking-run/stages/collection-incremental-plan.js";
+import type { CollectionGitHubReadPort } from "../../../application/tracking-run/ports.js";
+import { nodeContentDigestPort } from "../../../infrastructure/tracking-run/content-digest.js";
+import { createGitHubReadPort } from "../../../infrastructure/tracking-run/github-port.js";
 import type {
   SnapshotCollectionItem,
   SnapshotCollectionRepository,
@@ -23,31 +27,25 @@ import type {
   RuntimeConfiguration,
   RuntimeState,
 } from "../contracts.js";
-import { githubApiRemaining } from "../github-rate-limit.js";
 import { currentRuntimeTime } from "../clock.js";
 import { selectPersonalReminderRelationCandidateConsumers } from "../personal-reminder-relation-selection.js";
 import {
   previousGraphAdjacentNodeIds,
+  previousPersonalReminderRelationCandidateConsumerNodeIds,
   previousRelationCandidateDependencyProducers,
   previousStaleRepositoryBlockerTopologyNodeIds,
 } from "../previous-state/analysis.js";
-import { previousRepositoryValues } from "../previous-state/collection.js";
 import { previousSnapshot } from "../previous-state/snapshot.js";
 import {
   EMPTY_RELATION_CANDIDATES,
   currentNativeCandidateStateByStaleNodeId,
   indexRelationCandidatesByNodeId,
 } from "../relation-candidate-index.js";
-import { configuredNodeIdentifiers } from "./incremental-plan.js";
 import {
   effectiveAssigneeRelationChangeTargetNodeIds,
   staleEffectiveAssigneeTargetsToRetain,
 } from "./relation-expansion-targets.js";
 import { collectRelationExpandedItems } from "./relation-expansion.js";
-import {
-  collectFreshRepositoryItems,
-  type FreshRepositoryRuntimeCollection,
-} from "./repository-collection.js";
 import {
   finalizeEnumeratedItemObservation,
   finalizeItemDetailObservation,
@@ -61,7 +59,10 @@ async function collectProductionItems(
   configuration: RuntimeConfiguration,
   state: RuntimeState,
   authentication: GitHubClient,
+  read: CollectionGitHubReadPort,
+  context: CollectionPlanningContext,
   repositoryInventory: RepositoryInventory,
+  initial: InitialRepositoryCollection,
   captureEvaluationTime: () => RunEvaluatedAt,
 ): Promise<
   Readonly<{
@@ -71,52 +72,15 @@ async function collectProductionItems(
     diagnostics: readonly string[];
   }>
 > {
-  const nodeIdentifiers = configuredNodeIdentifiers(configuration.config);
-  const explicitNodeItems =
-    nodeIdentifiers.length === 0
-      ? Object.freeze([])
-      : await adapters.enumerateGitHubItemsByIdentifiers({
-          allowlist: repositoryInventory.allowlist,
-          identifiers: nodeIdentifiers,
-          observedAt: invocation.startedAt,
-          request: authentication.request,
-          graphql: authentication.graphql,
-        });
-  const adjacentNodeIds = previousGraphAdjacentNodeIds(state);
-  const freshCollectionsByRepositoryId = new Map<
-    GitHubRepositoryId,
-    FreshRepositoryRuntimeCollection
-  >();
-  const initialRepositoryResults = await collectRepositoriesWithStaleFallback({
-    allowlist: repositoryInventory.allowlist,
-    repositories: repositoryInventory.allowlist.repositories,
-    observedAt: invocation.startedAt,
-    previousValues: previousRepositoryValues(state),
-    collect: async (repository) => {
-      const collected = await collectFreshRepositoryItems(
-        adapters,
-        invocation,
-        configuration,
-        state,
-        authentication,
-        repositoryInventory.allowlist,
-        repository,
-        explicitNodeItems,
-        adjacentNodeIds,
-      );
-      freshCollectionsByRepositoryId.set(repository.id, collected);
-      return collected.state;
-    },
-  });
-  const repositoryResultsById = new Map(
-    initialRepositoryResults.map((result) => [result.repository.id, result]),
-  );
+  const { freshCollectionsByRepositoryId, repositoryResultsById } = initial;
   const expanded = await collectRelationExpandedItems(
     adapters,
     invocation,
     configuration,
     state,
     authentication,
+    read,
+    context,
     repositoryInventory,
     freshCollectionsByRepositoryId,
     repositoryResultsById,
@@ -142,11 +106,7 @@ async function collectProductionItems(
     staleRepositoryIds.add(result.repository.id);
     collectionRepositories.push(result.previousValue);
     staleItems.push(
-      ...markObservedGitHubItemsStale({
-        previousItems: result.previousValue.items,
-        failedAt: result.failedAt,
-        diagnostic: result.diagnostic,
-      }),
+      ...retainStaleObservedItems(result.previousValue.items, result.failedAt, result.diagnostic),
     );
     diagnostics.push(result.diagnostic.message);
   }
@@ -345,35 +305,53 @@ export function createCollectItemsStage(
   adapters: CollectionRuntimeAdapters,
   sessions: GitHubRunSessions,
 ): DailyTransactionDependencies<ProductionTypes>["collectIncrementalItems"] {
-  return ({ invocation, configuration, state, inventoryCollected, repositoryInventory }) =>
-    collectRunItems(
-      inventoryCollected,
-      {
-        async collect(_inventory, captureEvaluationTime) {
-          const authentication = sessions.require(invocation.runId);
-          try {
+  return async ({ invocation, configuration, state, inventoryCollected, repositoryInventory }) => {
+    try {
+      const read = createGitHubReadPort(inventoryCollected, sessions, {
+        enumerateOpen: adapters.enumerateOpenGitHubItems,
+        enumerateByIdentifiers: adapters.enumerateGitHubItemsByIdentifiers,
+        collectDetails: adapters.collectGitHubItemDetails,
+      });
+      const references = Object.freeze({
+        adjacentNodeIds: previousGraphAdjacentNodeIds(state),
+        personalReminderRelationCandidateConsumerNodeIds:
+          previousPersonalReminderRelationCandidateConsumerNodeIds(state),
+        staleBlockerTopologyNodeIds: previousStaleRepositoryBlockerTopologyNodeIds(state),
+      });
+      return await collectRunItems(
+        inventoryCollected,
+        {
+          read,
+          references,
+          async completeRelationClosure(initial, context, captureEvaluationTime) {
+            const authentication = sessions.require(invocation.runId);
             const collection = await collectProductionItems(
               adapters,
               invocation,
               configuration,
               state,
               authentication,
+              read,
+              context,
               repositoryInventory,
+              initial,
               captureEvaluationTime,
             );
             return Object.freeze({
               value: collection.value,
               itemCount: collection.value.trackedNodeIds.size,
               changedItemCount: collection.changedItemCount,
-              githubApiRemaining: githubApiRemaining(authentication),
+              githubApiRemaining: read.rateLimitSnapshot()?.remaining ?? 0,
               staleRepositoryCount: collection.staleRepositoryCount,
               diagnostics: collection.diagnostics,
             });
-          } finally {
-            sessions.release(invocation.runId);
-          }
+          },
         },
-      },
-      { now: () => currentRuntimeTime(adapters) },
-    );
+        { now: () => currentRuntimeTime(adapters) },
+        nodeContentDigestPort,
+      );
+    } finally {
+      sessions.release(invocation.runId);
+    }
+  };
 }

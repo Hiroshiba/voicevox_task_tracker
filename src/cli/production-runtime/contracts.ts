@@ -10,6 +10,10 @@ import type {
 } from "../../codex/index.js";
 import type { Config } from "../../config/index.js";
 import type { Sha256Hash } from "../../canonical-json/sha256.js";
+import type {
+  RepositoryCollectionResult,
+  StaleObservedGitHubItem,
+} from "../../application/tracking-run/stages/collection-stale.js";
 import type { PreparedRun } from "../../application/tracking-run/prepare-run.js";
 import type { AnalysisPreviousState } from "../../application/tracking-run/contracts/previous-state.js";
 import type { InventoryCollectedRun } from "../../application/tracking-run/stages/inventory.js";
@@ -53,8 +57,6 @@ import type {
   FreshObservedGitHubItem,
   GitHubItemDetail,
   PublicRepositoryAllowlist,
-  RepositoryCollectionResult,
-  StaleObservedGitHubItem,
 } from "../../github/index.js";
 import type {
   AnalyzeGraphResult,

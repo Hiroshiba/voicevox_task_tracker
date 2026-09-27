@@ -31,9 +31,22 @@ const pureLeafImportPaths = [
   "canonical-json/sha256-hex.js",
   "canonical-json/sha256.js",
   "canonical-json/value.js",
+  "codex/analysis-elements.js",
+  "codex/analysis-selection.js",
+  "codex/backend-version.js",
+  "github/errors.js",
+  "github/incremental-item-collection.js",
+  "github/item-detail-types.js",
+  "github/item-normalization.js",
   "github/public-repository-allowlist.js",
+  "github/stable-id.js",
 ];
+const typeOnlyLeafImportPaths = ["github/item-enumeration.js"];
 const pureLeafImportPattern = pureLeafImportPaths
+  .concat(typeOnlyLeafImportPaths)
+  .map((path) => path.replaceAll(".", "\\."))
+  .join("|");
+const typeOnlyLeafImportPattern = typeOnlyLeafImportPaths
   .map((path) => path.replaceAll(".", "\\."))
   .join("|");
 const restrictedModulePattern = `(?:^|/)(?!(?:${pureLeafImportPattern})$)(?:canonical-json|codex|persistence|pages|discord|github)(?:/|$)`;
@@ -135,6 +148,11 @@ export default defineConfig([
             {
               regex: restrictedModulePattern,
               message: "applicationは許可されたpure leaf moduleだけを参照してください",
+            },
+            {
+              regex: `(?:^|/)(?:${typeOnlyLeafImportPattern})$`,
+              allowTypeImports: true,
+              message: "applicationは列挙moduleを型としてだけ参照してください",
             },
           ],
         },

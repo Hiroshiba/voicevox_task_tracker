@@ -76,21 +76,17 @@ export {
   type GitHubTimelineAssignee,
 } from "./item-detail-types.js";
 export {
-  markObservedGitHubItemsStale,
   normalizeGitHubActor,
   normalizeGitHubEvents,
   normalizeObservedGitHubItem,
   normalizeObservedGitHubItems,
   type FreshObservedGitHubIssue,
   type FreshObservedGitHubItem,
-  type FreshObservedGitHubItemReference,
   type GitHubBotPredicate,
   type GitHubBotPredicateInput,
-  type MarkObservedGitHubItemsStaleOptions,
   type NormalizeGitHubEventsOptions,
   type NormalizeObservedGitHubItemOptions,
   type NormalizeObservedGitHubItemsOptions,
-  type StaleObservedGitHubItem,
 } from "./item-normalization.js";
 export {
   PRODUCTION_SOURCE_ID_KINDS,
@@ -128,12 +124,6 @@ export {
   type PublicRepository,
   type PublicRepositoryId,
 } from "./public-repository-allowlist.js";
-export {
-  collectRepositoriesWithStaleFallback,
-  type CollectRepositoriesOptions,
-  type PreviousRepositoryValue,
-  type RepositoryCollectionResult,
-} from "./repository-collection.js";
 export {
   discoverRepositoryInventory,
   type DiscoverRepositoryInventoryOptions,

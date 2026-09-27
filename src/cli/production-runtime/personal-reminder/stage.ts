@@ -48,7 +48,7 @@ import {
 import type { PersonalReminderRuntimeAdapters } from "../adapters.js";
 import { forcedAiAnalysisTarget } from "../ai-analysis-target.js";
 import { aiDependencyReconciliationContext } from "../ai-dependencies/reconciliation-context.js";
-import { CODEX_BACKEND_VERSION } from "../analysis-identity.js";
+import { CODEX_BACKEND_VERSION } from "../../../codex/backend-version.js";
 import type {
   CodexAnalysis,
   CollectedItems,

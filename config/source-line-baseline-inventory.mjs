@@ -65,11 +65,6 @@ export const INITIAL_SOURCE_LINE_BASELINE = [
     sha256: "2d86d09e17ed8eb9e756bf6f100ebe7af3294e8417f65ba02108969d102e406d",
   },
   {
-    path: "src/github/item-normalization.ts",
-    lineCount: 1010,
-    sha256: "2f103b9d464f47a297fb5f965355132751b805fc4cec23ff84267ab14a0e268b",
-  },
-  {
     path: "src/graph/analyze-graph.ts",
     lineCount: 2416,
     sha256: "e5fc1942765ed09805d240ea837538a04f2f40021aa6afc6b26c6bafe7eb197d",
