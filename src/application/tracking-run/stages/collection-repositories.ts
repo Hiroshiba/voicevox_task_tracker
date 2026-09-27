@@ -234,7 +234,7 @@ export async function collectInitialRepositoryItems(
     FreshRepositoryRuntimeCollection
   >();
   const results = await collectRepositoryValues({
-    repositories: inventory.data.approvedRepositories,
+    repositories: inventory.data.allowlist.repositories,
     observedAt: context.startedAt,
     previousValues,
     collect: async (repository) => {

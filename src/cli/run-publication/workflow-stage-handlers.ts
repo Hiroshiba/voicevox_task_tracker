@@ -1,5 +1,7 @@
 import { resolve } from "node:path";
 
+import { CliWorkflowArtifactError } from "../errors.js";
+import { readOptionalRunReportFile } from "../workflow-run-report.js";
 import type {
   BuildPagesCliCommand,
   NotifyDiscordCliCommand,
@@ -219,6 +221,24 @@ export async function notifyWorkflowOperations(
   dependencies: Readonly<{ adapters: WorkflowDeliveryAdapters }>,
   command: NotifyOperationsCliCommand,
 ): Promise<void> {
+  if (command.incidentKind === "collection") {
+    const reportPath = resolve(
+      dependencies.adapters.repositoryPath,
+      command.collectAnalyzeReportPath,
+    );
+    const report = await readOptionalRunReportFile(reportPath);
+    if (report == null) {
+      throw new CliWorkflowArtifactError(reportPath, "missing", {});
+    }
+    if (report.command !== "collect-analyze") {
+      throw new CliWorkflowArtifactError(reportPath, "invalid", {
+        cause: new TypeError("収集run reportのcommandが一致しません"),
+      });
+    }
+    if (report.status === "failure" && report.failureKind === "public_boundary") {
+      return;
+    }
+  }
   const config = await dependencies.adapters.loadConfig(
     resolve(dependencies.adapters.repositoryPath, command.configPath),
   );

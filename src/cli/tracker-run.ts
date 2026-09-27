@@ -1,5 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { randomUUID } from "node:crypto";
+import { appendFile } from "node:fs/promises";
 
 import { z } from "zod";
 
@@ -11,6 +12,7 @@ import { type CliExecutionResult } from "./application.js";
 import { notificationActionSchema, parseCliArguments, type CliCommand } from "./command.js";
 import { createDefaultCliApplication } from "./composition-root.js";
 import { safeErrorDiagnostic } from "./error-diagnostic.js";
+import { isPublicBoundaryViolation } from "./public-boundary-error.js";
 import {
   CliCodexAuthenticationError,
   CliCredentialsError,
@@ -296,6 +298,10 @@ export async function runTrackerCliMain(args: readonly string[]): Promise<number
     }
   }
   if (failure != null) {
+    const githubOutputPath = process.env["GITHUB_OUTPUT"];
+    if (githubOutputPath != null && isPublicBoundaryViolation(failure)) {
+      await appendFile(githubOutputPath, "public_boundary_violation=true\n", "utf8");
+    }
     process.stderr.write(`${safeTopLevelMessage(failure)}\n`);
     process.stderr.write(`${safeErrorDiagnostic(stage, failure)}\n`);
     return 1;

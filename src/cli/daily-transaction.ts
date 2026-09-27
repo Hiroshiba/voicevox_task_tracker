@@ -22,6 +22,7 @@ import {
   type DryRunCliCommand,
 } from "./command.js";
 import { safeErrorDiagnostic } from "./error-diagnostic.js";
+import { isPublicBoundaryViolation } from "./public-boundary-error.js";
 import { RunCoordinator, type CoordinatedRunResult } from "./run-coordinator.js";
 import { createRunIdentity } from "./tracking-run/identity.js";
 import { projectLegacyDailyInvocation } from "./tracking-run/migration-bridge/legacy-invocation.js";
@@ -412,7 +413,7 @@ function completedReport(
   finishedAt: UtcIsoDateTime,
 ): RunReport {
   return createRunReport({
-    schemaVersion: "4",
+    schemaVersion: "5",
     runId: invocation.runId,
     command: invocation.command.kind,
     status,
@@ -431,17 +432,19 @@ function completedReport(
 function failureReport(
   invocation: DailyRunInvocation,
   failedStage: RunStage,
+  failureKind: Extract<RunReport, { status: "failure" }>["failureKind"],
   metrics: RunMetrics,
   diagnostics: readonly string[],
   discordSentAt: UtcIsoDateTime | null,
   finishedAt: UtcIsoDateTime,
 ): RunReport {
   return createRunReport({
-    schemaVersion: "4",
+    schemaVersion: "5",
     runId: invocation.runId,
     command: invocation.command.kind,
     status: "failure",
     complete: false,
+    failureKind,
     failedStage,
     scheduledFor: invocation.scheduledFor,
     startedAt: invocation.startedAt,
@@ -525,6 +528,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
     invocation: DailyRunInvocation,
     reportPath: string,
     stage: RunStage,
+    failureKind: Extract<RunReport, { status: "failure" }>["failureKind"],
     metrics: RunMetrics,
     configuration: Types["configuration"] | undefined,
     diagnostics: readonly string[],
@@ -534,6 +538,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
     const report = failureReport(
       invocation,
       stage,
+      failureKind,
       this.#metricsWithAiProcessAttemptCount(metrics, configuration),
       diagnostics,
       discordSentAt,
@@ -746,6 +751,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           invocation,
           request.reportPath,
           "completeness_validation",
+          "other",
           metrics,
           configuration,
           diagnostics,
@@ -838,7 +844,8 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
       });
     } catch (error: unknown) {
       await this.#recordError(invocation, stage, "cli.stage.failed", error);
-      const alertKind = operationsAlertKind(stage);
+      const failureKind = isPublicBoundaryViolation(error) ? "public_boundary" : "other";
+      const alertKind = failureKind === "public_boundary" ? undefined : operationsAlertKind(stage);
       if (
         alertKind != null &&
         configuration != null &&
@@ -869,6 +876,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         invocation,
         request.reportPath,
         stage,
+        failureKind,
         metrics,
         configuration,
         [...diagnostics, safeErrorDiagnostic(stage, error)],

@@ -38,7 +38,7 @@ const runMetricsSchema = z.strictObject({
 });
 
 const runReportFields = {
-  schemaVersion: z.literal("4"),
+  schemaVersion: z.literal("5"),
   runId: nonEmptyStringSchema,
   command: z.enum(["daily", "dry-run", "backfill", "collect-analyze"]),
   scheduledFor: dateTimeSchema,
@@ -65,6 +65,7 @@ const runReportSchema = z
       ...runReportFields,
       status: z.literal("failure"),
       complete: z.literal(false),
+      failureKind: z.enum(["public_boundary", "other"]),
       failedStage: z.enum([
         "configuration",
         "authentication",
@@ -177,6 +178,7 @@ export function createRunReport(value: unknown): RunReport {
       ...result.data,
       status: "failure",
       complete: false,
+      failureKind: result.data.failureKind,
       failedStage: result.data.failedStage,
       metrics: {
         ...result.data.metrics,

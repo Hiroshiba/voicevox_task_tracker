@@ -60,7 +60,7 @@ export type CollectionPort = Readonly<{
 export type CollectedRun<Collection extends Readonly<{ evaluatedAt: RunEvaluatedAt }>> = StageState<
   "collected",
   {
-    approvedRepositories: InventoryCollectedRun["data"]["approvedRepositories"];
+    approvedRepositories: InventoryCollectedRun["data"]["allowlist"]["repositories"];
     allowlistDigest: InventoryCollectedRun["data"]["allowlistDigest"];
     collection: Collection;
     sourceCatalog: readonly SourceId[];
@@ -105,7 +105,7 @@ export async function collectRunItems(
     port.read,
     port.delay,
     context,
-    inventory.data.approvedRepositories,
+    inventory.data.allowlist.repositories,
     initial,
     () => {
       if (evaluation.current.status === "captured") {
@@ -158,7 +158,7 @@ export async function collectRunItems(
     stage: "collected",
     core: inventory.core,
     data: Object.freeze({
-      approvedRepositories: inventory.data.approvedRepositories,
+      approvedRepositories: inventory.data.allowlist.repositories,
       allowlistDigest: inventory.data.allowlistDigest,
       collection,
       sourceCatalog,

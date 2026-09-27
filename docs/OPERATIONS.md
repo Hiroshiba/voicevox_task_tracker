@@ -19,7 +19,7 @@ GitHub Actionsのscheduleには遅延があるため、厳密な投稿時刻は�
 9. `report-workflow`
 
 通常の公開経路は`notify-discord`までの6 jobです。通知候補があるrunでは、その後に`publish-notification-history`が動きます。
-`notify-operations`は収集、Pages関連、Discord通知のいずれかのjobが失敗したときだけ実行されます。
+`notify-operations`は収集、Pages関連、Discord通知のいずれかのjobが失敗したときだけ実行されます。公開境界違反を検出した場合は運用障害通知も送りません。収集失敗時のrun reportを取得できなければ、通知段階は失敗として停止します。
 `report-workflow`は先行jobの成否にかかわらず実行され、全job結果と収集metricをActions artifactへ保存します。
 
 Pagesではトップの項目一覧に未完了の追跡項目が表示され、既定が要対応度の降順であることを確認します。

@@ -1,6 +1,6 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type { Sha256Hash } from "../../../canonical-json/sha256.js";
-import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
+import type { PublicRepositoryAllowlist } from "../../../github/public-repository-allowlist.js";
 import type { PreparedRun } from "../prepare-run.js";
 import type { ContentDigestPort } from "../ports.js";
 import { createInventoryCollectedStageProof } from "../contracts/proofs.js";
@@ -8,7 +8,7 @@ import { projectAnalysisRunCore, type StageState } from "../contracts/run-core.j
 
 /** GitHub portが確定した公開repositoryと非secret認証情報。 */
 export type RepositoryInventoryObservation = Readonly<{
-  approvedRepositories: readonly PublicRepository[];
+  allowlist: PublicRepositoryAllowlist;
   installationId: number;
   githubApiRemaining: number;
   diagnostics: readonly string[];
@@ -23,7 +23,7 @@ export type RepositoryInventoryPort = Readonly<{
 export type InventoryCollectedRun = StageState<
   "inventory_collected",
   {
-    approvedRepositories: readonly PublicRepository[];
+    allowlist: PublicRepositoryAllowlist;
     allowlistDigest: Sha256Hash;
     session: Readonly<{ installationId: number }>;
     metrics: Readonly<{ repositoryCount: number; githubApiRemaining: number }>;
@@ -41,10 +41,10 @@ export async function collectRepositoryInventory(
   if (!Number.isSafeInteger(observation.installationId) || observation.installationId <= 0) {
     throw new TypeError("GitHub installation IDが不正です");
   }
-  const approvedRepositories = Object.freeze([...observation.approvedRepositories]);
+  const allowlist = observation.allowlist;
   const allowlistDigest = digest.sha256Utf8(
     serializeCanonicalJson(
-      approvedRepositories.map((repository) => ({
+      allowlist.repositories.map((repository) => ({
         id: repository.id,
         owner: repository.owner,
         name: repository.name,
@@ -58,11 +58,11 @@ export async function collectRepositoryInventory(
     stage: "inventory_collected",
     core: projectAnalysisRunCore(prepared.core),
     data: Object.freeze({
-      approvedRepositories,
+      allowlist,
       allowlistDigest,
       session: Object.freeze({ installationId: observation.installationId }),
       metrics: Object.freeze({
-        repositoryCount: approvedRepositories.length,
+        repositoryCount: allowlist.repositories.length,
         githubApiRemaining: observation.githubApiRemaining,
       }),
       diagnostics: Object.freeze([...observation.diagnostics]),

@@ -14,7 +14,7 @@ export type PreparedBaseState = Readonly<{
   snapshot:
     | Readonly<{ status: "missing_branch" | "operations_only" }>
     | Readonly<{ status: "available"; snapshot: object }>;
-  history: AnalysisPreviousState["history"];
+  history: readonly Readonly<{ events: readonly unknown[] }>[];
   aiCache: AnalysisPreviousState["aiCache"];
   personalReminderAiCache: AnalysisPreviousState["personalReminderAiCache"];
   notificationLedger: AnalysisPreviousState["notificationLedger"];

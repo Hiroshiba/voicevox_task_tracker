@@ -1,8 +1,4 @@
-import {
-  createUtcIsoDateTime,
-  type OperationsAlertKind,
-  type UtcIsoDateTime,
-} from "../domain/index.js";
+import { createUtcIsoDateTime, type UtcIsoDateTime } from "../domain/index.js";
 import { z } from "zod";
 import {
   notificationActionSchema,
@@ -110,15 +106,20 @@ export type ResolveDiscordDeliveryCliCommand = Readonly<{
   resolution: "retry" | "acknowledge";
 }>;
 
-/** workflow障害時に運用障害通知だけを送るCLI入力。 */
-export type NotifyOperationsCliCommand = Readonly<{
+type NotifyOperationsCommandFields = Readonly<{
   kind: "notify-operations";
   configPath: string;
-  incidentKind: OperationsAlertKind;
   incidentId: string;
   occurredAt: UtcIsoDateTime;
   retryAttempts: number;
 }>;
+
+/** workflow障害時に運用障害通知だけを送るCLI入力。 */
+export type NotifyOperationsCliCommand = NotifyOperationsCommandFields &
+  (
+    | Readonly<{ incidentKind: "collection"; collectAnalyzeReportPath: string }>
+    | Readonly<{ incidentKind: "pages" | "discord" }>
+  );
 
 /** workflow全体のjob結果をCLI reportへ統合する入力。 */
 export type ReportWorkflowCliCommand = Readonly<{
@@ -473,7 +474,14 @@ function parseResolveDiscordDelivery(args: readonly string[]): ResolveDiscordDel
 function parseNotifyOperations(args: readonly string[]): NotifyOperationsCliCommand {
   const options = parseOptions(
     args,
-    new Set(["--config", "--incident-id", "--kind", "--occurred-at", "--retry-attempts"]),
+    new Set([
+      "--config",
+      "--incident-id",
+      "--kind",
+      "--occurred-at",
+      "--retry-attempts",
+      "--collect-analyze-report",
+    ]),
   );
   const incidentKind = optionalSingleOption(options, "--kind");
   if (incidentKind !== "collection" && incidentKind !== "pages" && incidentKind !== "discord") {
@@ -502,14 +510,28 @@ function parseNotifyOperations(args: readonly string[]): NotifyOperationsCliComm
   ) {
     throw usageError("--retry-attemptsには1以上の整数を指定してください");
   }
-  return Object.freeze({
+  const common = {
     kind: "notify-operations",
     configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
-    incidentKind,
     incidentId,
     occurredAt,
     retryAttempts,
-  });
+  } satisfies NotifyOperationsCommandFields;
+  if (incidentKind === "collection") {
+    return Object.freeze({
+      ...common,
+      incidentKind,
+      collectAnalyzeReportPath: requiredSingleOption(
+        options,
+        "--collect-analyze-report",
+        "notify-operations",
+      ),
+    });
+  }
+  if (optionalSingleOption(options, "--collect-analyze-report") != null) {
+    throw usageError("--collect-analyze-reportはcollection障害だけに指定してください");
+  }
+  return Object.freeze({ ...common, incidentKind });
 }
 
 function parseWorkflowJobResult(options: ParsedOptions, name: string): WorkflowJobResult {
@@ -656,7 +678,8 @@ export function formatCliUsage(): string {
     "  voicevox-task-tracker build-pages [--config PATH] [--artifact PATH] [--output PATH]",
     "  voicevox-task-tracker notify-discord --pages-url URL [--artifact PATH]",
     "  voicevox-task-tracker resolve-discord-delivery --delivery-id ID --resolution retry|acknowledge [--config PATH]",
-    "  voicevox-task-tracker notify-operations --kind collection|pages|discord --incident-id ID --occurred-at ISO",
+    "  voicevox-task-tracker notify-operations --kind collection --incident-id ID --occurred-at ISO --collect-analyze-report PATH",
+    "  voicevox-task-tracker notify-operations --kind pages|discord --incident-id ID --occurred-at ISO",
     "  voicevox-task-tracker report-workflow --run-id ID --run-attempt NUMBER --quality-result RESULT --collect-analyze-result RESULT --persist-state-result RESULT --build-pages-result RESULT --deploy-pages-result RESULT --notify-discord-result RESULT --publish-notification-history-result RESULT --notify-operations-result RESULT",
     "  voicevox-task-tracker verify-state --state-directory PATH",
   ].join("\n");

@@ -33,8 +33,8 @@ canonical JSONの値と直列化は`src/canonical-json/value.ts`に置き、chec
 `production-runtime/create-application.ts`がCLIアプリケーションを組み立て、`daily-dependencies.ts`が日次runの各stageを実アダプターへ接続します。
 分割workflowの組み立ては`workflow/create-runner.ts`が担います。
 `production-runtime/daily-startup/`は設定とstateを準備し、GitHub portをinventory stageへ接続します。
-GitHub portは認証とrepository inventoryを取得し、公開かつ非archived・有効なrepositoryをrunごとに一度選びます。
-未移行の処理へ渡すbridgeは、選定済みの公開repository配列を索引化し、公開可否を再判定しません。
+GitHub portは認証とrepository inventoryを取得します。前回stateや履歴に保存されたrepositoryが今回のinventoryで非公開なら、選定前にrunを停止します。公開かつ非archived・有効なrepositoryをrunごとに一度選びます。
+未移行の処理へ渡すbridgeは、選定済みの公開allowlistをそのまま渡し、公開可否を再判定しません。
 `InventoryCollectedRun`には公開allowlistとdigest、非secretのinstallation ID、収集指標を残し、GitHub clientとtokenは残しません。
 inventoryへの遷移では、準備段階のbase stateから解析に必要な追跡項目、収集値、関係、cache、履歴、通知管理記録を個別に投影します。
 前回のeffective graph状態はstate読込時に固定配列へ変換します。
@@ -147,6 +147,7 @@ GitHubの`closingIssuesReferences`とtimelineの`willCloseTarget`はauthoritativ
 関係先のPRや子Issueで確認した作業者を、親Issueや横断Issueの実質担当者へ拡張しません。
 
 `.github/workflows/daily.yml`は通常経路の`quality`、`collect-analyze`、`persist-state`、初回の`build-pages`、初回の`deploy-pages`、`notify-discord`、通知候補がある場合だけ動く`publish-notification-history`に、失敗時だけ動く`notify-operations`と全job結果を保存する`report-workflow`を加えた9 jobで構成されています。
+収集失敗のrun reportには公開境界違反かどうかを型付きで記録します。運用障害通知は収集run reportを検証し、公開境界違反なら送信しません。収集run reportを取得できない場合も送信前に停止します。Pages生成と通知処理で検出した公開境界違反はCLIからjob出力へ渡し、運用障害通知jobを起動しません。
 schema version 13のworkflow artifactは`notificationAction`を保持します。`persist-state`はsnapshotと、未送信候補を含む通知管理記録を同じatomic transactionで保存します。`notify-discord`はartifactと`tracker-state`のsnapshot run IDを照合してから、`send`なら通知を送り、`hold`と`acknowledge-current`なら通常通知を送らずにrunを完了します。不一致の場合は通知もrun完了処理も行いません。`send`で通知候補がある場合だけ`publish-notification-history`が最新stateを取得し、送信済み通知を含むPagesを再生成してdeployします。運用障害通知はこの通知処理と別系統です。
 repository variableの`VOICEVOX_TASK_TRACKER_SCHEDULE_PAUSED`が`true`の場合は、定期実行の開始jobと障害通知・run報告を省略します。手動実行には影響しません。
 `collect-analyze`とsandbox jobは、`CODEX_AUTH_JSON`が空なら認証ファイルを配置せず、実行候補があるときだけCLI側で認証不足を検出します。
