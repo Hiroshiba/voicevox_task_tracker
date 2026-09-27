@@ -3,7 +3,6 @@ import {
   elementInputFingerprints,
   createAnalysisElementExactInputs,
   type AnalysisElementDependencyFingerprintMap,
-  type AnalysisElementExactInputMap,
   type AnalysisElementInputFingerprintMap,
   type AnalysisImpactDecisionForDiagnostics,
 } from "../../../codex/analysis-element-dependencies.js";
@@ -26,11 +25,13 @@ import {
   type PreparedAiAnalysisCandidate,
 } from "../../../codex/analysis-selection.js";
 import type { AnalysisElementReuseRecord } from "../../../codex/analysis-elements.js";
+import { AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS } from "../../../codex/generic-ai-definition.js";
 import {
-  GENERIC_AI_ELEMENT_DEFINITIONS,
-  AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS,
-} from "../../../codex/generic-ai-definition.js";
-import type { CodexAnalysisInput } from "../../../codex/input.js";
+  createCodexAnalysisInput,
+  projectCodexLockedElementResult,
+  serializeCodexAnalysisInput,
+  type CodexAnalysisInput,
+} from "../../../codex/input.js";
 import {
   AI_ANALYSIS_ELEMENTS,
   aiAnalysisElementSchema,
@@ -47,30 +48,14 @@ import type { ContentDigestPort } from "../ports.js";
 import { createAiAnalysisRunIdentity } from "./collection-analysis-fingerprint.js";
 import type { DeterministicallyAnalyzedRun } from "./deterministic.js";
 import type { DeterministicItemAnalysis } from "./deterministic-item.js";
+import {
+  planGenericAiCachedElements,
+  type GenericAiCacheLookupPort,
+  type GenericAiElementPlan,
+} from "./generic-ai-cache-plan.js";
+import type { GenericAiBudgetPlan } from "./generic-ai-budget-plan.js";
 
-type GenericAiElementDecision =
-  | Readonly<{ choice: "not_required"; reason: "deterministic" | "forced_target_other_element" }>
-  | Readonly<{ choice: "snapshot_reuse"; reason: "current_completed_result" }>
-  | Readonly<{
-      choice: "cache_lookup";
-      onCacheMiss: "execute";
-      reason: "current_input_requires_evaluation";
-    }>
-  | Readonly<{ choice: "ai_disabled"; reason: "ai_disabled" }>
-  | Readonly<{ choice: "deferred"; reason: "forced_target_other_item" }>;
-
-/** 汎用AIの1要素について確定した入力と計画理由。 */
-export type GenericAiElementPlan = Readonly<{
-  element: AiAnalysisElement;
-  revision: number;
-  inputProjectionVersion: number;
-  necessity: "required" | "not_required";
-  selected: boolean;
-  exactInput: object;
-  inputFingerprint: AiAnalysisElementInputFingerprint;
-  dependencyFingerprint: AiAnalysisElementInputFingerprint;
-}> &
-  GenericAiElementDecision;
+export type { GenericAiElementPlan } from "./generic-ai-cache-plan.js";
 
 /** 1項目の全要素と実行用候補を保持する。 */
 export type GenericAiItemPlan = Readonly<{
@@ -79,6 +64,7 @@ export type GenericAiItemPlan = Readonly<{
   elements: readonly GenericAiElementPlan[];
   planning: AnalysisElementPlanning;
   candidate: PreparedAiAnalysisCandidate;
+  executionCandidate?: PreparedAiAnalysisCandidate;
 }>;
 
 /** 汎用AIの全項目について確定した候補と入力。 */
@@ -86,6 +72,7 @@ export type GenericAiPlan = Readonly<{
   identity: AiAnalysisRunIdentity;
   target?: AiAnalysisTarget;
   items: readonly GenericAiItemPlan[];
+  budget: GenericAiBudgetPlan;
   failures: readonly Readonly<{
     candidateId: string;
     reason: "input_validation_failed";
@@ -135,6 +122,8 @@ export type GenericAiPreviousElements = Readonly<{
 /** 未移行のstateと輸送入力を計画段階へ投影する境界。 */
 export type GenericAiPlanningPort = Readonly<{
   digest: ContentDigestPort;
+  lookupCache: GenericAiCacheLookupPort;
+  reserveBudget: (candidates: readonly PreparedAiAnalysisCandidate[]) => GenericAiBudgetPlan;
   target: AiAnalysisTarget | undefined;
   prepareItem: (
     run: DeterministicallyAnalyzedRun,
@@ -152,6 +141,7 @@ export type GenericAiPlanningPort = Readonly<{
     planning: AnalysisElementPlanning,
     target: AiAnalysisTarget | undefined,
   ) => CodexAnalysisInput;
+  serializeTransportInput: (input: CodexAnalysisInput) => string;
   recordInputValidationFailure: (candidateId: string, error: unknown) => Promise<void>;
 }>;
 
@@ -173,81 +163,6 @@ function executionFingerprints(
   }
   return Object.freeze(
     z.record(aiAnalysisElementSchema, aiAnalysisElementFingerprintSchema).parse(values),
-  );
-}
-
-function chooseElementPlan(
-  selected: boolean,
-  skipReason: "not_required" | "up_to_date" | undefined,
-  forcedOtherItem: boolean,
-  forcedOtherElement: boolean,
-  aiEnabled: boolean,
-): GenericAiElementDecision {
-  if (forcedOtherItem) {
-    return Object.freeze({ choice: "deferred", reason: "forced_target_other_item" });
-  }
-  if (forcedOtherElement) {
-    return Object.freeze({ choice: "not_required", reason: "forced_target_other_element" });
-  }
-  if (selected) {
-    return aiEnabled
-      ? Object.freeze({
-          choice: "cache_lookup",
-          onCacheMiss: "execute",
-          reason: "current_input_requires_evaluation",
-        })
-      : Object.freeze({ choice: "ai_disabled", reason: "ai_disabled" });
-  }
-  if (skipReason === "up_to_date") {
-    return Object.freeze({ choice: "snapshot_reuse", reason: "current_completed_result" });
-  }
-  return Object.freeze({ choice: "not_required", reason: "deterministic" });
-}
-
-function elementPlans(
-  exactInputs: AnalysisElementExactInputMap,
-  planning: AnalysisElementPlanning,
-  target: AiAnalysisTarget | undefined,
-  candidateId: string,
-  aiEnabled: boolean,
-): readonly GenericAiElementPlan[] {
-  const selected = new Set(planning.selection.selected.map((value) => value.element));
-  const skipped = new Map(
-    planning.selection.skipped.map((value) => [value.candidate.element, value.reason]),
-  );
-  return Object.freeze(
-    AI_ANALYSIS_ELEMENTS.map((element) => {
-      const exact = exactInputs[element];
-      const candidate = planning.candidates[element];
-      if (exact.fingerprint !== candidate.inputFingerprint) {
-        throw new TypeError(
-          `AI要素の厳密入力とfingerprintが一致しません。対象: ${candidateId}/${element}`,
-        );
-      }
-      const forcedOtherItem = target != null && target.nodeId !== candidateId;
-      const forcedOtherElement =
-        target?.nodeId === candidateId && !target.elements.includes(element);
-      const selectedForExecution = selected.has(element) && !forcedOtherItem;
-      const skipReason = skipped.get(element);
-      const decision = chooseElementPlan(
-        selectedForExecution,
-        skipReason,
-        forcedOtherItem,
-        forcedOtherElement,
-        aiEnabled,
-      );
-      return Object.freeze({
-        element,
-        revision: GENERIC_AI_ELEMENT_DEFINITIONS[element].revision,
-        inputProjectionVersion: GENERIC_AI_ELEMENT_DEFINITIONS[element].inputProjectionVersion,
-        necessity: candidate.necessity,
-        selected: selectedForExecution,
-        ...decision,
-        exactInput: exact.exactInput,
-        inputFingerprint: exact.fingerprint,
-        dependencyFingerprint: candidate.dependencyFingerprint,
-      });
-    }),
   );
 }
 
@@ -309,12 +224,30 @@ export async function planGenericAi(
     });
     const targetForItem = target?.nodeId === nodeId ? target : undefined;
     const executionPlanning =
-      targetForItem == null
+      target == null
         ? planning
-        : Object.freeze({
-            ...planning,
-            selection: forceAnalysisElementSelection(planning, targetForItem),
-          });
+        : targetForItem != null
+          ? Object.freeze({
+              ...planning,
+              selection: forceAnalysisElementSelection(planning, targetForItem),
+            })
+          : Object.freeze({
+              ...planning,
+              selection: Object.freeze({
+                ...planning.selection,
+                selected: Object.freeze([]),
+                shouldCallAi: false,
+              }),
+            });
+    const elements = await planGenericAiCachedElements(
+      exactInputs,
+      executionPlanning,
+      target,
+      nodeId,
+      analyzed.core.config.ai.enabled,
+      identity,
+      port.lookupCache,
+    );
     const input = port.createTransportInput(
       analyzed,
       analysis,
@@ -333,42 +266,119 @@ export async function planGenericAi(
         promptFingerprint,
         priority: source.priority,
         estimatedCostUsd: estimateAiInputCost(
-          `${serializeCanonicalJson(input)}\n`,
+          serializeCodexAnalysisInput(input),
           analyzed.core.config.ai.budget.estimatedInputCostUsdPerMillionTokens,
         ).estimatedCostUsd,
       } satisfies AiAnalysisCandidate),
       executionPlanning.selection,
     );
+    const misses = elements.filter((element) => element.choice === "execute");
+    const cachedLockedElements = Object.fromEntries(
+      elements
+        .filter((element) => element.choice === "cache_hit")
+        .map((element) => [
+          element.element,
+          projectCodexLockedElementResult(element.element, element.entry.generation.result),
+        ]),
+    );
+    const executionInput =
+      misses.length === 0
+        ? undefined
+        : createCodexAnalysisInput({
+            ...input,
+            selectedElements: misses.map((element) => element.element),
+            lockedElements: Object.freeze({
+              ...input.lockedElements,
+              ...cachedLockedElements,
+            }),
+          });
+    const preparedExecutionCandidate =
+      executionInput == null
+        ? undefined
+        : prepareAiAnalysisCandidate(
+            Object.freeze({
+              ...candidate,
+              input: executionInput,
+            }),
+            Object.freeze({
+              ...executionPlanning.selection,
+              selected: Object.freeze(
+                executionPlanning.selection.selected.filter((value) =>
+                  misses.some((element) => element.element === value.element),
+                ),
+              ),
+            }),
+          );
+    const executionInputJson =
+      executionInput == null ? undefined : port.serializeTransportInput(executionInput);
+    const executionCandidate =
+      preparedExecutionCandidate == null || executionInputJson == null
+        ? undefined
+        : Object.freeze({
+            ...preparedExecutionCandidate,
+            normalizedInput: executionInputJson,
+            inputCharacters: Array.from(executionInputJson).length,
+            estimatedCostUsd: estimateAiInputCost(
+              executionInputJson,
+              analyzed.core.config.ai.budget.estimatedInputCostUsdPerMillionTokens,
+            ).estimatedCostUsd,
+          });
     items.push(
       Object.freeze({
         nodeId,
         selectedElements: Object.freeze(
-          target != null && target.nodeId !== nodeId
-            ? []
-            : executionPlanning.selection.selected.map((value) => value.element),
+          executionPlanning.selection.selected.map((value) => value.element),
         ),
-        elements: elementPlans(
-          exactInputs,
-          executionPlanning,
-          target,
-          nodeId,
-          analyzed.core.config.ai.enabled,
-        ),
+        elements,
         planning: executionPlanning,
         candidate,
+        ...(executionCandidate == null ? {} : { executionCandidate }),
       }),
     );
   }
+  const budget = port.reserveBudget(
+    items.flatMap((item) => (item.executionCandidate == null ? [] : [item.executionCandidate])),
+  );
+  if (
+    budget.ledger.ledgerId !== analyzed.core.aiBudget.ledgerId ||
+    budget.ledger.sequence < analyzed.core.aiBudget.sequence
+  ) {
+    throw new TypeError("汎用AIの予約ledgerが入力runと一致しません");
+  }
+  const deferredByCandidateId = new Map(
+    budget.deferred.map((value) => [value.candidateId, value.reason]),
+  );
+  const budgetedItems = Object.freeze(
+    items.map((item) => {
+      const reason = deferredByCandidateId.get(item.nodeId);
+      return reason == null
+        ? item
+        : Object.freeze({
+            ...item,
+            elements: Object.freeze(
+              item.elements.map((element) =>
+                element.choice === "execute"
+                  ? Object.freeze({ ...element, choice: "budget_deferred" as const, reason })
+                  : element,
+              ),
+            ),
+          });
+    }),
+  );
   const plan = Object.freeze({
     identity,
     ...(target == null ? {} : { target }),
-    items: Object.freeze(items),
+    items: budgetedItems,
+    budget,
     failures: Object.freeze(failures),
     analysisImpactDecisions: Object.freeze(analysisImpactDecisions),
   }) satisfies GenericAiPlan;
   return Object.freeze({
     stage: "generic_ai_planned",
-    core: projectGenericAiRunCore(analyzed.core),
+    core: Object.freeze({
+      ...projectGenericAiRunCore(analyzed.core),
+      aiBudget: budget.ledger,
+    }),
     data: Object.freeze({
       approvedRepositories: analyzed.data.approvedRepositories,
       allowlistDigest: analyzed.data.allowlistDigest,

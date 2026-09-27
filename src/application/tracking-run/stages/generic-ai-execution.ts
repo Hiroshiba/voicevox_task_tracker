@@ -18,11 +18,13 @@ export type GenericAiExecutionOutcome =
       item: GenericAiItemPlan;
       status: "failed";
       failure: AiAnalysisRunResult["failures"][number];
+      result?: AiAnalysisRunResult["results"][number];
     }>
   | Readonly<{
       item: GenericAiItemPlan;
       status: "deferred";
       reason: AiAnalysisRunResult["deferred"][number]["reason"];
+      result?: AiAnalysisRunResult["results"][number];
     }>
   | Readonly<{
       item: GenericAiItemPlan;
@@ -51,13 +53,21 @@ function indexRunOutcomes(
     values.set(result.candidateId, "completed");
   }
   for (const failure of run.failures) {
-    if (values.has(failure.candidateId)) {
+    const result = run.results.find((value) => value.candidateId === failure.candidateId);
+    if (
+      values.has(failure.candidateId) &&
+      !(values.get(failure.candidateId) === "completed" && result?.complete === false)
+    ) {
       throw new TypeError(`汎用AIの結果IDが重複しています。対象: ${failure.candidateId}`);
     }
     values.set(failure.candidateId, "failed");
   }
   for (const deferred of run.deferred) {
-    if (values.has(deferred.candidateId)) {
+    const result = run.results.find((value) => value.candidateId === deferred.candidateId);
+    if (
+      values.has(deferred.candidateId) &&
+      !(values.get(deferred.candidateId) === "completed" && result?.complete === false)
+    ) {
       throw new TypeError(`汎用AIの結果IDが重複しています。対象: ${deferred.candidateId}`);
     }
     values.set(deferred.candidateId, "deferred");
@@ -89,28 +99,49 @@ function outcomeForItem(
   if (result != null) {
     const expected = new Set(item.selectedElements);
     const actual = new Set(result.elements.map((element) => element.element));
+    const resultOrder = item.selectedElements.filter((element) => actual.has(element));
+    const cached = item.elements.filter((element) => element.choice === "cache_hit");
     if (
-      result.elements.length !== expected.size ||
-      actual.size !== expected.size ||
-      result.elements.some((element) => {
+      result.complete !== (result.elements.length === expected.size) ||
+      actual.size !== result.elements.length ||
+      (!result.complete && result.elements.some((element) => element.origin !== "cache")) ||
+      cached.some((element) => !actual.has(element.element)) ||
+      result.elements.some((element, index) => {
         const plannedElement = item.elements.find((value) => value.element === element.element);
         return (
+          element.element !== resultOrder[index] ||
           !expected.has(element.element) ||
-          plannedElement?.inputFingerprint !== element.generation.metadata.inputFingerprint
+          plannedElement?.inputFingerprint !== element.generation.metadata.inputFingerprint ||
+          (element.origin === "cache" &&
+            (plannedElement.choice !== "cache_hit" ||
+              element.cacheKey !== plannedElement.entry.cacheKey)) ||
+          (element.origin === "executed" && plannedElement.choice !== "execute")
         );
       })
     ) {
       throw new TypeError(`汎用AIの結果要素が計画と一致しません。対象: ${item.nodeId}`);
     }
-    return Object.freeze({ item, status: "completed", result });
+    if (result.complete) {
+      return Object.freeze({ item, status: "completed", result });
+    }
   }
   const failure = run.failures.find((value) => value.candidateId === item.nodeId);
   if (failure != null) {
-    return Object.freeze({ item, status: "failed", failure });
+    return Object.freeze({
+      item,
+      status: "failed",
+      failure,
+      ...(result == null ? {} : { result }),
+    });
   }
   const deferred = run.deferred.find((value) => value.candidateId === item.nodeId);
   if (deferred != null) {
-    return Object.freeze({ item, status: "deferred", reason: deferred.reason });
+    return Object.freeze({
+      item,
+      status: "deferred",
+      reason: deferred.reason,
+      ...(result == null ? {} : { result }),
+    });
   }
   if (
     item.selectedElements.length !== 0 ||

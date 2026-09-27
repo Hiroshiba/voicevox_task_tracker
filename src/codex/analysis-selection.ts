@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import { parseSha256Hash } from "../canonical-json/sha256.js";
-import { serializeCanonicalJson } from "../canonical-json/value.js";
 import {
   AI_ANALYSIS_ELEMENTS,
   AI_ANALYSIS_ELEMENT_SCHEMA_VERSION,
@@ -12,7 +11,7 @@ import {
   type AiAnalysisElementSelection,
   type AiAnalysisElementSelectionCandidate,
 } from "./element-selection.js";
-import { type CodexAnalysisInput } from "./input.js";
+import { serializeCodexAnalysisInput, type CodexAnalysisInput } from "./input.js";
 import { type ReasoningEffort } from "../domain/index.js";
 
 const aiAnalysisTargetSchema = z
@@ -140,7 +139,7 @@ export function prepareAiAnalysisCandidate(
 ): PreparedAiAnalysisCandidate {
   validateCandidateId(candidate.id);
   validatePromptFingerprint(candidate.promptFingerprint);
-  const normalizedInput = `${serializeCanonicalJson(candidate.input)}\n`;
+  const normalizedInput = serializeCodexAnalysisInput(candidate.input);
   return Object.freeze({
     ...candidate,
     elementSelection,

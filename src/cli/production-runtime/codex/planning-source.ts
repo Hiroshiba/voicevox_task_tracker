@@ -5,9 +5,15 @@ import type {
 import type { DeterministicallyAnalyzedRun } from "../../../application/tracking-run/stages/deterministic.js";
 import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
 import { type AnalysisElementInputFingerprintMap } from "../../../codex/analysis-element-dependencies.js";
+import {
+  CODEX_AUTHENTICATION_PREFLIGHT_INPUT_CHARACTERS,
+  CODEX_AUTHENTICATION_PREFLIGHT_PROMPT,
+} from "../../../codex/preflight.js";
+import { estimateAiInputCost } from "../../../codex/budget.js";
 import { recordCodexDiagnostic, type CodexDiagnosticsContext } from "../../../codex/diagnostics.js";
 import type { AnalysisElementPlanning } from "../../../codex/element-planning.js";
 import type { CodexAnalysisInput } from "../../../codex/input.js";
+import { serializeCodexTransportAnalysisInput } from "../../../codex/transport-alias.js";
 import type { GraphNodeId, Relation } from "../../../domain/index.js";
 import type { AnalyzeGraphResult } from "../../../graph/index.js";
 import { relationNodes } from "../../../graph/relation-candidate-endpoints.js";
@@ -22,6 +28,8 @@ import { previousSnapshot, previousTrackedItem } from "../previous-state/snapsho
 import { createEarliestRelationSourceOccurredAtById } from "../relation-source-occurrence.js";
 import { necessityInputForAnalysis, preservedElementsForSelection } from "./input.js";
 import { analysisImpactProofsForItem } from "./reuse.js";
+import { reserveGenericAiBudget } from "./budget-plan.js";
+import { createGenericAiCacheLookup } from "./planning-cache.js";
 
 function createPriority(
   state: RuntimeState,
@@ -88,8 +96,34 @@ export function createGenericAiPlanningPort(
       ? previousGraph.downstreamImpactByNodeId
       : new Map<GraphNodeId, AnalyzeGraphResult["downstreamImpacts"][number]>();
   const previousRelations = previousSnapshot(state)?.relations ?? [];
+  const preflightCost =
+    configuration.config.ai.enabled &&
+    configuration.credentials.codex.enabled &&
+    configuration.credentials.codex.authentication === "auth-json"
+      ? estimateAiInputCost(
+          CODEX_AUTHENTICATION_PREFLIGHT_PROMPT,
+          configuration.config.ai.budget.estimatedInputCostUsdPerMillionTokens,
+        )
+      : undefined;
+  const preflightCharge =
+    preflightCost == null
+      ? undefined
+      : Object.freeze({
+          inputCharacters: CODEX_AUTHENTICATION_PREFLIGHT_INPUT_CHARACTERS,
+          estimatedInputTokens: preflightCost.estimatedInputTokens,
+          estimatedCostUsd: preflightCost.estimatedCostUsd,
+        });
   return Object.freeze({
     digest: nodeContentDigestPort,
+    lookupCache: createGenericAiCacheLookup(state.session.aiCache),
+    reserveBudget: (candidates: Parameters<GenericAiPlanningPort["reserveBudget"]>[0]) =>
+      reserveGenericAiBudget(
+        candidates,
+        configuration.config.ai.budget,
+        configuration.config.ai.budget.estimatedInputCostUsdPerMillionTokens,
+        configuration.codexAttemptBudget,
+        preflightCharge,
+      ),
     target: forcedAiAnalysisTarget(configuration),
     prepareItem: (
       run: DeterministicallyAnalyzedRun,
@@ -151,6 +185,7 @@ export function createGenericAiPlanningPort(
         previousTrackedItem(state, analysis.item.nodeId)?.observedAt,
         createEarliestRelationSourceOccurredAtById,
       ),
+    serializeTransportInput: serializeCodexTransportAnalysisInput,
     recordInputValidationFailure: async (candidateId: string, error: unknown): Promise<void> => {
       await recordCodexDiagnostic(
         diagnostics == null ? undefined : Object.freeze({ ...diagnostics, candidateId }),

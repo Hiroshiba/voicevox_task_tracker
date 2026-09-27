@@ -1,6 +1,7 @@
 import {
   type CodexAnalysisInput,
   createCodexAnalysisInput,
+  serializeCodexAnalysisInput,
   transformCodexSourceReferences,
 } from "./input.js";
 import { z } from "zod";
@@ -322,6 +323,11 @@ function createCodexTransportInput(input: CodexAnalysisInput): CodexTransportInp
     input: transportInput,
     codec,
   });
+}
+
+/** Codex初回processへ渡すalias化済み入力を費用見積用に返す。 */
+export function serializeCodexTransportAnalysisInput(input: CodexAnalysisInput): string {
+  return serializeCodexAnalysisInput(createCodexTransportInput(input).input);
 }
 
 function restoreSourceId(value: string, path: string, codec: CodexTransportAliasCodec): string {

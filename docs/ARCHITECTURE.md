@@ -267,7 +267,7 @@ terminal項目も同じ扱いにし、次回runで必ずAI分析を再試行し�
 | `notification`   |        1 | 非terminalのCodex候補で、native blocker・自動化ノイズ・通知抑制ラベルがない                    | 項目基本情報、全候補、本文・コメント・レビュー、状態系の確定signal         | 通知推奨                       |
 | `selfCommitment` |        1 | 観測期間内の未編集human comment候補がある                                                      | 項目全体、自己申告候補、本文・コメント・レビュー                           | 自己申告原因による通知抑制     |
 
-要素別の計画は意味入力そのものと、そのcanonical JSONから作ったfingerprintを一緒に保持します。評価時刻の経過だけではfingerprintを変えません。AIを使う要素はcache照合を計画し、miss時の新規実行を明示します。AI無効、不要、現在の完了結果の再利用、強制解析による延期も要素ごとに区別します。
+要素別の計画は意味入力そのものと、そのcanonical JSONから作ったfingerprintを一緒に保持します。評価時刻の経過だけではfingerprintを変えません。計画時にAIを使う要素のcache hitとmissを確定し、missだけを選択した輸送入力と費用を固定します。cache hitの値は輸送入力のlockedElementsに渡し、missが延期または失敗しても計画結果に保持します。AI無効、不要、現在の完了結果の再利用、強制解析による延期も要素ごとに区別します。
 
 selfCommitmentは他の要素から独立して扱い、他の要素のprojectionへ専用の観測期間を混ぜません。
 selfCommitmentの候補は前回`observedAt`より後、今回の評価時刻以前の未編集human commentに限り、source authorとtimeline event actorが同じhumanであることを確認します。前回観測がない場合は追加推論を行いません。通知時は現在の`waitingOn`が単独のhuman userであり、そのactorと一致することを決定論的に確認し、他者、混在、不明、依存解消の原因は通知を残します。
@@ -507,7 +507,7 @@ run共有のCodex exec実試行数、候補選択時の入力文字数と見積�
 本番経路は候補の入力から費用を見積もり、blocker変化と前回graphのdownstream impactを予算不足時の優先順位へ反映します。入力文字数と費用の見積は追加入力と出力tokenを含む実課金の上限ではありません。
 これらの条件が同じ候補では、前回延期された項目をnode ID順より先にします。
 
-`auth-json`で実行候補が1件以上あるrunだけ、候補workerより先にCodex認証preflightを1論理call実行します。preflightは固定した短文を、候補データと通常のsystem promptを含めず、空の一時directoryで実行します。preflightと最優先候補の初回試行に2枠を確保してからpreflightを実行し、完了後に他の候補の初回試行枠を優先順で予約します。予算計画で選ばれた候補は`ai.execution.maxConcurrentCalls`の設定値まで並列実行します。
+`auth-json`で実行候補が1件以上あるrunだけ、候補workerより先にCodex認証preflightを1論理call実行します。preflightは固定した短文を、候補データと通常のsystem promptを含めず、空の一時directoryで実行します。計画時にpreflightと最優先候補の初回試行に2枠を確保し、他の候補の初回試行枠も優先順に予約します。実行時はpreflightの完了後に候補workerを開始します。予算計画で選ばれた候補は`ai.execution.maxConcurrentCalls`の設定値まで並列実行します。
 `api-key`、候補なし、cache hitだけのrun、全候補が予算延期されたrunではpreflightを実行しません。preflightに失敗した場合は候補を開始せず、実行段階に応じて`codex_analysis`または`personal_reminder_analysis`を失敗させます。
 preflightはrun全体の入力文字数と見積費用へ1論理callとして計上し、項目ごとの入力文字数上限には含めません。現行の`ai.budget.maxCodexExecAttemptsPerRun`は50回で、preflightを実行するrunでは初回試行を最大49候補へ配れます。汎用AI、個人原因AI、preflight、transport retry、semantic補正がprocessRunnerへ渡す`codex exec`を合算し、呼び出し後の起動失敗やtimeoutも数えます。`codex --version`と呼び出し前の失敗は数えません。retryとsemantic補正には未予約枠だけを使います。
 

@@ -1,8 +1,4 @@
 import {
-  CODEX_AUTHENTICATION_PREFLIGHT_INPUT_CHARACTERS,
-  CODEX_AUTHENTICATION_PREFLIGHT_PROMPT,
-  createEmptyAiBudgetUsage,
-  estimateAiInputCost,
   recordCodexDiagnostic,
   runPlannedAiAnalyses,
   type AiAnalysisRunFailure,
@@ -161,20 +157,17 @@ export async function analyzeCodex(
     diagnostics,
     semanticGenerationCounter.observer,
   );
-  const preflightInputCost =
-    codexCredentials.authentication === "auth-json"
-      ? estimateAiInputCost(
-          CODEX_AUTHENTICATION_PREFLIGHT_PROMPT,
-          configuration.config.ai.budget.estimatedInputCostUsdPerMillionTokens,
-        )
-      : undefined;
   const preflightDiagnostics = createCodexPreflightDiagnostics(diagnostics, invocation);
+  const preflightCharge = planned.data.plan.budget.preflightCharge;
+  if (preflightCharge != null && codexCredentials.authentication !== "auth-json") {
+    throw new TypeError("汎用AIの認証preflight計画と認証方式が一致しません");
+  }
   const preflight =
-    preflightInputCost == null
+    preflightCharge == null
       ? undefined
       : Object.freeze({
-          inputCharacters: CODEX_AUTHENTICATION_PREFLIGHT_INPUT_CHARACTERS,
-          estimatedCostUsd: preflightInputCost.estimatedCostUsd,
+          inputCharacters: preflightCharge.inputCharacters,
+          estimatedCostUsd: preflightCharge.estimatedCostUsd,
           execute: (ticket: CodexInitialAttemptTicket) =>
             adapters.executeCodexAuthenticationPreflight(
               codexConfiguration,
@@ -193,8 +186,6 @@ export async function analyzeCodex(
     planned.data.plan,
     {
       identity,
-      budget: configuration.config.ai.budget,
-      initialUsage: createEmptyAiBudgetUsage(),
       maxConcurrentCalls: configuration.config.ai.execution.maxConcurrentCalls,
     },
     {
@@ -247,6 +238,10 @@ export async function analyzeCodex(
               ),
           ]),
   }) satisfies AiAnalysisRunResult;
+  const legacyRun = Object.freeze({
+    ...run,
+    results: Object.freeze(run.results.filter((result) => result.complete)),
+  }) satisfies AiAnalysisRunResult;
   await recordCodexDiagnostic(diagnostics, "codex.analysis.summary", {
     phase: "summary",
     candidateItemCount: prepared.candidates.length,
@@ -268,21 +263,23 @@ export async function analyzeCodex(
   return Object.freeze({
     executed,
     stage: Object.freeze({
-      run,
+      run: legacyRun,
       inputByNodeId: prepared.inputByNodeId,
       elementPlanningByNodeId: prepared.elementPlanningByNodeId,
       elementGenerationsByNodeId: elementGenerationsByNodeId(
         state,
         planned.data.facts.items,
         prepared.elementPlanningByNodeId,
-        run,
+        legacyRun,
         target,
       ),
     }),
     status: fallback ? "fallback" : "success",
     aiCallCount:
       ledgerSummary.logicalCandidateCount + ledgerSummary.authenticationPreflightAttemptCount,
-    aiCacheHitCount: run.results.filter((result) => result.origin === "cache").length,
+    aiCacheHitCount: run.results.filter((result) =>
+      result.elements.some((element) => element.origin === "cache"),
+    ).length,
     aiRetainedResultCount: countRetainedAiResults(state, planned),
     estimatedInputTokens: ledgerSummary.estimatedInputTokens,
     diagnostics: Object.freeze([
