@@ -1,8 +1,5 @@
 import type { RunIdentity, RunRequest } from "../../../application/tracking-run/request.js";
-import type {
-  PreparedBaseStateShape,
-  PreparedRun,
-} from "../../../application/tracking-run/prepare-run.js";
+import type { PreparedRun } from "../../../application/tracking-run/prepare-run.js";
 import { UnreachableError } from "../../../util/index.js";
 import type {
   BackfillCliCommand,
@@ -100,8 +97,6 @@ export function projectLegacyDailyInvocation(
 }
 
 /** 準備済みrunから未移行の下流段階へ値だけを投影する。 */
-export function projectPreparedLegacyDailyInvocation<BaseState extends PreparedBaseStateShape>(
-  prepared: PreparedRun<BaseState>,
-): DailyRunInvocation {
+export function projectPreparedLegacyDailyInvocation(prepared: PreparedRun): DailyRunInvocation {
   return projectLegacyDailyInvocation(prepared.data.request, prepared.core.identity);
 }

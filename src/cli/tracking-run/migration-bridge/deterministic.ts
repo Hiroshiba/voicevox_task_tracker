@@ -3,13 +3,11 @@ import type {
   CanonicalCollectedItems,
   CollectedItems,
   DeterministicAnalysis,
-  NormalizedBaseState,
 } from "../../production-runtime/contracts.js";
 import type { DeterministicItemAnalysis } from "../../initial-item-analysis.js";
 import { projectLegacyCollectedItems } from "./collection.js";
 
 type AnalyzedProductionRun = DeterministicallyAnalyzedRun<
-  NormalizedBaseState,
   CanonicalCollectedItems,
   DeterministicItemAnalysis
 >;

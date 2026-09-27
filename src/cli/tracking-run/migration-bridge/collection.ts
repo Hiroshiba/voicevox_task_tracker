@@ -2,7 +2,6 @@ import type { CollectedRun } from "../../../application/tracking-run/stages/coll
 import type {
   CanonicalCollectedItems,
   CollectedItems,
-  NormalizedBaseState,
 } from "../../production-runtime/contracts.js";
 
 const projectedCollections = new WeakMap<CanonicalCollectedItems, CollectedItems>();
@@ -35,7 +34,7 @@ export function projectLegacyCollectedItems(collection: CanonicalCollectedItems)
 
 /** 未移行のAIとgraph入力へ正規化済み収集値を投影する。 */
 export function projectLegacyCollection(
-  run: CollectedRun<NormalizedBaseState, CanonicalCollectedItems>,
+  run: CollectedRun<CanonicalCollectedItems>,
 ): CollectedItems {
   return projectLegacyCollectedItems(run.data.collection);
 }

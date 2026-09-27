@@ -6,10 +6,7 @@ import type {
   RunRequest,
   RunExecutionPolicy,
 } from "../application/tracking-run/request.js";
-import type {
-  PreparedBaseStateShape,
-  PreparedRun,
-} from "../application/tracking-run/prepare-run.js";
+import type { PreparedRun } from "../application/tracking-run/prepare-run.js";
 import type { InventoryCollectedRun } from "../application/tracking-run/stages/inventory.js";
 import type { CollectedRun } from "../application/tracking-run/stages/collection.js";
 import type { RunEvaluatedAt } from "../application/tracking-run/contracts/evaluation-time.js";
@@ -46,10 +43,10 @@ export type OnlineCliCommand =
 export type DailyTransactionTypeMap = Readonly<{
   configuration: unknown;
   state: unknown;
-  prepared: PreparedRun<PreparedBaseStateShape>;
-  inventoryCollected: InventoryCollectedRun<PreparedBaseStateShape>;
-  collectedRun: CollectedRun<PreparedBaseStateShape, Readonly<{ evaluatedAt: RunEvaluatedAt }>>;
-  deterministicallyAnalyzed: DeterministicallyAnalyzedRun<PreparedBaseStateShape>;
+  prepared: PreparedRun;
+  inventoryCollected: InventoryCollectedRun;
+  collectedRun: CollectedRun<Readonly<{ evaluatedAt: RunEvaluatedAt }>>;
+  deterministicallyAnalyzed: DeterministicallyAnalyzedRun;
   repositoryInventory: unknown;
   collection: unknown;
   codexAnalysis: unknown;

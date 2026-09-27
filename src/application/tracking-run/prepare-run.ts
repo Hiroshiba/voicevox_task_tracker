@@ -1,61 +1,27 @@
 import type { Config } from "../../config/schema.js";
 import { parseSha256Hash, type Sha256Hash } from "../../canonical-json/sha256.js";
-import { createPreparedStageProof, type StageProofFor } from "./contracts/proofs.js";
+import { createPreparedStageProof } from "./contracts/proofs.js";
+import type { PreparedBaseState, StageState } from "./contracts/run-core.js";
 import {
   runIdentitySchema,
   runRequestSchema,
-  type RunExecutionPolicy,
   type RunIdentity,
   type RunRequest,
 } from "./request.js";
 
-/** 固定revisionから現行形式へ正規化した前回state。 */
-export type PreparedBaseStateShape = Readonly<{
-  revision: Readonly<{ status: "missing" }> | Readonly<{ status: "present"; revision: string }>;
-  snapshot: Readonly<{ status: "missing_branch" | "operations_only" | "available" }>;
-  history: readonly object[];
-  aiCache: readonly object[];
-  personalReminderAiCache: readonly object[];
-  notificationLedger: object;
-}>;
-
-/** run開始時に固定するAI予算の初期残量。 */
-export type InitialAiBudgetLedger = Readonly<{
-  ledgerId: string;
-  sequence: 0;
-  maxProcessAttempts: number;
-  maxInputCharacters: number;
-  maxEstimatedCostUsd: number;
-  consumedProcessAttempts: 0;
-  consumedInputCharacters: 0;
-  consumedEstimatedCostUsd: 0;
-}>;
-
 /** 前処理が確定した後段共通のrun状態。 */
-export type PreparedRun<BaseState extends PreparedBaseStateShape> = Readonly<{
-  stage: "prepared";
-  core: Readonly<{
-    identity: RunIdentity;
-    executionPolicy: RunExecutionPolicy;
-    config: Config;
-    configDigest: Sha256Hash;
-    baseState: BaseState;
-    aiBudget: InitialAiBudgetLedger;
-  }>;
-  data: Readonly<{ request: RunRequest }>;
-  proof: StageProofFor<"prepared">;
-}>;
+export type PreparedRun = StageState<"prepared", { request: RunRequest }>;
 
 /** 検証済み設定と同一revisionの前回stateからrunを準備する。 */
-export function prepareRun<BaseState extends PreparedBaseStateShape>(
+export function prepareRun(
   input: Readonly<{
     request: RunRequest;
     identity: RunIdentity;
     config: Config;
     configDigest: Sha256Hash;
-    baseState: BaseState;
+    baseState: PreparedBaseState;
   }>,
-): PreparedRun<BaseState> {
+): PreparedRun {
   const request = runRequestSchema.parse(input.request);
   const identity = runIdentitySchema.parse(input.identity);
   parseSha256Hash(input.configDigest);

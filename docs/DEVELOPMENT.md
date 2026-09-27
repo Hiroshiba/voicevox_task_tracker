@@ -260,6 +260,8 @@ CIの`verify-state`は、本番と同じ移行処理を使ってstate全体を�
 `src/domain`と`src/graph`はネットワークやファイルシステムへ依存しないpure TypeScriptにします。
 同じ入力から同じ結果を返す処理だけを置き、pureな判定層から副作用のあるadapterを呼びません。
 `src/application/tracking-run`はCLI、環境変数、ファイルシステム、副作用を持つbarrelを参照せず、pureなleafとport契約だけを使います。
+段階のcore型は`CoreByStage`で段階名に対応付け、inventory以後へbase state全体やCLI requestを引き継ぎません。
+公開repositoryの選定はinventory portで一度だけ行い、未移行処理へのbridgeは選定済み配列から索引を作ります。
 checkpoint、artifact、receiptのdigest計算は`ContentDigestPort`を通して`src/infrastructure/tracking-run`へ置きます。
 sourceの1000行上限はTypeScriptとJavaScriptをESLint、shell、CSS、Vue、Python、workflow YAMLを`check:source-lines`で確認します。
 GitHub、Codex、永続化、Pages、Discordへの副作用はそれぞれのadapterへ閉じ込め、一つのrunとしての順序制御を`src/cli`で行います。

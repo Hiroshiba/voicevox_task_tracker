@@ -17,6 +17,7 @@ export function createPrepareRunStage(): DailyTransactionDependencies<Production
         aiCache: state.aiCache,
         personalReminderAiCache: state.personalReminderAiCache,
         notificationLedger: state.notificationLedger,
+        previousState: state.previousState,
       }),
     });
 }

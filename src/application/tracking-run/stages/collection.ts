@@ -1,9 +1,9 @@
 import type { SourceId } from "../../../domain/source-id.js";
 import type { GitHubNodeId, TrackingNotificationClass } from "../../../domain/types.js";
-import type { UtcIsoDateTime } from "../../../domain/types.js";
 import { createRunEvaluatedAt, type RunEvaluatedAt } from "../contracts/evaluation-time.js";
-import { createCollectedStageProof, type StageProofFor } from "../contracts/proofs.js";
-import type { PreparedBaseStateShape } from "../prepare-run.js";
+import { createCollectedStageProof } from "../contracts/proofs.js";
+import type { StageState } from "../contracts/run-core.js";
+import type { ClockPort } from "../ports.js";
 import type { InventoryCollectedRun } from "./inventory.js";
 import {
   assertCollectionSourceTimes,
@@ -45,27 +45,19 @@ type CollectionObservation<Collection extends CollectionSource> = Readonly<{
 }>;
 
 /** 増分収集と関係端点の閉包を要求する境界。 */
-export type CollectionPort<
-  BaseState extends PreparedBaseStateShape,
-  Collection extends CollectionSource,
-> = Readonly<{
-  clock: () => UtcIsoDateTime;
+export type CollectionPort<Collection extends CollectionSource> = Readonly<{
   collect: (
-    inventory: InventoryCollectedRun<BaseState>,
+    inventory: InventoryCollectedRun,
     captureEvaluationTime: () => RunEvaluatedAt,
   ) => Promise<CollectionObservation<Collection>>;
 }>;
 
 /** 一度固定した評価時刻と正規化sourceを持つrun。 */
-export type CollectedRun<
-  BaseState extends PreparedBaseStateShape,
-  Collection extends Readonly<{ evaluatedAt: RunEvaluatedAt }>,
-> = Readonly<{
-  stage: "collected";
-  core: InventoryCollectedRun<BaseState>["core"];
-  data: Readonly<{
-    approvedRepositories: InventoryCollectedRun<BaseState>["data"]["approvedRepositories"];
-    allowlistDigest: InventoryCollectedRun<BaseState>["data"]["allowlistDigest"];
+export type CollectedRun<Collection extends Readonly<{ evaluatedAt: RunEvaluatedAt }>> = StageState<
+  "collected",
+  {
+    approvedRepositories: InventoryCollectedRun["data"]["approvedRepositories"];
+    allowlistDigest: InventoryCollectedRun["data"]["allowlistDigest"];
     collection: Collection;
     sourceCatalog: readonly SourceId[];
     metrics: Readonly<{
@@ -75,18 +67,15 @@ export type CollectedRun<
       staleRepositoryCount: number;
     }>;
     diagnostics: readonly string[];
-  }>;
-  proof: StageProofFor<"collected">;
-}>;
+  }
+>;
 
 /** 収集結果を検証し、一つの評価時刻とsource catalogを確定する。 */
-export async function collectRunItems<
-  BaseState extends PreparedBaseStateShape,
-  Collection extends CollectionSource,
->(
-  inventory: InventoryCollectedRun<BaseState>,
-  port: CollectionPort<BaseState, Collection>,
-): Promise<CollectedRun<BaseState, CanonicalCollection<Collection>>> {
+export async function collectRunItems<Collection extends CollectionSource>(
+  inventory: InventoryCollectedRun,
+  port: CollectionPort<Collection>,
+  clock: ClockPort,
+): Promise<CollectedRun<CanonicalCollection<Collection>>> {
   const evaluation: {
     current:
       Readonly<{ status: "pending" }> | Readonly<{ status: "captured"; value: RunEvaluatedAt }>;
@@ -95,7 +84,7 @@ export async function collectRunItems<
     if (evaluation.current.status === "captured") {
       throw new TypeError("評価時刻は一度だけ取得できます");
     }
-    const value = createRunEvaluatedAt(port.clock());
+    const value = createRunEvaluatedAt(clock.now());
     evaluation.current = Object.freeze({ status: "captured", value });
     return value;
   });

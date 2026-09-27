@@ -1,4 +1,8 @@
 import { parseSha256Hash } from "../../canonical-json/sha256.js";
+import type {
+  AnalysisPreviousState,
+  PreviousSnapshotProjection,
+} from "../../application/tracking-run/contracts/previous-state.js";
 import {
   createPersonalReminderAiCacheEntry,
   type PersonalReminderAiCacheEntry,
@@ -18,6 +22,7 @@ import type { AiCacheEntry } from "../../codex/cache.js";
 import type { StateHistoryRecord } from "../../persistence/history.js";
 import type { StateSnapshotReadResult } from "../../persistence/state-persistence-session.js";
 import type { StateNotificationLedger } from "../../persistence/state-documents.js";
+import { snapshotEffectiveGraphStateByNodeId } from "../../persistence/snapshot.js";
 
 /** 旧下流が必要とするsessionと現行形式へ変換したbase state。 */
 export type BaseStateIngress = Readonly<{
@@ -27,7 +32,31 @@ export type BaseStateIngress = Readonly<{
   aiCache: readonly AiCacheEntry[];
   personalReminderAiCache: readonly PersonalReminderAiCacheEntry[];
   notificationLedger: StateNotificationLedger;
+  previousState: AnalysisPreviousState;
 }>;
+
+function projectPreviousSnapshot(snapshot: StateSnapshotReadResult): PreviousSnapshotProjection {
+  if (snapshot.status !== "available") {
+    return Object.freeze({ status: snapshot.status });
+  }
+  const value = snapshot.snapshot;
+  return Object.freeze({
+    status: "available",
+    trackedItems: Object.freeze([...value.items]),
+    collectionRepositories: Object.freeze([...value.collection.repositories]),
+    externalReferences: Object.freeze([...value.externalReferences]),
+    relations: Object.freeze([...value.relations]),
+    graphNodeStateObservations: Object.freeze([...value.graphNodeStateObservations]),
+    effectiveGraphStates: Object.freeze(
+      [...snapshotEffectiveGraphStateByNodeId(value)]
+        .map(([nodeId, state]) =>
+          Object.freeze([nodeId, state] satisfies [typeof nodeId, typeof state]),
+        )
+        .sort(([left], [right]) => left.localeCompare(right)),
+    ),
+    trackingStartAt: value.trackingStartAt,
+  });
+}
 
 function decodeStateFile(bytes: Uint8Array, kind: string): string {
   try {
@@ -144,5 +173,20 @@ export async function readBaseStateIngress(
     aiCache,
     personalReminderAiCache,
     notificationLedger,
+    previousState: Object.freeze({
+      snapshot: projectPreviousSnapshot(snapshot),
+      history: Object.freeze(
+        history.map((record) =>
+          Object.freeze({ runId: record.runId, recordedAt: record.recordedAt }),
+        ),
+      ),
+      aiCache: Object.freeze([...aiCache]),
+      personalReminderAiCache: Object.freeze([...personalReminderAiCache]),
+      notificationLedger: Object.freeze({
+        entries: Object.freeze([...notificationLedger.entries]),
+        operationsAlerts: Object.freeze([...notificationLedger.operationsAlerts]),
+        pendingNotifications: Object.freeze([...notificationLedger.pendingNotifications]),
+      }),
+    }),
   });
 }

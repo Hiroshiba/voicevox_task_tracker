@@ -346,31 +346,34 @@ export function createCollectItemsStage(
   sessions: GitHubRunSessions,
 ): DailyTransactionDependencies<ProductionTypes>["collectIncrementalItems"] {
   return ({ invocation, configuration, state, inventoryCollected, repositoryInventory }) =>
-    collectRunItems(inventoryCollected, {
-      clock: () => currentRuntimeTime(adapters),
-      async collect(_inventory, captureEvaluationTime) {
-        const authentication = sessions.require(invocation.runId);
-        try {
-          const collection = await collectProductionItems(
-            adapters,
-            invocation,
-            configuration,
-            state,
-            authentication,
-            repositoryInventory,
-            captureEvaluationTime,
-          );
-          return Object.freeze({
-            value: collection.value,
-            itemCount: collection.value.trackedNodeIds.size,
-            changedItemCount: collection.changedItemCount,
-            githubApiRemaining: githubApiRemaining(authentication),
-            staleRepositoryCount: collection.staleRepositoryCount,
-            diagnostics: collection.diagnostics,
-          });
-        } finally {
-          sessions.release(invocation.runId);
-        }
+    collectRunItems(
+      inventoryCollected,
+      {
+        async collect(_inventory, captureEvaluationTime) {
+          const authentication = sessions.require(invocation.runId);
+          try {
+            const collection = await collectProductionItems(
+              adapters,
+              invocation,
+              configuration,
+              state,
+              authentication,
+              repositoryInventory,
+              captureEvaluationTime,
+            );
+            return Object.freeze({
+              value: collection.value,
+              itemCount: collection.value.trackedNodeIds.size,
+              changedItemCount: collection.changedItemCount,
+              githubApiRemaining: githubApiRemaining(authentication),
+              staleRepositoryCount: collection.staleRepositoryCount,
+              diagnostics: collection.diagnostics,
+            });
+          } finally {
+            sessions.release(invocation.runId);
+          }
+        },
       },
-    });
+      { now: () => currentRuntimeTime(adapters) },
+    );
 }

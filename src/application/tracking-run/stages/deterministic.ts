@@ -9,11 +9,8 @@ import {
   relationNodes,
 } from "../../../graph/relation-candidate-endpoints.js";
 import type { RelationCandidate } from "../../../graph/relation-candidate-types.js";
-import {
-  createDeterministicallyAnalyzedStageProof,
-  type StageProofFor,
-} from "../contracts/proofs.js";
-import type { PreparedBaseStateShape } from "../prepare-run.js";
+import { createDeterministicallyAnalyzedStageProof } from "../contracts/proofs.js";
+import type { StageState } from "../contracts/run-core.js";
 import type { CollectedRun } from "./collection.js";
 
 const candidateIdSchema = z
@@ -65,30 +62,26 @@ export type DeterministicFacts<Item extends AnalyzedItem> = Readonly<{
 
 /** 決定論的な初期項目判定を行うpure port。 */
 export type DeterministicAnalysisPort<
-  BaseState extends PreparedBaseStateShape,
   Collection extends DeterministicCollection = DeterministicCollection,
   Item extends AnalyzedItem = AnalyzedItem,
 > = Readonly<{
-  analyze: (collected: CollectedRun<BaseState, Collection>) => readonly Item[];
+  analyze: (collected: CollectedRun<Collection>) => readonly Item[];
 }>;
 
 /** 決定論的な初期判定と候補factsが確定したrun。 */
 export type DeterministicallyAnalyzedRun<
-  BaseState extends PreparedBaseStateShape,
   Collection extends DeterministicCollection = DeterministicCollection,
   Item extends AnalyzedItem = AnalyzedItem,
-> = Readonly<{
-  stage: "deterministically_analyzed";
-  core: CollectedRun<BaseState, Collection>["core"];
-  data: Readonly<{
-    approvedRepositories: CollectedRun<BaseState, Collection>["data"]["approvedRepositories"];
-    allowlistDigest: CollectedRun<BaseState, Collection>["data"]["allowlistDigest"];
+> = StageState<
+  "deterministically_analyzed",
+  {
+    approvedRepositories: CollectedRun<Collection>["data"]["approvedRepositories"];
+    allowlistDigest: CollectedRun<Collection>["data"]["allowlistDigest"];
     collection: Omit<Collection, "relationCandidates">;
     sourceCatalog: readonly SourceId[];
     facts: DeterministicFacts<Item>;
-  }>;
-  proof: StageProofFor<"deterministically_analyzed">;
-}>;
+  }
+>;
 
 function relationFacts(
   candidates: readonly RelationCandidate[],
@@ -130,13 +123,12 @@ function orderedNodeIds(nodeIds: Iterable<GitHubNodeId>): readonly GitHubNodeId[
 
 /** 収集済み入力から初期判定と関係候補factsを一度だけ確定する。 */
 export function analyzeDeterministically<
-  BaseState extends PreparedBaseStateShape,
   Collection extends DeterministicCollection,
   Item extends AnalyzedItem,
 >(
-  collected: CollectedRun<BaseState, Collection>,
-  port: DeterministicAnalysisPort<BaseState, Collection, Item>,
-): DeterministicallyAnalyzedRun<BaseState, Collection, Item> {
+  collected: CollectedRun<Collection>,
+  port: DeterministicAnalysisPort<Collection, Item>,
+): DeterministicallyAnalyzedRun<Collection, Item> {
   const items = Object.freeze([...port.analyze(collected)]);
   const analyzedNodeIds = items.map((item) => item.item.nodeId);
   if (

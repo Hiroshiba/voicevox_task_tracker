@@ -34,7 +34,13 @@ canonical JSONの値と直列化は`src/canonical-json/value.ts`に置き、chec
 分割workflowの組み立ては`workflow/create-runner.ts`が担います。
 `production-runtime/daily-startup/`は設定とstateを準備し、GitHub portをinventory stageへ接続します。
 GitHub portは認証とrepository inventoryを取得し、公開かつ非archived・有効なrepositoryをrunごとに一度選びます。
+未移行の処理へ渡すbridgeは、選定済みの公開repository配列を索引化し、公開可否を再判定しません。
 `InventoryCollectedRun`には公開allowlistとdigest、非secretのinstallation ID、収集指標を残し、GitHub clientとtokenは残しません。
+inventoryへの遷移では、準備段階のbase stateから解析に必要な追跡項目、収集値、関係、cache、履歴、通知管理記録を個別に投影します。
+前回のeffective graph状態はstate読込時に固定配列へ変換します。
+inventory以後のcoreはrun識別情報、実行方針、設定とdigest、基準revision、AI予算、前回stateの投影だけを持ちます。
+GitHub読取portは選定済みallowlist内の列挙と詳細取得、正規化した観測値、rate limitの参照を契約とします。
+時刻、待機、digestの副作用は別のportで要求します。
 増分列挙、詳細取得、関係端点の追加収集、競合時の再取得、503時の前回値保持は`collection/`が実行します。
 追加収集は同じallowlistを参照し、別の公開可否判定を作りません。
 関係端点の探索中は取得済みsourceの発生時刻から計画用の時刻を定め、読み取り完了後に時計を一度だけ読みます。

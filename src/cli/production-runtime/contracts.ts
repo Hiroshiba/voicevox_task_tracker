@@ -11,6 +11,7 @@ import type {
 import type { Config } from "../../config/index.js";
 import type { Sha256Hash } from "../../canonical-json/sha256.js";
 import type { PreparedRun } from "../../application/tracking-run/prepare-run.js";
+import type { AnalysisPreviousState } from "../../application/tracking-run/contracts/previous-state.js";
 import type { InventoryCollectedRun } from "../../application/tracking-run/stages/inventory.js";
 import type {
   CanonicalCollection,
@@ -110,15 +111,7 @@ export type RuntimeState = Readonly<{
   aiCache: readonly AiCacheEntry[];
   personalReminderAiCache: readonly PersonalReminderAiCacheEntry[];
   notificationLedger: StateNotificationLedger;
-}>;
-
-export type NormalizedBaseState = Readonly<{
-  revision: StateBranchHead;
-  snapshot: StateSnapshotReadResult;
-  history: readonly StateHistoryRecord[];
-  aiCache: readonly AiCacheEntry[];
-  personalReminderAiCache: readonly PersonalReminderAiCacheEntry[];
-  notificationLedger: StateNotificationLedger;
+  previousState: AnalysisPreviousState;
 }>;
 
 export type ValidatedRunWithPreview = ValidatedRun &
@@ -246,11 +239,10 @@ export type ProductionTypes = DailyTransactionTypeMap &
   Readonly<{
     configuration: RuntimeConfiguration;
     state: RuntimeState;
-    prepared: PreparedRun<NormalizedBaseState>;
-    inventoryCollected: InventoryCollectedRun<NormalizedBaseState>;
-    collectedRun: CollectedRun<NormalizedBaseState, CanonicalCollectedItems>;
+    prepared: PreparedRun;
+    inventoryCollected: InventoryCollectedRun;
+    collectedRun: CollectedRun<CanonicalCollectedItems>;
     deterministicallyAnalyzed: DeterministicallyAnalyzedRun<
-      NormalizedBaseState,
       CanonicalCollectedItems,
       DeterministicItemAnalysis
     >;
