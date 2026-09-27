@@ -37,6 +37,35 @@ const pureLeafImportPattern = pureLeafImportPaths
   .join("|");
 const restrictedModulePattern = `(?:^|/)(?!(?:${pureLeafImportPattern})$)(?:canonical-json|codex|persistence|pages|discord|github)(?:/|$)`;
 
+const nullComparisonRestrictions = [
+  {
+    selector: "BinaryExpression[operator='==='] > Literal[value=null]",
+    message: "nullとの比較には==を使ってください",
+  },
+  {
+    selector: "BinaryExpression[operator='!=='] > Literal[value=null]",
+    message: "nullとの比較には!=を使ってください",
+  },
+  {
+    selector: "BinaryExpression[operator='==='] > Identifier[name='undefined']",
+    message: "nullまたはundefinedとの比較には== nullを使ってください",
+  },
+  {
+    selector: "BinaryExpression[operator='!=='] > Identifier[name='undefined']",
+    message: "nullまたはundefinedとの比較には!= nullを使ってください",
+  },
+];
+const restrictedImportSyntax = [
+  {
+    selector: "ImportExpression",
+    message: "この層では動的importを使わず、許可されたleaf moduleを静的に参照してください",
+  },
+  {
+    selector: "TSImportType",
+    message: "この層ではimport型を使わず、許可されたleaf moduleを静的に参照してください",
+  },
+];
+
 export default defineConfig([
   {
     ignores: SOURCE_LINE_PERMANENT_EXCLUSIONS,
@@ -68,31 +97,24 @@ export default defineConfig([
       ],
       "@typescript-eslint/no-non-null-assertion": "error",
       eqeqeq: ["error", "always", { null: "ignore" }],
-      "no-restricted-syntax": [
-        "error",
-        {
-          selector: "BinaryExpression[operator='==='] > Literal[value=null]",
-          message: "nullとの比較には==を使ってください",
-        },
-        {
-          selector: "BinaryExpression[operator='!=='] > Literal[value=null]",
-          message: "nullとの比較には!=を使ってください",
-        },
-        {
-          selector: "BinaryExpression[operator='==='] > Identifier[name='undefined']",
-          message: "nullまたはundefinedとの比較には== nullを使ってください",
-        },
-        {
-          selector: "BinaryExpression[operator='!=='] > Identifier[name='undefined']",
-          message: "nullまたはundefinedとの比較には!= nullを使ってください",
-        },
-      ],
+      "no-restricted-syntax": ["error", ...nullComparisonRestrictions],
     },
   },
   {
     files: SOURCE_LINE_ESLINT_GLOBS,
     rules: {
       "max-lines": ["error", { max: 1000, skipBlankLines: false, skipComments: false }],
+    },
+  },
+  {
+    files: [
+      "src/application/**/*.{ts,tsx}",
+      "src/domain/**/*.{ts,tsx}",
+      "src/graph/**/*.{ts,tsx}",
+      "src/canonical-json/{value,sha256,sha256-hex}.{ts,tsx}",
+    ],
+    rules: {
+      "no-restricted-syntax": ["error", ...nullComparisonRestrictions, ...restrictedImportSyntax],
     },
   },
   {
@@ -172,15 +194,35 @@ export default defineConfig([
     },
   },
   {
-    files: ["src/canonical-json/{value,sha256,sha256-hex}.ts"],
+    files: ["src/canonical-json/{value,sha256,sha256-hex}.{ts,tsx}"],
     rules: {
       "no-restricted-imports": [
         "error",
         {
+          paths: builtinModules
+            .filter((moduleName) => !moduleName.startsWith("node:"))
+            .map((name) => ({
+              name,
+              message: "canonical JSON leafはNode.jsの組み込みモジュールへ依存しないでください",
+            })),
           patterns: [
             {
-              group: ["node:*", "**/infrastructure/**", "**/cli/**"],
-              message: "canonical JSON leafは実行環境へ依存しないでください",
+              group: [
+                "node:*",
+                "**/application/**",
+                "**/infrastructure/**",
+                "**/cli/**",
+                "**/codex/**",
+                "**/persistence/**",
+                "**/pages/**",
+                "**/discord/**",
+                "**/github/**",
+                "./index",
+                "./index.*",
+                "**/canonical-json/index",
+                "**/canonical-json/index.*",
+              ],
+              message: "canonical JSON leafは実行環境や副作用を参照しないでください",
             },
           ],
         },
