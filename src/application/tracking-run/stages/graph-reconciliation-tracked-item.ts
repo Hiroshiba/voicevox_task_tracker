@@ -1,4 +1,3 @@
-import type { ReducedCodexDecision } from "../../../codex/index.js";
 import type {
   AiAnalysisDependency,
   TrackedItemAiDependencies,
@@ -18,32 +17,44 @@ import {
   type TrackedItemAiAnalysis,
   type UtcIsoDateTime,
 } from "../../../domain/index.js";
-import { type FreshObservedGitHubItem } from "../../../github/index.js";
-import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
-import type { GenericAiItemAdoption } from "../../../application/tracking-run/stages/generic-ai-adoption-contracts.js";
-import { trackedItemInputEvents } from "../../tracked-item-input-events.js";
-import { unknownBlockerValueAiDependencies } from "../ai-dependencies/blocker-values.js";
-import { notDependentAiDependency, unrecordedAiDependency } from "../ai-dependencies/selection.js";
-import { criticalSeverityWasRequested, severityAiDependency } from "../ai-dependencies/severity.js";
-import { stallSinceAiDependency } from "../ai-dependencies/stall-since.js";
-import type { BlockerValueAiDependencies, PendingTrackedItem, RuntimeState } from "../contracts.js";
-import { previousTrackedItem } from "../previous-state/snapshot.js";
-import { sourceOccurredAtByIdForAnalysis } from "../relation-source-occurrence.js";
+import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";
+import type { DeterministicItemAnalysis } from "./deterministic-item.js";
+import type { GenericAiItemAdoption } from "./generic-ai-adoption-contracts.js";
+import { trackedItemInputEvents } from "./graph-reconciliation-input-events.js";
+import { unknownBlockerValueAiDependencies } from "./graph-reconciliation-blocker-values.js";
+import {
+  notDependentAiDependency,
+  unrecordedAiDependency,
+} from "./graph-reconciliation-ai-selection.js";
+import {
+  criticalSeverityWasRequested,
+  severityAiDependency,
+} from "./graph-reconciliation-severity.js";
+import { stallSinceAiDependency } from "./graph-reconciliation-stall-since.js";
+import type {
+  GraphBlockerValueAiDependencies,
+  GraphReducedDecision,
+  PendingGraphTrackedItem,
+  GraphWorkingState,
+} from "./graph-reconciliation-contracts.js";
+import { previousTrackedItem } from "./graph-reconciliation-previous-items.js";
+import { sourceOccurredAtByIdForAnalysis } from "./graph-reconciliation-source-time.js";
 import {
   stateAiDependencies,
   confidenceAiDependency,
   evidenceAiDependency,
   uncertaintiesAiDependency,
   lastProgressAiDependency,
-} from "./state-ai-dependencies.js";
-import { transitionBasisForDecision } from "./decision-basis.js";
-import { trackedItemState } from "./staleness.js";
+} from "./graph-reconciliation-state-ai-dependencies.js";
+import { transitionBasisForDecision } from "./graph-reconciliation-decision-basis.js";
+import { trackedItemState } from "./graph-reconciliation-staleness.js";
 
-function trackedItemAiDependenciesForAnalysis(
-  state: RuntimeState,
+/** 最終graphの依存から現在項目の値単位AI依存を投影する。 */
+export function trackedItemAiDependenciesForAnalysis(
+  state: GraphWorkingState,
   item: FreshObservedGitHubItem,
   nodeId: GitHubNodeId,
-  decision: ReducedCodexDecision,
+  decision: GraphReducedDecision,
   deterministicDecision: IssueStateDecision | PullRequestStateDecision,
   staleness: StalenessResult,
   statusBasis: IssueStateDecision["statusBasis"],
@@ -53,7 +64,7 @@ function trackedItemAiDependenciesForAnalysis(
   adopted: GenericAiItemAdoption,
   downstreamImpactDependency: AiAnalysisDependency | undefined,
   blockersDependency: AiAnalysisDependency | undefined,
-  blockerValueDependencies: BlockerValueAiDependencies | undefined,
+  blockerValueDependencies: GraphBlockerValueAiDependencies | undefined,
   relationSetDependency: AiAnalysisDependency | undefined,
 ): TrackedItemAiDependencies {
   const applications = aiAnalysis.applications;
@@ -136,18 +147,18 @@ function trackedItemAiDependenciesForAnalysis(
 
 /** 追跡項目を作成する。 */
 export function createTrackedItem(
-  state: RuntimeState,
+  state: GraphWorkingState,
   analysis: DeterministicItemAnalysis,
-  decision: ReducedCodexDecision,
+  decision: GraphReducedDecision,
   primaryWaitingOn: PrimaryWaitingOn,
   staleness: StalenessResult,
   aiAnalysis: TrackedItemAiAnalysis,
   adopted: GenericAiItemAdoption,
   downstreamImpactDependency: AiAnalysisDependency | undefined,
   blockersDependency: AiAnalysisDependency | undefined,
-  blockerValueDependencies: BlockerValueAiDependencies | undefined,
+  blockerValueDependencies: GraphBlockerValueAiDependencies | undefined,
   relationSetDependency: AiAnalysisDependency | undefined,
-): PendingTrackedItem {
+): PendingGraphTrackedItem {
   const transitionBasis = transitionBasisForDecision(analysis, decision);
   const commonFields = {
     nodeId: analysis.item.nodeId,
@@ -214,7 +225,7 @@ export function createTrackedItem(
     confidence: decision.confidence,
     evidence: decision.evidence,
     uncertainties: decision.uncertainties,
-  } satisfies Omit<PendingTrackedItem, "status" | "waitingOn">;
+  } satisfies Omit<PendingGraphTrackedItem, "status" | "waitingOn">;
   if (isTerminalStatus(decision.status)) {
     return Object.freeze({
       ...commonFields,

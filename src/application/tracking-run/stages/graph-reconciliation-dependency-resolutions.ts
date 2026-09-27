@@ -9,36 +9,39 @@ import type {
   SourceId,
   UtcIsoDateTime,
 } from "../../../domain/index.js";
-import type { NotificationDependencyCause } from "../../../discord/index.js";
 import type { RelationCandidateAssessment } from "../../../graph/index.js";
 import { assertNonNullable } from "../../../util/index.js";
-import { latestUtcIsoDateTime } from "../../codex-input-projection.js";
-import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
+import { latestUtcIsoDateTime } from "./graph-reconciliation-source-time.js";
+import type { DeterministicItemAnalysis } from "./deterministic-item.js";
 import {
   combineSelectedAiDependencies,
   notDependentAiDependency,
   preferIndependentAiDependency,
-} from "../ai-dependencies/selection.js";
-import type { CollectedItems, GraphResult } from "../contracts.js";
-import { nonEmptySourceIds } from "../source-ids.js";
-import { dependencyCauseForBlockers } from "./dependency-resolution-causes.js";
+} from "./graph-reconciliation-ai-selection.js";
+import type {
+  GraphDependencyCause,
+  GraphWorkingCollection,
+  GraphWorkingResult,
+} from "./graph-reconciliation-contracts.js";
+import { nonEmptySourceIds } from "./graph-reconciliation-source-ids.js";
+import { dependencyCauseForBlockers } from "./graph-reconciliation-dependency-resolution-causes.js";
 import type {
   DependencyResolutionIndexes,
   DependencyResolutionStaticIndexes,
-} from "./dependency-resolution-contracts.js";
+} from "./graph-reconciliation-dependency-resolution-contracts.js";
 import {
   createDependencyResolutionIndexes,
   enumeratedTerminalAt,
-} from "./dependency-resolution-indexes.js";
-import { relationMeaningKey } from "./dependency-resolution-keys.js";
+} from "./graph-reconciliation-dependency-resolution-indexes.js";
+import { relationMeaningKey } from "./graph-reconciliation-dependency-resolution-keys.js";
 import {
   latestRelationEventForProgress,
   relationResolutionOccurredAt,
-} from "./dependency-resolution-time.js";
+} from "./graph-reconciliation-dependency-resolution-time.js";
 
 type DependencyResolutionResult = Readonly<{
   progress: readonly DependencyResolutionProgress[];
-  cause: NotificationDependencyCause;
+  cause: GraphDependencyCause;
 }>;
 
 function dependencyResolutionSupport(
@@ -119,8 +122,8 @@ function dependencyResolutionRelationGroup(
 
 /** 新たに解消した依存の進捗と通知原因を返す。 */
 export function dependencyResolutions(
-  collection: CollectedItems,
-  graph: GraphResult | undefined,
+  collection: GraphWorkingCollection,
+  graph: GraphWorkingResult | undefined,
   staticIndexes: DependencyResolutionStaticIndexes | undefined,
   relationAssessments: readonly RelationCandidateAssessment[],
   analysis: DeterministicItemAnalysis,
@@ -144,7 +147,7 @@ export function dependencyResolutions(
   }
   const previousObservedAt = staticIndexes.previousObservedAtByNodeId.get(analysis.item.nodeId);
   const enumeratedItemsByNodeId = staticIndexes.enumeratedItemsByNodeId;
-  const cause: NotificationDependencyCause =
+  const cause: GraphDependencyCause =
     previousObservedAt == null
       ? Object.freeze({ status: "indeterminate" })
       : dependencyCauseForBlockers(

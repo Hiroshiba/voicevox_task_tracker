@@ -5,23 +5,23 @@ VOICEVOX Task Trackerは、GitHubから得た確定情報を決定論的に評�
 
 ## モジュール境界
 
-| モジュール                        | 責務                                                                                             | 主な依存先                                                                     |
-| --------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
-| `src/canonical-json`              | pure leafでcanonical JSON直列化とSHA-256値を検証し、`index.ts`からNode.js hashを公開する         | `src/infrastructure/tracking-run`                                              |
-| `src/application/tracking-run`    | 日次runの閉じた値、inventory・collection・決定論的分析のstage、proof型、port契約                 | `src/canonical-json`と公開allowlistのpure leaf、`src/domain`、`src/graph`、Zod |
-| `src/infrastructure/tracking-run` | GitHub sessionをstage出力の外で保持するportと`ContentDigestPort`のNode.js実装                    | `src/application/tracking-run`、`src/github`、Node.js標準module                |
-| `src/config`                      | YAMLの読み込み、Zod schemaとsemantic validation                                                  | `src/codex`、`src/domain`、`src/util`                                          |
-| `src/diagnostics`                 | 詳細診断のJSONL記録、Error直列化、暗号化、復号                                                   | `src/canonical-json`、Node.js標準module                                        |
-| `src/github`                      | GitHub App認証、RESTとGraphQLの読み取り、公開allowlist、収集、正規化、rate limit管理             | `src/config`、`src/domain`                                                     |
-| `src/domain`                      | 状態機械、maintainerとlabel解決、追跡選定、停滞時間、停滞レベル、重要度、要対応度                | `src/canonical-json`のpure leaf、`src/util`                                    |
-| `src/graph`                       | 関係候補抽出、edge reconcile、cycle、frontier、downstream impact                                 | `src/canonical-json`のpure leaf、`src/domain`                                  |
-| `src/codex`                       | 分析候補選定、予算、cache、隔離実行、schemaとsemantic validation、reducer                        | `src/canonical-json`、`src/domain`、`src/graph`                                |
-| `src/persistence`                 | snapshot、履歴、AI cache、通知管理記録、run report、Git branch transaction                       | `src/canonical-json`、`src/codex`、`src/domain`、`src/github`                  |
-| `src/pages`                       | 独立した公開guard、公開DTO生成、gzip上限検査、JSON出力                                           | `src/canonical-json`、`src/domain`、`src/graph`、`src/persistence`、`src/util` |
-| `src/discord`                     | 通知候補選別、通知管理記録による重複抑制、payload分割、mention制限、Webhook送信                  | `src/domain`、`src/graph`                                                      |
-| `src/performance`                 | 外部接続をモックした日次runの処理時間、API使用率、AI論理call数、summaryサイズの確認              | `src/cli`と全実処理モジュール                                                  |
-| `src/cli`                         | コマンド解析、日次トランザクション、実アダプターの合成、run report                               | 上記の全モジュール                                                             |
-| `web`                             | 公開DTOの検証、要対応度と重要度を含む一覧と詳細、通知履歴、項目ごとの依存グラフ、検索、deep link | `src/pages`のDTO契約                                                           |
+| モジュール                        | 責務                                                                                                    | 主な依存先                                                                     |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `src/canonical-json`              | pure leafでcanonical JSON直列化とSHA-256値を検証し、`index.ts`からNode.js hashを公開する                | `src/infrastructure/tracking-run`                                              |
+| `src/application/tracking-run`    | 日次runの閉じた値、inventory・collection・決定論的分析・汎用AI採用・graph統合のstage、proof型、port契約 | `src/canonical-json`と公開allowlistのpure leaf、`src/domain`、`src/graph`、Zod |
+| `src/infrastructure/tracking-run` | GitHub sessionをstage出力の外で保持するportと`ContentDigestPort`のNode.js実装                           | `src/application/tracking-run`、`src/github`、Node.js標準module                |
+| `src/config`                      | YAMLの読み込み、Zod schemaとsemantic validation                                                         | `src/codex`、`src/domain`、`src/util`                                          |
+| `src/diagnostics`                 | 詳細診断のJSONL記録、Error直列化、暗号化、復号                                                          | `src/canonical-json`、Node.js標準module                                        |
+| `src/github`                      | GitHub App認証、RESTとGraphQLの読み取り、公開allowlist、収集、正規化、rate limit管理                    | `src/config`、`src/domain`                                                     |
+| `src/domain`                      | 状態機械、maintainerとlabel解決、追跡選定、停滞時間、停滞レベル、重要度、要対応度                       | `src/canonical-json`のpure leaf、`src/util`                                    |
+| `src/graph`                       | 関係候補抽出、edge reconcile、cycle、frontier、downstream impact                                        | `src/canonical-json`のpure leaf、`src/domain`                                  |
+| `src/codex`                       | 分析候補選定、予算、cache、隔離実行、schemaとsemantic validation、reducer                               | `src/canonical-json`、`src/domain`、`src/graph`                                |
+| `src/persistence`                 | snapshot、履歴、AI cache、通知管理記録、run report、Git branch transaction                              | `src/canonical-json`、`src/codex`、`src/domain`、`src/github`                  |
+| `src/pages`                       | 独立した公開guard、公開DTO生成、gzip上限検査、JSON出力                                                  | `src/canonical-json`、`src/domain`、`src/graph`、`src/persistence`、`src/util` |
+| `src/discord`                     | 通知候補選別、通知管理記録による重複抑制、payload分割、mention制限、Webhook送信                         | `src/domain`、`src/graph`                                                      |
+| `src/performance`                 | 外部接続をモックした日次runの処理時間、API使用率、AI論理call数、summaryサイズの確認                     | `src/cli`と全実処理モジュール                                                  |
+| `src/cli`                         | コマンド解析、日次トランザクション、実アダプターの合成、run report                                      | 上記の全モジュール                                                             |
+| `web`                             | 公開DTOの検証、要対応度と重要度を含む一覧と詳細、通知履歴、項目ごとの依存グラフ、検索、deep link        | `src/pages`のDTO契約                                                           |
 
 `src/domain`と`src/graph`はネットワークとファイルシステムへ依存しません。
 副作用を持つモジュールがpureな判定を呼び出し、pureな判定からGitHub、Codex、Git、Pages、Discordを呼び出す逆向きの依存は作りません。
@@ -48,20 +48,21 @@ GitHub読取portは選定済みallowlist内の列挙と詳細取得、正規化�
 `DeterministicallyAnalyzedRun`は初期項目判定、関係候補のID・端点・判定担当、追跡・終了・stale・詳細再取得の集合を確定します。
 収集段階で確定した追跡対象、再分析対象、関係候補が利用できない個人催促の対象項目は、このstageのfactsへ引き継ぎます。
 汎用AIの計画はこのfactsを受け取り、9要素ごとの必要性、選択理由、意味入力、fingerprintを`GenericAiPlannedRun`へ固定します。
-未移行のreducer、graph、個人催促は同じfactsから入力を投影して利用します。
+汎用AIの採用とgraph統合は同じfactsを使い、個人催促は確定した最終graphを受け取ります。
 Issueの明示依頼候補と実質担当候補は`deterministic-responsibility.ts`、IssueとPull Requestに共通するmention候補は`deterministic-mentions.ts`で抽出します。
 `src/application/tracking-run/stages/deterministic.ts`は`CollectedRun`から初期判定を生成し、`deterministic-item.ts`がIssueとPull Requestを1件ずつ判定します。
 初期判定は実行環境や永続化セッションを受け取らず、収集段階で固定した評価日時を使います。
 初期判定とAI結果を採用した再判定は、入力契約を分けます。
 `codex/planning-source.ts`は前回stateと収集値から計画用の事実を投影し、`src/application/tracking-run/stages/generic-ai-plan.ts`が要素の選択と実行候補を確定します。
 未移行のCodex実行器には`src/cli/tracking-run/migration-bridge/generic-ai-plan.ts`が確定済み候補を渡します。
-汎用AIの9要素の採用は`src/application/tracking-run/stages/generic-ai-adoption.ts`が確定し、`reduction/`は採用結果を判定へ反映します。暫定graphと最終graphの構築は`graph/`が担います。
-`personal-reminder/stage.ts`は既存の個人催促moduleを接続し、`validation/`はsnapshotと通知候補を作って完全性を検証します。
-日次runのinventory、collection、決定論的分析の成果物は`src/application/tracking-run/stages/`を契約とし、未移行stageの型は`production-runtime/contracts.ts`に置きます。
+汎用AIの9要素の採用は`src/application/tracking-run/stages/generic-ai-adoption.ts`が確定します。
+`graph-reconciliation.ts`は採用済み要素から2回の項目統合、内部の暫定graph、最終graph、項目値とAI依存を順に確定します。
+`personal-reminder/stage.ts`は既存の個人催促moduleを接続し、`validation/`は最終項目値へ個人催促を反映してsnapshotと通知候補を作ります。
+日次runのinventoryからgraph統合までの成果物は`src/application/tracking-run/stages/`を契約とし、未移行stageの型は`production-runtime/contracts.ts`に置きます。
 実アダプターの契約は`adapters.ts`に置きます。
 前回stateの参照は`previous-state/`、解析identityは`analysis-identity.ts`、AI依存は`ai-dependencies/`、関係候補とgraphの索引は`relation-candidate-index.ts`と`graph-result-indexes.ts`で共有します。
 新しい判断は対応するstageを唯一の所有先とし、組み立て側から各stageへ一方向に依存します。
-stage間の実装参照は`reduction/stage.ts`から暫定graphを作る`graph/stage.ts`への呼び出しに限ります。
+日次transactionは`GraphReconciledRun`を一度受け取り、未移行の後段には確定済み値の索引だけを投影します。
 `src/cli/notification-delivery-runtime.ts`はDiscord通知の送達、送信済み履歴と通知管理記録の保存、送信開始済み通知の手動解決を担当します。
 `production-runtime/publication/`は公開処理への接続を担い、公開可否、成果物、公開順序の判断は`src/cli/run-publication/`が担当します。
 完全性検証で`ValidatedRun`を得た後だけ、保存、Pages生成、Discord通知へ進めます。dailyは一つの`ValidatedRun`を公開処理へ渡し、分割workflowはartifactの値を再解析・再計算せず`ValidatedRun`として復元します。
@@ -124,7 +125,7 @@ stateの固定revisionでtransaction markerとdurable recordのV1固定pathを�
 6. GitHubイベントをsource ID付きに正規化し、追跡対象と関係候補を選びます。Pull Request作成前のcommitは作成時刻を下限としてpushイベント化し、項目作成前のイベントを作りません。
 7. `config.yml`の`maintainers`からrepositoryごとのGitHubユーザー名一覧を解決し、IssueとPull Requestの状態と責務を決定論的に判定します。抽象的なmaintainer、reviewer、merge_deciderの責務は、メンテナ1人につき1件の`kind: "user"`候補へ展開します。openかつ未アサインIssueでは、明確な着手宣言、追跡中のPRとのGitHub上で確定したauthoritativeな直接`implements`関係、継続成果物を持つ人間を実質担当候補として`candidates.waitingOn`へ加え、候補IDとsource IDを`deterministicSignals`へ渡します。正式assigneeを解除した場合は解除前のsourceを候補から除きます。 個人催促向けには、block適用前のローカルな状態と責務もIssue・PR双方で判定します。
 8. 汎用AIの解釈が必要な要素をCodexで分析し、出力を検証します。未アサインIssueの候補はIssue全体を進めているとhigh以上で判断できる場合だけ既存の`waiting_for_work`へ反映し、推論だけのrelation、部分実装、親・横断Issue、助言、検証、review、条件付き意向、撤回、延期、単なるauthorやcommenterは反映しません。一般的な活動状態の推察と、部分担当や部分実装のモデル化は行いません。前回のAI分析が失敗または延期した項目は、GitHub側の変化にかかわらず分析対象を再選定します。
-9. reducerの第1 pass、暫定graphのreconcileと解析、graphを反映したreducerの第2 pass、最終graphのreconcileと解析の順に実行し、停滞時間、cycle、frontier、downstream impactを確定して重要度と要対応度を計算します。
+9. `GraphReconciledRun`で第1項目統合、内部の暫定graph、第2項目統合、最終graphの順に実行します。最終graphからcycle、frontier、downstream impactを確定し、重要度、期限の切迫度、要対応度、値別のAI依存を計算します。
 10. 最終graph、収集した項目と詳細、ローカル判定、前回の原因を専用helperへ渡し、原因・根拠・責務範囲・時計を組み立てます。関係や汎用AIの採用で初めて確定した原因も追加・更新し、必要な原因を残予算で意味評価します。
 11. 原因ごとの採用結果から現在対応と個人通知候補を作り、snapshot全体の完全性と公開安全性を検証します。system通知は項目全体の確定事実と変化から選びます。
 12. `daily`と`backfill`では検証済みstateをatomic commitし、Pages用DTOを書き出して通知処理を実行します。`send`は既存の最大件数と通知管理記録の重複抑制に従ってDiscord送信を行い、`hold`は候補を未送信のまま保存します。`acknowledge-current`は現在の通知条件を満たす候補をreasonごとに上限なしで確認済みとして通知管理記録へ保存します。完了時に実測時刻と処理結果を反映したrun reportと通知管理記録を追加commitし、`send`だけが送信済み通知を日次履歴へ追加します。`tracking.startAt`が未確定なら同じcommitで確定します。
@@ -187,7 +188,7 @@ Codex実行では試行ごとに終了状態、標準出力、標準エラー出
 
 重要度は`src/domain`のpureな判定で計算します。
 停滞レベルとは独立した値です。
-`src/cli`は最終graphの解析後に必要な入力を集めて`src/domain`へ渡し、Codexやgraphがscoreとlevelを直接決めることはありません。
+`GraphReconciledRun`は最終graphの解析結果を`src/domain`の規則へ渡し、重要度と要対応度のscoreとlevelを確定します。
 
 | 入力                      | 依存する情報                                               |
 | ------------------------- | ---------------------------------------------------------- |

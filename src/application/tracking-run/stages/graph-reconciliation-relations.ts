@@ -1,5 +1,9 @@
 import { classifyCodexConfidence } from "../../../codex/confidence.js";
 import {
+  createAiAnalysisMigrationElementResultSchema,
+  type AiAnalysisElementMigrationResult,
+} from "../../../domain/ai-analysis-elements.js";
+import {
   buildSourceId,
   parseSourceId,
   type GitHubNodeId,
@@ -55,7 +59,18 @@ export function notificationRecommendationFromAdoption(
   output: GraphAdoptedOutput,
   thresholds: Readonly<{ high: number; medium: number }>,
 ): GraphNotificationRecommendation {
-  const result = output.notification;
+  return notificationRecommendationFromResult(output.notification, thresholds);
+}
+
+/** 保持項目の通知要素を採用済みの値から投影する。 */
+export function notificationRecommendationFromResult(
+  adoptedResult: AiAnalysisElementMigrationResult<"notification"> | undefined,
+  thresholds: Readonly<{ high: number; medium: number }>,
+): GraphNotificationRecommendation {
+  const result =
+    adoptedResult == null
+      ? undefined
+      : createAiAnalysisMigrationElementResultSchema("notification").parse(adoptedResult);
   if (result == null) {
     return Object.freeze({ availability: "not_available" });
   }

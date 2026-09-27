@@ -1,4 +1,3 @@
-import type { ReducedCodexDecision } from "../../../codex/index.js";
 import type {
   AiAnalysisDependency,
   TrackedItemAiDependencies,
@@ -10,19 +9,23 @@ import {
   type StalenessResult,
   type UtcIsoDateTime,
 } from "../../../domain/index.js";
-import type { SnapshotTrackedItem } from "../../../persistence/index.js";
-import { criticalSeverityWasRequested, severityAiDependency } from "../ai-dependencies/severity.js";
-import { combineSelectedAiDependencies } from "../ai-dependencies/selection.js";
-import { stallSinceAiDependency } from "../ai-dependencies/stall-since.js";
-import { stateDependenciesForWaitClass } from "../ai-dependencies/stall-time.js";
+import type { PreviousTrackedItem } from "../contracts/previous-state.js";
+import {
+  criticalSeverityWasRequested,
+  severityAiDependency,
+} from "./graph-reconciliation-severity.js";
+import { combineSelectedAiDependencies } from "./graph-reconciliation-ai-selection.js";
+import { stallSinceAiDependency } from "./graph-reconciliation-stall-since.js";
+import { stateDependenciesForWaitClass } from "./graph-reconciliation-stall-time.js";
 import type {
-  ReducedItemAnalysis,
-  TrackedItemStaleness,
-  TrackedItemWithImportanceAssessment,
-} from "../contracts.js";
-import { sourceOccurredAtByIdForAnalysis } from "../relation-source-occurrence.js";
-import { revalidatedRetainedTrackedItemAiDependency } from "./retained-ai-reconciliation.js";
-import type { CurrentAiDependencyContext } from "./retained-ai-producers.js";
+  GraphReducedItem,
+  GraphTrackedItemStaleness,
+  GraphItemWithImportanceAssessment,
+  GraphReducedDecision,
+} from "./graph-reconciliation-contracts.js";
+import { sourceOccurredAtByIdForAnalysis } from "./graph-reconciliation-source-time.js";
+import { revalidatedRetainedTrackedItemAiDependency } from "./graph-reconciliation-retained-ai-reconciliation.js";
+import type { CurrentAiDependencyContext } from "./graph-reconciliation-retained-ai-producers.js";
 
 /** 期限評価から現在の期限レベルを求める。 */
 export function deadlineLevelForAssessment(
@@ -41,9 +44,9 @@ export function deadlineLevelForAssessment(
 }
 
 function attentionAiDependency(
-  decision: Readonly<Pick<ReducedCodexDecision, "status" | "waitingOn" | "evidence">>,
+  decision: Readonly<Pick<GraphReducedDecision, "status" | "waitingOn" | "evidence">>,
   staleness: Readonly<Pick<StalenessResult, "waitClass">>,
-  importance: TrackedItemWithImportanceAssessment["importance"],
+  importance: GraphItemWithImportanceAssessment["importance"],
   deadlineLevel: DeadlineLevel,
   itemDependencies: TrackedItemAiDependencies,
 ): AiAnalysisDependency {
@@ -71,15 +74,15 @@ function attentionAiDependency(
 
 /** 保存項目に反映するAI依存を確定する。 */
 export function finalizedTrackedItemAiDependencies(
-  item: TrackedItemWithImportanceAssessment,
-  currentAnalysis: ReducedItemAnalysis | undefined,
-  previousItem: SnapshotTrackedItem | undefined,
+  item: GraphItemWithImportanceAssessment,
+  currentAnalysis: GraphReducedItem | undefined,
+  previousItem: PreviousTrackedItem | undefined,
   downstreamImpactDependency: AiAnalysisDependency,
   blockersDependency: AiAnalysisDependency,
   relationSetDependency: AiAnalysisDependency,
   currentAiDependencyContext: CurrentAiDependencyContext,
   deadlineLevel: DeadlineLevel,
-  staleness: TrackedItemStaleness,
+  staleness: GraphTrackedItemStaleness,
 ): TrackedItemAiDependencies {
   const dependencies = Object.freeze({
     ...item.aiDependencies,

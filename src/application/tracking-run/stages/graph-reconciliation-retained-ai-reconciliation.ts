@@ -1,4 +1,4 @@
-import { hashCanonicalJson } from "../../../canonical-json/index.js";
+import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import {
   aiAnalysisElementApplicationUsesAiValue,
   type AiAnalysisElement,
@@ -10,23 +10,23 @@ import {
   type AiAnalysisDependencyElement,
 } from "../../../domain/ai-analysis-dependencies.js";
 import { assertNonNullable } from "../../../util/index.js";
-import { historicalAiDependencyFallback } from "../ai-dependencies/history.js";
+import { historicalAiDependencyFallback } from "./graph-reconciliation-ai-history.js";
 import {
   aiDependencyIndependencePriority,
   notDependentAiDependency,
   unrecordedAiDependency,
-} from "../ai-dependencies/selection.js";
-import type { TrackedItemWithImportanceAssessment } from "../contracts.js";
+} from "./graph-reconciliation-ai-selection.js";
+import type { GraphItemWithImportanceAssessment } from "./graph-reconciliation-contracts.js";
 import {
   currentAiDependencyForProducer,
   retainedElementUsesBlockerDependency,
   revalidatedHistoricalAiDependencyWithCurrentContext,
   type CurrentAiDependencyContext,
-} from "./retained-ai-producers.js";
+} from "./graph-reconciliation-retained-ai-producers.js";
 import {
   staleRepositoryAiDependency,
   type RetainedBlockerValueAiDependencies,
-} from "./retained-blocker-dependencies.js";
+} from "./graph-reconciliation-retained-blocker-dependencies.js";
 
 function retainedElementUsesStaleBlockerTopologyFallback(
   element: AiAnalysisDependencyElement,
@@ -39,7 +39,7 @@ function retainedElementUsesStaleBlockerTopologyFallback(
 }
 
 function currentDirectAiDependencyForRetainedElement(
-  item: TrackedItemWithImportanceAssessment,
+  item: GraphItemWithImportanceAssessment,
   element: AiAnalysisDependencyElement,
 ): AiAnalysisDependency | undefined {
   let applicationElement: AiAnalysisElement | undefined;
@@ -63,7 +63,7 @@ function currentDirectAiDependencyForRetainedElement(
 }
 
 function staleBlockerTopologyDirectAiDependency(
-  item: TrackedItemWithImportanceAssessment,
+  item: GraphItemWithImportanceAssessment,
   element: AiAnalysisDependencyElement,
 ): AiAnalysisDependency | undefined {
   if (element === "primaryWaitingOn") {
@@ -83,7 +83,7 @@ function staleBlockerTopologyDirectAiDependency(
 }
 
 function staleBlockerTopologyFallbackDependency(
-  item: TrackedItemWithImportanceAssessment,
+  item: GraphItemWithImportanceAssessment,
   element: AiAnalysisDependencyElement,
 ): AiAnalysisDependency {
   const staleRepository = staleRepositoryAiDependency();
@@ -94,7 +94,7 @@ function staleBlockerTopologyFallbackDependency(
 }
 
 function retainedElementMatchesNativeOpenBlocker(
-  item: TrackedItemWithImportanceAssessment,
+  item: GraphItemWithImportanceAssessment,
   element: AiAnalysisDependencyElement,
   context: CurrentAiDependencyContext,
 ): boolean {
@@ -162,11 +162,11 @@ function aiDependencyContainsLowerBound(
   const actualProducerSignatures = new Set(
     actual.status === "not_dependent"
       ? []
-      : (actual.producers ?? []).map((producer) => hashCanonicalJson(producer)),
+      : (actual.producers ?? []).map((producer) => serializeCanonicalJson(producer)),
   );
   return (
     expected.producers?.every((producer) =>
-      actualProducerSignatures.has(hashCanonicalJson(producer)),
+      actualProducerSignatures.has(serializeCanonicalJson(producer)),
     ) ?? true
   );
 }
@@ -178,7 +178,7 @@ function aiDependencyHasOnlyExpectedGraphProducers(
   const expectedProducerSignatures = new Set(
     expected.status === "not_dependent"
       ? []
-      : (expected.producers ?? []).map((producer) => hashCanonicalJson(producer)),
+      : (expected.producers ?? []).map((producer) => serializeCanonicalJson(producer)),
   );
   if (dependency.status === "not_dependent") {
     return true;
@@ -186,12 +186,12 @@ function aiDependencyHasOnlyExpectedGraphProducers(
   return (dependency.producers ?? []).every(
     (producer) =>
       producer.kind === "item_element" ||
-      expectedProducerSignatures.has(hashCanonicalJson(producer)),
+      expectedProducerSignatures.has(serializeCanonicalJson(producer)),
   );
 }
 
 function currentRetainedItemElementDependencies(
-  item: TrackedItemWithImportanceAssessment,
+  item: GraphItemWithImportanceAssessment,
   element: AiAnalysisDependencyElement,
   dependency: AiAnalysisDependency,
   context: CurrentAiDependencyContext,
@@ -214,7 +214,7 @@ function currentRetainedItemElementDependencies(
 
 /** 保持項目のAI依存を再検証する。 */
 export function revalidatedRetainedTrackedItemAiDependency(
-  item: TrackedItemWithImportanceAssessment,
+  item: GraphItemWithImportanceAssessment,
   element: AiAnalysisDependencyElement,
   dependency: AiAnalysisDependency,
   context: CurrentAiDependencyContext,

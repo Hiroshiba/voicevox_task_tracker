@@ -2,8 +2,11 @@ import { aiAnalysisElementApplicationUsesAiValue } from "../../../domain/ai-anal
 import type { GitHubNodeId, GraphNodeId, UtcIsoDateTime } from "../../../domain/index.js";
 import type { BlockerNodeAiDependency, ReconciledGraphEdge } from "../../../graph/index.js";
 import { assertNonNullable } from "../../../util/index.js";
-import type { GraphResult, PendingTrackedItem } from "../contracts.js";
-import { blockerNodeAiDependenciesByBlockedNodeId } from "../graph-result-indexes.js";
+import type {
+  GraphWorkingResult,
+  PendingGraphTrackedItem,
+} from "./graph-reconciliation-contracts.js";
+import { blockerNodeAiDependenciesByBlockedNodeId } from "./graph-reconciliation-graph-indexes.js";
 
 export type RetainedBlocker = Readonly<{
   blockerNodeId: GraphNodeId;
@@ -31,7 +34,7 @@ function compareRetainedBlockers(left: RetainedBlocker, right: RetainedBlocker):
 
 /** nativeの未完了blockerを対象node別に索引する。 */
 export function nativeOpenBlockerNodeIdsByTargetNodeId(
-  graph: GraphResult,
+  graph: GraphWorkingResult,
 ): ReadonlyMap<GraphNodeId, ReadonlySet<GraphNodeId>> {
   const blockerNodeIdsByTargetNodeId = new Map<GraphNodeId, Set<GraphNodeId>>();
   for (const edge of graph.edges) {
@@ -57,8 +60,8 @@ export function nativeOpenBlockerNodeIdsByTargetNodeId(
 
 /** 保持項目のblockerを対象node別に索引する。 */
 export function retainedBlockersByBlockedNodeId(
-  graph: GraphResult,
-  itemsByNodeId: ReadonlyMap<GitHubNodeId, PendingTrackedItem>,
+  graph: GraphWorkingResult,
+  itemsByNodeId: ReadonlyMap<GitHubNodeId, PendingGraphTrackedItem>,
 ): ReadonlyMap<GraphNodeId, readonly RetainedBlocker[]> {
   const supportsByBlockedNodeId = new Map<GraphNodeId, Map<GraphNodeId, ReconciledGraphEdge[]>>();
   for (const edge of graph.edges) {
@@ -131,7 +134,7 @@ type RetainedBlockerDecision =
 
 /** 保持項目のblocker判定を照合する。 */
 export function retainedBlockerDecision(
-  item: PendingTrackedItem,
+  item: PendingGraphTrackedItem,
   blockers: readonly RetainedBlocker[],
   minimumInferredConfidence: number,
 ): RetainedBlockerDecision {
@@ -180,7 +183,7 @@ type RetainedConfirmedBlockers =
 
 /** 保持項目の確認済みblockerを照合する。 */
 export function retainedConfirmedBlockers(
-  item: PendingTrackedItem,
+  item: PendingGraphTrackedItem,
   blockers: readonly RetainedBlocker[],
 ): RetainedConfirmedBlockers {
   if (aiAnalysisElementApplicationUsesAiValue(item.aiAnalysis.applications.waitingOn)) {

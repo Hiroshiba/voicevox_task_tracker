@@ -33,7 +33,6 @@ export {
   type DailyTransactionTypeMap,
   type DiscordStageResult,
   type DryRunArtifact,
-  type GraphAnalysisStageResult,
   type OnlineCliCommand,
 } from "./daily-transaction.js";
 export {

@@ -1,5 +1,6 @@
 import type { DailyTransactionDependencies } from "../daily-transaction.js";
 import { analyzeDeterministically } from "../../application/tracking-run/stages/deterministic.js";
+import { reconcileAdoptedGraph } from "../../application/tracking-run/stages/graph-reconciliation.js";
 import type { ProductionRuntimeAdapters } from "./adapters.js";
 import {
   createAdoptGenericAiStage,
@@ -18,7 +19,6 @@ import { projectLegacyCollection } from "../tracking-run/migration-bridge/collec
 import { createCollectInventoryStage } from "./daily-startup/inventory.js";
 import { createLoadStateStage } from "./daily-startup/state.js";
 import { createPrepareRunStage } from "./daily-startup/preparation.js";
-import { createReconcileGraphStage } from "./graph/stage.js";
 import { createAnalyzePersonalRemindersStage } from "./personal-reminder/stage.js";
 import {
   createWriteCollectAnalyzeArtifactStage,
@@ -32,7 +32,7 @@ import {
 } from "./publication/notification.js";
 import { createBuildPagesStage } from "./publication/pages.js";
 import { createPersistStateStage } from "./publication/persistence.js";
-import { createReduceAnalysisStage } from "./reduction/stage.js";
+import { projectLegacyGraphReconciliation } from "../tracking-run/migration-bridge/graph-reconciliation.js";
 import { createValidateCompletenessStage } from "./validation/stage.js";
 
 /** 日次transactionの各段階を既存アダプターへ接続する。 */
@@ -56,8 +56,8 @@ export function createDailyDependencies(
     planGenericAi: createPlanGenericAiStage(adapters),
     analyzeWithCodex: createAnalyzeWithCodexStage(adapters),
     adoptGenericAi: createAdoptGenericAiStage(),
-    reduceAnalysis: createReduceAnalysisStage(),
-    reconcileGraph: createReconcileGraphStage(),
+    reconcileAdoptedGraph,
+    projectLegacyGraphReconciliation,
     analyzePersonalReminders: createAnalyzePersonalRemindersStage(adapters),
     validateCompleteness: createValidateCompletenessStage(githubSessions),
     persistState: createPersistStateStage(),

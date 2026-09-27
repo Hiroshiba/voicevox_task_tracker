@@ -9,10 +9,10 @@ import {
   type UtcIsoDateTime,
 } from "../../../domain/index.js";
 import { assertNonNullable } from "../../../util/index.js";
-import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
-import type { RuntimeConfiguration } from "../contracts.js";
-import { nonEmptySourceIds } from "../source-ids.js";
-import type { ConsumerCodexElementOutput } from "./consumer-output.js";
+import type { DeterministicItemAnalysis } from "./deterministic-item.js";
+import type { GraphWorkingConfiguration } from "./graph-reconciliation-contracts.js";
+import { nonEmptySourceIds } from "./graph-reconciliation-source-ids.js";
+import type { GraphAdoptedOutput } from "./graph-reconciliation-adopted-output.js";
 
 function sourceIdSetsMatch(left: readonly SourceId[], right: readonly SourceId[]): boolean {
   if (left.length !== right.length) {
@@ -42,10 +42,10 @@ function outputSourceIds(
 }
 
 export function createEffectiveAssigneeAssessment(
-  configuration: RuntimeConfiguration,
+  configuration: GraphWorkingConfiguration,
   evaluatedAt: UtcIsoDateTime,
   analysis: DeterministicItemAnalysis,
-  output: ConsumerCodexElementOutput | undefined,
+  output: GraphAdoptedOutput | undefined,
 ): IssueEffectiveAssigneeAssessment {
   if (
     analysis.item.type !== "issue" ||
@@ -168,7 +168,7 @@ export function createEffectiveAssigneeAssessment(
 
 export function explicitRequestAssessment(
   analysis: DeterministicItemAnalysis,
-  output: ConsumerCodexElementOutput | undefined,
+  output: GraphAdoptedOutput | undefined,
 ): IssueExplicitRequestAssessment {
   const candidates = analysis.explicitRequestCandidates;
   const waitingOnResult = output?.waitingOn;

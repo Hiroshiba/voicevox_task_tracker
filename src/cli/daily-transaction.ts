@@ -14,6 +14,7 @@ import type { DeterministicallyAnalyzedRun } from "../application/tracking-run/s
 import type { GenericAiPlannedRun } from "../application/tracking-run/stages/generic-ai-plan.js";
 import type { GenericAiExecutedRun } from "../application/tracking-run/stages/generic-ai-execution.js";
 import type { GenericAiAdoptedRun } from "../application/tracking-run/stages/generic-ai-adoption.js";
+import type { GraphReconciledRun } from "../application/tracking-run/stages/graph-reconciliation.js";
 import {
   StateFormatError,
   StatePersonalReminderAiDependencyMismatchError,
@@ -54,6 +55,7 @@ export type DailyTransactionTypeMap = Readonly<{
   genericAiPlanned: GenericAiPlannedRun;
   genericAiExecuted: GenericAiExecutedRun;
   genericAiAdopted: GenericAiAdoptedRun;
+  graphReconciled: GraphReconciledRun;
   repositoryInventory: unknown;
   collection: unknown;
   codexAnalysis: unknown;
@@ -86,12 +88,6 @@ export type CodexAnalysisStageResult<Value> = Readonly<{
   aiRetainedResultCount: number;
   estimatedInputTokens: number;
   diagnostics: readonly string[];
-}>;
-
-/** graph解析段階の値とactive edge数。 */
-export type GraphAnalysisStageResult<Value> = Readonly<{
-  value: Value;
-  activeEdgeCount: number;
 }>;
 
 /** 個人催促原因解析段階の値、縮退状態、累積AI指標。 */
@@ -196,27 +192,10 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       genericAiExecuted: Types["genericAiExecuted"];
     }>,
   ) => Types["genericAiAdopted"];
-  reduceAnalysis: (
-    input: Readonly<{
-      invocation: DailyRunInvocation;
-      configuration: Types["configuration"];
-      state: Types["state"];
-      repositoryInventory: Types["repositoryInventory"];
-      deterministicallyAnalyzed: Types["deterministicallyAnalyzed"];
-      genericAiExecuted: Types["genericAiExecuted"];
-      genericAiAdopted: Types["genericAiAdopted"];
-      codexAnalysis: Types["codexAnalysis"];
-    }>,
-  ) => Promise<Types["reduction"]>;
-  reconcileGraph: (
-    input: Readonly<{
-      invocation: DailyRunInvocation;
-      configuration: Types["configuration"];
-      state: Types["state"];
-      deterministicallyAnalyzed: Types["deterministicallyAnalyzed"];
-      reduction: Types["reduction"];
-    }>,
-  ) => Promise<GraphAnalysisStageResult<Types["graph"]>>;
+  reconcileAdoptedGraph: (adopted: Types["genericAiAdopted"]) => Types["graphReconciled"];
+  projectLegacyGraphReconciliation: (
+    reconciled: Types["graphReconciled"],
+  ) => Readonly<{ reduction: Types["reduction"]; graph: Types["graph"] }>;
   analyzePersonalReminders: (
     input: Readonly<{
       invocation: DailyRunInvocation;
@@ -226,6 +205,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       deterministicallyAnalyzed: Types["deterministicallyAnalyzed"];
       genericAiExecuted: Types["genericAiExecuted"];
       codexAnalysis: Types["codexAnalysis"];
+      graphReconciled: Types["graphReconciled"];
       reduction: Types["reduction"];
       graph: Types["graph"];
     }>,
@@ -239,6 +219,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       collection: Types["collection"];
       codexAnalysis: Types["codexAnalysis"];
       genericAiAdopted: Types["genericAiAdopted"];
+      graphReconciled: Types["graphReconciled"];
       reduction: Types["reduction"];
       graph: Types["graph"];
       personalReminderAnalysis: Types["personalReminderAnalysis"];
@@ -697,28 +678,12 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         genericAiExecuted: codexAnalysis.executed,
       });
 
-      stage = "reducer";
-      const reduction = await this.#dependencies.reduceAnalysis({
-        invocation,
-        configuration,
-        state,
-        repositoryInventory,
-        deterministicallyAnalyzed,
-        genericAiExecuted: codexAnalysis.executed,
-        genericAiAdopted,
-        codexAnalysis: codexAnalysis.value,
-      });
-
       stage = "graph_analysis";
-      const graph = await this.#dependencies.reconcileGraph({
-        invocation,
-        configuration,
-        state,
-        deterministicallyAnalyzed,
-        reduction,
-      });
+      const graphReconciled = this.#dependencies.reconcileAdoptedGraph(genericAiAdopted);
+      const { reduction, graph } =
+        this.#dependencies.projectLegacyGraphReconciliation(graphReconciled);
       metrics = updateMetrics(metrics, {
-        activeEdgeCount: graph.activeEdgeCount,
+        activeEdgeCount: graphReconciled.data.graph.edges.filter((edge) => edge.active).length,
       });
 
       stage = "personal_reminder_analysis";
@@ -730,8 +695,9 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         deterministicallyAnalyzed,
         genericAiExecuted: codexAnalysis.executed,
         codexAnalysis: codexAnalysis.value,
+        graphReconciled,
         reduction,
-        graph: graph.value,
+        graph,
       });
       diagnostics.push(...personalReminderAnalysis.diagnostics);
       metrics = updateMetrics(metrics, {
@@ -761,8 +727,9 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         collection,
         codexAnalysis: codexAnalysis.value,
         genericAiAdopted,
+        graphReconciled,
         reduction,
-        graph: graph.value,
+        graph,
         personalReminderAnalysis: personalReminderAnalysis.value,
       });
       diagnostics.push(...validation.diagnostics);

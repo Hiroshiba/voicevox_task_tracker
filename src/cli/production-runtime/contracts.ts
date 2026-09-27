@@ -25,6 +25,7 @@ import type { DeterministicallyAnalyzedRun } from "../../application/tracking-ru
 import type { GenericAiPlannedRun } from "../../application/tracking-run/stages/generic-ai-plan.js";
 import type { GenericAiExecutedRun } from "../../application/tracking-run/stages/generic-ai-execution.js";
 import type { GenericAiAdoptedRun } from "../../application/tracking-run/stages/generic-ai-adoption.js";
+import type { GraphReconciledRun } from "../../application/tracking-run/stages/graph-reconciliation.js";
 import type { AiCacheEntry } from "../../codex/cache.js";
 import type { PersonalReminderAiCacheEntry } from "../../codex/personal-reminder-cache.js";
 import type { AiAnalysisDependency } from "../../domain/ai-analysis-dependencies.js";
@@ -251,6 +252,7 @@ export type ProductionTypes = DailyTransactionTypeMap &
     genericAiPlanned: GenericAiPlannedRun;
     genericAiExecuted: GenericAiExecutedRun;
     genericAiAdopted: GenericAiAdoptedRun;
+    graphReconciled: GraphReconciledRun;
     repositoryInventory: RepositoryInventory;
     collection: CollectedItems;
     codexAnalysis: CodexAnalysis;

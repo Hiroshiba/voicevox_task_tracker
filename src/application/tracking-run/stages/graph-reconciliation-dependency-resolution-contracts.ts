@@ -8,14 +8,15 @@ import type {
   TrackedItemState,
   UtcIsoDateTime,
 } from "../../../domain/index.js";
-import type { EnumeratedGitHubItem, FreshObservedGitHubItem } from "../../../github/index.js";
+import type { EnumeratedGitHubItem } from "../../../github/item-enumeration.js";
+import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";
 import type {
   ReconciledGraphEdge,
   RelationCandidate,
   RelationCandidateAssessment,
   RelationCandidateId,
 } from "../../../graph/index.js";
-import type { SnapshotGraphNodeStateObservation } from "../../../persistence/index.js";
+import type { GraphNodeStateObservation } from "./graph-reconciliation-contracts.js";
 
 export type ActiveRelation = Relation & Readonly<{ active: true }>;
 
@@ -32,10 +33,7 @@ export type DependencyResolutionIndexes = Readonly<{
   previousEffectiveStateByNodeId: ReadonlyMap<GraphNodeId, TrackedItemState>;
   enumeratedItemsByNodeId: ReadonlyMap<GraphNodeId, EnumeratedGitHubItem>;
   observedItemsByNodeId: ReadonlyMap<GraphNodeId, FreshObservedGitHubItem>;
-  currentNativeStateObservationsByNodeId: ReadonlyMap<
-    GraphNodeId,
-    SnapshotGraphNodeStateObservation
-  >;
+  currentNativeStateObservationsByNodeId: ReadonlyMap<GraphNodeId, GraphNodeStateObservation>;
   relationEventsByKey: ReadonlyMap<string, readonly RelationProgressEvent[]>;
   sourceOccurredAtById: ReadonlyMap<SourceId, UtcIsoDateTime>;
   relationRemovalEventsByKey: ReadonlyMap<string, RelationProgressEvent>;

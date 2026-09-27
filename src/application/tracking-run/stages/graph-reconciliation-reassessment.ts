@@ -13,26 +13,28 @@ import {
   type TrackedItem,
   type UtcIsoDateTime,
 } from "../../../domain/index.js";
-import type { FreshObservedGitHubItem, GitHubItemDetail } from "../../../github/index.js";
+import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";
+import type { GitHubItemDetail } from "../../../github/item-detail-types.js";
 import type { ReconciledGraphEdge } from "../../../graph/index.js";
 import { assertNonNullable } from "../../../util/index.js";
-import {
-  createNativeBlockers,
-  type DeterministicItemAnalysis,
-} from "../../../application/tracking-run/stages/deterministic-item.js";
-import type { GraphResult, RepositoryInventory, RuntimeConfiguration } from "../contracts.js";
-import { normalizeLabelRules } from "../label-rules.js";
-import { findRepository, repositoryFullName } from "../repository-lookup.js";
-import { checkFailureSourceIds, nonEmptySourceIds } from "../source-ids.js";
-import type { ConsumerCodexElementOutput } from "./consumer-output.js";
+import { createNativeBlockers, type DeterministicItemAnalysis } from "./deterministic-item.js";
+import type {
+  GraphWorkingResult,
+  GraphWorkingInventory,
+  GraphWorkingConfiguration,
+} from "./graph-reconciliation-contracts.js";
+import { normalizeLabelRules } from "./collection-label-rules.js";
+import { findRepository, repositoryFullName } from "./graph-reconciliation-repositories.js";
+import { checkFailureSourceIds, nonEmptySourceIds } from "./graph-reconciliation-source-ids.js";
+import type { GraphAdoptedOutput } from "./graph-reconciliation-adopted-output.js";
 import {
   createEffectiveAssigneeAssessment,
   explicitRequestAssessment,
-} from "./responsibility-assessments.js";
+} from "./graph-reconciliation-responsibility-assessments.js";
 
 function checkFailureAssessment(
   detail: Extract<GitHubItemDetail, Readonly<{ type: "pull_request" }>>,
-  output: ConsumerCodexElementOutput | undefined,
+  output: GraphAdoptedOutput | undefined,
 ): PullRequestCheckFailureAssessment {
   const sourceIds = checkFailureSourceIds(detail);
   if (sourceIds == null || output?.status == null || output.waitingOn == null) {
@@ -76,7 +78,7 @@ function checkFailureAssessment(
 
 export function naturalLanguageProgressAssessments(
   analysis: DeterministicItemAnalysis,
-  output: ConsumerCodexElementOutput | undefined,
+  output: GraphAdoptedOutput | undefined,
 ): readonly NaturalLanguageProgressAssessment[] {
   const progressResult = output?.progress;
   if (progressResult == null) {
@@ -104,7 +106,7 @@ type GraphBlockerIndex = Readonly<{
   stateByNodeId: ReadonlyMap<GraphNodeId, TrackedItem["state"]>;
 }>;
 
-export function createGraphBlockerIndex(graph: GraphResult): GraphBlockerIndex {
+export function createGraphBlockerIndex(graph: GraphWorkingResult): GraphBlockerIndex {
   const mutableBlockingEdgesByTargetNodeId = new Map<GraphNodeId, ReconciledGraphEdge[]>();
   for (const edge of graph.edges) {
     if (!edge.active || edge.type !== "blocks") {
@@ -183,10 +185,10 @@ function graphBlockers(
 
 export function reassessDeterministicAnalysis(
   evaluatedAt: UtcIsoDateTime,
-  configuration: RuntimeConfiguration,
-  inventory: RepositoryInventory,
+  configuration: GraphWorkingConfiguration,
+  inventory: GraphWorkingInventory,
   analysis: DeterministicItemAnalysis,
-  output: ConsumerCodexElementOutput | undefined,
+  output: GraphAdoptedOutput | undefined,
   graphBlockerIndex: GraphBlockerIndex | undefined,
 ): DeterministicItemAnalysis {
   const repository = findRepository(inventory, analysis.item.repositoryId);

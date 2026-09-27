@@ -1,17 +1,16 @@
 import type { GitHubNodeId, Relation, SourceId, UtcIsoDateTime } from "../../../domain/index.js";
-import type { GitHubItemDetail } from "../../../github/index.js";
+import type { GitHubItemDetail } from "../../../github/item-detail-types.js";
 import { assertNonNullable } from "../../../util/index.js";
 import {
-  createCodexSourceOccurredAtById,
+  sourceOccurredAtByIdForItem,
   latestUtcIsoDateTime,
-} from "../../codex-input-projection.js";
-import type { CollectedItems } from "../contracts.js";
-import { createEarliestRelationSourceOccurredAtById } from "../relation-source-occurrence.js";
+} from "./graph-reconciliation-source-time.js";
+import type { GraphWorkingCollection } from "./graph-reconciliation-contracts.js";
 import type {
   DependencyResolutionIndexes,
   RelationProgressEvent,
-} from "./dependency-resolution-contracts.js";
-import { relationProgressKey } from "./dependency-resolution-keys.js";
+} from "./graph-reconciliation-dependency-resolution-contracts.js";
+import { relationProgressKey } from "./graph-reconciliation-dependency-resolution-keys.js";
 
 /** 関係進捗に使う最新の削除イベントを返す。 */
 export function latestRelationEventForProgress(
@@ -41,7 +40,7 @@ function editedRelationSourceOccurredAts(
 
 /** 依存解消に使うsourceごとの発生時刻を作る。 */
 export function createDependencySourceOccurredAtById(
-  collection: CollectedItems,
+  collection: GraphWorkingCollection,
 ): ReadonlyMap<SourceId, UtcIsoDateTime> {
   const detailsByNodeId = new Map<GitHubNodeId, GitHubItemDetail>();
   for (const detail of collection.details) {
@@ -54,11 +53,7 @@ export function createDependencySourceOccurredAtById(
   for (const item of collection.observedItems) {
     const detail = detailsByNodeId.get(item.nodeId);
     assertNonNullable(detail, `依存解消sourceの詳細がありません。対象: ${item.nodeId}`);
-    for (const [sourceId, occurredAt] of createCodexSourceOccurredAtById(
-      item,
-      detail,
-      createEarliestRelationSourceOccurredAtById,
-    )) {
+    for (const [sourceId, occurredAt] of sourceOccurredAtByIdForItem(item, detail)) {
       const existingOccurredAt = sourceOccurredAtById.get(sourceId);
       if (existingOccurredAt == null || existingOccurredAt < occurredAt) {
         sourceOccurredAtById.set(sourceId, occurredAt);

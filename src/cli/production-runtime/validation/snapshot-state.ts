@@ -1,5 +1,6 @@
 import type { AiAnalysisRunIdentity } from "../../../codex/index.js";
 import type { GenericAiAdoptedRun } from "../../../application/tracking-run/stages/generic-ai-adoption.js";
+import type { GraphReconciledRun } from "../../../application/tracking-run/stages/graph-reconciliation.js";
 import { AI_ANALYSIS_ELEMENTS } from "../../../domain/ai-analysis-elements.js";
 import {
   analysisPlanFingerprintForItem,
@@ -7,7 +8,7 @@ import {
 } from "../../../application/tracking-run/stages/collection-analysis-fingerprint.js";
 import { nodeContentDigestPort } from "../../../infrastructure/tracking-run/content-digest.js";
 import type { Config } from "../../../config/index.js";
-import { calculateAttention, type GitHubNodeId, type Relation } from "../../../domain/index.js";
+import { type GitHubNodeId, type Relation } from "../../../domain/index.js";
 import type { EnumeratedGitHubItem } from "../../../github/index.js";
 import type { ReconciledGraphEdge } from "../../../graph/index.js";
 import {
@@ -31,14 +32,12 @@ import type {
   PendingTrackedItem,
   PersonalReminderAnalysis,
   ReducedAnalysis,
-  RepositoryInventory,
   RuntimeConfiguration,
   RuntimeState,
 } from "../contracts.js";
 import { previousCollectionItemsByNodeId } from "../previous-state/collection.js";
 import { previousSnapshot } from "../previous-state/snapshot.js";
 import { pendingSnapshotTrackingStartAt } from "../tracking-start-at.js";
-import { deadlineLevelForAssessment } from "./snapshot-item-ai-dependencies.js";
 import { snapshotItems } from "./snapshot-items.js";
 
 function toStateRelation(edge: ReconciledGraphEdge): Relation {
@@ -242,23 +241,15 @@ export function createValidatedSnapshot(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
   state: RuntimeState,
-  inventory: RepositoryInventory,
   collection: CollectedItems,
   codexAnalysis: CodexAnalysis,
   adopted: GenericAiAdoptedRun,
+  reconciled: GraphReconciledRun,
   reduction: ReducedAnalysis,
   graph: GraphResult,
   personalReminderAnalysis: PersonalReminderAnalysis,
 ): StateSnapshot {
-  const items = snapshotItems(
-    configuration,
-    state,
-    inventory,
-    collection,
-    reduction,
-    graph,
-    personalReminderAnalysis,
-  );
+  const items = snapshotItems(reconciled, personalReminderAnalysis);
   const itemsByNodeId = new Map(items.map((item) => [item.nodeId, item]));
   const snapshot = createStateSnapshot({
     schemaVersion: "19",
@@ -275,28 +266,9 @@ export function createValidatedSnapshot(
       ),
     },
     repositories: snapshotRepositories(collection),
-    items: items.map((item) => {
-      const staleness = reduction.stalenessByNodeId.get(item.nodeId);
-      assertNonNullable(staleness, `追跡項目 ${item.nodeId}のseverity再計算結果がありません`);
-      return {
-        ...item,
-        attention: calculateAttention({
-          importanceScore: item.importance.score,
-          deadlineLevel: deadlineLevelForAssessment(
-            item.deadlineAssessment,
-            collection.evaluatedAt,
-            configuration.config.staleness.timezone,
-          ),
-          deadlinePoints: configuration.config.attention.deadlinePoints,
-          elapsedHours: staleness.elapsedHours,
-          waitClass: staleness.waitClass,
-          thresholdsHours: configuration.config.staleness.thresholdsHours,
-          recencyFloor: configuration.config.attention.recencyFloor,
-          levels: configuration.config.attention.levels,
-        }),
-        severity: staleness.severity,
-        severityContext: staleness.severityContext,
-      };
+    items: items.map(({ deadlineLevel, ...item }) => {
+      void deadlineLevel;
+      return item;
     }),
     graphNodeStateObservations: graph.graphNodeStateObservations,
     externalReferences: graph.externalReferences,

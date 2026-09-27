@@ -111,6 +111,7 @@ export type GraphReducedItem = Readonly<{
   detail: GitHubItemDetail;
   effectiveAssigneeCandidates: readonly EffectiveAssigneeCandidateContext[];
   decision: GraphReducedDecision;
+  deterministicDecision: IssueStateDecision | PullRequestStateDecision;
   blockerValueAiDependencies: GraphBlockerValueAiDependencies;
   localResponsibilityDecision: IssueStateDecision | PullRequestStateDecision;
   aiAnalysisApplications: TrackedItemAiAnalysisApplications;
@@ -141,7 +142,7 @@ export type GraphNotificationRecommendation =
 
 /** 二回目の統合結果だけを保持する。 */
 export type GraphReduction = Readonly<{
-  items: readonly PendingGraphTrackedItem[];
+  items: readonly GraphFinalItem[];
   currentItems: readonly GraphReducedItem[];
   stalenessByNodeId: readonly (readonly [GitHubNodeId, GraphTrackedItemStaleness])[];
   relationAssessments: readonly RelationCandidateAssessment[];
@@ -154,15 +155,23 @@ export type GraphReduction = Readonly<{
 
 export type GraphWorkingReduction = Omit<
   GraphReduction,
-  "stalenessByNodeId" | "retainedNotificationRecommendations"
+  "items" | "stalenessByNodeId" | "retainedNotificationRecommendations"
 > &
   Readonly<{
+    items: readonly PendingGraphTrackedItem[];
     stalenessByNodeId: ReadonlyMap<GitHubNodeId, GraphTrackedItemStaleness>;
     retainedNotificationRecommendations: ReadonlyMap<GitHubNodeId, GraphNotificationRecommendation>;
   }>;
 
 type WithoutImportance<Item> = Item extends TrackedItem ? Omit<Item, "importance"> : never;
 export type PendingGraphTrackedItem = WithoutImportance<TrackedItem>;
+
+/** 最終graphの重要度を反映した項目。 */
+export type GraphItemWithImportanceAssessment = TrackedItem &
+  Readonly<{
+    importanceAssessment: NaturalLanguageImportanceAssessmentState;
+    deadlineAssessment: NaturalLanguageDeadlineAssessmentState;
+  }>;
 
 /** 停滞判定を保存値へ反映するための結果。 */
 export type GraphTrackedItemStaleness = Readonly<{

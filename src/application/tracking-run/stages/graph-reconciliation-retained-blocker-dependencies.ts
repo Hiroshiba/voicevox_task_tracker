@@ -1,22 +1,28 @@
-import { hashCanonicalJson } from "../../../canonical-json/index.js";
+import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type { AiAnalysisDependency } from "../../../domain/ai-analysis-dependencies.js";
 import type { GitHubNodeId, GraphNodeId } from "../../../domain/index.js";
 import type { BlockerNodeAiDependency } from "../../../graph/index.js";
-import { combineBlockerPrimitiveDependencies } from "../ai-dependencies/blocker-values.js";
+import { combineBlockerPrimitiveDependencies } from "./graph-reconciliation-blocker-values.js";
 import {
   combineSelectedAiDependencies,
   notDependentAiDependency,
   preferIndependentAiDependency,
   preferredAiDependencies,
-} from "../ai-dependencies/selection.js";
-import type { GraphResult, PendingTrackedItem } from "../contracts.js";
-import { graphAiDependenciesByNodeId, graphAiDependencyForNode } from "../graph-result-indexes.js";
+} from "./graph-reconciliation-ai-selection.js";
+import type {
+  GraphWorkingResult,
+  PendingGraphTrackedItem,
+} from "./graph-reconciliation-contracts.js";
+import {
+  graphAiDependenciesByNodeId,
+  graphAiDependencyForNode,
+} from "./graph-reconciliation-graph-indexes.js";
 import {
   retainedBlockerDecision,
   retainedBlockersByBlockedNodeId,
   retainedConfirmedBlockers,
   type RetainedBlocker,
-} from "./retained-blocker-topology.js";
+} from "./graph-reconciliation-retained-blocker-topology.js";
 
 /** 古いrepositoryのAI依存を作る。 */
 export function staleRepositoryAiDependency(): AiAnalysisDependency {
@@ -64,7 +70,7 @@ function retainedBlockerStatusDependencyCandidates(
         retainedBlockerPrimitiveDependency(blocker, ["presence", "confidence"]),
       ),
     );
-    dependenciesByHash.set(hashCanonicalJson(dependency), dependency);
+    dependenciesByHash.set(serializeCanonicalJson(dependency), dependency);
   }
   return Object.freeze([...dependenciesByHash.values()]);
 }
@@ -84,7 +90,7 @@ function retainedBlockerValueAiDependenciesWithoutCurrentTopology(): RetainedBlo
 }
 
 function retainedBlockerValueAiDependencies(
-  item: PendingTrackedItem,
+  item: PendingGraphTrackedItem,
   blockers: readonly RetainedBlocker[],
   negativeDependency: AiAnalysisDependency,
   minimumInferredConfidence: number,
@@ -261,8 +267,8 @@ function retainedBlockerValueAiDependencies(
 
 /** 保持項目のblocker値AI依存をnode別に索引する。 */
 export function retainedBlockerValueAiDependenciesByNodeId(
-  graph: GraphResult,
-  items: readonly PendingTrackedItem[],
+  graph: GraphWorkingResult,
+  items: readonly PendingGraphTrackedItem[],
   minimumInferredConfidence: number,
   staleNodeIds: ReadonlySet<string>,
   staleBlockerTopologyNodeIds: ReadonlySet<GitHubNodeId>,

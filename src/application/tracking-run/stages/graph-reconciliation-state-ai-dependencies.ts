@@ -1,6 +1,6 @@
-import { serializeCanonicalJson } from "../../../canonical-json/index.js";
-import type { ReducedCodexDecision } from "../../../codex/index.js";
-import type { GenericAiItemAdoption } from "../../../application/tracking-run/stages/generic-ai-adoption-contracts.js";
+import { serializeCanonicalJson } from "../../../canonical-json/value.js";
+import type { GraphReducedDecision } from "./graph-reconciliation-contracts.js";
+import type { GenericAiItemAdoption } from "./generic-ai-adoption-contracts.js";
 import { aiAnalysisElementApplicationUsesAiValue } from "../../../domain/ai-analysis-elements.js";
 import type { AiAnalysisDependency } from "../../../domain/ai-analysis-dependencies.js";
 import type {
@@ -11,14 +11,14 @@ import type {
   TrackedItemAiAnalysisApplications,
   UtcIsoDateTime,
 } from "../../../domain/index.js";
-import type { SnapshotTrackedItem } from "../../../persistence/index.js";
-import { revalidatedHistoricalAiDependency } from "../ai-dependencies/history.js";
+import type { PreviousTrackedItem } from "../contracts/previous-state.js";
+import { revalidatedHistoricalAiDependency } from "./graph-reconciliation-ai-history.js";
 import {
   combineSelectedAiDependencies,
   notDependentAiDependency,
   preferIndependentAiDependency,
-} from "../ai-dependencies/selection.js";
-import type { BlockerValueAiDependencies } from "../contracts.js";
+} from "./graph-reconciliation-ai-selection.js";
+import type { GraphBlockerValueAiDependencies } from "./graph-reconciliation-contracts.js";
 
 const STATE_AI_ANALYSIS_ELEMENTS: readonly ["status", "waitingOn", "nextAction"] = Object.freeze([
   "status",
@@ -32,7 +32,7 @@ type AdoptedElements = GenericAiItemAdoption["elements"];
 export function stateAiDependencies(
   adopted: AdoptedElements,
   applications: TrackedItemAiAnalysisApplications,
-  blockerDependencies: BlockerValueAiDependencies,
+  blockerDependencies: GraphBlockerValueAiDependencies,
 ): Readonly<{
   status: AiAnalysisDependency;
   waitingOn: AiAnalysisDependency;
@@ -84,7 +84,7 @@ export function stateAiDependencies(
 export function confidenceAiDependency(
   adopted: AdoptedElements,
   applications: TrackedItemAiAnalysisApplications,
-  blockerDependencies: BlockerValueAiDependencies,
+  blockerDependencies: GraphBlockerValueAiDependencies,
 ): AiAnalysisDependency {
   if (blockerDependencies.stateSupport === "authoritative_blocker") {
     return blockerDependencies.confidence;
@@ -111,10 +111,10 @@ export function confidenceAiDependency(
 /** evidenceのAI依存を合成する。 */
 export function evidenceAiDependency(
   adopted: AdoptedElements,
-  decision: ReducedCodexDecision,
+  decision: GraphReducedDecision,
   deterministicDecision: IssueStateDecision | PullRequestStateDecision,
   applications: TrackedItemAiAnalysisApplications,
-  blockerDependencies: BlockerValueAiDependencies,
+  blockerDependencies: GraphBlockerValueAiDependencies,
 ): AiAnalysisDependency {
   if (blockerDependencies.stateSupport === "authoritative_blocker") {
     return blockerDependencies.evidence;
@@ -159,7 +159,7 @@ export function lastProgressAiDependency(
   progressDependency: AiAnalysisDependency,
   applications: TrackedItemAiAnalysisApplications,
   staleness: StalenessResult,
-  previousItem: SnapshotTrackedItem | undefined,
+  previousItem: PreviousTrackedItem | undefined,
 ): AiAnalysisDependency {
   const deterministicAtLatest = staleness.meaningfulProgress.some(
     (progress) =>

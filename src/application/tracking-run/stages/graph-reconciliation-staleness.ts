@@ -1,4 +1,3 @@
-import type { ReducedCodexDecision } from "../../../codex/index.js";
 import {
   calculateStaleness,
   createLabelEffectsResolver,
@@ -13,26 +12,30 @@ import {
   type TrackingNotificationClass,
   type UtcIsoDateTime,
 } from "../../../domain/index.js";
-import type { FreshObservedGitHubItem } from "../../../github/index.js";
+import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";
 import type { AnalyzeGraphResult } from "../../../graph/index.js";
-import type { SnapshotTrackedItem } from "../../../persistence/index.js";
 import { assertNonNullable } from "../../../util/index.js";
+import type { PreviousTrackedItem } from "../contracts/previous-state.js";
 import type {
-  CollectedItems,
-  GraphResult,
-  RepositoryInventory,
-  RuntimeConfiguration,
-  RuntimeState,
-  TrackedItemStaleness,
-} from "../contracts.js";
-import { previousGraphIndex } from "../previous-state/graph.js";
-import { previousTrackedItem, previousTrackedItemsByNodeId } from "../previous-state/snapshot.js";
-import { findRepository, repositoryFullName } from "../repository-lookup.js";
-import { criticalSeverityWasRequested } from "../ai-dependencies/severity.js";
+  GraphReducedDecision,
+  GraphWorkingCollection,
+  GraphWorkingResult,
+  GraphWorkingInventory,
+  GraphWorkingConfiguration,
+  GraphWorkingState,
+  GraphTrackedItemStaleness,
+} from "./graph-reconciliation-contracts.js";
+import type { PreviousGraphIndex } from "./graph-reconciliation-previous.js";
+import {
+  previousTrackedItem,
+  previousTrackedItemsByNodeId,
+} from "./graph-reconciliation-previous-items.js";
+import { findRepository, repositoryFullName } from "./graph-reconciliation-repositories.js";
+import { criticalSeverityWasRequested } from "./graph-reconciliation-severity.js";
 
 /** 前回の停滞計算状態を取得する。 */
 export function previousStalenessState(
-  state: RuntimeState,
+  state: GraphWorkingState,
   nodeId: GitHubNodeId,
 ): Parameters<typeof calculateStaleness>[0]["previousState"] {
   const previous = previousTrackedItem(state, nodeId);
@@ -59,7 +62,7 @@ export function previousStalenessState(
 /** GitHub項目の追跡状態を取得する。 */
 export function trackedItemState(
   item: FreshObservedGitHubItem,
-  decision: ReducedCodexDecision,
+  decision: GraphReducedDecision,
 ): TrackedItem["state"] {
   if (decision.status === "terminal_merged") {
     return "merged";
@@ -74,8 +77,9 @@ type BlockedParentIndex = Readonly<{
 
 /** blocked親の参照索引を作成する。 */
 export function createBlockedParentIndex(
-  state: RuntimeState,
-  graph: GraphResult | undefined,
+  state: GraphWorkingState,
+  graph: GraphWorkingResult | undefined,
+  previousGraph: PreviousGraphIndex,
 ): BlockedParentIndex {
   const previousSeverityByNodeId = new Map<string, Severity>(
     [...previousTrackedItemsByNodeId(state).values()].map((item) => [item.nodeId, item.severity]),
@@ -84,7 +88,6 @@ export function createBlockedParentIndex(
   if (graph != null) {
     downstreamImpacts = graph.analysis.downstreamImpacts;
   } else {
-    const previousGraph = previousGraphIndex(state);
     downstreamImpacts =
       previousGraph.availability === "available"
         ? previousGraph.analysis.downstreamImpacts
@@ -100,7 +103,7 @@ export function createBlockedParentIndex(
 
 /** blocked親の文脈を構築する。 */
 export function blockedParentContext(
-  decision: ReducedCodexDecision,
+  decision: GraphReducedDecision,
   index: BlockedParentIndex,
 ): BlockedParentContext {
   if (decision.status !== "waiting_for_unblock") {
@@ -110,7 +113,7 @@ export function blockedParentContext(
   }
   const firstWaitingOn = decision.waitingOn[0];
   assertNonNullable(firstWaitingOn, "blocked項目にwaitingOnがありません");
-  const createRanking = (waitingOn: ReducedCodexDecision["waitingOn"][number]): BlockerRanking =>
+  const createRanking = (waitingOn: GraphReducedDecision["waitingOn"][number]): BlockerRanking =>
     Object.freeze({
       candidateId: waitingOn.candidateId,
       severity: index.previousSeverityByNodeId.get(waitingOn.candidateId) ?? "none",
@@ -127,7 +130,7 @@ export function blockedParentContext(
 }
 
 /** 停滞判定を追跡項目の形式へ変換する。 */
-export function trackedItemStaleness(staleness: StalenessResult): TrackedItemStaleness {
+export function trackedItemStaleness(staleness: StalenessResult): GraphTrackedItemStaleness {
   return Object.freeze({
     elapsedHours: staleness.elapsedHours.stall,
     severity: staleness.severity,
@@ -144,11 +147,11 @@ export function trackedItemStaleness(staleness: StalenessResult): TrackedItemSta
 /** 保持項目の停滞度を再計算する。 */
 export function recalculateTrackedItemStaleness(
   evaluatedAt: UtcIsoDateTime,
-  configuration: RuntimeConfiguration,
-  inventory: RepositoryInventory,
-  item: SnapshotTrackedItem,
+  configuration: GraphWorkingConfiguration,
+  inventory: GraphWorkingInventory,
+  item: PreviousTrackedItem,
   resolveLabelEffects: ReturnType<typeof createLabelEffectsResolver>,
-): TrackedItemStaleness {
+): GraphTrackedItemStaleness {
   const repository = findRepository(inventory, item.repositoryId);
   const recalculated = recalculateStalenessSeverity({
     evaluatedAt,
@@ -193,8 +196,8 @@ export function recalculateTrackedItemStaleness(
 
 /** 保持項目の通知分類を取得する。 */
 export function retainedItemNotificationClass(
-  collection: CollectedItems,
-  item: SnapshotTrackedItem,
+  collection: GraphWorkingCollection,
+  item: PreviousTrackedItem,
 ): TrackingNotificationClass {
   const currentClass = collection.trackingNotificationClassByNodeId.get(item.nodeId);
   if (currentClass != null) {
@@ -215,8 +218,8 @@ export function retainedItemNotificationClass(
 
 /** 保持項目の観測時刻を取得する。 */
 export function retainedItemObservedAt(
-  collection: CollectedItems,
-  item: SnapshotTrackedItem,
+  collection: GraphWorkingCollection,
+  item: PreviousTrackedItem,
 ): UtcIsoDateTime {
   const repositoryResult = collection.repositoryResults.find(
     (result) => result.repository.id === item.repositoryId,

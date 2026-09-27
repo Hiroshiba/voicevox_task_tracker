@@ -1,26 +1,28 @@
 import type { GitHubNodeId, GraphNodeId, SourceId, UtcIsoDateTime } from "../../../domain/index.js";
-import type { EnumeratedGitHubItem, FreshObservedGitHubItem } from "../../../github/index.js";
+import type { EnumeratedGitHubItem } from "../../../github/item-enumeration.js";
+import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";
 import type {
   ReconciledGraphEdge,
   RelationCandidate,
   RelationCandidateAssessment,
 } from "../../../graph/index.js";
-import {
-  snapshotEffectiveGraphStateByNodeId,
-  type SnapshotGraphNodeStateObservation,
-} from "../../../persistence/index.js";
 import { assertNonNullable } from "../../../util/index.js";
-import type { CollectedItems, GraphResult, RuntimeState } from "../contracts.js";
-import { previousSnapshot } from "../previous-state/snapshot.js";
+import type {
+  GraphNodeStateObservation,
+  GraphWorkingCollection,
+  GraphWorkingResult,
+  GraphWorkingState,
+} from "./graph-reconciliation-contracts.js";
+import { previousSnapshot } from "./graph-reconciliation-previous-items.js";
 import type {
   ActiveRelation,
   DependencyResolutionIndexes,
   DependencyResolutionStaticIndexes,
   PreviousBlockerEdgesByTargetNodeId,
   RelationProgressEvent,
-} from "./dependency-resolution-contracts.js";
-import { relationProgressKey } from "./dependency-resolution-keys.js";
-import { createDependencySourceOccurredAtById } from "./dependency-resolution-time.js";
+} from "./graph-reconciliation-dependency-resolution-contracts.js";
+import { relationProgressKey } from "./graph-reconciliation-dependency-resolution-keys.js";
+import { createDependencySourceOccurredAtById } from "./graph-reconciliation-dependency-resolution-time.js";
 
 type EnumeratedTerminal = Readonly<{
   state: "closed" | "merged";
@@ -58,11 +60,11 @@ export function enumeratedTerminalAt(
 }
 
 function previousBlockerEdgesByTargetNodeId(
-  state: RuntimeState,
+  state: GraphWorkingState,
 ): PreviousBlockerEdgesByTargetNodeId {
   const snapshot = previousSnapshot(state);
   assertNonNullable(snapshot, "newly unblocked項目の前回snapshotがありません");
-  const previousStateByNodeId = snapshotEffectiveGraphStateByNodeId(snapshot);
+  const previousStateByNodeId = new Map(snapshot.effectiveGraphStates);
   const edgesByTargetNodeId = new Map<GraphNodeId, Map<GraphNodeId, ActiveRelation[]>>();
   for (const edge of snapshot.relations) {
     if (
@@ -100,9 +102,9 @@ function relationProgressEventKey(event: RelationProgressEvent): string {
 
 /** 依存解消に使う固定索引を作る。 */
 export function createDependencyResolutionStaticIndexes(
-  state: RuntimeState,
-  collection: CollectedItems,
-  graph: GraphResult,
+  state: GraphWorkingState,
+  collection: GraphWorkingCollection,
+  graph: GraphWorkingResult,
 ): DependencyResolutionStaticIndexes {
   const previousSnapshotValue = previousSnapshot(state);
   assertNonNullable(previousSnapshotValue, "newly unblocked項目の前回snapshotがありません");
@@ -112,7 +114,7 @@ export function createDependencyResolutionStaticIndexes(
       item.observedAt,
     ]),
   );
-  const previousEffectiveStateByNodeId = snapshotEffectiveGraphStateByNodeId(previousSnapshotValue);
+  const previousEffectiveStateByNodeId = new Map(previousSnapshotValue.effectiveGraphStates);
   const enumeratedItemsByNodeId = new Map<GraphNodeId, EnumeratedGitHubItem>();
   for (const item of collection.enumeratedItems) {
     if (enumeratedItemsByNodeId.has(item.nodeId)) {
@@ -127,10 +129,7 @@ export function createDependencyResolutionStaticIndexes(
     }
     observedItemsByNodeId.set(item.nodeId, item);
   }
-  const currentNativeStateObservationsByNodeId = new Map<
-    GraphNodeId,
-    SnapshotGraphNodeStateObservation
-  >();
+  const currentNativeStateObservationsByNodeId = new Map<GraphNodeId, GraphNodeStateObservation>();
   for (const observation of graph.currentNativeStateObservations) {
     if (currentNativeStateObservationsByNodeId.has(observation.nodeId)) {
       throw new TypeError(`current native state observation ${observation.nodeId}が重複しています`);

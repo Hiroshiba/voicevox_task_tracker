@@ -1,7 +1,7 @@
 import type { Config } from "../../../config/index.js";
 import type { LabelRule } from "../../../domain/index.js";
 
-export function normalizeLabelRules(config: Config): readonly LabelRule[] {
+export function normalizeLabelRules(config: Pick<Config, "labels">): readonly LabelRule[] {
   return Object.freeze(
     config.labels.rules.map((rule) => {
       const effects: {

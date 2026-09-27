@@ -1,4 +1,3 @@
-import { reducePreservedCodexRelationsAndNotification } from "../../../codex/index.js";
 import {
   AI_ANALYSIS_DEPENDENCY_ELEMENTS,
   reconcileRetainedAiAnalysisDependency,
@@ -10,59 +9,62 @@ import {
   resolveWaitingOnAccountIdentifiers,
   type GitHubNodeId,
 } from "../../../domain/index.js";
-import type { DiscordNotificationItem } from "../../../discord/index.js";
 import type { RelationCandidateAssessment } from "../../../graph/index.js";
 import { assertNonNullable } from "../../../util/index.js";
-import type { GenericAiAdoptedRun } from "../../../application/tracking-run/stages/generic-ai-adoption.js";
-import {
-  projectLegacyConsumerOutput,
-  projectLegacyDeadlineAssessment,
-  projectLegacyImportanceAssessment,
-  projectLegacyPreservedElements,
-  projectLegacyTrackedItemAiAnalysis,
-} from "../../tracking-run/migration-bridge/generic-ai-adoption.js";
+import type { GenericAiAdoptedRun } from "./generic-ai-adoption.js";
+import { adoptedOutput } from "./graph-reconciliation-adopted-output.js";
+import { trackedItemAiAnalysisFromAdoption } from "./graph-reconciliation-ai-analysis.js";
 import {
   blockerValueAiDependencies,
   unknownBlockerValueAiDependencies,
-} from "../ai-dependencies/blocker-values.js";
-import { aiDependencyReconciliationContext } from "../ai-dependencies/reconciliation-context.js";
-import { resolveDeadlineAssessment, resolveImportanceAssessment } from "../analysis-assessments.js";
+} from "./graph-reconciliation-blocker-values.js";
+import { aiDependencyReconciliationContext } from "./graph-reconciliation-ai-dependency-context.js";
+import {
+  deadlineAssessmentFromAdoption,
+  importanceAssessmentFromAdoption,
+} from "./graph-reconciliation-assessments.js";
 import type {
-  BlockerValueAiDependencies,
-  CodexAnalysis,
-  CollectedItems,
-  DeterministicAnalysis,
-  GraphResult,
-  PendingTrackedItem,
-  ReducedAnalysis,
-  ReducedItemAnalysis,
-  RepositoryInventory,
-  RuntimeConfiguration,
-  RuntimeState,
-  TrackedItemStaleness,
-} from "../contracts.js";
+  GraphBlockerValueAiDependencies,
+  GraphWorkingCollection,
+  GraphNotificationRecommendation,
+  GraphWorkingResult,
+  PendingGraphTrackedItem,
+  GraphWorkingReduction,
+  GraphReducedItem,
+  GraphWorkingInventory,
+  GraphWorkingConfiguration,
+  GraphWorkingState,
+  GraphTrackedItemStaleness,
+} from "./graph-reconciliation-contracts.js";
 import {
   blockerNodeAiDependenciesByBlockedNodeId,
   blockersAiDependenciesByNodeId,
   downstreamImpactAiDependenciesByNodeId,
   graphAiDependenciesByNodeId,
   graphAiDependencyForNode,
-} from "../graph-result-indexes.js";
-import { normalizeLabelRules } from "../label-rules.js";
-import { preservedElementsWithCompatibleRelations } from "../preserved-codex-relations.js";
-import { preservedElementsForRetainedItem } from "../previous-state/saved-ai-elements.js";
-import { previousSnapshot, previousTrackedItem } from "../previous-state/snapshot.js";
-import { findRepository, repositoryFullName } from "../repository-lookup.js";
-import { reducedDeterministicDecision, reductionForAnalysis } from "./codex-reduction.js";
-import { primaryWaitingOnForDecision, transitionBasisForDecision } from "./decision-basis.js";
-import { createDependencyResolutionStaticIndexes } from "./dependency-resolution-indexes.js";
-import { dependencyResolutions } from "./dependency-resolutions.js";
+} from "./graph-reconciliation-graph-indexes.js";
+import { normalizeLabelRules } from "./collection-label-rules.js";
+import { decisionFromAdoption } from "./graph-reconciliation-decision.js";
+import { previousSnapshot, previousTrackedItem } from "./graph-reconciliation-previous-items.js";
+import type { PreviousGraphIndex } from "./graph-reconciliation-previous.js";
+import { findRepository, repositoryFullName } from "./graph-reconciliation-repositories.js";
+import {
+  notificationRecommendationFromAdoption,
+  notificationRecommendationFromResult,
+  relationAssessmentsFromAdoption,
+} from "./graph-reconciliation-relations.js";
+import {
+  primaryWaitingOnForDecision,
+  transitionBasisForDecision,
+} from "./graph-reconciliation-decision-basis.js";
+import { createDependencyResolutionStaticIndexes } from "./graph-reconciliation-dependency-resolution-indexes.js";
+import { dependencyResolutions } from "./graph-reconciliation-dependency-resolutions.js";
 import {
   createGraphBlockerIndex,
   naturalLanguageProgressAssessments,
   reassessDeterministicAnalysis,
-} from "./reassessment.js";
-import { createSelfCommitmentCause } from "./self-commitment-cause.js";
+} from "./graph-reconciliation-reassessment.js";
+import { createSelfCommitmentCause } from "./graph-reconciliation-self-commitment-cause.js";
 import {
   blockedParentContext,
   createBlockedParentIndex,
@@ -71,21 +73,21 @@ import {
   retainedItemNotificationClass,
   retainedItemObservedAt,
   trackedItemStaleness,
-} from "./staleness.js";
-import { createTrackedItem } from "./tracked-item.js";
+} from "./graph-reconciliation-staleness.js";
+import { createTrackedItem } from "./graph-reconciliation-tracked-item.js";
 
 /** 項目単位の解析結果を統合する。 */
 export function reduceAnalysisPass(
-  configuration: RuntimeConfiguration,
-  state: RuntimeState,
-  inventory: RepositoryInventory,
-  collection: CollectedItems,
-  deterministicAnalysis: DeterministicAnalysis,
-  codexAnalysis: CodexAnalysis,
+  configuration: GraphWorkingConfiguration,
+  state: GraphWorkingState,
+  inventory: GraphWorkingInventory,
+  collection: GraphWorkingCollection,
   adopted: GenericAiAdoptedRun,
-  graph: GraphResult | undefined,
-): ReducedAnalysis {
+  graph: GraphWorkingResult | undefined,
+  previousIndex: PreviousGraphIndex,
+): GraphWorkingReduction {
   const resolveLabelEffects = createLabelEffectsResolver(normalizeLabelRules(configuration.config));
+  const deterministicAnalysis = adopted.data.facts;
   const adoptedByNodeId = new Map(adopted.data.items.map((item) => [item.nodeId, item]));
   const downstreamImpactDependenciesByNodeId =
     graph == null ? undefined : downstreamImpactAiDependenciesByNodeId(graph);
@@ -106,23 +108,23 @@ export function reduceAnalysisPass(
       ? undefined
       : createDependencyResolutionStaticIndexes(state, collection, graph);
   const graphBlockerIndex = graph == null ? undefined : createGraphBlockerIndex(graph);
-  const blockedParentIndex = createBlockedParentIndex(state, graph);
-  const currentItems: ReducedItemAnalysis[] = [];
-  const items: PendingTrackedItem[] = [];
-  const stalenessByNodeId = new Map<GitHubNodeId, TrackedItemStaleness>();
+  const blockedParentIndex = createBlockedParentIndex(state, graph, previousIndex);
+  const currentItems: GraphReducedItem[] = [];
+  const items: PendingGraphTrackedItem[] = [];
+  const stalenessByNodeId = new Map<GitHubNodeId, GraphTrackedItemStaleness>();
   const relationAssessments: RelationCandidateAssessment[] = [];
   const retainedNotificationRecommendations = new Map<
     GitHubNodeId,
-    DiscordNotificationItem["notificationRecommendation"]
+    GraphNotificationRecommendation
   >();
-  let runStatus: ReducedAnalysis["runStatus"] = "success";
+  let runStatus: GraphWorkingReduction["runStatus"] = "success";
   for (const originalAnalysis of deterministicAnalysis.items) {
     const adoptedItem = adoptedByNodeId.get(originalAnalysis.item.nodeId);
     assertNonNullable(
       adoptedItem,
       `汎用AIの採用項目がありません。対象: ${originalAnalysis.item.nodeId}`,
     );
-    const output = projectLegacyConsumerOutput(originalAnalysis, adoptedItem);
+    const output = adoptedOutput(adoptedItem);
     const analysis = reassessDeterministicAnalysis(
       collection.evaluatedAt,
       configuration,
@@ -131,22 +133,26 @@ export function reduceAnalysisPass(
       output,
       graphBlockerIndex,
     );
-    const reduction = reductionForAnalysis(configuration, analysis, codexAnalysis, adoptedItem);
-    const relationNotificationReduction = reducePreservedCodexRelationsAndNotification(
+    const relationAssessmentsForAnalysis = relationAssessmentsFromAdoption(
       analysis.item.nodeId,
-      projectLegacyPreservedElements(adoptedItem),
+      output,
+    );
+    const notificationRecommendation = notificationRecommendationFromAdoption(
+      output,
       configuration.config.ai.confidence,
     );
-    const relationAssessmentsForAnalysis = relationNotificationReduction.relationAssessments;
-    const notificationRecommendation = relationNotificationReduction.notification;
-    const decision = reduction?.decision ?? reducedDeterministicDecision(analysis.decision);
-    if (reduction?.ai.status === "unavailable") {
+    const decision = decisionFromAdoption(
+      analysis.decision,
+      adoptedItem,
+      configuration.config.ai.confidence,
+    );
+    if (adoptedItem.status === "failed" || adoptedItem.status === "deferred") {
       runStatus = "fallback";
     }
     relationAssessments.push(...relationAssessmentsForAnalysis);
     const basis = transitionBasisForDecision(analysis, decision);
     const repository = findRepository(inventory, analysis.item.repositoryId);
-    const aiAnalysis = projectLegacyTrackedItemAiAnalysis(adoptedItem);
+    const aiAnalysis = trackedItemAiAnalysisFromAdoption(adoptedItem);
     const primaryWaitingOn = primaryWaitingOnForDecision(
       analysis.decision,
       decision,
@@ -162,8 +168,7 @@ export function reduceAnalysisPass(
     const previousItem = previousTrackedItem(state, analysis.item.nodeId);
     const selfCommitmentCause = createSelfCommitmentCause({
       analysis,
-      selfCommitmentResult: output?.selfCommitment,
-      analysisInput: codexAnalysis.inputByNodeId.get(analysis.item.nodeId),
+      selfCommitmentResult: output.selfCommitment,
       previous:
         previousItem == null
           ? Object.freeze({
@@ -212,7 +217,7 @@ export function reduceAnalysisPass(
       graph == null
         ? undefined
         : graphAiDependencyForNode(blockersDependenciesByNodeId, analysis.item.nodeId, "blocker");
-    let blockerValueDependencies: BlockerValueAiDependencies;
+    let blockerValueDependencies: GraphBlockerValueAiDependencies;
     if (graph == null) {
       blockerValueDependencies = unknownBlockerValueAiDependencies();
     } else {
@@ -245,6 +250,7 @@ export function reduceAnalysisPass(
         detail: analysis.detail,
         effectiveAssigneeCandidates: analysis.effectiveAssigneeCandidates,
         decision,
+        deterministicDecision: analysis.decision,
         blockerValueAiDependencies: blockerValueDependencies,
         localResponsibilityDecision: analysis.localResponsibilityDecision,
         aiAnalysisApplications: aiAnalysis.applications,
@@ -252,25 +258,11 @@ export function reduceAnalysisPass(
         statusBasis: basis.statusBasis,
         responsibilityBasis: basis.responsibilityBasis,
         dependencyCause: dependencyResolution.cause,
-        notificationRecommendation:
-          notificationRecommendation == null
-            ? Object.freeze({
-                availability: "not_available",
-              })
-            : Object.freeze({
-                availability: "available",
-                value: notificationRecommendation,
-              }),
+        notificationRecommendation,
         primaryWaitingOn,
         staleness,
-        importanceAssessment: resolveImportanceAssessment(
-          undefined,
-          projectLegacyImportanceAssessment(adoptedItem),
-        ),
-        deadlineAssessment: resolveDeadlineAssessment(
-          undefined,
-          projectLegacyDeadlineAssessment(adoptedItem),
-        ),
+        importanceAssessment: importanceAssessmentFromAdoption(output),
+        deadlineAssessment: deadlineAssessmentFromAdoption(output),
       }),
     );
     stalenessByNodeId.set(analysis.item.nodeId, trackedItemStaleness(staleness));
@@ -292,7 +284,7 @@ export function reduceAnalysisPass(
   }
   const currentNodeIds = new Set(items.map((item) => item.nodeId));
   const currentRepositoryIds = new Set<string>(
-    inventory.allowlist.repositories.map((repository) => repository.id),
+    inventory.repositories.map((repository) => repository.id),
   );
   for (const previousItem of previousSnapshot(state)?.items ?? []) {
     if (
@@ -317,24 +309,12 @@ export function reduceAnalysisPass(
           resolveLabelEffects,
         ),
       );
-      const preservedElements = preservedElementsWithCompatibleRelations(
-        preservedElementsForRetainedItem(previousItem),
-        undefined,
-      );
-      const preservedReduction = reducePreservedCodexRelationsAndNotification(
-        previousItem.nodeId,
-        preservedElements,
+      const retainedNotification = notificationRecommendationFromResult(
+        previousItem.aiAnalysis.adoptedElements.notification?.result,
         configuration.config.ai.confidence,
       );
-      relationAssessments.push(...preservedReduction.relationAssessments);
-      if (preservedReduction.notification != null) {
-        retainedNotificationRecommendations.set(
-          previousItem.nodeId,
-          Object.freeze({
-            availability: "available",
-            value: preservedReduction.notification,
-          }),
-        );
+      if (retainedNotification.availability === "available") {
+        retainedNotificationRecommendations.set(previousItem.nodeId, retainedNotification);
       }
     }
   }

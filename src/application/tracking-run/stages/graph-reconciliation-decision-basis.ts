@@ -1,4 +1,4 @@
-import type { ReducedCodexDecision } from "../../../codex/index.js";
+import type { GraphReducedDecision } from "./graph-reconciliation-contracts.js";
 import {
   aiAnalysisElementApplicationUsesAiValue,
   type AiAnalysisElementApplication,
@@ -10,15 +10,15 @@ import type {
   SourceId,
 } from "../../../domain/index.js";
 import { UnreachableError } from "../../../util/index.js";
-import { latestUtcIsoDateTime } from "../../codex-input-projection.js";
-import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
-import { sourceOccurredAtByIdForAnalysis } from "../relation-source-occurrence.js";
-import { nonEmptySourceIds } from "../source-ids.js";
+import { latestUtcIsoDateTime } from "./graph-reconciliation-source-time.js";
+import type { DeterministicItemAnalysis } from "./deterministic-item.js";
+import { sourceOccurredAtByIdForAnalysis } from "./graph-reconciliation-source-time.js";
+import { nonEmptySourceIds } from "./graph-reconciliation-source-ids.js";
 
 /** 判定の第一の待ち相手を返す。 */
 export function primaryWaitingOnForDecision(
   deterministicDecision: IssueStateDecision | PullRequestStateDecision,
-  decision: ReducedCodexDecision,
+  decision: GraphReducedDecision,
   application: AiAnalysisElementApplication,
 ): PrimaryWaitingOn {
   if (!aiAnalysisElementApplicationUsesAiValue(application)) {
@@ -56,7 +56,7 @@ export function primaryWaitingOnForDecision(
 /** 判定の状態遷移根拠を返す。 */
 export function transitionBasisForDecision(
   analysis: DeterministicItemAnalysis,
-  decision: ReducedCodexDecision,
+  decision: GraphReducedDecision,
 ): Readonly<{
   statusBasis: IssueStateDecision["statusBasis"];
   responsibilityBasis: IssueStateDecision["responsibilityBasis"];

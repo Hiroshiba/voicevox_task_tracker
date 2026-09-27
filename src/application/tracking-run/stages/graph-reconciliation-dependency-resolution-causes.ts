@@ -5,16 +5,22 @@ import type {
   SourceId,
   UtcIsoDateTime,
 } from "../../../domain/index.js";
-import type {
-  NotificationCauseEvidence,
-  NotificationDependencyCause,
-} from "../../../discord/index.js";
-import type { EnumeratedGitHubItem, FreshObservedGitHubItem } from "../../../github/index.js";
+import type { EnumeratedGitHubItem } from "../../../github/item-enumeration.js";
+import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";
 import { assertNonNullable } from "../../../util/index.js";
-import type { CollectedItems } from "../contracts.js";
-import type { RelationProgressEvent } from "./dependency-resolution-contracts.js";
-import { enumeratedTerminal } from "./dependency-resolution-indexes.js";
-import { relationProgressKey } from "./dependency-resolution-keys.js";
+import type {
+  GraphDependencyCause,
+  GraphWorkingCollection,
+} from "./graph-reconciliation-contracts.js";
+import type { RelationProgressEvent } from "./graph-reconciliation-dependency-resolution-contracts.js";
+import { enumeratedTerminal } from "./graph-reconciliation-dependency-resolution-indexes.js";
+import { relationProgressKey } from "./graph-reconciliation-dependency-resolution-keys.js";
+
+type NotificationCauseEvidence = Extract<
+  GraphDependencyCause,
+  { status: "complete" }
+>["evidence"][number];
+type NotificationDependencyCause = GraphDependencyCause;
 
 type NotificationCauseEvidenceList = readonly [
   NotificationCauseEvidence,
@@ -86,7 +92,7 @@ function nonEmptyNotificationCauseEvidence(
 }
 
 function terminalCauseForBlocker(
-  collection: CollectedItems,
+  collection: GraphWorkingCollection,
   enumeratedItemsByNodeId: ReadonlyMap<GraphNodeId, EnumeratedGitHubItem>,
   observedItemsByNodeId: ReadonlyMap<GraphNodeId, FreshObservedGitHubItem>,
   blockerNodeId: GraphNodeId,
@@ -128,7 +134,7 @@ function terminalCauseForBlocker(
 }
 
 function relationCauseForEdge(
-  collection: CollectedItems,
+  collection: GraphWorkingCollection,
   relationEventsByKey: ReadonlyMap<string, readonly RelationProgressEvent[]>,
   edge: Relation,
   previousObservedAt: UtcIsoDateTime,
@@ -189,7 +195,7 @@ function relationCauseForEdge(
 }
 
 function dependencyCauseForBlocker(
-  collection: CollectedItems,
+  collection: GraphWorkingCollection,
   enumeratedItemsByNodeId: ReadonlyMap<GraphNodeId, EnumeratedGitHubItem>,
   observedItemsByNodeId: ReadonlyMap<GraphNodeId, FreshObservedGitHubItem>,
   relationEventsByKey: ReadonlyMap<string, readonly RelationProgressEvent[]>,
@@ -240,7 +246,7 @@ function dependencyCauseForBlocker(
 
 /** 複数のblockerから通知の依存解消原因を確定する。 */
 export function dependencyCauseForBlockers(
-  collection: CollectedItems,
+  collection: GraphWorkingCollection,
   enumeratedItemsByNodeId: ReadonlyMap<GraphNodeId, EnumeratedGitHubItem>,
   observedItemsByNodeId: ReadonlyMap<GraphNodeId, FreshObservedGitHubItem>,
   relationEventsByKey: ReadonlyMap<string, readonly RelationProgressEvent[]>,

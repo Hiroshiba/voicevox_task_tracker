@@ -13,12 +13,12 @@ import { UnreachableError } from "../../../util/index.js";
 import {
   historicalAiDependencyFallback,
   historicalAiDependencyHistory,
-} from "../ai-dependencies/history.js";
+} from "./graph-reconciliation-ai-history.js";
 import {
   aiDependencyForElementApplication,
   unrecordedAiDependency,
-} from "../ai-dependencies/selection.js";
-import type { RetainedBlockerValueAiDependencies } from "./retained-blocker-dependencies.js";
+} from "./graph-reconciliation-ai-selection.js";
+import type { RetainedBlockerValueAiDependencies } from "./graph-reconciliation-retained-blocker-dependencies.js";
 
 export type CurrentAiDependencyContext = Omit<
   AiAnalysisDependencyReconciliationContext,
