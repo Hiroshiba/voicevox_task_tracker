@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 
@@ -798,13 +799,16 @@ function createPerformanceHarness(repositoryPath: string, config: Config): Perfo
   const runDaily = (runAt: UtcIsoDateTime) => {
     currentRunAt = runAt;
     currentRunStartedAt = performance.now();
-    return application.run([
-      "daily",
-      "--config",
-      "unused-performance-config.yml",
-      "--report",
-      "unused-performance-report.json",
-    ]);
+    return application.run(
+      [
+        "daily",
+        "--config",
+        "unused-performance-config.yml",
+        "--report",
+        "unused-performance-report.json",
+      ],
+      randomUUID(),
+    );
   };
 
   return Object.freeze({

@@ -1,11 +1,13 @@
 import { resolve } from "node:path";
 
+import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import { CodexAttemptBudget } from "../../../codex/index.js";
+import { nodeContentDigestPort } from "../../../infrastructure/tracking-run/content-digest.js";
+import { inspectRunBootstrapState } from "../../../infrastructure/tracking-run/bootstrap-state.js";
 import type { DailyTransactionDependencies } from "../../daily-transaction.js";
 import {
   assertCodexRuntimeReady,
   readRuntimeCredentials,
-  requireEnvironmentVariables,
   resolveRuntimeTarget,
 } from "../../production-runtime-setup.js";
 import type { ConfigurationRuntimeAdapters } from "../adapters.js";
@@ -22,9 +24,8 @@ export function createReadAiProcessAttemptCountStage(): ProductionDailyDependenc
 export function createValidateConfigurationStage(
   adapters: ConfigurationRuntimeAdapters,
 ): ProductionDailyDependencies["validateConfiguration"] {
-  return async ({ invocation, configPath }) => {
-    requireEnvironmentVariables(adapters.environment, ["GH_APP_ID", "GH_APP_PRIVATE_KEY"]);
-    const config = await adapters.loadConfig(resolve(adapters.repositoryPath, configPath));
+  return async ({ request }) => {
+    const config = await adapters.loadConfig(resolve(adapters.repositoryPath, request.configPath));
     const target = await resolveRuntimeTarget(
       Object.freeze({
         repositoryPath: adapters.repositoryPath,
@@ -34,14 +35,21 @@ export function createValidateConfigurationStage(
         createStateBranchAdapter: adapters.createStateBranchAdapter,
       }),
       config,
-      invocation.command,
+      request,
     );
-    const credentials = readRuntimeCredentials(
-      adapters.environment,
-      config,
-      invocation.command,
-      target.kind,
+    const bootstrap = await inspectRunBootstrapState(
+      adapters.createStateBranchAdapter(),
+      target.state.branch,
     );
+    if (bootstrap.kind === "manual_resolution_required") {
+      throw new TypeError("state bootstrapが不整合のため手動解決が必要です", {
+        cause: bootstrap.cause,
+      });
+    }
+    if (bootstrap.kind === "resume_with_exact_runtime") {
+      throw new TypeError("未完了runは元のruntimeによる再開が必要です");
+    }
+    const credentials = readRuntimeCredentials(adapters.environment, config, request);
     let codexReadinessPromise: Promise<void> | undefined;
     const ensureCodexReady = (): Promise<void> => {
       const codexCredentials = credentials.codex;
@@ -59,6 +67,8 @@ export function createValidateConfigurationStage(
     };
     return Object.freeze({
       config,
+      configDigest: nodeContentDigestPort.sha256Utf8(serializeCanonicalJson(config)),
+      baseStateHead: bootstrap.observedStateHead,
       credentials,
       target,
       ensureCodexReady,

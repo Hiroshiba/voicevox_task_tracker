@@ -9,6 +9,7 @@ export type CodexDiagnosticsContext = Readonly<{
   recorder: DiagnosticsJsonlRecorder;
   runId?: string;
   invocationId?: string;
+  stage?: string;
   candidateId?: string;
 }>;
 
@@ -19,6 +20,9 @@ function identifierDetails(context: CodexDiagnosticsContext): DiagnosticsJsonObj
   }
   if (context.invocationId != null) {
     details["invocationId"] = context.invocationId;
+  }
+  if (context.stage != null) {
+    details["stage"] = context.stage;
   }
   if (context.candidateId != null) {
     details["candidateId"] = context.candidateId;

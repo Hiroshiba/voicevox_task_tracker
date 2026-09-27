@@ -1,14 +1,19 @@
-import { createHash } from "node:crypto";
-
 import type { DiagnosticsJsonlRecorder } from "../diagnostics/recorder.js";
 import { createUtcIsoDateTime, type UtcIsoDateTime } from "../domain/index.js";
 import { GitHubRetryExhaustedError } from "../github/index.js";
-import { serializeCanonicalJson } from "../canonical-json/index.js";
+import type {
+  RunIdentity,
+  RunRequest,
+  RunExecutionPolicy,
+} from "../application/tracking-run/request.js";
+import type {
+  PreparedBaseStateShape,
+  PreparedRun,
+} from "../application/tracking-run/prepare-run.js";
 import {
   StateFormatError,
   StatePersonalReminderAiDependencyMismatchError,
 } from "../persistence/index.js";
-import { UnreachableError } from "../util/index.js";
 import {
   type BackfillCliCommand,
   type CollectAnalyzeCliCommand,
@@ -17,6 +22,10 @@ import {
 } from "./command.js";
 import { safeErrorDiagnostic } from "./error-diagnostic.js";
 import { RunCoordinator, type CoordinatedRunResult } from "./run-coordinator.js";
+import { createRunIdentity } from "./tracking-run/identity.js";
+import { projectLegacyDailyInvocation } from "./tracking-run/migration-bridge/legacy-invocation.js";
+import { projectPreparedLegacyDailyInvocation } from "./tracking-run/migration-bridge/legacy-invocation.js";
+import { parseRunRequest } from "./tracking-run/parse-request.js";
 import {
   createEmptyRunMetrics,
   createRunReport,
@@ -33,6 +42,7 @@ export type OnlineCliCommand =
 export type DailyTransactionTypeMap = Readonly<{
   configuration: unknown;
   state: unknown;
+  prepared: PreparedRun<PreparedBaseStateShape>;
   authentication: unknown;
   repositoryInventory: unknown;
   collection: unknown;
@@ -50,6 +60,8 @@ export type DailyTransactionTypeMap = Readonly<{
 /** run内の全段階へ渡す安定した識別情報。 */
 export type DailyRunInvocation = Readonly<{
   runId: string;
+  invocationId: string;
+  executionPolicy: RunExecutionPolicy;
   command: OnlineCliCommand;
   scheduledFor: UtcIsoDateTime;
   startedAt: UtcIsoDateTime;
@@ -131,8 +143,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
   readAiProcessAttemptCount: (configuration: Types["configuration"]) => number;
   validateConfiguration: (
     input: Readonly<{
-      invocation: DailyRunInvocation;
-      configPath: string;
+      request: RunRequest;
     }>,
   ) => Promise<Types["configuration"]>;
   loadState: (
@@ -141,6 +152,14 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       configuration: Types["configuration"];
     }>,
   ) => Promise<Types["state"]>;
+  prepareRun: (
+    input: Readonly<{
+      request: RunRequest;
+      identity: RunIdentity;
+      configuration: Types["configuration"];
+      state: Types["state"];
+    }>,
+  ) => Types["prepared"];
   authenticateGitHub: (
     input: Readonly<{
       invocation: DailyRunInvocation;
@@ -356,55 +375,6 @@ function currentTime(runtime: DailyRunRuntime): UtcIsoDateTime {
   return createUtcIsoDateTime(value.toISOString());
 }
 
-function resolveScheduledFor(command: OnlineCliCommand, startedAt: UtcIsoDateTime): UtcIsoDateTime {
-  const scheduledFor = command.schedule.kind === "specified" ? command.schedule.value : startedAt;
-  if (scheduledFor > startedAt) {
-    throw new RangeError("runの予定時刻は開始時刻以前にしてください");
-  }
-  return scheduledFor;
-}
-
-function createRunId(command: OnlineCliCommand, scheduledFor: UtcIsoDateTime): string {
-  let commandIdentity: unknown;
-  switch (command.kind) {
-    case "daily":
-      commandIdentity = {
-        kind: command.kind,
-        configPath: command.configPath,
-        notificationAction: command.notificationAction,
-        scheduledFor,
-        ...(command.sandboxContextPath == null
-          ? {}
-          : { sandboxContextPath: command.sandboxContextPath }),
-      };
-      break;
-    case "backfill":
-    case "collect-analyze":
-      commandIdentity = {
-        kind: command.kind,
-        configPath: command.configPath,
-        mode: command.mode,
-        notificationAction: command.notificationAction,
-        repositoryFilter: command.repositoryFilter,
-        scheduledFor,
-      };
-      break;
-    case "dry-run":
-      commandIdentity = {
-        kind: command.kind,
-        configPath: command.configPath,
-        scheduledFor,
-      };
-      break;
-    default:
-      throw new UnreachableError(command);
-  }
-  const digest = createHash("sha256")
-    .update(serializeCanonicalJson(commandIdentity), "utf8")
-    .digest("hex");
-  return `tracker-run:${digest}`;
-}
-
 function freezeEffects(effects: MutableEffects): DailyRunEffects {
   return Object.freeze({
     ...effects,
@@ -618,6 +588,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         event,
         details: {
           runId: invocation.runId,
+          invocationId: invocation.invocationId,
           command: invocation.command.kind,
           stage,
           ...(mismatchError != null
@@ -635,7 +606,12 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
     }
   }
 
-  async #execute(invocation: DailyRunInvocation): Promise<DailyRunExecutionResult> {
+  async #execute(
+    initialInvocation: DailyRunInvocation,
+    request: RunRequest,
+    identity: RunIdentity,
+  ): Promise<DailyRunExecutionResult> {
+    let invocation = initialInvocation;
     let stage: RunStage = "configuration";
     let metrics = updateMetrics(createEmptyRunMetrics(), {
       scheduleDelayMilliseconds:
@@ -650,13 +626,14 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
 
     try {
       configuration = await this.#dependencies.validateConfiguration({
-        invocation,
-        configPath: invocation.command.configPath,
+        request,
       });
       state = await this.#dependencies.loadState({
         invocation,
         configuration,
       });
+      const prepared = this.#dependencies.prepareRun({ request, identity, configuration, state });
+      invocation = projectPreparedLegacyDailyInvocation(prepared);
 
       stage = "authentication";
       const authentication = await this.#dependencies.authenticateGitHub({
@@ -784,10 +761,10 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
       diagnostics.push(...validation.diagnostics);
       metrics = this.#metricsWithAiProcessAttemptCount(metrics, configuration);
 
-      if (invocation.command.kind === "dry-run") {
+      if (request.output.kind === "dry_run_artifact") {
         stage = "artifact";
         await this.#dependencies.writeDryRunArtifact(
-          invocation.command.artifactPath,
+          request.output.path,
           createDryRunArtifact(
             invocation,
             runStatus,
@@ -803,7 +780,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
       if (validation.status === "incomplete") {
         return await this.#writeFailure(
           invocation,
-          invocation.command.reportPath,
+          request.reportPath,
           "completeness_validation",
           metrics,
           configuration,
@@ -813,9 +790,9 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         );
       }
 
-      if (invocation.command.kind === "collect-analyze") {
+      if (request.output.kind === "analysis_artifact") {
         stage = "artifact";
-        await this.#dependencies.writeCollectAnalyzeArtifact(invocation.command.artifactPath, {
+        await this.#dependencies.writeCollectAnalyzeArtifact(request.output.path, {
           invocation,
           configuration,
           state,
@@ -828,7 +805,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         effects.artifactWritten = true;
       }
 
-      if (invocation.command.kind !== "dry-run" && invocation.command.kind !== "collect-analyze") {
+      if (request.output.kind === "publication") {
         stage = "state_persistence";
         persisted = await this.#dependencies.persistState({
           invocation,
@@ -890,7 +867,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         discordSentAt,
         currentTime(this.#runtime),
       );
-      await this.#dependencies.writeReport(invocation.command.reportPath, report);
+      await this.#dependencies.writeReport(request.reportPath, report);
       return Object.freeze({
         report,
         effects: freezeEffects(effects),
@@ -902,7 +879,8 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         alertKind != null &&
         configuration != null &&
         state != null &&
-        (invocation.command.kind === "daily" || invocation.command.kind === "backfill")
+        request.executionPolicy.effectTarget === "production" &&
+        request.output.kind === "publication"
       ) {
         effects.discordAttempted = true;
         try {
@@ -925,7 +903,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
       }
       return this.#writeFailure(
         invocation,
-        invocation.command.reportPath,
+        request.reportPath,
         stage,
         metrics,
         configuration,
@@ -939,15 +917,13 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
   /** サブコマンドを排他かつ同じrun IDで冪等に実行する。 */
   public async run(
     command: OnlineCliCommand,
+    invocationId: string,
   ): Promise<CoordinatedRunResult<DailyRunExecutionResult>> {
-    const startedAt = currentTime(this.#runtime);
-    const scheduledFor = resolveScheduledFor(command, startedAt);
-    const invocation = Object.freeze({
-      runId: createRunId(command, scheduledFor),
-      command,
-      scheduledFor,
-      startedAt,
-    });
-    return this.#coordinator.runExclusive(invocation.runId, () => this.#execute(invocation));
+    const request = parseRunRequest(command, this.#runtime.now(), invocationId);
+    const identity = createRunIdentity(request);
+    const invocation = projectLegacyDailyInvocation(request, identity);
+    return this.#coordinator.runExclusive(invocation.runId, () =>
+      this.#execute(invocation, request, identity),
+    );
   }
 }

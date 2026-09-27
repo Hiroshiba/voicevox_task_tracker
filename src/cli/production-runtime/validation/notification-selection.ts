@@ -20,6 +20,7 @@ import { mergeNotificationLedger, notificationLedgerEntries } from "./notificati
 
 type ValidationNotificationSelection = Readonly<{
   notificationSelection: DiscordNotificationSelection;
+  notificationPreview: DiscordNotificationSelection;
   ledgerEntriesToMerge: readonly NotificationLedgerEntry[];
   pendingNotifications: readonly PendingNotification[];
 }>;
@@ -54,8 +55,7 @@ export function selectValidationNotifications(
       minimumAiConfidence: configuration.config.ai.confidence.medium,
     },
   };
-  const notificationAction =
-    invocation.command.kind === "dry-run" ? "send" : invocation.command.notificationAction;
+  const notificationAction = invocation.executionPolicy.notificationAction;
   const emptyCandidates: readonly [] = Object.freeze([]);
   const emptyLedgerReservations: readonly [] = Object.freeze([]);
   const acknowledgedNotificationLedgerEntries =
@@ -96,6 +96,7 @@ export function selectValidationNotifications(
   const notificationPendingToMerge = notificationSelection.pendingNotifications;
   return Object.freeze({
     notificationSelection,
+    notificationPreview: recalculatedSelection,
     ledgerEntriesToMerge: notificationLedgerEntriesToMerge,
     pendingNotifications: notificationPendingToMerge,
   });

@@ -1,4 +1,4 @@
-import { StatePersistenceSession } from "../../../persistence/index.js";
+import { readBaseStateIngress } from "../../../infrastructure/tracking-run/base-state-ingress.js";
 import type { DailyTransactionDependencies } from "../../daily-transaction.js";
 import type { StateRuntimeAdapters } from "../adapters.js";
 import type { ProductionTypes } from "../contracts.js";
@@ -9,22 +9,10 @@ export function createLoadStateStage(
 ): DailyTransactionDependencies<ProductionTypes>["loadState"] {
   return async ({ configuration }) => {
     const stateAdapter = adapters.createStateBranchAdapter();
-    const session =
-      configuration.target.kind === "sandbox"
-        ? await StatePersistenceSession.openAtRevision(
-            stateAdapter,
-            configuration.target.state,
-            configuration.target.context.baseStateRevision,
-          )
-        : await adapters.openStateSession(stateAdapter, configuration.target.state);
-    const [snapshot, notificationLedger] = await Promise.all([
-      session.loadSnapshot(),
-      session.loadNotificationLedger(),
-    ]);
-    return Object.freeze({
-      session,
-      snapshot,
-      notificationLedger,
-    });
+    return readBaseStateIngress(
+      stateAdapter,
+      configuration.target.state,
+      configuration.baseStateHead,
+    );
   };
 }

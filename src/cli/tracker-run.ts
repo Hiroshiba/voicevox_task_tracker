@@ -1,4 +1,5 @@
 import { pathToFileURL } from "node:url";
+import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
 
@@ -225,6 +226,7 @@ async function recordTopLevelError(
   recorder: DiagnosticsJsonlRecorder | undefined,
   stage: RunStage | "unknown",
   command: string,
+  invocationId: string,
   error: unknown,
 ): Promise<unknown> {
   if (recorder == null) {
@@ -236,7 +238,7 @@ async function recordTopLevelError(
       details: {
         command,
         stage,
-        invocationId: `tracker-cli:${process.pid.toString()}`,
+        invocationId,
       },
       error,
     });
@@ -258,6 +260,7 @@ export async function runTrackerCliMain(args: readonly string[]): Promise<number
     const { runDiagnosticsCli } = await import("../diagnostics/cli.js");
     return runDiagnosticsCli(args.slice(1), process.env);
   }
+  const invocationId = randomUUID();
   let stage: RunStage | "unknown" = "unknown";
   let command = args[0] ?? "unknown";
   let recorder: DiagnosticsJsonlRecorder | undefined;
@@ -272,12 +275,12 @@ export async function runTrackerCliMain(args: readonly string[]): Promise<number
       const parsedCommand = parseCliArguments(commandArgs);
       command = parsedCommand.kind;
       stage = topLevelDiagnosticStage(parsedCommand);
-      return createDefaultCliApplication(recorder).run(commandArgs);
+      return createDefaultCliApplication(recorder).run(commandArgs, invocationId);
     });
     result = executionResult;
     writeFailureDiagnostics(executionResult);
   } catch (error: unknown) {
-    failure = await recordTopLevelError(recorder, stage, command, error);
+    failure = await recordTopLevelError(recorder, stage, command, invocationId, error);
   } finally {
     if (recorder != null) {
       try {

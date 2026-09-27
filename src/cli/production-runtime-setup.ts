@@ -13,8 +13,8 @@ import {
   type StateBranchAdapter,
   type StatePersistenceConfiguration,
 } from "../persistence/index.js";
+import type { RunRequest } from "../application/tracking-run/request.js";
 import { assertNonNullable, UnreachableError } from "../util/index.js";
-import { type OnlineCliCommand } from "./daily-transaction.js";
 import { CliCodexAuthenticationError, CliCredentialsError, CliExecutableError } from "./errors.js";
 import {
   assertSandboxManifestMatchesContext,
@@ -149,8 +149,7 @@ function codexKnownSecrets(credentials: RuntimeCodexCredentials): readonly strin
 export function readRuntimeCredentials(
   environment: Readonly<NodeJS.ProcessEnv>,
   config: Config,
-  command: OnlineCliCommand,
-  executionTargetKind: RuntimeExecutionTarget["kind"],
+  request: RunRequest,
 ): RuntimeCredentials {
   requireEnvironmentVariables(environment, ["GH_APP_ID", "GH_APP_PRIVATE_KEY"]);
   let github: GitHubAppCredentials;
@@ -168,38 +167,30 @@ export function readRuntimeCredentials(
   }
   const codex = readCodexCredentials(environment, config);
   const knownSecrets = [github.privateKey, ...codexKnownSecrets(codex)];
-  if (config.notifications.discord.enabled && executionTargetKind === "production") {
-    switch (command.kind) {
-      case "daily":
-      case "backfill":
-        switch (command.notificationAction) {
-          case "send":
-            knownSecrets.push(
-              requireEnvironmentValue(environment, config.notifications.discord.webhookSecretName),
-              requireEnvironmentValue(
-                environment,
-                config.notifications.discord.operationsWebhookSecretName,
-              ),
-            );
-            break;
-          case "hold":
-          case "acknowledge-current":
-            knownSecrets.push(
-              requireEnvironmentValue(
-                environment,
-                config.notifications.discord.operationsWebhookSecretName,
-              ),
-            );
-            break;
-          default:
-            throw new UnreachableError(command.notificationAction);
-        }
+  if (
+    config.notifications.discord.enabled &&
+    request.executionPolicy.effectTarget === "production" &&
+    request.executionPolicy.executionShape === "sequential"
+  ) {
+    switch (request.executionPolicy.notificationAction) {
+      case "send":
+        knownSecrets.push(
+          requireEnvironmentValue(environment, config.notifications.discord.webhookSecretName),
+          requireEnvironmentValue(
+            environment,
+            config.notifications.discord.operationsWebhookSecretName,
+          ),
+        );
         break;
-      case "dry-run":
-      case "collect-analyze":
+      case "hold":
+      case "acknowledge-current":
+        knownSecrets.push(
+          requireEnvironmentValue(
+            environment,
+            config.notifications.discord.operationsWebhookSecretName,
+          ),
+        );
         break;
-      default:
-        throw new UnreachableError(command);
     }
   }
   return Object.freeze({
@@ -217,19 +208,18 @@ function parseSandboxManifestBytes(bytes: Uint8Array): SandboxManifest {
 export async function resolveRuntimeTarget(
   dependencies: RuntimeTargetDependencies,
   config: Config,
-  command: OnlineCliCommand,
+  request: RunRequest,
 ): Promise<RuntimeExecutionTarget> {
-  const sandboxContextPath = command.kind === "daily" ? command.sandboxContextPath : undefined;
-  if (sandboxContextPath == null) {
+  if (request.executionPolicy.effectTarget !== "sandbox") {
     return Object.freeze({
       kind: "production",
       state: config.state,
     });
   }
-  if (command.kind !== "daily") {
-    throw new TypeError("sandbox contextはdaily commandでだけ指定できます");
+  if (request.requestKind !== "sandbox_daily") {
+    throw new TypeError("sandbox実行要求の入力形式が不正です");
   }
-  if (command.notificationAction !== "hold") {
+  if (request.executionPolicy.notificationAction !== "hold") {
     throw new TypeError("sandbox実行のnotification-actionはholdにしてください");
   }
   const readSandboxContext = dependencies.readSandboxContext;
@@ -237,7 +227,7 @@ export async function resolveRuntimeTarget(
     throw new TypeError("sandbox contextの読み取りadapterがありません");
   }
   const context = await readSandboxContext(
-    resolve(dependencies.repositoryPath, sandboxContextPath),
+    resolve(dependencies.repositoryPath, request.sandboxContextPath),
   );
   const branch = sandboxBranchForEnvironment(context.environmentId);
   const stateAdapter = dependencies.createStateBranchAdapter();

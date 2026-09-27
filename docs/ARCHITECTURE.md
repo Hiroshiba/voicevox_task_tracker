@@ -93,10 +93,14 @@ flowchart LR
 
 `pnpm tracker:run`はworkflow向けサブコマンドを検証し、変換せず既存CLIへ渡します。
 option形式の引数は`--backfill`に従って`daily`または`backfill`へ変換し、`DailyTransactionRunner`へ渡します。
+新しいrunの入口では、CLI引数を`RunRequest`へ検証し、実行形、作用先、通知処理を`RunExecutionPolicy`で確定します。
+受付時に`invocationId`を作り、予定時刻と開始時刻からrun IDを決めます。
+stateの固定revisionでtransaction markerとdurable recordのV1固定pathを先に読み、両方がない場合か、整合した完了済みrunの場合だけ現行runtimeで準備します。
+片方の欠落や内容の不整合では停止し、未完了runを現行形式で読み替えません。
 日次トランザクションは次の順で進みます。
 
-1. `config.yml`を検証し、必要な環境変数だけを読み取ります。
-2. `tracker-state` branchのsnapshotと通知管理記録を同じrevisionから読み取ります。
+1. `config.yml`を一度検証してcanonical digestを作り、必要な環境変数だけを読み取ります。
+2. `tracker-state` branchのsnapshot、履歴、AI cache、個人催促AI cache、通知管理記録を同じrevisionから読み、現行形式の`PreparedRun`を作ります。
 3. GitHub Appのinstallation tokenを発行し、期限前に更新できる読み取り専用clientを作ります。
 4. Organizationのrepository metadataを全ページ取得し、run中に不変な公開allowlistを作ります。
 5. allowlist内repositoryのopen IssueとPull Requestを列挙して詳細を収集します。前回の`aiAnalysis.status`が`failed`か`deferred`の項目は、GitHub側の変化にかかわらず詳細を収集します。個人原因も初回の未計画、計画versionの変更、必要性が残る未評価・失敗・延期で有効な採用値がない場合、terminalになった原因の終了確認を詳細取得へ加えます。AI無効中は個人原因の再試行だけを理由に毎回取得しません。収集した詳細から関係先を抽出し、まだ取得していないOrganization内の関係先を識別子指定で個別列挙して収集結果へ統合します。追加した詳細から関係先を再び抽出し、対象がなくなるまで同じrun内で繰り返します。native relationは設定した深度まで、参照は追跡根から1 hopだけ辿ります。
@@ -110,6 +114,7 @@ option形式の引数は`--backfill`に従って`daily`または`backfill`へ変
 13. 成功、Codex縮退、失敗のいずれでもCLIのreport pathへrun reportを書き出します。
 
 `dry-run`は手順11まで実行し、state、Pages、Discordを変更せずに検証済みartifactとrun reportだけを書き出します。
+通知処理は`hold`とし、通知候補はartifactの`result.notificationPreview`へ別に残します。
 Codexの失敗は決定論的判定へ縮退できるため、完全性を満たす場合は`fallback`として後続処理を続けます。
 snapshotは汎用AIの有効状態、利用可否、縮退状態をrun statusと別に保存します。
 `available`は検証済みのAI分析結果を1件以上利用できたことを表します。分析対象がなく失敗も延期もないrunも`available`です。

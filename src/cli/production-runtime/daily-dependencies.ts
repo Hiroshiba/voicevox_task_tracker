@@ -10,6 +10,7 @@ import {
 import { createAuthenticateGitHubStage } from "./daily-startup/github-authentication.js";
 import { createCollectRepositoryInventoryStage } from "./daily-startup/repository-inventory.js";
 import { createLoadStateStage } from "./daily-startup/state.js";
+import { createPrepareRunStage } from "./daily-startup/preparation.js";
 import { createApplyDeterministicRulesStage } from "./deterministic/stage.js";
 import { createReconcileGraphStage } from "./graph/stage.js";
 import { createAnalyzePersonalRemindersStage } from "./personal-reminder/stage.js";
@@ -39,6 +40,7 @@ export function createDailyDependencies(
     readAiProcessAttemptCount: createReadAiProcessAttemptCountStage(),
     validateConfiguration: createValidateConfigurationStage(adapters),
     loadState: createLoadStateStage(adapters),
+    prepareRun: createPrepareRunStage(),
     authenticateGitHub: createAuthenticateGitHubStage(adapters),
     collectRepositoryInventory: createCollectRepositoryInventoryStage(adapters),
     collectIncrementalItems: createCollectIncrementalItemsStage(adapters),

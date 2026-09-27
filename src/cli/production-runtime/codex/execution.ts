@@ -86,7 +86,8 @@ export async function analyzeCodex(
       : Object.freeze({
           recorder: adapters.diagnosticsRecorder,
           runId: invocation.runId,
-          invocationId: `${invocation.runId}:codex`,
+          invocationId: invocation.invocationId,
+          stage: "codex_analysis",
         });
   for (const impact of prepared.analysisImpactDecisions) {
     await recordCodexDiagnostic(

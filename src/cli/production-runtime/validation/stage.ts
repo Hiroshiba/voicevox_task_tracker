@@ -1,5 +1,4 @@
 import type { DailyRunInvocation, DailyTransactionDependencies } from "../../daily-transaction.js";
-import type { ValidatedRun } from "../../run-publication/contracts.js";
 import type {
   CodexAnalysis,
   CollectedItems,
@@ -10,6 +9,7 @@ import type {
   RepositoryInventory,
   RuntimeConfiguration,
   RuntimeState,
+  ValidatedRunWithPreview,
 } from "../contracts.js";
 import { stateHistoryInputEvents } from "./history-events.js";
 import {
@@ -28,7 +28,7 @@ function validateRunCompleteness(
   reduction: ReducedAnalysis,
   graph: GraphResult,
   personalReminderAnalysis: PersonalReminderAnalysis,
-): ValidatedRun {
+): ValidatedRunWithPreview {
   const snapshot = createValidatedSnapshot(
     invocation,
     configuration,
@@ -55,6 +55,7 @@ function validateRunCompleteness(
     historyInputEvents: stateHistoryInputEvents(reduction),
     notificationLedger: mergeSelectedNotificationLedger(state, notification),
     notificationSelection: notification.notificationSelection,
+    notificationPreview: notification.notificationPreview,
   });
 }
 

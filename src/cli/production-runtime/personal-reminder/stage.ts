@@ -135,7 +135,8 @@ async function analyzePersonalReminders(
       : Object.freeze({
           recorder: adapters.diagnosticsRecorder,
           runId: invocation.runId,
-          invocationId: `${invocation.runId}:personal-reminder`,
+          invocationId: invocation.invocationId,
+          stage: "personal_reminder_analysis",
         });
   for (const conflict of plan.continuityConflicts) {
     await recordCodexDiagnostic(diagnostics, "codex.personal_reminder.continuity_conflict", {

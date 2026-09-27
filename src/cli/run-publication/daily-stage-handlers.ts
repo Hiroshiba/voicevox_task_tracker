@@ -70,15 +70,15 @@ export async function sendDailyDiscord(
 ): ReturnType<DailyPublicationStageHandlers["sendDiscord"]> {
   const { invocation, configuration, state, repositoryInventory, validated, pages } = input;
   if (
-    invocation.command.kind !== "dry-run" &&
-    (invocation.command.notificationAction === "acknowledge-current" ||
-      invocation.command.notificationAction === "hold")
+    invocation.executionPolicy.notificationAction === "acknowledge-current" ||
+    invocation.executionPolicy.notificationAction === "hold"
   ) {
     return Object.freeze({
       value: Object.freeze({
         delivery: Object.freeze({
           status: "skipped",
-          reason: invocation.command.notificationAction === "hold" ? "held" : "no_candidates",
+          reason:
+            invocation.executionPolicy.notificationAction === "hold" ? "held" : "no_candidates",
         }),
         notificationEvents: Object.freeze([]),
         notificationLedger: validated.notificationLedger,

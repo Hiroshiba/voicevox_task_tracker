@@ -9,6 +9,10 @@ import type {
   AiAnalysisElementSourceGenerationMap,
 } from "../../codex/index.js";
 import type { Config } from "../../config/index.js";
+import type { Sha256Hash } from "../../canonical-json/sha256.js";
+import type { PreparedRun } from "../../application/tracking-run/prepare-run.js";
+import type { AiCacheEntry } from "../../codex/cache.js";
+import type { PersonalReminderAiCacheEntry } from "../../codex/personal-reminder-cache.js";
 import type { AiAnalysisDependency } from "../../domain/ai-analysis-dependencies.js";
 import type {
   ExternalGhostNode,
@@ -33,6 +37,7 @@ import type {
 } from "../../domain/index.js";
 import type {
   DiscordNotificationItem,
+  DiscordNotificationSelection,
   NotificationCause,
   NotificationDependencyCause,
 } from "../../discord/index.js";
@@ -65,6 +70,8 @@ import type {
   StatePersistenceSession,
   StateSnapshotReadResult,
 } from "../../persistence/index.js";
+import type { StateBranchHead } from "../../persistence/branch-adapter.js";
+import type { StateHistoryRecord } from "../../persistence/history.js";
 import type { DailyTransactionTypeMap } from "../daily-transaction.js";
 import type { DeterministicItemAnalysis } from "../initial-item-analysis.js";
 import type { EffectiveAssigneeCandidateContext } from "../issue-responsibility-candidates.js";
@@ -83,6 +90,8 @@ export type MutablePartial<Value> = {
 
 export type RuntimeConfiguration = Readonly<{
   config: Config;
+  configDigest: Sha256Hash;
+  baseStateHead: StateBranchHead;
   credentials: RuntimeCredentials;
   target: RuntimeExecutionTarget;
   ensureCodexReady: () => Promise<void>;
@@ -92,8 +101,23 @@ export type RuntimeConfiguration = Readonly<{
 export type RuntimeState = Readonly<{
   session: StatePersistenceSession;
   snapshot: StateSnapshotReadResult;
+  history: readonly StateHistoryRecord[];
+  aiCache: readonly AiCacheEntry[];
+  personalReminderAiCache: readonly PersonalReminderAiCacheEntry[];
   notificationLedger: StateNotificationLedger;
 }>;
+
+export type NormalizedBaseState = Readonly<{
+  revision: StateBranchHead;
+  snapshot: StateSnapshotReadResult;
+  history: readonly StateHistoryRecord[];
+  aiCache: readonly AiCacheEntry[];
+  personalReminderAiCache: readonly PersonalReminderAiCacheEntry[];
+  notificationLedger: StateNotificationLedger;
+}>;
+
+export type ValidatedRunWithPreview = ValidatedRun &
+  Readonly<{ notificationPreview: DiscordNotificationSelection }>;
 
 export type RepositoryInventory = Readonly<{
   inventory: readonly Repository[];
@@ -217,6 +241,7 @@ export type ProductionTypes = DailyTransactionTypeMap &
   Readonly<{
     configuration: RuntimeConfiguration;
     state: RuntimeState;
+    prepared: PreparedRun<NormalizedBaseState>;
     authentication: GitHubClient;
     repositoryInventory: RepositoryInventory;
     collection: CollectedItems;
@@ -225,7 +250,7 @@ export type ProductionTypes = DailyTransactionTypeMap &
     reduction: ReducedAnalysis;
     graph: GraphResult;
     personalReminderAnalysis: PersonalReminderAnalysis;
-    validated: ValidatedRun;
+    validated: ValidatedRunWithPreview;
     persisted: PersistedRun;
     pages: PagesResult;
     discord: DiscordResult;

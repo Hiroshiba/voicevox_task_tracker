@@ -54,7 +54,7 @@ export class CliApplication<Types extends DailyTransactionTypeMap> {
     this.#dependencies = dependencies;
   }
 
-  async #runCommand(command: CliCommand): Promise<CliExecutionResult> {
+  async #runCommand(command: CliCommand, invocationId: string): Promise<CliExecutionResult> {
     switch (command.kind) {
       case "help":
         await this.#dependencies.writeStandardOutput(`${formatCliUsage()}\n`);
@@ -66,7 +66,7 @@ export class CliApplication<Types extends DailyTransactionTypeMap> {
       case "dry-run":
       case "backfill":
       case "collect-analyze": {
-        const coordinated = await this.#dependencies.dailyRunner.run(command);
+        const coordinated = await this.#dependencies.dailyRunner.run(command, invocationId);
         return Object.freeze({
           command: command.kind,
           exitCode: exitCodeForStatus(coordinated.value.report.status),
@@ -95,7 +95,7 @@ export class CliApplication<Types extends DailyTransactionTypeMap> {
   }
 
   /** process argv相当の配列を解析して一つのサブコマンドを実行する。 */
-  public async run(args: readonly string[]): Promise<CliExecutionResult> {
-    return this.#runCommand(parseCliArguments(args));
+  public async run(args: readonly string[], invocationId: string): Promise<CliExecutionResult> {
+    return this.#runCommand(parseCliArguments(args), invocationId);
   }
 }

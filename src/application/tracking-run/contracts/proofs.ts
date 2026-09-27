@@ -12,6 +12,10 @@ class StageProofToken<StageName extends AnalysisRunStageName> {
   private constructor(stageName: StageName) {
     this[stageProofBrand] = stageName;
   }
+
+  public static prepared(): StageProofToken<"prepared"> {
+    return new StageProofToken("prepared");
+  }
 }
 
 class RunCompletenessProofToken {
@@ -52,6 +56,11 @@ type StageProofByStage = {
 
 /** 段階ごとの検証を通過した証明。 */
 export type StageProofFor<StageName extends AnalysisRunStageName> = StageProofByStage[StageName];
+
+/** ingress検証を終えたrunの準備段階を証明する。 */
+export function createPreparedStageProof(): StageProofFor<"prepared"> {
+  return StageProofToken.prepared();
+}
 
 /** 公開前の完全性検証を通過した証明。 */
 export type RunCompletenessProof = RunCompletenessProofToken;

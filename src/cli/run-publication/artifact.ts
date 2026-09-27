@@ -35,7 +35,7 @@ export function createCollectAnalyzeArtifact(
   const artifact = createWorkflowArtifact({
     schemaVersion: "13",
     kind: "validated_public_run",
-    notificationAction: input.invocation.command.notificationAction,
+    notificationAction: input.invocation.executionPolicy.notificationAction,
     repositoryAllowlist: input.inventory.allowlist.repositories.map((repository) => ({
       id: repository.id,
       owner: repository.owner,
