@@ -8,13 +8,8 @@ import {
   type SourceId,
   type UtcIsoDateTime,
 } from "../../../domain/index.js";
-import type { FreshObservedGitHubItem, GitHubItemDetail } from "../../../github/index.js";
 import { assertNonNullable } from "../../../util/index.js";
-import type { DeterministicItemAnalysis } from "../../initial-item-analysis.js";
-import {
-  createIssueRequestCandidates,
-  createMentionedWaitingOnCandidates,
-} from "../../issue-responsibility-candidates.js";
+import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
 import type { RuntimeConfiguration } from "../contracts.js";
 import { nonEmptySourceIds } from "../source-ids.js";
 import type { ConsumerCodexElementOutput } from "./consumer-output.js";
@@ -172,11 +167,10 @@ export function createEffectiveAssigneeAssessment(
 }
 
 export function explicitRequestAssessment(
-  item: Extract<FreshObservedGitHubItem, Readonly<{ type: "issue" }>>,
-  detail: Extract<GitHubItemDetail, Readonly<{ type: "issue" }>>,
+  analysis: DeterministicItemAnalysis,
   output: ConsumerCodexElementOutput | undefined,
 ): IssueExplicitRequestAssessment {
-  const candidates = createIssueRequestCandidates(item, detail);
+  const candidates = analysis.explicitRequestCandidates;
   const waitingOnResult = output?.waitingOn;
   if (waitingOnResult == null || candidates.length === 0) {
     return Object.freeze({
@@ -187,9 +181,8 @@ export function explicitRequestAssessment(
     candidates.map((candidate) => candidate.sourceId),
     "明示依頼候補",
   );
-  const mentionedCandidates = createMentionedWaitingOnCandidates(detail);
   const mentionedByKey = new Map(
-    mentionedCandidates.map((candidate) => [
+    analysis.mentionedWaitingOnCandidates.map((candidate) => [
       `${candidate.kind}:${candidate.id.toLowerCase()}`,
       candidate,
     ]),

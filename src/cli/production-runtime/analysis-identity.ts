@@ -17,7 +17,7 @@ import type {
 } from "../../domain/index.js";
 import type { AnalysisElementDependencyFingerprintMap } from "../../codex/analysis-element-dependencies.js";
 import { UnreachableError } from "../../util/index.js";
-import type { DeterministicItemAnalysis } from "../initial-item-analysis.js";
+import type { DeterministicItemAnalysis } from "../../application/tracking-run/stages/deterministic-item.js";
 import type { RuntimeState } from "./contracts.js";
 import { adoptedResultForRetainedItem } from "./previous-state/saved-ai-elements.js";
 import { previousTrackedItem } from "./previous-state/snapshot.js";

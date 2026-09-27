@@ -13,7 +13,7 @@ import type { NotificationDependencyCause } from "../../../discord/index.js";
 import type { RelationCandidateAssessment } from "../../../graph/index.js";
 import { assertNonNullable } from "../../../util/index.js";
 import { latestUtcIsoDateTime } from "../../codex-input-projection.js";
-import type { DeterministicItemAnalysis } from "../../initial-item-analysis.js";
+import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
 import {
   combineSelectedAiDependencies,
   notDependentAiDependency,

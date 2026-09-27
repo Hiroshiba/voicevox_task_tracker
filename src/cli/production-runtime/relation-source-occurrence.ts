@@ -4,7 +4,7 @@ import {
   addCodexSourceOccurredAtForContext,
   createCodexSourceOccurredAtById,
 } from "../codex-input-projection.js";
-import type { DeterministicItemAnalysis } from "../initial-item-analysis.js";
+import type { DeterministicItemAnalysis } from "../../application/tracking-run/stages/deterministic-item.js";
 
 function setEarliestRelationSourceOccurredAt(
   sourceOccurredAtById: Map<SourceId, UtcIsoDateTime>,

@@ -4,22 +4,28 @@ import {
   type IssueBlocker,
   type IssueStateDecision,
   type IssueStateMachineInput,
-} from "../domain/issue-state-machine.js";
-import type { ResolvedLabelEffects } from "../domain/label-resolution.js";
+} from "../../../domain/issue-state-machine.js";
+import type { ResolvedLabelEffects } from "../../../domain/label-resolution.js";
+import type { SourceId } from "../../../domain/source-id.js";
 import {
   determinePullRequestLocalResponsibility,
   determinePullRequestState,
   type PullRequestStateDecision,
-} from "../domain/pull-request-state-machine.js";
-import type { TrackingNotificationClass, UtcIsoDateTime } from "../domain/index.js";
-import type { FreshObservedGitHubItem, GitHubItemDetail } from "../github/index.js";
-import type { RelationCandidate } from "../graph/index.js";
+} from "../../../domain/pull-request-state-machine.js";
+import type { TrackingNotificationClass, UtcIsoDateTime } from "../../../domain/types.js";
+import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";
+import type { GitHubItemDetail } from "../../../github/item-detail-types.js";
+import type { RelationCandidate } from "../../../graph/relation-candidate-types.js";
+import {
+  createMentionedWaitingOnCandidates,
+  type MentionedWaitingOnCandidate,
+} from "./deterministic-mentions.js";
 import {
   createEffectiveAssigneeCandidateContexts,
   createIssueRequestCandidates,
   type EffectiveAssigneeCandidateContext,
   type EffectiveAssigneeCollectionContext,
-} from "./issue-responsibility-candidates.js";
+} from "./deterministic-responsibility.js";
 
 /** AI分析前の1件の判定へ渡す、設定解決済みの入力。 */
 export type InitialItemAnalysisInput = Readonly<{
@@ -45,6 +51,11 @@ export type DeterministicItemAnalysis = Readonly<{
   notificationsSuppressedByLabel: boolean;
   relationCandidates: readonly RelationCandidate[];
   effectiveAssigneeCandidates: readonly EffectiveAssigneeCandidateContext[];
+  explicitRequestCandidates: readonly Readonly<{
+    sourceId: SourceId;
+    occurredAt: UtcIsoDateTime;
+  }>[];
+  mentionedWaitingOnCandidates: readonly MentionedWaitingOnCandidate[];
 }>;
 
 /** GitHubの確定した関係候補からblockerを構築する。 */
@@ -90,6 +101,7 @@ export function analyzeInitialItem(input: InitialItemAnalysisInput): Determinist
     effectiveAssigneeCollectionContext,
   } = input;
   const notificationsSuppressedByLabel = labelEffects.suppressNotifications;
+  const mentionedWaitingOnCandidates = createMentionedWaitingOnCandidates(detail);
 
   if (item.type === "issue" && detail.type === "issue") {
     const effectiveAssigneeCandidates = createEffectiveAssigneeCandidateContexts(
@@ -98,10 +110,11 @@ export function analyzeInitialItem(input: InitialItemAnalysisInput): Determinist
       detail,
       relationCandidates,
     );
+    const explicitRequestCandidates = createIssueRequestCandidates(item, detail);
     const decision = determineIssueState({
       issue: item,
       blockers,
-      explicitRequestCandidates: createIssueRequestCandidates(item, detail),
+      explicitRequestCandidates,
       explicitRequestAssessment: {
         status: "not_assessed",
       },
@@ -117,7 +130,7 @@ export function analyzeInitialItem(input: InitialItemAnalysisInput): Determinist
     });
     const localResponsibilityDecision = determineIssueLocalResponsibility({
       issue: item,
-      explicitRequestCandidates: createIssueRequestCandidates(item, detail),
+      explicitRequestCandidates,
       explicitRequestAssessment: {
         status: "not_assessed",
       },
@@ -140,6 +153,8 @@ export function analyzeInitialItem(input: InitialItemAnalysisInput): Determinist
       notificationsSuppressedByLabel,
       relationCandidates,
       effectiveAssigneeCandidates,
+      explicitRequestCandidates,
+      mentionedWaitingOnCandidates,
     });
   }
 
@@ -174,6 +189,8 @@ export function analyzeInitialItem(input: InitialItemAnalysisInput): Determinist
       notificationsSuppressedByLabel,
       relationCandidates,
       effectiveAssigneeCandidates: Object.freeze([]),
+      explicitRequestCandidates: Object.freeze([]),
+      mentionedWaitingOnCandidates,
     });
   }
 

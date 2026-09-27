@@ -46,12 +46,13 @@ GitHub読取portは選定済みallowlist内の列挙と詳細取得、正規化�
 関係端点の探索中は取得済みsourceの発生時刻から計画用の時刻を定め、読み取り完了後に時計を一度だけ読みます。
 その`evaluatedAt`はrun開始時刻と異なる型で保持し、`CollectedRun`が正規source IDのcatalogと未来時刻の検証結果を確定します。
 `DeterministicallyAnalyzedRun`は初期項目判定、関係候補のID・端点・判定担当、追跡・終了・stale・詳細再取得の集合を確定します。
-未移行のAI、reducer、graph、個人催促は同じ決定論的stageから入力を投影して利用します。
-Issueの明示依頼候補と実質担当候補、IssueとPull Requestに共通するmention候補は`src/cli/issue-responsibility-candidates.ts`で抽出します。
-`src/cli/initial-item-analysis.ts`は、設定解決済みの値と収集済みの情報から、AI分析前のIssueとPull Requestを1件ずつ判定します。
-初期判定は実行環境や永続化セッションを受け取らず、評価日時も入力で受け取ります。
+収集段階で確定した追跡対象、再分析対象、関係候補が利用できない個人催促の対象項目は、このstageのfactsへ引き継ぎます。
+未移行のAI、reducer、graph、個人催促は同じfactsから入力を投影して利用します。
+Issueの明示依頼候補と実質担当候補は`deterministic-responsibility.ts`、IssueとPull Requestに共通するmention候補は`deterministic-mentions.ts`で抽出します。
+`src/application/tracking-run/stages/deterministic.ts`は`CollectedRun`から初期判定を生成し、`deterministic-item.ts`がIssueとPull Requestを1件ずつ判定します。
+初期判定は実行環境や永続化セッションを受け取らず、収集段階で固定した評価日時を使います。
 初期判定とAI結果を採用した再判定は、入力契約を分けます。
-`production-runtime/deterministic/stage.ts`が初期判定をcanonical stageへ接続し、`codex/candidates.ts`と`codex/input.ts`が汎用AIの候補と入力を組み立てます。
+`codex/candidates.ts`と`codex/input.ts`が汎用AIの候補と入力を組み立てます。
 AI結果の採用と判定の統合は`reduction/`、暫定graphと最終graphの構築は`graph/`が担います。
 `personal-reminder/stage.ts`は既存の個人催促moduleを接続し、`validation/`はsnapshotと通知候補を作って完全性を検証します。
 日次runのinventory、collection、決定論的分析の成果物は`src/application/tracking-run/stages/`を契約とし、未移行stageの型は`production-runtime/contracts.ts`に置きます。

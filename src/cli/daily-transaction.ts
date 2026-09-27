@@ -165,13 +165,8 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
   ) => Promise<Types["collectedRun"]>;
   projectLegacyCollection: (collected: Types["collectedRun"]) => Types["collection"];
   applyDeterministicRules: (
-    input: Readonly<{
-      invocation: DailyRunInvocation;
-      configuration: Types["configuration"];
-      repositoryInventory: Types["repositoryInventory"];
-      collectedRun: Types["collectedRun"];
-    }>,
-  ) => Promise<Types["deterministicallyAnalyzed"]>;
+    collectedRun: Types["collectedRun"],
+  ) => Types["deterministicallyAnalyzed"];
   analyzeWithCodex: (
     input: Readonly<{
       invocation: DailyRunInvocation;
@@ -646,12 +641,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
       });
 
       stage = "deterministic_analysis";
-      const deterministicallyAnalyzed = await this.#dependencies.applyDeterministicRules({
-        invocation,
-        configuration,
-        repositoryInventory,
-        collectedRun,
-      });
+      const deterministicallyAnalyzed = this.#dependencies.applyDeterministicRules(collectedRun);
       stage = "codex_analysis";
       const codexAnalysis = await this.#dependencies.analyzeWithCodex({
         invocation,

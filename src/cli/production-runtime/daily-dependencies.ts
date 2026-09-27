@@ -1,4 +1,5 @@
 import type { DailyTransactionDependencies } from "../daily-transaction.js";
+import { analyzeDeterministically } from "../../application/tracking-run/stages/deterministic.js";
 import type { ProductionRuntimeAdapters } from "./adapters.js";
 import { createAnalyzeWithCodexStage } from "./codex/stage.js";
 import { createCollectItemsStage } from "./collection/stage.js";
@@ -13,7 +14,6 @@ import { projectLegacyCollection } from "../tracking-run/migration-bridge/collec
 import { createCollectInventoryStage } from "./daily-startup/inventory.js";
 import { createLoadStateStage } from "./daily-startup/state.js";
 import { createPrepareRunStage } from "./daily-startup/preparation.js";
-import { createAnalyzeDeterministicRunStage } from "./deterministic/stage.js";
 import { createReconcileGraphStage } from "./graph/stage.js";
 import { createAnalyzePersonalRemindersStage } from "./personal-reminder/stage.js";
 import {
@@ -48,7 +48,7 @@ export function createDailyDependencies(
     projectLegacyRepositoryInventory,
     collectIncrementalItems: createCollectItemsStage(adapters, githubSessions),
     projectLegacyCollection,
-    applyDeterministicRules: createAnalyzeDeterministicRunStage(),
+    applyDeterministicRules: analyzeDeterministically,
     analyzeWithCodex: createAnalyzeWithCodexStage(adapters),
     reduceAnalysis: createReduceAnalysisStage(),
     reconcileGraph: createReconcileGraphStage(),

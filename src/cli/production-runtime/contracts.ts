@@ -81,8 +81,8 @@ import type {
 import type { StateBranchHead } from "../../persistence/branch-adapter.js";
 import type { StateHistoryRecord } from "../../persistence/history.js";
 import type { DailyTransactionTypeMap } from "../daily-transaction.js";
-import type { DeterministicItemAnalysis } from "../initial-item-analysis.js";
-import type { EffectiveAssigneeCandidateContext } from "../issue-responsibility-candidates.js";
+import type { DeterministicItemAnalysis } from "../../application/tracking-run/stages/deterministic-item.js";
+import type { EffectiveAssigneeCandidateContext } from "../../application/tracking-run/stages/deterministic-responsibility.js";
 import type { PersonalReminderAnalysisResult } from "../personal-reminder/index.js";
 import type { RuntimeCredentials, RuntimeExecutionTarget } from "../production-runtime-setup.js";
 import type {
@@ -245,10 +245,7 @@ export type ProductionTypes = DailyTransactionTypeMap &
     prepared: PreparedRun;
     inventoryCollected: InventoryCollectedRun;
     collectedRun: CollectedRun<CanonicalCollectedItems>;
-    deterministicallyAnalyzed: DeterministicallyAnalyzedRun<
-      CanonicalCollectedItems,
-      DeterministicItemAnalysis
-    >;
+    deterministicallyAnalyzed: DeterministicallyAnalyzedRun;
     repositoryInventory: RepositoryInventory;
     collection: CollectedItems;
     codexAnalysis: CodexAnalysis;

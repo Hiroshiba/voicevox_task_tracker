@@ -19,8 +19,7 @@ import { assertNonNullable } from "../../../util/index.js";
 import {
   createNativeBlockers,
   type DeterministicItemAnalysis,
-} from "../../initial-item-analysis.js";
-import { createIssueRequestCandidates } from "../../issue-responsibility-candidates.js";
+} from "../../../application/tracking-run/stages/deterministic-item.js";
 import type { GraphResult, RepositoryInventory, RuntimeConfiguration } from "../contracts.js";
 import { normalizeLabelRules } from "../label-rules.js";
 import { findRepository, repositoryFullName } from "../repository-lookup.js";
@@ -200,11 +199,7 @@ export function reassessDeterministicAnalysis(
       ? createNativeBlockers(analysis.item, analysis.relationCandidates)
       : graphBlockers(graphBlockerIndex, analysis.item);
   if (analysis.item.type === "issue" && analysis.detail.type === "issue") {
-    const explicitRequestAssessmentValue = explicitRequestAssessment(
-      analysis.item,
-      analysis.detail,
-      output,
-    );
+    const explicitRequestAssessmentValue = explicitRequestAssessment(analysis, output);
     const effectiveAssigneeAssessmentValue = createEffectiveAssigneeAssessment(
       configuration,
       evaluatedAt,
@@ -216,7 +211,7 @@ export function reassessDeterministicAnalysis(
       decision: determineIssueState({
         issue: analysis.item,
         blockers,
-        explicitRequestCandidates: createIssueRequestCandidates(analysis.item, analysis.detail),
+        explicitRequestCandidates: analysis.explicitRequestCandidates,
         explicitRequestAssessment: explicitRequestAssessmentValue,
         effectiveAssigneeCandidates: analysis.effectiveAssigneeCandidates.map(
           (candidate) => candidate.candidate,
@@ -228,7 +223,7 @@ export function reassessDeterministicAnalysis(
       }),
       localResponsibilityDecision: determineIssueLocalResponsibility({
         issue: analysis.item,
-        explicitRequestCandidates: createIssueRequestCandidates(analysis.item, analysis.detail),
+        explicitRequestCandidates: analysis.explicitRequestCandidates,
         explicitRequestAssessment: explicitRequestAssessmentValue,
         effectiveAssigneeCandidates: analysis.effectiveAssigneeCandidates.map(
           (candidate) => candidate.candidate,

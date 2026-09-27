@@ -11,7 +11,7 @@ import type {
 } from "../../../domain/index.js";
 import { UnreachableError } from "../../../util/index.js";
 import { latestUtcIsoDateTime } from "../../codex-input-projection.js";
-import type { DeterministicItemAnalysis } from "../../initial-item-analysis.js";
+import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
 import { sourceOccurredAtByIdForAnalysis } from "../relation-source-occurrence.js";
 import { nonEmptySourceIds } from "../source-ids.js";
 

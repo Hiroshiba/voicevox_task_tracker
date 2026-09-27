@@ -1,7 +1,8 @@
 import { z } from "zod";
 
+import { createLabelEffectsResolver } from "../../../domain/label-resolution.js";
+import { resolveRepositoryMaintainers } from "../../../domain/maintainer-resolution.js";
 import type { GitHubNodeId, GraphNodeId } from "../../../domain/types.js";
-import type { RunEvaluatedAt } from "../contracts/evaluation-time.js";
 import type { SourceId } from "../../../domain/source-id.js";
 import { buildRelationCandidateId } from "../../../graph/relation-candidate-id.js";
 import {
@@ -9,9 +10,22 @@ import {
   relationNodes,
 } from "../../../graph/relation-candidate-endpoints.js";
 import type { RelationCandidate } from "../../../graph/relation-candidate-types.js";
+import { assertNonNullable } from "../../../util/index.js";
 import { createDeterministicallyAnalyzedStageProof } from "../contracts/proofs.js";
 import type { StageState } from "../contracts/run-core.js";
-import type { CollectedRun } from "./collection.js";
+import type { CanonicalCollection, CollectedRun } from "./collection.js";
+import type { CollectedItemObservations } from "./collection-production.js";
+import {
+  EMPTY_RELATION_CANDIDATES,
+  indexRelationCandidatesByNodeId,
+} from "./collection-relation-index.js";
+import { normalizeLabelRules } from "./collection-label-rules.js";
+import {
+  analyzeInitialItem,
+  createNativeBlockers,
+  type DeterministicItemAnalysis,
+} from "./deterministic-item.js";
+import type { EffectiveAssigneeCollectionContext } from "./deterministic-responsibility.js";
 
 const candidateIdSchema = z
   .string()
@@ -32,26 +46,20 @@ export type DeterministicRelationFact = Readonly<{
   provenance: RelationCandidate["provenance"];
 }>;
 
-export type DeterministicCollection = Readonly<{
-  evaluatedAt: RunEvaluatedAt;
-  relationCandidates: readonly RelationCandidate[];
-  observedItems: readonly Readonly<{ nodeId: GitHubNodeId; state: "open" | "closed" }>[];
-  staleItems: readonly Readonly<{
-    nodeId: GitHubNodeId;
-    previousObservation: Readonly<{ state: "open" | "closed" }>;
-  }>[];
-  details: readonly Readonly<{ nodeId: GitHubNodeId }>[];
-  trackedNodeIds: readonly GitHubNodeId[];
-  analysisNodeIds: readonly GitHubNodeId[];
-  unavailableConsumerNodeIds: readonly GitHubNodeId[];
-  changedNodeIds: readonly GitHubNodeId[];
-}>;
-
-export type AnalyzedItem = Readonly<{ item: Readonly<{ nodeId: GitHubNodeId }> }>;
+type CanonicalCollectedItems = CanonicalCollection<CollectedItemObservations>;
+type DeterministicCollectedRun = CollectedRun<CanonicalCollectedItems>;
+type DeterministicCollection = Omit<
+  CanonicalCollectedItems,
+  | "relationCandidates"
+  | "trackedNodeIds"
+  | "analysisNodeIds"
+  | "unavailableConsumerNodeIds"
+  | "changedNodeIds"
+>;
 
 /** 決定論的に確定した項目、収集集合、関係候補のfacts。 */
-export type DeterministicFacts<Item extends AnalyzedItem> = Readonly<{
-  items: readonly Item[];
+export type DeterministicFacts = Readonly<{
+  items: readonly DeterministicItemAnalysis[];
   relations: readonly DeterministicRelationFact[];
   trackedNodeIds: readonly GitHubNodeId[];
   terminalNodeIds: readonly GitHubNodeId[];
@@ -62,26 +70,15 @@ export type DeterministicFacts<Item extends AnalyzedItem> = Readonly<{
   changedNodeIds: readonly GitHubNodeId[];
 }>;
 
-/** 決定論的な初期項目判定を行うpure port。 */
-export type DeterministicAnalysisPort<
-  Collection extends DeterministicCollection = DeterministicCollection,
-  Item extends AnalyzedItem = AnalyzedItem,
-> = Readonly<{
-  analyze: (collected: CollectedRun<Collection>) => readonly Item[];
-}>;
-
 /** 決定論的な初期判定と候補factsが確定したrun。 */
-export type DeterministicallyAnalyzedRun<
-  Collection extends DeterministicCollection = DeterministicCollection,
-  Item extends AnalyzedItem = AnalyzedItem,
-> = StageState<
+export type DeterministicallyAnalyzedRun = StageState<
   "deterministically_analyzed",
   {
-    approvedRepositories: CollectedRun<Collection>["data"]["approvedRepositories"];
-    allowlistDigest: CollectedRun<Collection>["data"]["allowlistDigest"];
-    collection: Omit<Collection, "relationCandidates">;
+    approvedRepositories: DeterministicCollectedRun["data"]["approvedRepositories"];
+    allowlistDigest: DeterministicCollectedRun["data"]["allowlistDigest"];
+    collection: DeterministicCollection;
     sourceCatalog: readonly SourceId[];
-    facts: DeterministicFacts<Item>;
+    facts: DeterministicFacts;
   }
 >;
 
@@ -123,28 +120,90 @@ function orderedNodeIds(nodeIds: Iterable<GitHubNodeId>): readonly GitHubNodeId[
   return Object.freeze([...new Set(nodeIds)].sort());
 }
 
+function analyzeInitialItems(
+  collected: DeterministicCollectedRun,
+): readonly DeterministicItemAnalysis[] {
+  const collection = collected.data.collection;
+  const resolveLabelEffects = createLabelEffectsResolver(
+    normalizeLabelRules(collected.core.config),
+  );
+  const repositoriesById = new Map(
+    collected.data.approvedRepositories.map((repository) => [repository.id, repository]),
+  );
+  const observedItemsByNodeId = new Map(
+    collection.observedItems.map((item) => [item.nodeId, item]),
+  );
+  const detailsByNodeId = new Map(collection.details.map((detail) => [detail.nodeId, detail]));
+  const relationCandidatesByNodeId = indexRelationCandidatesByNodeId(collection.relationCandidates);
+  const effectiveAssigneeCollectionContext = Object.freeze({
+    observedItemsByNodeId,
+    detailsByNodeId,
+    trackedNodeIds: new Set(collection.trackedNodeIds),
+  }) satisfies EffectiveAssigneeCollectionContext;
+  const analysisNodeIds = new Set(collection.analysisNodeIds);
+  const notificationClassByNodeId = new Map(collection.trackingNotificationClassByNodeId);
+  const items: DeterministicItemAnalysis[] = [];
+  for (const item of collection.observedItems) {
+    if (!analysisNodeIds.has(item.nodeId)) {
+      continue;
+    }
+    const repository = repositoriesById.get(item.repositoryId);
+    assertNonNullable(repository, `公開repositoryがありません。対象: ${item.repositoryId}`);
+    const repositoryFullName = `${repository.owner}/${repository.name}`;
+    const maintainers = resolveRepositoryMaintainers(
+      collected.core.config.maintainers,
+      repositoryFullName,
+    );
+    const detail = detailsByNodeId.get(item.nodeId);
+    assertNonNullable(detail, `GitHub詳細取得結果がありません。対象: ${item.nodeId}`);
+    const notificationClass = notificationClassByNodeId.get(item.nodeId);
+    assertNonNullable(notificationClass, `追跡項目の通知分類がありません。対象: ${item.nodeId}`);
+    const relationCandidates =
+      relationCandidatesByNodeId.get(item.nodeId) ?? EMPTY_RELATION_CANDIDATES;
+    items.push(
+      analyzeInitialItem({
+        item,
+        detail,
+        blockers: createNativeBlockers(item, relationCandidates),
+        maintainers,
+        labelEffects: resolveLabelEffects(repositoryFullName, item.labels),
+        confidenceThresholds: collected.core.config.ai.confidence,
+        evaluatedAt: collection.evaluatedAt,
+        notificationClass,
+        relationCandidates,
+        effectiveAssigneeCollectionContext,
+      }),
+    );
+  }
+  return Object.freeze(items);
+}
+
 /** 収集済み入力から初期判定と関係候補factsを一度だけ確定する。 */
-export function analyzeDeterministically<
-  Collection extends DeterministicCollection,
-  Item extends AnalyzedItem,
->(
-  collected: CollectedRun<Collection>,
-  port: DeterministicAnalysisPort<Collection, Item>,
-): DeterministicallyAnalyzedRun<Collection, Item> {
-  const items = Object.freeze([...port.analyze(collected)]);
+export function analyzeDeterministically(
+  collected: DeterministicCollectedRun,
+): DeterministicallyAnalyzedRun {
+  const source = collected.data.collection;
+  const items = analyzeInitialItems(collected);
   const analyzedNodeIds = items.map((item) => item.item.nodeId);
   if (
     new Set(analyzedNodeIds).size !== analyzedNodeIds.length ||
-    analyzedNodeIds.length !== collected.data.collection.analysisNodeIds.length ||
-    analyzedNodeIds.some((nodeId) => !collected.data.collection.analysisNodeIds.includes(nodeId))
+    analyzedNodeIds.length !== source.analysisNodeIds.length ||
+    analyzedNodeIds.some((nodeId) => !source.analysisNodeIds.includes(nodeId))
   ) {
     throw new TypeError("決定論的分析対象が収集済み分析集合と一致しません");
   }
-  const { relationCandidates, ...collection } = collected.data.collection;
+  const {
+    relationCandidates,
+    trackedNodeIds,
+    analysisNodeIds,
+    unavailableConsumerNodeIds,
+    changedNodeIds,
+    ...collection
+  } = source;
   const facts = Object.freeze({
     items,
     relations: relationFacts(relationCandidates, collected.data.sourceCatalog),
-    trackedNodeIds: orderedNodeIds(collection.trackedNodeIds),
+    trackedNodeIds,
     terminalNodeIds: orderedNodeIds([
       ...collection.observedItems
         .filter((item) => item.state === "closed")
@@ -155,10 +214,10 @@ export function analyzeDeterministically<
     ]),
     staleNodeIds: orderedNodeIds(collection.staleItems.map((item) => item.nodeId)),
     refetchedNodeIds: orderedNodeIds(collection.details.map((detail) => detail.nodeId)),
-    analysisNodeIds: orderedNodeIds(collection.analysisNodeIds),
-    unavailableConsumerNodeIds: orderedNodeIds(collection.unavailableConsumerNodeIds),
-    changedNodeIds: orderedNodeIds(collection.changedNodeIds),
-  }) satisfies DeterministicFacts<Item>;
+    analysisNodeIds,
+    unavailableConsumerNodeIds,
+    changedNodeIds,
+  }) satisfies DeterministicFacts;
   return Object.freeze({
     stage: "deterministically_analyzed",
     core: collected.core,

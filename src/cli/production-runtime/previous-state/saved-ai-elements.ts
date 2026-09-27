@@ -22,7 +22,7 @@ import type {
 } from "../../../domain/index.js";
 import type { SnapshotTrackedItem } from "../../../persistence/index.js";
 import { UnreachableError } from "../../../util/index.js";
-import type { DeterministicItemAnalysis } from "../../initial-item-analysis.js";
+import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
 import type { MutablePartial, RuntimeState } from "../contracts.js";
 import { previousTrackedItem } from "./snapshot.js";
 

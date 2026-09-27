@@ -249,37 +249,6 @@ export default defineConfig([
     },
   },
   {
-    files: ["src/cli/initial-item-analysis.ts"],
-    rules: {
-      "no-restricted-imports": [
-        "error",
-        {
-          patterns: [
-            {
-              group: [
-                "node:*",
-                "**/production-runtime*",
-                "**/composition-root*",
-                "**/daily-transaction*",
-                "**/persistence/**",
-                "**/config/**",
-                "**/codex/**",
-                "**/discord/**",
-                "**/pages/**",
-              ],
-              message: "初期判定には、実行環境や副作用ではなく解決済みの値を渡してください",
-            },
-          ],
-        },
-      ],
-      "no-restricted-globals": [
-        "error",
-        { name: "fetch", message: "初期判定では外部接続を行わないでください" },
-        { name: "process", message: "初期判定では実行環境を参照しないでください" },
-      ],
-    },
-  },
-  {
     files: ["src/cli/personal-reminder/**/*.ts"],
     rules: {
       "no-restricted-imports": [

@@ -24,7 +24,7 @@ import {
 } from "../../../domain/index.js";
 import { type FreshObservedGitHubItem } from "../../../github/index.js";
 import { assertNonNullable } from "../../../util/index.js";
-import type { DeterministicItemAnalysis } from "../../initial-item-analysis.js";
+import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
 import { trackedItemInputEvents } from "../../tracked-item-input-events.js";
 import { aiAnalysisRunIndex, generatedElementsForNode } from "../ai-analysis-run-index.js";
 import { forcedAiAnalysisTarget, isForcedUnexecutedElement } from "../ai-analysis-target.js";

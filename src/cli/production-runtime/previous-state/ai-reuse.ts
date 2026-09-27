@@ -24,7 +24,7 @@ import {
   type AiAnalysisElementSourceGeneration,
 } from "../../../domain/ai-analysis-source-generations.js";
 import type { GitHubNodeId } from "../../../domain/index.js";
-import type { DeterministicItemAnalysis } from "../../initial-item-analysis.js";
+import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
 import { elementDependencyFingerprints } from "../analysis-identity.js";
 import type { RuntimeState } from "../contracts.js";
 import {

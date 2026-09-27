@@ -13,8 +13,7 @@ import {
 } from "../../../domain/ai-analysis-elements.js";
 import { isTerminalStatus } from "../../../domain/index.js";
 import { selectRelationAssessmentCandidates } from "../../../graph/relation-candidate-endpoints.js";
-import type { DeterministicItemAnalysis } from "../../initial-item-analysis.js";
-import { createIssueRequestCandidates } from "../../issue-responsibility-candidates.js";
+import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
 import { deterministicElementResult } from "../analysis-identity.js";
 import type { RuntimeState } from "../contracts.js";
 import { preservedElementsWithCompatibleRelations } from "../preserved-codex-relations.js";
@@ -124,7 +123,7 @@ export function necessityInputForAnalysis(
   const terminal = isTerminalStatus(analysis.decision.status);
   const unresolvedRequest =
     !terminal && analysis.item.type === "issue" && analysis.detail.type === "issue"
-      ? createIssueRequestCandidates(analysis.item, analysis.detail).length > 0
+      ? analysis.explicitRequestCandidates.length > 0
       : false;
   const unresolvedCi =
     !terminal && analysis.item.type === "pull_request" && analysis.detail.type === "pull_request"

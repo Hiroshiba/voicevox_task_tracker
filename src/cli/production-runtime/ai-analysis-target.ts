@@ -1,6 +1,6 @@
 import { createAiAnalysisTarget, type AiAnalysisTarget } from "../../codex/index.js";
 import type { AiAnalysisElement } from "../../domain/ai-analysis-elements.js";
-import type { DeterministicItemAnalysis } from "../initial-item-analysis.js";
+import type { DeterministicItemAnalysis } from "../../application/tracking-run/stages/deterministic-item.js";
 import type { RuntimeConfiguration } from "./contracts.js";
 
 /** 強制解析設定から対象を取得する。 */

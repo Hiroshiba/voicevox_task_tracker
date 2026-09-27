@@ -10,8 +10,6 @@ import {
   parseSourceId,
   resolvePullRequestCommitOccurredAt,
   type GitHubNodeId,
-  type IssueStateDecision,
-  type PullRequestStateDecision,
   type SourceId,
   type UtcIsoDateTime,
 } from "../domain/index.js";
@@ -33,12 +31,11 @@ import {
   selectRelationAssessmentCandidates,
 } from "../graph/relation-candidate-endpoints.js";
 import { assertNonNullable } from "../util/index.js";
+import type { DeterministicItemAnalysis } from "../application/tracking-run/stages/deterministic-item.js";
 import {
-  createMentionedWaitingOnCandidates,
   resolveEffectiveAssigneePullRequestState,
-  type EffectiveAssigneeCandidateContext,
   type EffectiveAssigneeSourceContext,
-} from "./issue-responsibility-candidates.js";
+} from "../application/tracking-run/stages/deterministic-responsibility.js";
 
 type CodexWaitingOnCandidate = Readonly<{ id: string }>;
 
@@ -48,14 +45,6 @@ type CodexSelfCommitmentCandidate = Readonly<{
 }>;
 
 type CodexSourceAuthor = CodexAnalysisInput["sources"][number]["author"];
-
-type CodexInputAnalysis = Readonly<{
-  item: FreshObservedGitHubItem;
-  detail: GitHubItemDetail;
-  decision: IssueStateDecision | PullRequestStateDecision;
-  relationCandidates: readonly RelationCandidate[];
-  effectiveAssigneeCandidates: readonly EffectiveAssigneeCandidateContext[];
-}>;
 
 type RelationSourceOccurredAt = (
   items: readonly FreshObservedGitHubItem[],
@@ -557,7 +546,7 @@ function requireCodexSourceOccurredAt(
 export function createCodexInput(
   configuration: Readonly<{ config: Config }>,
   evaluatedAt: UtcIsoDateTime,
-  analysis: CodexInputAnalysis,
+  analysis: DeterministicItemAnalysis,
   selectedElements: readonly AiAnalysisElement[],
   preservedElements: CodexPreservedElements,
   previousObservedAt: UtcIsoDateTime | undefined,
@@ -567,7 +556,7 @@ export function createCodexInput(
     selectRelationAssessmentCandidates(analysis.item.nodeId, analysis.relationCandidates),
     (candidate) => candidate.id,
   );
-  const mentionedCandidates = createMentionedWaitingOnCandidates(analysis.detail);
+  const mentionedCandidates = analysis.mentionedWaitingOnCandidates;
   const selfCandidates = selfCommitmentCandidates(
     analysis.item,
     analysis.detail,

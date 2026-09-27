@@ -19,7 +19,7 @@ import type {
   TrackedItemAiAnalysisMigrationElements,
 } from "../../../domain/index.js";
 import { UnreachableError } from "../../../util/index.js";
-import type { DeterministicItemAnalysis } from "../../initial-item-analysis.js";
+import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
 import { generatedElementsForNode } from "../ai-analysis-run-index.js";
 import { isForcedUnexecutedElement } from "../ai-analysis-target.js";
 import type { MutablePartial, RuntimeState } from "../contracts.js";

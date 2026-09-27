@@ -17,7 +17,7 @@ import {
 import type { AiAnalysisElementSourceGeneration } from "../../../domain/ai-analysis-source-generations.js";
 import type { GitHubNodeId, TrackedItemAiAnalysisApplications } from "../../../domain/index.js";
 import { assertNonNullable, UnreachableError } from "../../../util/index.js";
-import type { DeterministicItemAnalysis } from "../../initial-item-analysis.js";
+import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
 import { aiAnalysisRunIndex, generatedElementsForNode } from "../ai-analysis-run-index.js";
 import { deterministicElementResult } from "../analysis-identity.js";
 import type { RuntimeState } from "../contracts.js";

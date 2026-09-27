@@ -12,7 +12,7 @@ import type { IssueStateDecision, PullRequestStateDecision } from "../../../doma
 import { deduplicateByStableId } from "../../../github/index.js";
 import { selectRelationAssessmentCandidates } from "../../../graph/relation-candidate-endpoints.js";
 import { assertNonNullable } from "../../../util/index.js";
-import type { DeterministicItemAnalysis } from "../../initial-item-analysis.js";
+import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
 import { aiAnalysisRunIndex } from "../ai-analysis-run-index.js";
 import { forcedAiAnalysisTarget } from "../ai-analysis-target.js";
 import type { CodexAnalysis, RuntimeConfiguration, RuntimeState } from "../contracts.js";

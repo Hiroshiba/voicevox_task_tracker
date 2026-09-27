@@ -7,7 +7,7 @@ import type { SourceId, UtcIsoDateTime } from "../../../domain/index.js";
 import type { NotificationCause } from "../../../discord/index.js";
 import { assertNonNullable } from "../../../util/index.js";
 import { codexCommentSources } from "../../codex-input-projection.js";
-import type { DeterministicItemAnalysis } from "../../initial-item-analysis.js";
+import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
 
 type SelfCommitmentPreviousObservation =
   | Readonly<{

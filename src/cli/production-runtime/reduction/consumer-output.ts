@@ -14,7 +14,7 @@ import {
 } from "../../../domain/ai-analysis-elements.js";
 import { isTerminalStatus } from "../../../domain/index.js";
 import { assertNonNullable, UnreachableError } from "../../../util/index.js";
-import type { DeterministicItemAnalysis } from "../../initial-item-analysis.js";
+import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
 import { aiAnalysisRunIndex } from "../ai-analysis-run-index.js";
 import { forcedAiAnalysisTarget, isForcedUnexecutedElement } from "../ai-analysis-target.js";
 import type { CodexAnalysis, RuntimeConfiguration, RuntimeState } from "../contracts.js";

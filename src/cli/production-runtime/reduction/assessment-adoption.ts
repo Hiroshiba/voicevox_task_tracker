@@ -8,7 +8,7 @@ import type {
   NaturalLanguageDeadlineAssessmentState,
   NaturalLanguageImportanceAssessmentState,
 } from "../../../domain/index.js";
-import type { DeterministicItemAnalysis } from "../../initial-item-analysis.js";
+import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
 import { isForcedUnexecutedElement } from "../ai-analysis-target.js";
 import type { RuntimeState } from "../contracts.js";
 import {

@@ -11,7 +11,7 @@ import {
   type AiAnalysisElementMigrationResult,
 } from "../../../domain/ai-analysis-elements.js";
 import { assertNonNullable, UnreachableError } from "../../../util/index.js";
-import type { DeterministicItemAnalysis } from "../../initial-item-analysis.js";
+import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
 import { isForcedUnexecutedElement } from "../ai-analysis-target.js";
 import type { CodexAnalysis, RuntimeState } from "../contracts.js";
 import { preservedElementsWithCompatibleRelations } from "../preserved-codex-relations.js";
