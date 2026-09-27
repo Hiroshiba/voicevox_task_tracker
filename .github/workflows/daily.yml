@@ -599,6 +599,7 @@ jobs:
         with:
           pattern: daily-run-report-${{ github.run_id }}-${{ github.run_attempt }}-collect-analyze
           path: artifacts/run-reports
+          merge-multiple: true
       - name: 運用障害をDiscordへ通知
         env:
           DISCORD_OPERATIONS_WEBHOOK_URL: ${{ secrets.DISCORD_OPERATIONS_WEBHOOK_URL }}
