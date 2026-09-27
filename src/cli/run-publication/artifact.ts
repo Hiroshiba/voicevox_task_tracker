@@ -33,7 +33,7 @@ export function createCollectAnalyzeArtifact(
     throw new TypeError("collect-analyze以外のrunからworkflow artifactを生成できません");
   }
   const artifact = createWorkflowArtifact({
-    schemaVersion: "13",
+    schemaVersion: "14",
     kind: "validated_public_run",
     notificationAction: input.invocation.executionPolicy.notificationAction,
     repositoryAllowlist: input.inventory.allowlist.repositories.map((repository) => ({
@@ -41,6 +41,8 @@ export function createCollectAnalyzeArtifact(
       owner: repository.owner,
       name: repository.name,
     })),
+    repositoryInventory: input.inventory.allowlist.repositories,
+    allowlistDigest: input.inventory.allowlistDigest,
     snapshot: input.validated.snapshot,
     historyInputEvents: input.validated.historyInputEvents,
     notificationLedger: input.validated.notificationLedger,

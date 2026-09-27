@@ -94,6 +94,7 @@ export async function sendDailyDiscord(
     discordDeliverySettings(configuration.config),
     state,
     repositoryInventory.inventory,
+    repositoryInventory.allowlist.repositories,
     configuration.credentials.knownSecrets,
     validated,
     pages.pagesUrl,
@@ -131,6 +132,7 @@ export function completeDailyRun(
     config: configuration.config,
     state,
     repositoryInventory: repositoryInventory.inventory,
+    repositoryAllowlist: repositoryInventory.allowlist.repositories,
     validated,
     runMetadata: createRunMetadata({ invocation, validated, metrics, diagnostics }),
     delivery: {

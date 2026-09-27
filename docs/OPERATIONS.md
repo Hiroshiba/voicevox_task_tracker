@@ -19,7 +19,7 @@ GitHub Actionsのscheduleには遅延があるため、厳密な投稿時刻は�
 9. `report-workflow`
 
 通常の公開経路は`notify-discord`までの6 jobです。通知候補があるrunでは、その後に`publish-notification-history`が動きます。
-`notify-operations`は収集、Pages関連、Discord通知のいずれかのjobが失敗したときだけ実行されます。公開境界違反を検出した場合は運用障害通知も送りません。収集失敗時のrun reportを取得できなければ、通知段階は失敗として停止します。
+`notify-operations`は収集、Pages関連、Discord通知のいずれかのjobが失敗したときだけ実行されます。公開境界違反を検出した場合は運用障害通知も送りません。収集jobでは公開境界の分類をrun reportとは別のjob出力にも記録します。CLI開始前などでrun reportが作られなかった通常障害は運用障害通知を続けます。存在するrun reportが破損している場合は通知を停止します。通知のHTTP呼出前に既存stateと送信予定値の公開安全性を検査します。
 `report-workflow`は先行jobの成否にかかわらず実行され、全job結果と収集metricをActions artifactへ保存します。
 
 Pagesではトップの項目一覧に未完了の追跡項目が表示され、既定が要対応度の降順であることを確認します。
@@ -640,7 +640,7 @@ semantic補正の上限に達した場合、`codex_fallback`には最後の世�
 state commit後のPages失敗は想定内であり、stateを巻き戻しません。
 
 公開guardが失敗した場合は安全設定を無効化しません。
-どの入力にallowlist外repository、private sentinel、secretらしい値、長すぎる全文、安全でないURLが入ったかを、secretをlogへ出さずに調べます。
+どの入力にallowlist外repository、既知の非公開repository参照、secretらしい値、長すぎる全文、安全でないURLが入ったかを、secretをlogへ出さずに調べます。
 原因を除いた後に`backfill: none`で手動再実行します。
 
 同じrunを再実行してもworkflow concurrencyと通知管理記録が競合と通常通知の重複を抑えます。

@@ -122,6 +122,7 @@ export type ValidatedRunWithPreview = ValidatedRun &
 export type RepositoryInventory = Readonly<{
   inventory: readonly Repository[];
   allowlist: PublicRepositoryAllowlist;
+  allowlistDigest: InventoryCollectedRun["data"]["allowlistDigest"];
 }>;
 
 export type CollectedItems = Readonly<{

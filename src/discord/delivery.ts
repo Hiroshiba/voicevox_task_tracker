@@ -115,13 +115,6 @@ export type DiscordDigestDelivery =
 
 type NotificationLedgerReservation = Extract<NotificationLedgerEntry, { status: "reserved" }>;
 
-function createSafeLedgerCause(error: unknown): Error {
-  if (error instanceof Error && error.message.length > 0) {
-    return new Error(error.message);
-  }
-  return new Error("ledger adapterの処理が失敗しました");
-}
-
 function currentUtcDateTime(runtime: DiscordWebhookRuntime): UtcIsoDateTime {
   const current = runtime.now();
   if (!Number.isFinite(current.getTime())) {
@@ -209,7 +202,7 @@ async function recordNotificationEntries(
     await ledger.recordNotifications(entries);
   } catch (error: unknown) {
     throw new DiscordLedgerError("write", {
-      cause: createSafeLedgerCause(error),
+      cause: error,
     });
   }
 }
@@ -226,7 +219,7 @@ async function hasOperationsAlert(
     return await ledger.hasOperationsAlert(alertKey);
   } catch (error: unknown) {
     throw new DiscordLedgerError("read", {
-      cause: createSafeLedgerCause(error),
+      cause: error,
     });
   }
 }
@@ -239,7 +232,7 @@ async function recordOperationsAlert(
     await ledger.recordOperationsAlert(entry);
   } catch (error: unknown) {
     throw new DiscordLedgerError("write", {
-      cause: createSafeLedgerCause(error),
+      cause: error,
     });
   }
 }

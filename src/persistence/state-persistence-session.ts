@@ -43,13 +43,20 @@ import {
   createStateHistoryRecord,
   diffStateHistory,
   parseStateHistoryRecords,
-  resolveStateHistoryNotificationItemDisplayReference,
   type StateHistoryDiff,
   type StateHistoryInputEvent,
   type StateHistoryNotificationEvent,
   type StateHistoryRecord,
 } from "./history.js";
-import { assertStatePublicSafety, assertStateValuesPublicSafety } from "./public-safety.js";
+import {
+  assertNotificationWaitingOnMatchesSnapshot,
+  assertRunConsistency,
+} from "./state-persistence-validation.js";
+import {
+  assertExistingStatePublicSafety,
+  assertStatePublicSafety,
+  assertStateValuesPublicSafety,
+} from "./public-safety.js";
 import {
   assertPersonalReminderEvidenceClosure,
   assertPersonalReminderEvidenceRecordsClosure,
@@ -93,6 +100,7 @@ export type PersistStateTransactionInput = Readonly<{
   historyInputEvents: readonly StateHistoryInputEvent[];
   notificationLedger: StateNotificationLedger;
   repositoryInventory: readonly Repository[];
+  repositoryAllowlist: readonly Pick<Repository, "id" | "owner" | "name">[];
   knownSecrets: readonly string[];
 }>;
 
@@ -116,6 +124,7 @@ export type PersistNotificationDeliveryInput = Readonly<{
   notificationLedger: StateNotificationLedger;
   committedAt: UtcIsoDateTime;
   repositoryInventory: readonly Repository[];
+  repositoryAllowlist: readonly Pick<Repository, "id" | "owner" | "name">[];
   knownSecrets: readonly string[];
 }>;
 
@@ -126,6 +135,7 @@ export type PersistRunCompletionInput = Readonly<{
   notificationLedger: StateNotificationLedger;
   runReport: StateRunReport;
   repositoryInventory: readonly Repository[];
+  repositoryAllowlist: readonly Pick<Repository, "id" | "owner" | "name">[];
   knownSecrets: readonly string[];
 }>;
 
@@ -242,68 +252,6 @@ function personalReminderAiCachePath(
     configuration.personalReminderAiCacheDirectory,
     `${cacheKey.slice(CACHE_KEY_PREFIX.length)}.json`,
   );
-}
-
-function assertRunConsistency(snapshot: StateSnapshot, report: StateRunReport): void {
-  if (
-    snapshot.run.id !== report.runId ||
-    snapshot.run.status !== report.status ||
-    snapshot.generatedAt < report.startedAt ||
-    snapshot.generatedAt > report.finishedAt
-  ) {
-    throw new StateSnapshotSemanticError("snapshotとrun reportのrun情報が一致しません");
-  }
-  const activeEdgeCount = snapshot.relations.filter((relation) => relation.active).length;
-  if (
-    report.metrics.repositoryCount !== snapshot.repositories.length ||
-    report.metrics.itemCount !== snapshot.items.length ||
-    report.metrics.activeEdgeCount !== activeEdgeCount ||
-    report.metrics.staleRepositoryCount !==
-      snapshot.repositories.filter((repository) => repository.freshness === "stale").length
-  ) {
-    throw new StateSnapshotSemanticError("snapshotとrun reportの件数が一致しません");
-  }
-}
-
-function assertNotificationWaitingOnMatchesSnapshot(
-  event: StateHistoryNotificationEvent,
-  snapshot: StateSnapshot,
-  item: StateSnapshot["items"][number],
-): void {
-  if (event.waitingOn.status !== "recorded") {
-    throw new StateHistoryError("新規通知送信eventのwaitingOnが記録済みではありません");
-  }
-  if (item.waitingOn.length === 0) {
-    throw new StateHistoryError("通知送信eventの対象itemにwaitingOnがありません");
-  }
-  if (event.waitingOn.values.length !== item.waitingOn.length) {
-    throw new StateHistoryError("通知送信eventとsnapshotのwaitingOn件数が一致しません");
-  }
-  for (const [index, expected] of item.waitingOn.entries()) {
-    const actual = event.waitingOn.values[index];
-    if (actual == null) {
-      throw new StateHistoryError("通知送信eventとsnapshotのwaitingOnが順序込みで一致しません");
-    }
-    if (
-      actual.kind !== expected.kind ||
-      actual.candidateId !== expected.candidateId ||
-      actual.role !== expected.role
-    ) {
-      throw new StateHistoryError("通知送信eventとsnapshotのwaitingOnが順序込みで一致しません");
-    }
-    if (expected.kind !== "item") {
-      continue;
-    }
-    if (actual.kind !== "item") {
-      throw new StateHistoryError("通知送信eventのitem waitingOn種別が一致しません");
-    }
-    if (
-      actual.displayReference !==
-      resolveStateHistoryNotificationItemDisplayReference(snapshot, expected.candidateId)
-    ) {
-      throw new StateHistoryError("通知送信eventのitem waitingOn表示参照とsnapshotが一致しません");
-    }
-  }
 }
 
 /** 同じbranch revisionを読み、全成果物を一つのcommitへまとめるsession。 */
@@ -703,12 +651,13 @@ export class StatePersistenceSession {
     if (snapshot == null) {
       assertStateValuesPublicSafety([notificationLedger], input.knownSecrets);
     } else {
-      assertStatePublicSafety({
+      assertExistingStatePublicSafety(
         snapshot,
-        repositoryInventory: snapshot.repositories,
-        additionalValues: [notificationLedger],
-        knownSecrets: input.knownSecrets,
-      });
+        await this.loadHistoryRecords(),
+        notificationLedger,
+        [],
+        input.knownSecrets,
+      );
     }
     const update = Object.freeze({
       path: this.#configuration.notificationLedgerPath,
@@ -810,6 +759,7 @@ export class StatePersistenceSession {
     assertStatePublicSafety({
       snapshot,
       repositoryInventory: input.repositoryInventory,
+      repositoryAllowlist: input.repositoryAllowlist,
       additionalValues: [...history.historyRecords, notificationLedger],
       knownSecrets: input.knownSecrets,
     });
@@ -909,6 +859,7 @@ export class StatePersistenceSession {
     assertStatePublicSafety({
       snapshot,
       repositoryInventory: input.repositoryInventory,
+      repositoryAllowlist: input.repositoryAllowlist,
       additionalValues: [...history.historyRecords, notificationLedger, runReport],
       knownSecrets: input.knownSecrets,
     });
@@ -985,6 +936,7 @@ export class StatePersistenceSession {
     assertStatePublicSafety({
       snapshot,
       repositoryInventory: input.repositoryInventory,
+      repositoryAllowlist: input.repositoryAllowlist,
       additionalValues: [
         ...existingHistoryRecords,
         historyRecord,

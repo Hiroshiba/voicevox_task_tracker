@@ -1,7 +1,8 @@
 import { StateConfigurationError, StatePublicSafetyError } from "./errors.js";
 import { type StateSnapshot } from "./snapshot.js";
 import { type Repository } from "../domain/index.js";
-import { createPublicRepositoryAllowlist } from "../github/index.js";
+import { isEligiblePublicRepository } from "../github/public-repository-allowlist.js";
+import { containsPrivateRepositoryReference } from "../github/private-repository-reference.js";
 
 const MAX_PERSISTED_STRING_LENGTH = 4096;
 const SECRET_PATTERNS: readonly RegExp[] = [
@@ -49,6 +50,7 @@ const FULL_CONTENT_FIELD_NAMES = new Set([
 export type StatePublicSafetyInput = Readonly<{
   snapshot: StateSnapshot;
   repositoryInventory: readonly Repository[];
+  repositoryAllowlist: readonly Pick<Repository, "id" | "owner" | "name">[];
   additionalValues: readonly unknown[];
   knownSecrets: readonly string[];
 }>;
@@ -77,33 +79,21 @@ function isUnknownArray(value: unknown): value is unknown[] {
   return Array.isArray(value);
 }
 
-function privateRepositorySentinels(inventory: readonly Repository[]): readonly string[] {
-  return Object.freeze(
-    inventory
-      .filter((repository) => repository.visibility !== "public")
-      .flatMap((repository) => [
-        repository.id,
-        `${repository.owner}/${repository.name}`,
-        `https://github.com/${repository.owner}/${repository.name}`,
-      ]),
-  );
-}
-
 function scanValues(
   values: readonly unknown[],
-  privateSentinels: readonly string[],
+  repositoryInventory: readonly Repository[],
   knownSecrets: readonly string[],
 ): readonly string[] {
   const violationCodes = new Set<string>();
+  if (containsPrivateRepositoryReference(values, repositoryInventory)) {
+    violationCodes.add("private_repository_data");
+  }
   const pending: unknown[] = [...values];
   const visited = new WeakSet<object>();
 
   while (pending.length > 0) {
     const value = pending.pop();
     if (typeof value === "string") {
-      if (includesKnownValue(value, privateSentinels)) {
-        violationCodes.add("private_repository_data");
-      }
       if (includesKnownValue(value, knownSecrets) || includesSecretPattern(value)) {
         violationCodes.add("secret");
       }
@@ -143,11 +133,27 @@ function scanValues(
 export function assertStatePublicSafety(input: StatePublicSafetyInput): void {
   assertKnownSecrets(input.knownSecrets);
 
-  const allowlist = createPublicRepositoryAllowlist(input.repositoryInventory);
   const violationCodes: string[] = [];
+  const eligibleRepositories = input.repositoryInventory.filter(isEligiblePublicRepository);
+  const allowlist = new Map(
+    input.repositoryAllowlist.map((repository) => [repository.id, repository]),
+  );
+  if (
+    allowlist.size !== input.repositoryAllowlist.length ||
+    allowlist.size !== eligibleRepositories.length ||
+    eligibleRepositories.some((repository) => {
+      const entry = allowlist.get(repository.id);
+      return entry?.owner !== repository.owner || entry.name !== repository.name;
+    })
+  ) {
+    violationCodes.push("repository_allowlist_mismatch");
+  }
   for (const repository of input.snapshot.repositories) {
-    if (!allowlist.has(repository.id)) {
+    const entry = allowlist.get(repository.id);
+    if (entry == null) {
       violationCodes.push("repository_not_allowlisted");
+    } else if (entry.owner !== repository.owner || entry.name !== repository.name) {
+      violationCodes.push("repository_identity_mismatch");
     }
   }
   for (const item of input.snapshot.items) {
@@ -159,7 +165,7 @@ export function assertStatePublicSafety(input: StatePublicSafetyInput): void {
   violationCodes.push(
     ...scanValues(
       [input.snapshot, ...input.additionalValues],
-      privateRepositorySentinels(input.repositoryInventory),
+      input.repositoryInventory,
       input.knownSecrets,
     ),
   );
@@ -176,6 +182,37 @@ export function assertStateValuesPublicSafety(
 ): void {
   assertKnownSecrets(knownSecrets);
   const violationCodes = scanValues(values, [], knownSecrets);
+  if (violationCodes.length > 0) {
+    throw new StatePublicSafetyError(violationCodes);
+  }
+}
+
+/** 既存stateから運用通知へ渡す値を公開境界で検査する。 */
+export function assertExistingStatePublicSafety(
+  snapshot: StateSnapshot | undefined,
+  historyRecords: readonly unknown[],
+  notificationLedger: unknown,
+  plannedValues: readonly unknown[],
+  knownSecrets: readonly string[],
+): void {
+  assertKnownSecrets(knownSecrets);
+  const violationCodes: string[] = [];
+  if (snapshot != null) {
+    const repositoryIds = new Set(snapshot.repositories.map((repository) => repository.id));
+    if (snapshot.repositories.some((repository) => !isEligiblePublicRepository(repository))) {
+      violationCodes.push("repository_not_public");
+    }
+    if (snapshot.items.some((item) => !repositoryIds.has(item.repositoryId))) {
+      violationCodes.push("repository_not_allowlisted");
+    }
+  }
+  violationCodes.push(
+    ...scanValues(
+      [snapshot, ...historyRecords, notificationLedger, ...plannedValues],
+      snapshot?.repositories ?? [],
+      knownSecrets,
+    ),
+  );
   if (violationCodes.length > 0) {
     throw new StatePublicSafetyError(violationCodes);
   }

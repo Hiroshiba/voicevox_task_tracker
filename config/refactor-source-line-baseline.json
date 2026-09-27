@@ -2,11 +2,6 @@
   "baselineCommit": "2facf26033517ee7138a95b70ee1c0116028bc9a",
   "entries": [
     {
-      "path": "src/cli/notification-delivery-runtime.ts",
-      "lineCount": 1264,
-      "sha256": "c6b25abba422417e20878e83bb2b4d6d6333a3175fd17dadd9874e7d398a7fc2"
-    },
-    {
       "path": "src/cli/personal-reminder-runtime.ts",
       "lineCount": 4777,
       "sha256": "970d352590260691fbe3983b1845500ca5cc5b93aadbceec7b8491d14b6113ab"
@@ -95,11 +90,6 @@
       "path": "src/persistence/state-documents.ts",
       "lineCount": 1092,
       "sha256": "51ce68178a2cd4dc981ebfabeae16b2b5f530924755f56e61834294d01cc04df"
-    },
-    {
-      "path": "src/persistence/state-persistence-session.ts",
-      "lineCount": 1043,
-      "sha256": "e5464c4898c8426693c28772961a4fc6795b14fd87bef647af600499657bbc92"
     },
     {
       "path": "web/src/model.ts",

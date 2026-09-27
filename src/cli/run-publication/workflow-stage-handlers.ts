@@ -70,6 +70,7 @@ export async function persistWorkflowState(
     historyInputEvents: artifact.historyInputEvents,
     notificationLedger: artifact.notificationLedger,
     repositoryInventory: workflowArtifactRepositoryInventory(artifact),
+    repositoryAllowlist: artifact.repositoryAllowlist,
     knownSecrets: [],
   });
 }
@@ -161,6 +162,7 @@ export async function notifyWorkflowDiscord(
       config,
       state,
       repositoryInventory: workflowArtifactRepositoryInventory(artifact),
+      repositoryAllowlist: artifact.repositoryAllowlist,
       validated: validatedRunFromArtifact(artifact),
       runMetadata: artifact.runMetadata,
       delivery: {
@@ -191,6 +193,7 @@ export async function notifyWorkflowDiscord(
     artifact.discordSettings,
     state,
     workflowArtifactRepositoryInventory(artifact),
+    artifact.repositoryAllowlist,
     knownSecrets,
     Object.freeze({
       snapshot: artifact.snapshot,
@@ -205,6 +208,7 @@ export async function notifyWorkflowDiscord(
     config,
     state,
     repositoryInventory: workflowArtifactRepositoryInventory(artifact),
+    repositoryAllowlist: artifact.repositoryAllowlist,
     validated: validatedRunFromArtifact(artifact),
     runMetadata: artifact.runMetadata,
     delivery: {
@@ -227,15 +231,15 @@ export async function notifyWorkflowOperations(
       command.collectAnalyzeReportPath,
     );
     const report = await readOptionalRunReportFile(reportPath);
-    if (report == null) {
-      throw new CliWorkflowArtifactError(reportPath, "missing", {});
-    }
-    if (report.command !== "collect-analyze") {
+    if (report != null && report.command !== "collect-analyze") {
       throw new CliWorkflowArtifactError(reportPath, "invalid", {
         cause: new TypeError("収集run reportのcommandが一致しません"),
       });
     }
-    if (report.status === "failure" && report.failureKind === "public_boundary") {
+    if (
+      command.publicBoundaryStatus === "confirmed" ||
+      (report?.status === "failure" && report.failureKind === "public_boundary")
+    ) {
       return;
     }
   }

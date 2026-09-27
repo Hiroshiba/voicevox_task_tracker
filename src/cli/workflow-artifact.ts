@@ -7,7 +7,12 @@ import {
   type NotificationAction,
 } from "../application/tracking-run/contracts/closed-values.js";
 
-import { serializeCanonicalJson } from "../canonical-json/index.js";
+import {
+  hashCanonicalJson,
+  parseSha256Hash,
+  serializeCanonicalJson,
+} from "../canonical-json/index.js";
+import type { Sha256Hash } from "../canonical-json/index.js";
 import {
   createAiCacheEntry,
   createPersonalReminderAiCacheEntry,
@@ -34,7 +39,7 @@ import {
   type DiscordDeliverySettings,
   type DiscordNotificationSelection,
 } from "../discord/index.js";
-import { createPublicRepositoryAllowlist } from "../github/index.js";
+import { isEligiblePublicRepository } from "../github/public-repository-allowlist.js";
 import {
   assertStatePublicSafety,
   assertPersonalReminderEvidenceClosure,
@@ -50,7 +55,7 @@ import { assertNonNullable } from "../util/index.js";
 import { CliWorkflowArtifactError } from "./errors.js";
 
 const actionsSecretNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
-const WORKFLOW_ARTIFACT_SCHEMA_VERSION = "13";
+const WORKFLOW_ARTIFACT_SCHEMA_VERSION = "14";
 const nonNegativeIntegerSchema = z.number().int().nonnegative();
 const dateTimeSchema = z.iso
   .datetime({
@@ -71,6 +76,13 @@ const repositoryAllowlistEntrySchema = z.strictObject({
   owner: z.string().min(1),
   name: z.string().min(1),
 });
+const repositoryInventoryEntrySchema = repositoryAllowlistEntrySchema.extend({
+  visibility: z.literal("public"),
+  archived: z.literal(false),
+  disabled: z.literal(false),
+  observedAt: dateTimeSchema,
+});
+const allowlistDigestSchema = z.string().transform((value) => parseSha256Hash(value));
 const severitySchema = z.enum(["none", "watch", "urgent", "critical"]);
 const notificationReasonCodeSchema = z.enum([
   "assessment_overdue",
@@ -244,6 +256,8 @@ const workflowArtifactSchema = z.strictObject({
   kind: z.literal("validated_public_run"),
   notificationAction: notificationActionSchema,
   repositoryAllowlist: z.array(repositoryAllowlistEntrySchema),
+  repositoryInventory: z.array(repositoryInventoryEntrySchema),
+  allowlistDigest: allowlistDigestSchema,
   snapshot: z.unknown(),
   historyInputEvents: z.array(z.unknown()),
   notificationLedger: z.unknown(),
@@ -275,6 +289,8 @@ export type WorkflowArtifact = Readonly<{
   kind: "validated_public_run";
   notificationAction: NotificationAction;
   repositoryAllowlist: readonly WorkflowArtifactRepositoryAllowlistEntry[];
+  repositoryInventory: readonly Repository[];
+  allowlistDigest: Sha256Hash;
   snapshot: StateSnapshot;
   historyInputEvents: readonly StateHistoryInputEvent[];
   notificationLedger: StateNotificationLedger;
@@ -386,22 +402,6 @@ function createRepositoryAllowlist(
     throw new TypeError("workflow artifactのrepository allowlistが重複しています");
   }
   return Object.freeze(entries);
-}
-
-function repositoryInventory(snapshot: StateSnapshot): readonly Repository[] {
-  return Object.freeze(
-    snapshot.repositories.map((repository) =>
-      Object.freeze({
-        id: repository.id,
-        owner: repository.owner,
-        name: repository.name,
-        visibility: repository.visibility,
-        archived: repository.archived,
-        disabled: repository.disabled,
-        observedAt: repository.observedAt,
-      }),
-    ),
-  );
 }
 
 /** workflow run metadataを時系列も含めて検証する。 */
@@ -621,6 +621,10 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
     kind: "validated_public_run",
     notificationAction: result.data.notificationAction,
     repositoryAllowlist: createRepositoryAllowlist(result.data.repositoryAllowlist),
+    repositoryInventory: Object.freeze(
+      result.data.repositoryInventory.map((repository) => Object.freeze(repository)),
+    ),
+    allowlistDigest: result.data.allowlistDigest,
     snapshot,
     historyInputEvents,
     notificationLedger,
@@ -645,7 +649,7 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
   assertRunConsistency(snapshot, runMetadata);
   assertNotificationActionConsistency(artifact.notificationAction, notificationSelection);
   assertNotificationSelectionConsistency(snapshot, notificationLedger, notificationSelection);
-  assertWorkflowArtifactPublicSafety(artifact, repositoryInventory(snapshot), []);
+  assertWorkflowArtifactPublicSafety(artifact, artifact.repositoryInventory, []);
   return artifact;
 }
 
@@ -653,7 +657,7 @@ function assertRepositoryAllowlistConsistency(
   artifact: WorkflowArtifact,
   inventory: readonly Repository[],
 ): void {
-  const collectedAllowlist = createPublicRepositoryAllowlist(inventory).repositories;
+  const collectedAllowlist = inventory.filter(isEligiblePublicRepository);
   const artifactRepositories = new Map(
     artifact.repositoryAllowlist.map((repository) => [repository.id, repository]),
   );
@@ -666,6 +670,22 @@ function assertRepositoryAllowlistConsistency(
     ) {
       mismatch = true;
     }
+  }
+  if (
+    hashCanonicalJson(
+      artifact.repositoryInventory.map((repository) => ({
+        id: repository.id,
+        owner: repository.owner,
+        name: repository.name,
+        visibility: repository.visibility,
+        archived: repository.archived,
+        disabled: repository.disabled,
+      })),
+    ) !== artifact.allowlistDigest ||
+    serializeCanonicalJson(artifact.repositoryInventory) !==
+      serializeCanonicalJson(collectedAllowlist)
+  ) {
+    mismatch = true;
   }
   if (mismatch) {
     throw new StatePublicSafetyError(["repository_allowlist_mismatch"]);
@@ -682,6 +702,7 @@ export function assertWorkflowArtifactPublicSafety(
   assertStatePublicSafety({
     snapshot: artifact.snapshot,
     repositoryInventory: inventory,
+    repositoryAllowlist: artifact.repositoryAllowlist,
     additionalValues: [
       artifact.repositoryAllowlist,
       artifact.historyInputEvents,
@@ -697,11 +718,11 @@ export function assertWorkflowArtifactPublicSafety(
   });
 }
 
-/** workflow artifactから公開repository inventoryを復元する。 */
+/** workflow artifactの公開repository inventoryを返す。 */
 export function workflowArtifactRepositoryInventory(
-  artifact: Pick<WorkflowArtifact, "snapshot">,
+  artifact: Pick<WorkflowArtifact, "repositoryInventory">,
 ): readonly Repository[] {
-  return repositoryInventory(artifact.snapshot);
+  return artifact.repositoryInventory;
 }
 
 function hasErrorCode(error: unknown, code: string): boolean {

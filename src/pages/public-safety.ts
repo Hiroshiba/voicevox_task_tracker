@@ -1,4 +1,6 @@
 import { type Repository } from "../domain/index.js";
+import { isEligiblePublicRepository } from "../github/public-repository-allowlist.js";
+import { containsPrivateRepositoryReference } from "../github/private-repository-reference.js";
 import { type StateHistoryRecord, type StateSnapshot } from "../persistence/index.js";
 import { PagesPublicSafetyError } from "./errors.js";
 
@@ -96,18 +98,6 @@ function isSafeGitHubUrl(value: string): boolean {
   );
 }
 
-function privateRepositorySentinels(inventory: readonly Repository[]): readonly string[] {
-  return Object.freeze(
-    inventory
-      .filter((repository) => repository.visibility !== "public")
-      .flatMap((repository) => [
-        repository.id,
-        `${repository.owner}/${repository.name}`,
-        `https://github.com/${repository.owner}/${repository.name}`,
-      ]),
-  );
-}
-
 function createRepositoryAllowlist(
   entries: readonly PagesRepositoryAllowlistEntry[],
 ): ReadonlyMap<Repository["id"], PagesRepositoryAllowlistEntry> {
@@ -120,19 +110,19 @@ function createRepositoryAllowlist(
 
 function scanValues(
   values: readonly unknown[],
-  privateSentinels: readonly string[],
+  repositoryInventory: readonly Repository[],
   knownSecrets: readonly string[],
 ): readonly string[] {
   const violationCodes = new Set<string>();
+  if (containsPrivateRepositoryReference(values, repositoryInventory)) {
+    violationCodes.add("private_repository_data");
+  }
   const pending: unknown[] = [...values];
   const visited = new WeakSet<object>();
 
   while (pending.length > 0) {
     const value = pending.pop();
     if (typeof value === "string") {
-      if (containsValue(value, privateSentinels)) {
-        violationCodes.add("private_repository_data");
-      }
       if (containsValue(value, knownSecrets) || containsSecretPattern(value)) {
         violationCodes.add("secret");
       }
@@ -183,6 +173,16 @@ export function assertPagesPublicSafety(input: PagesPublicSafetyInput): void {
 
   const allowlist = createRepositoryAllowlist(input.repositoryAllowlist);
   const violationCodes: string[] = [];
+  const eligibleRepositories = input.repositoryInventory.filter(isEligiblePublicRepository);
+  if (
+    allowlist.size !== eligibleRepositories.length ||
+    eligibleRepositories.some((repository) => {
+      const entry = allowlist.get(repository.id);
+      return entry?.owner !== repository.owner || entry.name !== repository.name;
+    })
+  ) {
+    violationCodes.push("invalid_repository_allowlist");
+  }
   for (const repository of input.snapshot.repositories) {
     const allowlistedRepository = allowlist.get(repository.id);
     if (allowlistedRepository == null) {
@@ -205,7 +205,7 @@ export function assertPagesPublicSafety(input: PagesPublicSafetyInput): void {
   violationCodes.push(
     ...scanValues(
       [input.snapshot, ...input.historyRecords],
-      privateRepositorySentinels(input.repositoryInventory),
+      input.repositoryInventory,
       input.knownSecrets,
     ),
   );

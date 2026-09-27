@@ -65,6 +65,7 @@ export {
 } from "./history.js";
 export { MemoryStateBranchAdapter } from "./memory-state-branch-adapter.js";
 export {
+  assertExistingStatePublicSafety,
   assertStatePublicSafety,
   assertStateValuesPublicSafety,
   type StatePublicSafetyInput,

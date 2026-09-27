@@ -117,7 +117,11 @@ type NotifyOperationsCommandFields = Readonly<{
 /** workflow障害時に運用障害通知だけを送るCLI入力。 */
 export type NotifyOperationsCliCommand = NotifyOperationsCommandFields &
   (
-    | Readonly<{ incidentKind: "collection"; collectAnalyzeReportPath: string }>
+    | Readonly<{
+        incidentKind: "collection";
+        collectAnalyzeReportPath: string;
+        publicBoundaryStatus: "confirmed" | "not_confirmed" | "unclassified";
+      }>
     | Readonly<{ incidentKind: "pages" | "discord" }>
   );
 
@@ -481,6 +485,7 @@ function parseNotifyOperations(args: readonly string[]): NotifyOperationsCliComm
       "--occurred-at",
       "--retry-attempts",
       "--collect-analyze-report",
+      "--public-boundary-status",
     ]),
   );
   const incidentKind = optionalSingleOption(options, "--kind");
@@ -518,9 +523,19 @@ function parseNotifyOperations(args: readonly string[]): NotifyOperationsCliComm
     retryAttempts,
   } satisfies NotifyOperationsCommandFields;
   if (incidentKind === "collection") {
+    const publicBoundaryStatus =
+      optionalSingleOption(options, "--public-boundary-status") ?? "unclassified";
+    if (
+      publicBoundaryStatus !== "confirmed" &&
+      publicBoundaryStatus !== "not_confirmed" &&
+      publicBoundaryStatus !== "unclassified"
+    ) {
+      throw usageError("--public-boundary-statusが不正です");
+    }
     return Object.freeze({
       ...common,
       incidentKind,
+      publicBoundaryStatus,
       collectAnalyzeReportPath: requiredSingleOption(
         options,
         "--collect-analyze-report",
@@ -530,6 +545,9 @@ function parseNotifyOperations(args: readonly string[]): NotifyOperationsCliComm
   }
   if (optionalSingleOption(options, "--collect-analyze-report") != null) {
     throw usageError("--collect-analyze-reportはcollection障害だけに指定してください");
+  }
+  if (optionalSingleOption(options, "--public-boundary-status") != null) {
+    throw usageError("--public-boundary-statusはcollection障害だけに指定してください");
   }
   return Object.freeze({ ...common, incidentKind });
 }

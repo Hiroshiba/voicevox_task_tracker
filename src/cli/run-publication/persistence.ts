@@ -30,6 +30,7 @@ export async function persistValidatedRun(input: PersistValidatedRunInput): Prom
     historyInputEvents: input.validated.historyInputEvents,
     notificationLedger: input.validated.notificationLedger,
     repositoryInventory: input.inventory.inventory,
+    repositoryAllowlist: input.inventory.allowlist.repositories,
     knownSecrets: input.configuration.credentials.knownSecrets,
   });
   if (input.configuration.target.kind === "sandbox") {
@@ -49,6 +50,7 @@ export type PersistSuccessfulRunCompletionInput = Readonly<{
   config: Config;
   state: PublicationState;
   repositoryInventory: readonly Repository[];
+  repositoryAllowlist: readonly Pick<Repository, "id" | "owner" | "name">[];
   validated: ValidatedRun;
   runMetadata: WorkflowRunMetadata;
   delivery: RunCompletionDelivery;
@@ -88,6 +90,7 @@ export async function persistSuccessfulRunCompletion(
       finishedAt: completedAt,
     }),
     repositoryInventory: input.repositoryInventory,
+    repositoryAllowlist: input.repositoryAllowlist,
     knownSecrets: input.knownSecrets,
   });
   await input.state.session.publish();

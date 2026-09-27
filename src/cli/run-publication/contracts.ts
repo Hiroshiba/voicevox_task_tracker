@@ -1,4 +1,5 @@
 import type { Config, loadConfig } from "../../config/index.js";
+import type { Sha256Hash } from "../../canonical-json/sha256.js";
 import type {
   LabelRule,
   Repository,
@@ -90,6 +91,7 @@ export type PublicationState = Readonly<{
 export type PublicationRepositoryInventory = Readonly<{
   inventory: readonly Repository[];
   allowlist: PublicRepositoryAllowlist;
+  allowlistDigest: Sha256Hash;
 }>;
 
 /** 公開処理だけが必要とする外部接続。 */

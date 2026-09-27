@@ -6,6 +6,7 @@ import type { GitHubAppCredentials } from "../../github/credentials.js";
 import type { GitHubRateLimitSnapshot } from "../../github/errors.js";
 import { createPublicRepositoryAllowlist } from "../../github/public-repository-allowlist.js";
 import { GitHubPublicBoundaryViolationError } from "../../github/errors.js";
+import { containsPrivateRepositoryReference } from "../../github/private-repository-reference.js";
 import {
   type enumerateGitHubItemsByIdentifiers,
   type enumerateOpenGitHubItems,
@@ -59,22 +60,10 @@ export class GitHubRunSessions {
   }
 }
 
-function isUnknownArray(value: unknown): value is unknown[] {
-  return Array.isArray(value);
-}
-
-function isUnknownRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value != null && !Array.isArray(value);
-}
-
 function assertStoredPrivateRepositoryBoundary(
   inventory: Awaited<ReturnType<typeof discoverRepositoryInventory>>,
   prepared: Parameters<RepositoryInventoryPort["collect"]>[0],
 ): void {
-  const privateRepositories = inventory.filter((repository) => repository.visibility !== "public");
-  if (privateRepositories.length === 0) {
-    return;
-  }
   const storedValues: unknown[] = [
     prepared.core.baseState.snapshot,
     prepared.core.baseState.history,
@@ -82,37 +71,8 @@ function assertStoredPrivateRepositoryBoundary(
     prepared.core.baseState.personalReminderAiCache,
     prepared.core.baseState.notificationLedger,
   ];
-  const storedStrings = new Set<string>();
-  const visited = new WeakSet<object>();
-  while (storedValues.length > 0) {
-    const value = storedValues.pop();
-    if (typeof value === "string") {
-      storedStrings.add(value);
-      continue;
-    }
-    if (typeof value !== "object" || value == null || visited.has(value)) {
-      continue;
-    }
-    visited.add(value);
-    if (isUnknownArray(value)) {
-      storedValues.push(...value);
-      continue;
-    }
-    if (isUnknownRecord(value)) {
-      for (const [key, propertyValue] of Object.entries(value)) {
-        storedValues.push(key, propertyValue);
-      }
-    }
-  }
-  const persistedStrings = [...storedStrings];
-  const violationCount = privateRepositories.filter((repository) => {
-    const fullName = `${repository.owner}/${repository.name}`.toLowerCase();
-    return persistedStrings.some(
-      (value) => value.includes(repository.id) || value.toLowerCase().includes(fullName),
-    );
-  }).length;
-  if (violationCount > 0) {
-    throw new GitHubPublicBoundaryViolationError(violationCount);
+  if (containsPrivateRepositoryReference(storedValues, inventory)) {
+    throw new GitHubPublicBoundaryViolationError(1);
   }
 }
 

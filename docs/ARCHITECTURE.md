@@ -147,8 +147,8 @@ GitHubの`closingIssuesReferences`とtimelineの`willCloseTarget`はauthoritativ
 関係先のPRや子Issueで確認した作業者を、親Issueや横断Issueの実質担当者へ拡張しません。
 
 `.github/workflows/daily.yml`は通常経路の`quality`、`collect-analyze`、`persist-state`、初回の`build-pages`、初回の`deploy-pages`、`notify-discord`、通知候補がある場合だけ動く`publish-notification-history`に、失敗時だけ動く`notify-operations`と全job結果を保存する`report-workflow`を加えた9 jobで構成されています。
-収集失敗のrun reportには公開境界違反かどうかを型付きで記録します。運用障害通知は収集run reportを検証し、公開境界違反なら送信しません。収集run reportを取得できない場合も送信前に停止します。Pages生成と通知処理で検出した公開境界違反はCLIからjob出力へ渡し、運用障害通知jobを起動しません。
-schema version 13のworkflow artifactは`notificationAction`を保持します。`persist-state`はsnapshotと、未送信候補を含む通知管理記録を同じatomic transactionで保存します。`notify-discord`はartifactと`tracker-state`のsnapshot run IDを照合してから、`send`なら通知を送り、`hold`と`acknowledge-current`なら通常通知を送らずにrunを完了します。不一致の場合は通知もrun完了処理も行いません。`send`で通知候補がある場合だけ`publish-notification-history`が最新stateを取得し、送信済み通知を含むPagesを再生成してdeployします。運用障害通知はこの通知処理と別系統です。
+収集失敗のrun reportには公開境界違反かどうかを型付きで記録します。CLIの例外経路も同じ分類をjob出力へ渡します。CLI開始前の失敗では分類が未設定のまま残ります。運用障害通知は取得できたrun reportを検証し、reportまたはjob出力で公開境界違反が確定した場合は送信しません。reportが作られる前の通常障害では通知を続け、存在するreportが破損している場合は停止します。Pages生成と通知処理で検出した公開境界違反もCLIからjob出力へ渡し、運用障害通知jobを起動しません。
+schema version 14のworkflow artifactは`notificationAction`と収集段階で固定した公開repository inventory、allowlist、digestを保持します。`persist-state`はsnapshotと、未送信候補を含む通知管理記録を同じatomic transactionで保存します。`notify-discord`はartifactと`tracker-state`のsnapshot run IDを照合してから、`send`なら通知を送り、`hold`と`acknowledge-current`なら通常通知を送らずにrunを完了します。不一致の場合は通知もrun完了処理も行いません。`send`で通知候補がある場合だけ`publish-notification-history`が最新stateを取得し、送信済み通知を含むPagesを再生成してdeployします。運用障害通知はこの通知処理と別系統です。
 repository variableの`VOICEVOX_TASK_TRACKER_SCHEDULE_PAUSED`が`true`の場合は、定期実行の開始jobと障害通知・run報告を省略します。手動実行には影響しません。
 `collect-analyze`とsandbox jobは、`CODEX_AUTH_JSON`が空なら認証ファイルを配置せず、実行候補があるときだけCLI側で認証不足を検出します。
 secretが非空ならrunnerの一時directoryへ配置し、配置直後の`auth.json`のsha256を指紋として保存します。
@@ -472,21 +472,20 @@ Web UIは停滞レベルを表示、絞り込み、並び替え、依存グラ�
 
 公開境界は一つのfilterへ依存せず、三つの段階で検証します。
 
-1. 収集guardはrepository metadataだけを先に取得し、`public`、非アーカイブ、非disabledを満たすrepository IDをallowlistへ固定します。Organization外の参照先は詳細応答で`public`を検証し、関係候補の解決時にarchive済みとdisabledを除外します。
-2. 永続化guardはcommit直前にsnapshotと付随データを走査し、allowlist外ID、private repositoryのID、owner/name、repository URL、既知secret、credential field、不要な全文を拒否します。
-3. Pages guardはDTO生成直前に別実装で収集時の公開allowlistとsnapshotを照合し、repository identity、private sentinel、secret、安全でないURL、不要な全文を再検査します。
+1. 収集guardはrepository metadataだけを先に取得し、`public`、非アーカイブ、非disabledを満たすrepository IDをallowlistへ固定します。選定前に前回stateと既知の非公開repositoryを照合し、構造化されたrepository IDの完全一致と、境界を区切ったowner/nameまたはGitHub URLの一致で停止します。IDのない旧履歴と改名済みrepositoryの同一性は判定しません。Organization外の参照先は詳細応答で`public`を検証し、関係候補の解決時にarchive済みとdisabledを除外します。
+2. 永続化guardはcommit直前に収集段階のallowlistとinventory、snapshot、付随データを照合し、allowlist外ID、既知の非公開repository参照、既知secret、credential field、不要な全文を拒否します。allowlistを再生成しません。
+3. Pages guardはDTO生成直前に別実装で収集段階のallowlist、inventory、snapshotを照合し、repository identity、既知の非公開repository参照、secret、安全でないURL、不要な全文を再検査します。
 
 `config.yml`の`maintainers`に書いたGitHubユーザー名と、GitHubのreview requestや本文とコメントから得たteam識別子は公開情報としてguardを通過できます。
 GitHubのteam member一覧は収集しないため、snapshot、公開DTO、Discord通知の入力にも含まれません。
 
-収集時の公開allowlistはworkflow artifactへ保存し、Pages guardではsnapshotから再構築しません。
-artifactには照合に必要なrepository ID、owner、nameだけを保存します。
+収集時の公開allowlist、公開inventory、digestはworkflow artifactへ保存します。後続jobはsnapshotからinventoryを作らず、artifactに保存された値の形、digest、所属とsnapshotのrepository参照を照合します。既知の非公開repositoryへの参照は履歴も含めて検査します。
 
 guard違反は例外として日次トランザクションへ伝播します。
 新しいPages公開と通常digestは実行されず、最後に成功した公開結果が残ります。
-Pages guardを含むPages stageのエラーでは、通常digestの代わりにDiscordへ運用障害通知を試みます。
+Pages guardを含む公開境界違反では、通常digestも運用障害通知も送信しません。通常のPages障害では運用障害通知を試みます。
 通常digestにはPages guardを通過したsnapshot由来の通知候補だけを使います。
-通常digestの送信前には、artifactのsnapshotとtracker-state branchへ永続化済みのsnapshotでrun IDが一致することを検証し、不一致なら送信せず失敗します。
+通常digestの送信前には、artifactのsnapshotとtracker-state branchへ永続化済みのsnapshotでrun IDが一致することを検証し、既存履歴と通知台帳を含む公開安全性を再検査します。不一致や公開境界違反では送信せず失敗します。運用障害通知も既存snapshot、履歴、通知台帳、送信予定値をHTTP呼出前に検査します。
 
 ## Codexの隔離
 

@@ -872,17 +872,23 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           diagnostics.push(safeErrorDiagnostic("discord", alertError));
         }
       }
-      return this.#writeFailure(
-        invocation,
-        request.reportPath,
-        stage,
-        failureKind,
-        metrics,
-        configuration,
-        [...diagnostics, safeErrorDiagnostic(stage, error)],
-        discordSentAt,
-        effects,
-      );
+      try {
+        return await this.#writeFailure(
+          invocation,
+          request.reportPath,
+          stage,
+          failureKind,
+          metrics,
+          configuration,
+          [...diagnostics, safeErrorDiagnostic(stage, error)],
+          discordSentAt,
+          effects,
+        );
+      } catch (reportError: unknown) {
+        throw new AggregateError([error, reportError], "run reportの書込みにも失敗しました", {
+          cause: error,
+        });
+      }
     }
   }
 

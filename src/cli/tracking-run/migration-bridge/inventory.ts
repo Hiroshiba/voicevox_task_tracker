@@ -6,5 +6,6 @@ export function projectLegacyRepositoryInventory(run: InventoryCollectedRun): Re
   return Object.freeze({
     inventory: run.data.allowlist.repositories,
     allowlist: run.data.allowlist,
+    allowlistDigest: run.data.allowlistDigest,
   });
 }

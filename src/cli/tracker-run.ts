@@ -297,9 +297,26 @@ export async function runTrackerCliMain(args: readonly string[]): Promise<number
       }
     }
   }
+  const githubOutputPath = process.env["GITHUB_OUTPUT"];
+  if (githubOutputPath != null && command === "collect-analyze") {
+    const publicBoundaryConfirmed =
+      failure != null
+        ? isPublicBoundaryViolation(failure)
+        : result?.command === "collect-analyze" &&
+          result.result.report.status === "failure" &&
+          result.result.report.failureKind === "public_boundary";
+    await appendFile(
+      githubOutputPath,
+      `public_boundary_status=${publicBoundaryConfirmed ? "confirmed" : "not_confirmed"}\n`,
+      "utf8",
+    );
+  }
   if (failure != null) {
-    const githubOutputPath = process.env["GITHUB_OUTPUT"];
-    if (githubOutputPath != null && isPublicBoundaryViolation(failure)) {
+    if (
+      githubOutputPath != null &&
+      command !== "collect-analyze" &&
+      isPublicBoundaryViolation(failure)
+    ) {
       await appendFile(githubOutputPath, "public_boundary_violation=true\n", "utf8");
     }
     process.stderr.write(`${safeTopLevelMessage(failure)}\n`);
