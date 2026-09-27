@@ -15,6 +15,7 @@ import type {
 } from "../contracts.js";
 import { reconcileCurrentGraph } from "../graph/stage.js";
 import { reduceAnalysisPass } from "./item-reduction.js";
+import type { GenericAiAdoptedRun } from "../../../application/tracking-run/stages/generic-ai-adoption.js";
 
 function reduceAllAnalyses(
   configuration: RuntimeConfiguration,
@@ -23,6 +24,7 @@ function reduceAllAnalyses(
   collection: CollectedItems,
   deterministicAnalysis: DeterministicAnalysis,
   codexAnalysis: CodexAnalysis,
+  adopted: GenericAiAdoptedRun,
 ): ReducedAnalysis {
   const initialReduction = reduceAnalysisPass(
     configuration,
@@ -31,6 +33,7 @@ function reduceAllAnalyses(
     collection,
     deterministicAnalysis,
     codexAnalysis,
+    adopted,
     undefined,
   );
   const provisionalGraph = reconcileCurrentGraph(
@@ -46,6 +49,7 @@ function reduceAllAnalyses(
     collection,
     deterministicAnalysis,
     codexAnalysis,
+    adopted,
     provisionalGraph,
   );
 }
@@ -58,6 +62,7 @@ export function createReduceAnalysisStage(): DailyTransactionDependencies<Produc
     repositoryInventory,
     deterministicallyAnalyzed,
     codexAnalysis,
+    genericAiAdopted,
   }) =>
     Promise.resolve(
       reduceAllAnalyses(
@@ -67,6 +72,7 @@ export function createReduceAnalysisStage(): DailyTransactionDependencies<Produc
         projectLegacyAnalyzedCollection(deterministicallyAnalyzed),
         projectLegacyDeterministicAnalysis(deterministicallyAnalyzed),
         codexAnalysis,
+        genericAiAdopted,
       ),
     );
 }

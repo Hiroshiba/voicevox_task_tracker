@@ -13,7 +13,14 @@ import {
 import type { DiscordNotificationItem } from "../../../discord/index.js";
 import type { RelationCandidateAssessment } from "../../../graph/index.js";
 import { assertNonNullable } from "../../../util/index.js";
-import { forcedAiAnalysisTarget } from "../ai-analysis-target.js";
+import type { GenericAiAdoptedRun } from "../../../application/tracking-run/stages/generic-ai-adoption.js";
+import {
+  projectLegacyConsumerOutput,
+  projectLegacyDeadlineAssessment,
+  projectLegacyImportanceAssessment,
+  projectLegacyPreservedElements,
+  projectLegacyTrackedItemAiAnalysis,
+} from "../../tracking-run/migration-bridge/generic-ai-adoption.js";
 import {
   blockerValueAiDependencies,
   unknownBlockerValueAiDependencies,
@@ -46,12 +53,7 @@ import { preservedElementsWithCompatibleRelations } from "../preserved-codex-rel
 import { preservedElementsForRetainedItem } from "../previous-state/saved-ai-elements.js";
 import { previousSnapshot, previousTrackedItem } from "../previous-state/snapshot.js";
 import { findRepository, repositoryFullName } from "../repository-lookup.js";
-import {
-  currentAdoptedDeadlineAssessment,
-  currentAdoptedImportanceAssessment,
-} from "./assessment-adoption.js";
 import { reducedDeterministicDecision, reductionForAnalysis } from "./codex-reduction.js";
-import { codexOutputForConsumers } from "./consumer-output.js";
 import { primaryWaitingOnForDecision, transitionBasisForDecision } from "./decision-basis.js";
 import { createDependencyResolutionStaticIndexes } from "./dependency-resolution-indexes.js";
 import { dependencyResolutions } from "./dependency-resolutions.js";
@@ -60,7 +62,6 @@ import {
   naturalLanguageProgressAssessments,
   reassessDeterministicAnalysis,
 } from "./reassessment.js";
-import { preservedElementsForAnalysisReduction } from "./retained-results.js";
 import { createSelfCommitmentCause } from "./self-commitment-cause.js";
 import {
   blockedParentContext,
@@ -71,7 +72,7 @@ import {
   retainedItemObservedAt,
   trackedItemStaleness,
 } from "./staleness.js";
-import { createTrackedItem, trackedItemAiAnalysis } from "./tracked-item.js";
+import { createTrackedItem } from "./tracked-item.js";
 
 /** 項目単位の解析結果を統合する。 */
 export function reduceAnalysisPass(
@@ -81,10 +82,11 @@ export function reduceAnalysisPass(
   collection: CollectedItems,
   deterministicAnalysis: DeterministicAnalysis,
   codexAnalysis: CodexAnalysis,
+  adopted: GenericAiAdoptedRun,
   graph: GraphResult | undefined,
 ): ReducedAnalysis {
   const resolveLabelEffects = createLabelEffectsResolver(normalizeLabelRules(configuration.config));
-  const target = forcedAiAnalysisTarget(configuration);
+  const adoptedByNodeId = new Map(adopted.data.items.map((item) => [item.nodeId, item]));
   const downstreamImpactDependenciesByNodeId =
     graph == null ? undefined : downstreamImpactAiDependenciesByNodeId(graph);
   const blockersDependenciesByNodeId =
@@ -115,7 +117,12 @@ export function reduceAnalysisPass(
   >();
   let runStatus: ReducedAnalysis["runStatus"] = "success";
   for (const originalAnalysis of deterministicAnalysis.items) {
-    const output = codexOutputForConsumers(configuration, state, originalAnalysis, codexAnalysis);
+    const adoptedItem = adoptedByNodeId.get(originalAnalysis.item.nodeId);
+    assertNonNullable(
+      adoptedItem,
+      `汎用AIの採用項目がありません。対象: ${originalAnalysis.item.nodeId}`,
+    );
+    const output = projectLegacyConsumerOutput(originalAnalysis, adoptedItem);
     const analysis = reassessDeterministicAnalysis(
       collection.evaluatedAt,
       configuration,
@@ -124,16 +131,12 @@ export function reduceAnalysisPass(
       output,
       graphBlockerIndex,
     );
-    const reduction = reductionForAnalysis(configuration, state, analysis, codexAnalysis);
-    const planning = codexAnalysis.elementPlanningByNodeId.get(analysis.item.nodeId);
-    assertNonNullable(planning, `AI判定要素の計画がありません。対象: ${analysis.item.nodeId}`);
-    const relationNotificationReduction =
-      reduction ??
-      reducePreservedCodexRelationsAndNotification(
-        analysis.item.nodeId,
-        preservedElementsForAnalysisReduction(state, analysis, codexAnalysis, target),
-        configuration.config.ai.confidence,
-      );
+    const reduction = reductionForAnalysis(configuration, analysis, codexAnalysis, adoptedItem);
+    const relationNotificationReduction = reducePreservedCodexRelationsAndNotification(
+      analysis.item.nodeId,
+      projectLegacyPreservedElements(adoptedItem),
+      configuration.config.ai.confidence,
+    );
     const relationAssessmentsForAnalysis = relationNotificationReduction.relationAssessments;
     const notificationRecommendation = relationNotificationReduction.notification;
     const decision = reduction?.decision ?? reducedDeterministicDecision(analysis.decision);
@@ -143,14 +146,7 @@ export function reduceAnalysisPass(
     relationAssessments.push(...relationAssessmentsForAnalysis);
     const basis = transitionBasisForDecision(analysis, decision);
     const repository = findRepository(inventory, analysis.item.repositoryId);
-    const aiAnalysis = trackedItemAiAnalysis(
-      configuration,
-      state,
-      analysis,
-      codexAnalysis,
-      reduction,
-      output,
-    );
+    const aiAnalysis = projectLegacyTrackedItemAiAnalysis(adoptedItem);
     const primaryWaitingOn = primaryWaitingOnForDecision(
       analysis.decision,
       decision,
@@ -268,24 +264,12 @@ export function reduceAnalysisPass(
         primaryWaitingOn,
         staleness,
         importanceAssessment: resolveImportanceAssessment(
-          reduction?.importanceAssessment,
-          currentAdoptedImportanceAssessment(
-            state,
-            analysis,
-            planning.candidates.importance.savedReuse?.result,
-            planning,
-            target,
-          ),
+          undefined,
+          projectLegacyImportanceAssessment(adoptedItem),
         ),
         deadlineAssessment: resolveDeadlineAssessment(
-          reduction?.deadlineAssessment,
-          currentAdoptedDeadlineAssessment(
-            state,
-            analysis,
-            planning.candidates.deadline.savedReuse?.result,
-            planning,
-            target,
-          ),
+          undefined,
+          projectLegacyDeadlineAssessment(adoptedItem),
         ),
       }),
     );
@@ -298,6 +282,7 @@ export function reduceAnalysisPass(
         primaryWaitingOn,
         staleness,
         aiAnalysis,
+        adoptedItem,
         downstreamImpactDependency,
         blockersDependency,
         blockerValueDependencies,

@@ -63,6 +63,7 @@ export type CoreByStage = Readonly<{
   deterministically_analyzed: AnalysisRunCore;
   generic_ai_planned: GenericAiRunCore;
   generic_ai_executed: GenericAiRunCore;
+  generic_ai_adopted: GenericAiRunCore;
 }>;
 
 /** 段階名に対応したcoreとproofを持つ成果物。 */

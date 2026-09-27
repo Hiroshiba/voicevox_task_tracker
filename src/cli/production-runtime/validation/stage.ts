@@ -1,5 +1,6 @@
 import type { DailyRunInvocation, DailyTransactionDependencies } from "../../daily-transaction.js";
 import type { GitHubRunSessions } from "../../../infrastructure/tracking-run/github-port.js";
+import type { GenericAiAdoptedRun } from "../../../application/tracking-run/stages/generic-ai-adoption.js";
 import type {
   CodexAnalysis,
   CollectedItems,
@@ -26,6 +27,7 @@ function validateRunCompleteness(
   inventory: RepositoryInventory,
   collection: CollectedItems,
   codexAnalysis: CodexAnalysis,
+  genericAiAdopted: GenericAiAdoptedRun,
   reduction: ReducedAnalysis,
   graph: GraphResult,
   personalReminderAnalysis: PersonalReminderAnalysis,
@@ -37,6 +39,7 @@ function validateRunCompleteness(
     inventory,
     collection,
     codexAnalysis,
+    genericAiAdopted,
     reduction,
     graph,
     personalReminderAnalysis,
@@ -71,6 +74,7 @@ export function createValidateCompletenessStage(
     repositoryInventory,
     collection,
     codexAnalysis,
+    genericAiAdopted,
     reduction,
     graph,
     personalReminderAnalysis,
@@ -83,6 +87,7 @@ export function createValidateCompletenessStage(
         repositoryInventory,
         collection,
         codexAnalysis,
+        genericAiAdopted,
         reduction,
         graph,
         personalReminderAnalysis,

@@ -15,10 +15,7 @@ import { requirePersonalReminderAnalyzedItem } from "../../personal-reminder/ind
 import { normalizeLabelRules } from "../label-rules.js";
 import { resolveDeadlineAssessment, resolveImportanceAssessment } from "../analysis-assessments.js";
 import { aiDependencyReconciliationContext } from "../ai-dependencies/reconciliation-context.js";
-import {
-  aiDependencyForElementApplication,
-  combineSelectedAiDependencies,
-} from "../ai-dependencies/selection.js";
+import { combineSelectedAiDependencies } from "../ai-dependencies/selection.js";
 import type {
   CollectedItems,
   GraphResult,
@@ -101,9 +98,7 @@ function createTrackedItemWithImportance(
     (configuration.config.importance.weights.blockedItem > 0 ||
       configuration.config.importance.weights.blockedRepository > 0);
   const importanceDependencies = [
-    ...(naturalLanguageCanAffectImportance
-      ? [aiDependencyForElementApplication(item.nodeId, item.aiAnalysis.applications, "importance")]
-      : []),
+    ...(naturalLanguageCanAffectImportance ? [item.aiDependencies.importance] : []),
     ...(downstreamImpactCanAffectImportance ? [downstreamImpactDependency] : []),
   ];
   return Object.freeze({

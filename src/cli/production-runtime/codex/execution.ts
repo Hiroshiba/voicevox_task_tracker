@@ -25,7 +25,6 @@ import { summarizeAiBudgetLedger } from "../../../application/tracking-run/contr
 import { projectLegacyGenericAiPlanning } from "../../tracking-run/migration-bridge/generic-ai-plan.js";
 import type { CodexAnalysis, RuntimeConfiguration, RuntimeState } from "../contracts.js";
 import { previousSnapshot } from "../previous-state/snapshot.js";
-import { elementGenerationsByNodeId } from "./generations.js";
 
 function codexFallbackDiagnostic(failure: AiAnalysisRunFailure): string {
   return safeCodexFallbackDiagnostic(
@@ -128,13 +127,6 @@ export async function analyzeCodex(
         run: undefined,
         inputByNodeId: prepared.inputByNodeId,
         elementPlanningByNodeId: prepared.elementPlanningByNodeId,
-        elementGenerationsByNodeId: elementGenerationsByNodeId(
-          state,
-          planned.data.facts.items,
-          prepared.elementPlanningByNodeId,
-          undefined,
-          target,
-        ),
       }),
       status: fallback ? "fallback" : "success",
       aiCallCount: 0,
@@ -222,7 +214,16 @@ export async function analyzeCodex(
   );
   const run = Object.freeze({
     ...executedRun,
-    failures: Object.freeze([...planned.data.plan.failures, ...executedRun.failures]),
+    failures: Object.freeze([
+      ...planned.data.plan.failures.map((failure) =>
+        Object.freeze({
+          candidateId: failure.candidateId,
+          reason: failure.reason,
+          errorType: failure.errorType,
+        }),
+      ),
+      ...executedRun.failures,
+    ]),
     skipped:
       target == null
         ? executedRun.skipped
@@ -266,13 +267,6 @@ export async function analyzeCodex(
       run: legacyRun,
       inputByNodeId: prepared.inputByNodeId,
       elementPlanningByNodeId: prepared.elementPlanningByNodeId,
-      elementGenerationsByNodeId: elementGenerationsByNodeId(
-        state,
-        planned.data.facts.items,
-        prepared.elementPlanningByNodeId,
-        legacyRun,
-        target,
-      ),
     }),
     status: fallback ? "fallback" : "success",
     aiCallCount:

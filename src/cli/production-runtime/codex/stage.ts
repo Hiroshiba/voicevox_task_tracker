@@ -1,4 +1,6 @@
 import { planGenericAi } from "../../../application/tracking-run/stages/generic-ai-plan.js";
+import { adoptGenericAi } from "../../../application/tracking-run/stages/generic-ai-adoption.js";
+import { nodeContentDigestPort } from "../../../infrastructure/tracking-run/content-digest.js";
 import type { DailyTransactionDependencies } from "../../daily-transaction.js";
 import type { CodexRuntimeAdapters } from "../adapters.js";
 import type { ProductionTypes } from "../contracts.js";
@@ -49,4 +51,9 @@ export function createAnalyzeWithCodexStage(
       diagnostics: analysis.diagnostics,
     });
   };
+}
+
+/** 検証済み結果を要素別に採用し、旧処理へ渡す記録を確定する。 */
+export function createAdoptGenericAiStage(): DailyTransactionDependencies<ProductionTypes>["adoptGenericAi"] {
+  return ({ genericAiExecuted }) => adoptGenericAi(genericAiExecuted, nodeContentDigestPort);
 }

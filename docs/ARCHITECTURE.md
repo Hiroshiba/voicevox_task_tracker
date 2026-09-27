@@ -55,7 +55,7 @@ Issueの明示依頼候補と実質担当候補は`deterministic-responsibility.
 初期判定とAI結果を採用した再判定は、入力契約を分けます。
 `codex/planning-source.ts`は前回stateと収集値から計画用の事実を投影し、`src/application/tracking-run/stages/generic-ai-plan.ts`が要素の選択と実行候補を確定します。
 未移行のCodex実行器には`src/cli/tracking-run/migration-bridge/generic-ai-plan.ts`が確定済み候補を渡します。
-AI結果の採用と判定の統合は`reduction/`、暫定graphと最終graphの構築は`graph/`が担います。
+汎用AIの9要素の採用は`src/application/tracking-run/stages/generic-ai-adoption.ts`が確定し、`reduction/`は採用結果を判定へ反映します。暫定graphと最終graphの構築は`graph/`が担います。
 `personal-reminder/stage.ts`は既存の個人催促moduleを接続し、`validation/`はsnapshotと通知候補を作って完全性を検証します。
 日次runのinventory、collection、決定論的分析の成果物は`src/application/tracking-run/stages/`を契約とし、未移行stageの型は`production-runtime/contracts.ts`に置きます。
 実アダプターの契約は`adapters.ts`に置きます。
@@ -253,7 +253,7 @@ terminal項目も同じ扱いにし、次回runで必ずAI分析を再試行し�
 
 汎用AIの判定は状態、待ち相手、次の行動、関係、進捗、重要度、期限、通知推奨、selfCommitmentの9要素で選別します。
 入力schemaは5、出力schemaは7、snapshotは19とします。
-各要素のrevision、必要条件、入力投影、利用先、出力schemaは`src/codex/generic-ai-definition.ts`で対応付けます。`GenericAiPlannedRun`が選択要素と理由を項目ごとに固定し、`reduction/`が採用結果を統合します。表の意味入力は要素別fingerprintの対象であり、汎用AIへ渡す入力全体ではありません。
+各要素のrevision、必要条件、入力投影、利用先、出力schemaは`src/codex/generic-ai-definition.ts`で対応付けます。`GenericAiPlannedRun`が選択要素と理由を項目ごとに固定し、`GenericAiAdoptedRun`が新規結果、cache、前回snapshotを同じ規則で採用します。表の意味入力は要素別fingerprintの対象であり、汎用AIへ渡す入力全体ではありません。
 
 | 要素             | revision | 必要条件                                                                                       | 意味入力fingerprintの対象                                                  | 主な利用先                     |
 | ---------------- | -------: | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------ |
@@ -268,6 +268,7 @@ terminal項目も同じ扱いにし、次回runで必ずAI分析を再試行し�
 | `selfCommitment` |        1 | 観測期間内の未編集human comment候補がある                                                      | 項目全体、自己申告候補、本文・コメント・レビュー                           | 自己申告原因による通知抑制     |
 
 要素別の計画は意味入力そのものと、そのcanonical JSONから作ったfingerprintを一緒に保持します。評価時刻の経過だけではfingerprintを変えません。計画時にAIを使う要素のcache hitとmissを確定し、missだけを選択した輸送入力と費用を固定します。cache hitの値は輸送入力のlockedElementsに渡し、missが延期または失敗しても計画結果に保持します。AI無効、不要、現在の完了結果の再利用、強制解析による延期も要素ごとに区別します。
+採用段階は要素ごとに実行状態、採用値、保持値、生成元、現在性、適用元、AI依存を一つの記録へ確定します。失敗や延期の後も現在の入力に一致する前回の完了値を使い、入力が一致しない値は未検証理由を付けて保持します。採用後のrunはAI送信用の厳密入力を保持しません。
 
 selfCommitmentは他の要素から独立して扱い、他の要素のprojectionへ専用の観測期間を混ぜません。
 selfCommitmentの候補は前回`observedAt`より後、今回の評価時刻以前の未編集human commentに限り、source authorとtimeline event actorが同じhumanであることを確認します。前回観測がない場合は追加推論を行いません。通知時は現在の`waitingOn`が単独のhuman userであり、そのactorと一致することを決定論的に確認し、他者、混在、不明、依存解消の原因は通知を残します。

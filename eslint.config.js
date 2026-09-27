@@ -32,6 +32,8 @@ const pureLeafImportPaths = [
   "canonical-json/sha256.js",
   "canonical-json/value.js",
   "codex/analysis-elements.js",
+  "codex/analysis-element-confidence.js",
+  "codex/analysis-reuse.js",
   "codex/analysis-element-dependencies.js",
   "codex/analysis-selection.js",
   "codex/backend-version.js",

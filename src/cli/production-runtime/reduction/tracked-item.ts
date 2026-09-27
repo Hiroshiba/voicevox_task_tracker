@@ -1,8 +1,4 @@
-import type { CodexAnalysisReduction, ReducedCodexDecision } from "../../../codex/index.js";
-import {
-  AI_ANALYSIS_ELEMENTS,
-  type AiAnalysisElement,
-} from "../../../domain/ai-analysis-elements.js";
+import type { ReducedCodexDecision } from "../../../codex/index.js";
 import type {
   AiAnalysisDependency,
   TrackedItemAiDependencies,
@@ -23,42 +19,16 @@ import {
   type UtcIsoDateTime,
 } from "../../../domain/index.js";
 import { type FreshObservedGitHubItem } from "../../../github/index.js";
-import { assertNonNullable } from "../../../util/index.js";
 import type { DeterministicItemAnalysis } from "../../../application/tracking-run/stages/deterministic-item.js";
+import type { GenericAiItemAdoption } from "../../../application/tracking-run/stages/generic-ai-adoption-contracts.js";
 import { trackedItemInputEvents } from "../../tracked-item-input-events.js";
-import { aiAnalysisRunIndex, generatedElementsForNode } from "../ai-analysis-run-index.js";
-import { forcedAiAnalysisTarget, isForcedUnexecutedElement } from "../ai-analysis-target.js";
 import { unknownBlockerValueAiDependencies } from "../ai-dependencies/blocker-values.js";
-import {
-  aiDependencyForElementApplication,
-  notDependentAiDependency,
-  unrecordedAiDependency,
-} from "../ai-dependencies/selection.js";
+import { notDependentAiDependency, unrecordedAiDependency } from "../ai-dependencies/selection.js";
 import { criticalSeverityWasRequested, severityAiDependency } from "../ai-dependencies/severity.js";
 import { stallSinceAiDependency } from "../ai-dependencies/stall-since.js";
-import type {
-  BlockerValueAiDependencies,
-  CodexAnalysis,
-  PendingTrackedItem,
-  RuntimeConfiguration,
-  RuntimeState,
-} from "../contracts.js";
-import { savedEvaluationRecordForElement } from "../previous-state/saved-ai-elements.js";
+import type { BlockerValueAiDependencies, PendingTrackedItem, RuntimeState } from "../contracts.js";
 import { previousTrackedItem } from "../previous-state/snapshot.js";
 import { sourceOccurredAtByIdForAnalysis } from "../relation-source-occurrence.js";
-import { aiAnalysisElementApplicationsForAnalysis } from "./element-applications.js";
-import type { ConsumerCodexElementOutput } from "./consumer-output.js";
-import {
-  evaluationRecordsForAnalysis,
-  evaluatedElementsForGenerations,
-  forcedMigrationReuseRecordsForAnalysis,
-} from "./evaluation-records.js";
-import { adoptedElementsForAnalysis } from "./current-adopted-elements.js";
-import {
-  migratedElementsForAnalysis,
-  mixedAdoptedElementsForAnalysis,
-} from "./migrated-elements.js";
-import { adoptedRecordsForPlanning } from "./retained-results.js";
 import {
   stateAiDependencies,
   confidenceAiDependency,
@@ -68,126 +38,6 @@ import {
 } from "./state-ai-dependencies.js";
 import { transitionBasisForDecision } from "./decision-basis.js";
 import { trackedItemState } from "./staleness.js";
-
-/** 追跡項目のAI解析記録を構築する。 */
-export function trackedItemAiAnalysis(
-  configuration: RuntimeConfiguration,
-  state: RuntimeState,
-  analysis: DeterministicItemAnalysis,
-  codexAnalysis: CodexAnalysis,
-  reduction: CodexAnalysisReduction | undefined,
-  consumerOutput: ConsumerCodexElementOutput | undefined,
-): TrackedItemAiAnalysis {
-  const nodeId = analysis.item.nodeId;
-  const generations = codexAnalysis.elementGenerationsByNodeId.get(nodeId);
-  assertNonNullable(generations, `AI判定要素の保存結果がありません。対象: ${nodeId}`);
-  const planning = codexAnalysis.elementPlanningByNodeId.get(nodeId);
-  assertNonNullable(planning, `AI判定要素の計画がありません。対象: ${nodeId}`);
-  const target = forcedAiAnalysisTarget(configuration);
-  const run = codexAnalysis.run;
-  const migratedElements = migratedElementsForAnalysis(
-    state,
-    analysis,
-    planning,
-    run,
-    reduction,
-    consumerOutput,
-    target,
-  );
-  const adoptedElements = adoptedElementsForAnalysis(
-    state,
-    analysis,
-    planning,
-    run,
-    migratedElements,
-    reduction,
-    consumerOutput,
-    target,
-  );
-  const generatedElements = generatedElementsForNode(codexAnalysis.run, nodeId);
-  const missingEvaluationElements = new Set<AiAnalysisElement>();
-  for (const element of AI_ANALYSIS_ELEMENTS) {
-    if (
-      generatedElements[element] == null &&
-      isForcedUnexecutedElement(analysis, element, target) &&
-      planning.candidates[element].necessity === "required" &&
-      savedEvaluationRecordForElement(state, nodeId, element) == null
-    ) {
-      missingEvaluationElements.add(element);
-    }
-  }
-  const evaluationRecords = evaluationRecordsForAnalysis(
-    state,
-    analysis,
-    planning,
-    generations,
-    run,
-    adoptedElements,
-    migratedElements,
-    target,
-  );
-  const elements = evaluatedElementsForGenerations(
-    generations,
-    evaluationRecords,
-    missingEvaluationElements,
-  );
-  const applications = aiAnalysisElementApplicationsForAnalysis(
-    state,
-    analysis,
-    planning,
-    run,
-    reduction,
-    consumerOutput,
-  );
-  let status: TrackedItemAiAnalysis["status"];
-  if (run == null) {
-    status = "disabled";
-  } else {
-    const runIndex = aiAnalysisRunIndex(run);
-    const result = runIndex.resultByNodeId.get(nodeId);
-    if (result != null) {
-      status = "used";
-    } else {
-      const failure = runIndex.failureByNodeId.get(nodeId);
-      if (failure != null) {
-        status = "failed";
-      } else {
-        const deferred = runIndex.deferredByNodeId.get(nodeId);
-        if (deferred != null) {
-          status = "deferred";
-        } else {
-          const skipped = runIndex.skippedByNodeId.get(nodeId);
-          assertNonNullable(skipped, `Codex分析候補の分類がありません。対象: ${nodeId}`);
-          status = skipped.reason === "not_required" ? "not_required" : "used";
-        }
-      }
-    }
-  }
-  if (Object.keys(migratedElements).length !== 0) {
-    const reuseRecords = Object.freeze({
-      ...adoptedRecordsForPlanning(planning),
-      ...forcedMigrationReuseRecordsForAnalysis(state, analysis, planning, target),
-    });
-    return Object.freeze({
-      origin: "migration",
-      status,
-      elements,
-      adoptedElements: mixedAdoptedElementsForAnalysis(
-        adoptedElements,
-        migratedElements,
-        reuseRecords,
-      ),
-      applications,
-    });
-  }
-  return Object.freeze({
-    origin: "current",
-    status,
-    elements,
-    adoptedElements,
-    applications,
-  });
-}
 
 function trackedItemAiDependenciesForAnalysis(
   state: RuntimeState,
@@ -200,6 +50,7 @@ function trackedItemAiDependenciesForAnalysis(
   responsibilityBasis: IssueStateDecision["responsibilityBasis"],
   sourceOccurredAtById: ReadonlyMap<SourceId, UtcIsoDateTime>,
   aiAnalysis: TrackedItemAiAnalysis,
+  adopted: GenericAiItemAdoption,
   downstreamImpactDependency: AiAnalysisDependency | undefined,
   blockersDependency: AiAnalysisDependency | undefined,
   blockerValueDependencies: BlockerValueAiDependencies | undefined,
@@ -209,7 +60,7 @@ function trackedItemAiDependenciesForAnalysis(
   const resolvedBlockerValueDependencies =
     blockerValueDependencies ?? unknownBlockerValueAiDependencies();
   const stateDependencies = stateAiDependencies(
-    nodeId,
+    adopted.elements,
     applications,
     resolvedBlockerValueDependencies,
   );
@@ -222,24 +73,28 @@ function trackedItemAiDependenciesForAnalysis(
     waitingOn: stateDependencies.waitingOn,
     primaryWaitingOn: stateDependencies.primaryWaitingOn,
     nextAction: stateDependencies.nextAction,
-    confidence: confidenceAiDependency(nodeId, applications, resolvedBlockerValueDependencies),
+    confidence: confidenceAiDependency(
+      adopted.elements,
+      applications,
+      resolvedBlockerValueDependencies,
+    ),
     evidence: evidenceAiDependency(
-      nodeId,
+      adopted.elements,
       decision,
       deterministicDecision,
       applications,
       resolvedBlockerValueDependencies,
     ),
     uncertainties: uncertaintiesAiDependency(
-      nodeId,
-      applications,
+      adopted.elements,
       resolvedBlockerValueDependencies.uncertainties,
     ),
-    deadline: aiDependencyForElementApplication(nodeId, applications, "deadline"),
-    deadlineLevel: aiDependencyForElementApplication(nodeId, applications, "deadline"),
+    deadline: adopted.elements.deadline.aiDependency,
+    deadlineLevel: adopted.elements.deadline.aiDependency,
     lastProgressAt: lastProgressAiDependency(
       nodeId,
       item.createdAt,
+      adopted.elements.progress.aiDependency,
       applications,
       staleness,
       previousItem,
@@ -247,7 +102,7 @@ function trackedItemAiDependenciesForAnalysis(
     stallSince: notDependentAiDependency(),
     severity: notDependentAiDependency(),
     downstreamImpact: resolvedDownstreamImpactDependency,
-    importance: aiDependencyForElementApplication(nodeId, applications, "importance"),
+    importance: adopted.elements.importance.aiDependency,
     attention: notDependentAiDependency(),
     blockers: resolvedBlockersDependency,
     relationSet: resolvedRelationSetDependency,
@@ -287,6 +142,7 @@ export function createTrackedItem(
   primaryWaitingOn: PrimaryWaitingOn,
   staleness: StalenessResult,
   aiAnalysis: TrackedItemAiAnalysis,
+  adopted: GenericAiItemAdoption,
   downstreamImpactDependency: AiAnalysisDependency | undefined,
   blockersDependency: AiAnalysisDependency | undefined,
   blockerValueDependencies: BlockerValueAiDependencies | undefined,
@@ -348,6 +204,7 @@ export function createTrackedItem(
       transitionBasis.responsibilityBasis,
       sourceOccurredAtByIdForAnalysis(analysis),
       aiAnalysis,
+      adopted,
       downstreamImpactDependency,
       blockersDependency,
       blockerValueDependencies,

@@ -13,6 +13,7 @@ import type { RunEvaluatedAt } from "../application/tracking-run/contracts/evalu
 import type { DeterministicallyAnalyzedRun } from "../application/tracking-run/stages/deterministic.js";
 import type { GenericAiPlannedRun } from "../application/tracking-run/stages/generic-ai-plan.js";
 import type { GenericAiExecutedRun } from "../application/tracking-run/stages/generic-ai-execution.js";
+import type { GenericAiAdoptedRun } from "../application/tracking-run/stages/generic-ai-adoption.js";
 import {
   StateFormatError,
   StatePersonalReminderAiDependencyMismatchError,
@@ -52,6 +53,7 @@ export type DailyTransactionTypeMap = Readonly<{
   deterministicallyAnalyzed: DeterministicallyAnalyzedRun;
   genericAiPlanned: GenericAiPlannedRun;
   genericAiExecuted: GenericAiExecutedRun;
+  genericAiAdopted: GenericAiAdoptedRun;
   repositoryInventory: unknown;
   collection: unknown;
   codexAnalysis: unknown;
@@ -189,6 +191,11 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       genericAiPlanned: Types["genericAiPlanned"];
     }>,
   ) => Promise<CodexAnalysisStageResult<Types["codexAnalysis"]>>;
+  adoptGenericAi: (
+    input: Readonly<{
+      genericAiExecuted: Types["genericAiExecuted"];
+    }>,
+  ) => Types["genericAiAdopted"];
   reduceAnalysis: (
     input: Readonly<{
       invocation: DailyRunInvocation;
@@ -197,6 +204,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       repositoryInventory: Types["repositoryInventory"];
       deterministicallyAnalyzed: Types["deterministicallyAnalyzed"];
       genericAiExecuted: Types["genericAiExecuted"];
+      genericAiAdopted: Types["genericAiAdopted"];
       codexAnalysis: Types["codexAnalysis"];
     }>,
   ) => Promise<Types["reduction"]>;
@@ -230,6 +238,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       repositoryInventory: Types["repositoryInventory"];
       collection: Types["collection"];
       codexAnalysis: Types["codexAnalysis"];
+      genericAiAdopted: Types["genericAiAdopted"];
       reduction: Types["reduction"];
       graph: Types["graph"];
       personalReminderAnalysis: Types["personalReminderAnalysis"];
@@ -684,6 +693,10 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
       });
       let runStatus = codexAnalysis.status;
 
+      const genericAiAdopted = this.#dependencies.adoptGenericAi({
+        genericAiExecuted: codexAnalysis.executed,
+      });
+
       stage = "reducer";
       const reduction = await this.#dependencies.reduceAnalysis({
         invocation,
@@ -692,6 +705,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         repositoryInventory,
         deterministicallyAnalyzed,
         genericAiExecuted: codexAnalysis.executed,
+        genericAiAdopted,
         codexAnalysis: codexAnalysis.value,
       });
 
@@ -746,6 +760,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         repositoryInventory,
         collection,
         codexAnalysis: codexAnalysis.value,
+        genericAiAdopted,
         reduction,
         graph: graph.value,
         personalReminderAnalysis: personalReminderAnalysis.value,

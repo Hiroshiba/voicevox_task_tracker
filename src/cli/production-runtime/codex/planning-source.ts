@@ -10,6 +10,7 @@ import {
   CODEX_AUTHENTICATION_PREFLIGHT_PROMPT,
 } from "../../../codex/preflight.js";
 import { estimateAiInputCost } from "../../../codex/budget.js";
+import { listNativeRelationConstraints } from "../../../codex/semantic-validation.js";
 import { recordCodexDiagnostic, type CodexDiagnosticsContext } from "../../../codex/diagnostics.js";
 import type { AnalysisElementPlanning } from "../../../codex/element-planning.js";
 import type { CodexAnalysisInput } from "../../../codex/input.js";
@@ -141,6 +142,11 @@ export function createGenericAiPlanningPort(
       );
       return Object.freeze({
         baseInput,
+        deterministicStatePriority:
+          analysis.decision.determination === "determined" ||
+          listNativeRelationConstraints(baseInput).some(
+            (constraint) => constraint.verdict === "current_is_blocked_by_target",
+          ),
         necessityInput: necessityInputForAnalysis(
           state,
           analysis,
@@ -166,6 +172,12 @@ export function createGenericAiPlanningPort(
         generations: savedGenerationsForItem(state, analysis.item.nodeId),
         evaluations: impact.evaluation,
         reuses: impact.adopted,
+        adopted:
+          previousTrackedItem(state, analysis.item.nodeId)?.aiAnalysis.adoptedElements ??
+          Object.freeze({}),
+        evaluated:
+          previousTrackedItem(state, analysis.item.nodeId)?.aiAnalysis.elements ??
+          Object.freeze({}),
         impacts: impact.decisions,
       });
     },

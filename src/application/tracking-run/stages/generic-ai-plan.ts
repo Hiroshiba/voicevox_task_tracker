@@ -42,6 +42,10 @@ import {
 import type { GitHubNodeId } from "../../../domain/types.js";
 import { z } from "zod";
 import type { AiAnalysisElementSourceGeneration } from "../../../domain/ai-analysis-source-generations.js";
+import type {
+  TrackedItemAiAnalysisCurrentElements,
+  TrackedItemAiAnalysisMigrationAdoptedElements,
+} from "../../../domain/types.js";
 import { createGenericAiPlannedStageProof } from "../contracts/proofs.js";
 import { projectGenericAiRunCore, type StageState } from "../contracts/run-core.js";
 import type { ContentDigestPort } from "../ports.js";
@@ -63,21 +67,31 @@ export type GenericAiItemPlan = Readonly<{
   selectedElements: readonly AiAnalysisElement[];
   elements: readonly GenericAiElementPlan[];
   planning: AnalysisElementPlanning;
+  previousAdopted: TrackedItemAiAnalysisMigrationAdoptedElements;
+  previousEvaluated: TrackedItemAiAnalysisCurrentElements;
+  deterministicStatePriority: boolean;
   candidate: PreparedAiAnalysisCandidate;
   executionCandidate?: PreparedAiAnalysisCandidate;
 }>;
 
 /** 汎用AIの全項目について確定した候補と入力。 */
+export type GenericAiInputFailurePlan = Readonly<{
+  candidateId: GitHubNodeId;
+  reason: "input_validation_failed";
+  errorType: string;
+  previousAdopted: TrackedItemAiAnalysisMigrationAdoptedElements;
+  previousEvaluated: TrackedItemAiAnalysisCurrentElements;
+}>;
+
+/** 汎用AIの全項目について確定した候補と入力。 */
 export type GenericAiPlan = Readonly<{
   identity: AiAnalysisRunIdentity;
+  aiEnabled: boolean;
+  minimumConfidence: number;
   target?: AiAnalysisTarget;
   items: readonly GenericAiItemPlan[];
   budget: GenericAiBudgetPlan;
-  failures: readonly Readonly<{
-    candidateId: string;
-    reason: "input_validation_failed";
-    errorType: string;
-  }>[];
+  failures: readonly GenericAiInputFailurePlan[];
   analysisImpactDecisions: readonly Readonly<{
     candidateId: string;
     element: AiAnalysisElement;
@@ -105,6 +119,7 @@ export type GenericAiPlanningItemSource = Readonly<{
   necessityInput: AnalysisElementNecessityInput;
   dependencyFingerprints: AnalysisElementDependencyFingerprintMap;
   priority: AiAnalysisPriority;
+  deterministicStatePriority: boolean;
 }>;
 
 /** 保存済み評価と採用の現在性を要素別に照合した結果。 */
@@ -112,6 +127,8 @@ export type GenericAiPreviousElements = Readonly<{
   generations: Readonly<Partial<Record<AiAnalysisElement, AiAnalysisElementSourceGeneration>>>;
   evaluations: Readonly<Partial<Record<AiAnalysisElement, AnalysisElementReuseRecord>>>;
   reuses: Readonly<Partial<Record<AiAnalysisElement, AnalysisElementReuseRecord>>>;
+  adopted: TrackedItemAiAnalysisMigrationAdoptedElements;
+  evaluated: TrackedItemAiAnalysisCurrentElements;
   impacts: readonly Readonly<{
     element: AiAnalysisElement;
     role: "adopted" | "evaluated";
@@ -197,11 +214,17 @@ export async function planGenericAi(
       source = port.prepareItem(analyzed, analysis);
     } catch (error: unknown) {
       await port.recordInputValidationFailure(nodeId, error);
+      const previous =
+        analyzed.core.previousState.snapshot.status === "available"
+          ? analyzed.core.previousState.snapshot.trackedItems.find((item) => item.nodeId === nodeId)
+          : undefined;
       failures.push(
         Object.freeze({
           candidateId: nodeId,
           reason: "input_validation_failed",
           errorType: error instanceof Error ? error.name : typeof error,
+          previousAdopted: previous?.aiAnalysis.adoptedElements ?? Object.freeze({}),
+          previousEvaluated: previous?.aiAnalysis.elements ?? Object.freeze({}),
         }),
       );
       continue;
@@ -331,6 +354,9 @@ export async function planGenericAi(
         ),
         elements,
         planning: executionPlanning,
+        previousAdopted: previous.adopted,
+        previousEvaluated: previous.evaluated,
+        deterministicStatePriority: source.deterministicStatePriority,
         candidate,
         ...(executionCandidate == null ? {} : { executionCandidate }),
       }),
@@ -367,6 +393,8 @@ export async function planGenericAi(
   );
   const plan = Object.freeze({
     identity,
+    aiEnabled: analyzed.core.config.ai.enabled,
+    minimumConfidence: analyzed.core.config.ai.confidence.medium,
     ...(target == null ? {} : { target }),
     items: budgetedItems,
     budget,

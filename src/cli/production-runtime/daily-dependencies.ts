@@ -1,7 +1,11 @@
 import type { DailyTransactionDependencies } from "../daily-transaction.js";
 import { analyzeDeterministically } from "../../application/tracking-run/stages/deterministic.js";
 import type { ProductionRuntimeAdapters } from "./adapters.js";
-import { createAnalyzeWithCodexStage, createPlanGenericAiStage } from "./codex/stage.js";
+import {
+  createAdoptGenericAiStage,
+  createAnalyzeWithCodexStage,
+  createPlanGenericAiStage,
+} from "./codex/stage.js";
 import { createCollectItemsStage } from "./collection/stage.js";
 import type { ProductionTypes } from "./contracts.js";
 import {
@@ -51,6 +55,7 @@ export function createDailyDependencies(
     applyDeterministicRules: analyzeDeterministically,
     planGenericAi: createPlanGenericAiStage(adapters),
     analyzeWithCodex: createAnalyzeWithCodexStage(adapters),
+    adoptGenericAi: createAdoptGenericAiStage(),
     reduceAnalysis: createReduceAnalysisStage(),
     reconcileGraph: createReconcileGraphStage(),
     analyzePersonalReminders: createAnalyzePersonalRemindersStage(adapters),

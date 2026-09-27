@@ -1,5 +1,6 @@
 import { serializeCanonicalJson } from "../../../canonical-json/index.js";
 import type { ReducedCodexDecision } from "../../../codex/index.js";
+import type { GenericAiItemAdoption } from "../../../application/tracking-run/stages/generic-ai-adoption-contracts.js";
 import { aiAnalysisElementApplicationUsesAiValue } from "../../../domain/ai-analysis-elements.js";
 import type { AiAnalysisDependency } from "../../../domain/ai-analysis-dependencies.js";
 import type {
@@ -13,7 +14,6 @@ import type {
 import type { SnapshotTrackedItem } from "../../../persistence/index.js";
 import { revalidatedHistoricalAiDependency } from "../ai-dependencies/history.js";
 import {
-  aiDependencyForElementApplication,
   combineSelectedAiDependencies,
   notDependentAiDependency,
   preferIndependentAiDependency,
@@ -26,9 +26,11 @@ const STATE_AI_ANALYSIS_ELEMENTS: readonly ["status", "waitingOn", "nextAction"]
   "nextAction",
 ]);
 
+type AdoptedElements = GenericAiItemAdoption["elements"];
+
 /** state値のAI依存を合成する。 */
 export function stateAiDependencies(
-  nodeId: GitHubNodeId,
+  adopted: AdoptedElements,
   applications: TrackedItemAiAnalysisApplications,
   blockerDependencies: BlockerValueAiDependencies,
 ): Readonly<{
@@ -39,7 +41,7 @@ export function stateAiDependencies(
 }> {
   const stateApplicationDependency = (
     element: "status" | "waitingOn" | "nextAction",
-  ): AiAnalysisDependency => aiDependencyForElementApplication(nodeId, applications, element);
+  ): AiAnalysisDependency => adopted[element].aiDependency;
   const stateValueDependency = (
     element: "status" | "waitingOn" | "nextAction",
     blockerDependency: AiAnalysisDependency,
@@ -80,7 +82,7 @@ export function stateAiDependencies(
 
 /** confidenceのAI依存を合成する。 */
 export function confidenceAiDependency(
-  nodeId: GitHubNodeId,
+  adopted: AdoptedElements,
   applications: TrackedItemAiAnalysisApplications,
   blockerDependencies: BlockerValueAiDependencies,
 ): AiAnalysisDependency {
@@ -101,14 +103,14 @@ export function confidenceAiDependency(
     ) {
       continue;
     }
-    dependencies.push(aiDependencyForElementApplication(nodeId, applications, element));
+    dependencies.push(adopted[element].aiDependency);
   }
   return combineSelectedAiDependencies(dependencies);
 }
 
 /** evidenceのAI依存を合成する。 */
 export function evidenceAiDependency(
-  nodeId: GitHubNodeId,
+  adopted: AdoptedElements,
   decision: ReducedCodexDecision,
   deterministicDecision: IssueStateDecision | PullRequestStateDecision,
   applications: TrackedItemAiAnalysisApplications,
@@ -123,7 +125,7 @@ export function evidenceAiDependency(
       aiAnalysisElementApplicationUsesAiValue(applications[element]) ||
       applications[element].status === "unavailable"
     ) {
-      dependencies.push(aiDependencyForElementApplication(nodeId, applications, element));
+      dependencies.push(adopted[element].aiDependency);
     }
   }
   const deterministicEvidence = new Set(
@@ -141,14 +143,11 @@ export function evidenceAiDependency(
 
 /** uncertaintiesのAI依存を合成する。 */
 export function uncertaintiesAiDependency(
-  nodeId: GitHubNodeId,
-  applications: TrackedItemAiAnalysisApplications,
+  adopted: AdoptedElements,
   blockerDependency: AiAnalysisDependency,
 ): AiAnalysisDependency {
   return combineSelectedAiDependencies([
-    ...STATE_AI_ANALYSIS_ELEMENTS.map((element) =>
-      aiDependencyForElementApplication(nodeId, applications, element),
-    ),
+    ...STATE_AI_ANALYSIS_ELEMENTS.map((element) => adopted[element].aiDependency),
     blockerDependency,
   ]);
 }
@@ -157,6 +156,7 @@ export function uncertaintiesAiDependency(
 export function lastProgressAiDependency(
   nodeId: GitHubNodeId,
   createdAt: UtcIsoDateTime,
+  progressDependency: AiAnalysisDependency,
   applications: TrackedItemAiAnalysisApplications,
   staleness: StalenessResult,
   previousItem: SnapshotTrackedItem | undefined,
@@ -171,7 +171,7 @@ export function lastProgressAiDependency(
     (progress) =>
       progress.occurredAt === staleness.lastProgressAt && progress.determination === "ai",
   )
-    ? aiDependencyForElementApplication(nodeId, applications, "progress")
+    ? progressDependency
     : undefined;
   const previousProgressDependency =
     previousItem?.lastProgressAt === staleness.lastProgressAt
@@ -204,8 +204,6 @@ export function lastProgressAiDependency(
   );
   return combineSelectedAiDependencies([
     selectedDependency,
-    ...(hasNewerNaturalLanguageCandidate
-      ? [aiDependencyForElementApplication(nodeId, applications, "progress")]
-      : []),
+    ...(hasNewerNaturalLanguageCandidate ? [progressDependency] : []),
   ]);
 }

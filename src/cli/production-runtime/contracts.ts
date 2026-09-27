@@ -6,7 +6,6 @@ import type {
   CodexAttemptBudget,
   PersonalReminderAiRunResult,
   ReducedCodexDecision,
-  AiAnalysisElementSourceGenerationMap,
 } from "../../codex/index.js";
 import type { Config } from "../../config/index.js";
 import type { Sha256Hash } from "../../canonical-json/sha256.js";
@@ -25,6 +24,7 @@ import type { RunEvaluatedAt } from "../../application/tracking-run/contracts/ev
 import type { DeterministicallyAnalyzedRun } from "../../application/tracking-run/stages/deterministic.js";
 import type { GenericAiPlannedRun } from "../../application/tracking-run/stages/generic-ai-plan.js";
 import type { GenericAiExecutedRun } from "../../application/tracking-run/stages/generic-ai-execution.js";
+import type { GenericAiAdoptedRun } from "../../application/tracking-run/stages/generic-ai-adoption.js";
 import type { AiCacheEntry } from "../../codex/cache.js";
 import type { PersonalReminderAiCacheEntry } from "../../codex/personal-reminder-cache.js";
 import type { AiAnalysisDependency } from "../../domain/ai-analysis-dependencies.js";
@@ -155,7 +155,6 @@ export type CodexAnalysis = Readonly<{
   run: AiAnalysisRunResult | undefined;
   inputByNodeId: ReadonlyMap<GitHubNodeId, CodexAnalysisInput>;
   elementPlanningByNodeId: ReadonlyMap<GitHubNodeId, AnalysisElementPlanning>;
-  elementGenerationsByNodeId: ReadonlyMap<GitHubNodeId, AiAnalysisElementSourceGenerationMap>;
 }>;
 
 export type ReducedItemAnalysis = Readonly<{
@@ -251,6 +250,7 @@ export type ProductionTypes = DailyTransactionTypeMap &
     deterministicallyAnalyzed: DeterministicallyAnalyzedRun;
     genericAiPlanned: GenericAiPlannedRun;
     genericAiExecuted: GenericAiExecutedRun;
+    genericAiAdopted: GenericAiAdoptedRun;
     repositoryInventory: RepositoryInventory;
     collection: CollectedItems;
     codexAnalysis: CodexAnalysis;

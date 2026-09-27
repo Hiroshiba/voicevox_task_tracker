@@ -1,4 +1,6 @@
 import type { AiAnalysisRunIdentity } from "../../../codex/index.js";
+import type { GenericAiAdoptedRun } from "../../../application/tracking-run/stages/generic-ai-adoption.js";
+import { AI_ANALYSIS_ELEMENTS } from "../../../domain/ai-analysis-elements.js";
 import {
   analysisPlanFingerprintForItem,
   createAiAnalysisRunIdentity,
@@ -93,7 +95,11 @@ function snapshotRepositories(collection: CollectedItems): readonly SnapshotRepo
   );
 }
 
-function snapshotAiState(config: Config, codexAnalysis: CodexAnalysis): SnapshotAiState {
+function snapshotAiState(
+  config: Config,
+  codexAnalysis: CodexAnalysis,
+  adopted: GenericAiAdoptedRun,
+): SnapshotAiState {
   if (!config.ai.enabled) {
     if (codexAnalysis.run != null) {
       throw new TypeError("AIが無効ですがCodex分析結果があります");
@@ -106,8 +112,15 @@ function snapshotAiState(config: Config, codexAnalysis: CodexAnalysis): Snapshot
   }
   const run = codexAnalysis.run;
   assertNonNullable(run, "AIが有効ですがCodex分析結果がありません");
-  const degraded = run.failures.length > 0 || run.deferred.length > 0;
-  if (run.results.length > 0 || !degraded) {
+  const degraded = adopted.data.items.some(
+    (item) => item.status === "failed" || item.status === "deferred",
+  );
+  const availableResult = adopted.data.items.some((item) =>
+    AI_ANALYSIS_ELEMENTS.some(
+      (element) => item.elements[element].application.status === "current_ai",
+    ),
+  );
+  if (availableResult || !degraded) {
     return Object.freeze({
       enabled: true,
       available: true,
@@ -232,6 +245,7 @@ export function createValidatedSnapshot(
   inventory: RepositoryInventory,
   collection: CollectedItems,
   codexAnalysis: CodexAnalysis,
+  adopted: GenericAiAdoptedRun,
   reduction: ReducedAnalysis,
   graph: GraphResult,
   personalReminderAnalysis: PersonalReminderAnalysis,
@@ -250,7 +264,7 @@ export function createValidatedSnapshot(
     schemaVersion: "19",
     generatedAt: collection.evaluatedAt,
     trackingStartAt: pendingSnapshotTrackingStartAt(configuration, state, collection.evaluatedAt),
-    ai: snapshotAiState(configuration.config, codexAnalysis),
+    ai: snapshotAiState(configuration.config, codexAnalysis, adopted),
     collection: {
       repositories: validatedCollectionRepositories(
         state,

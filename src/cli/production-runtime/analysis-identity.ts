@@ -1,5 +1,6 @@
 import { hashCanonicalJson } from "../../canonical-json/index.js";
 import {
+  aiAnalysisElementApplicationUsesAiValue,
   createAiAnalysisElementResultSchema,
   createAiAnalysisMigrationElementResultSchema,
   type AiAnalysisElement,
@@ -7,10 +8,6 @@ import {
   type AiAnalysisElementInputFingerprint,
   type AiAnalysisElementMigrationResult,
 } from "../../domain/ai-analysis-elements.js";
-import type {
-  TrackedItemAiAnalysisCurrentAdoptedElements,
-  TrackedItemAiAnalysisMigrationElements,
-} from "../../domain/index.js";
 import type { AnalysisElementDependencyFingerprintMap } from "../../codex/analysis-element-dependencies.js";
 import { UnreachableError } from "../../util/index.js";
 import type { DeterministicItemAnalysis } from "../../application/tracking-run/stages/deterministic-item.js";
@@ -68,10 +65,13 @@ function dependencyResultForElement(
   element: AiAnalysisElement,
 ): AiAnalysisElementMigrationResult | undefined {
   const item = previousTrackedItem(state, analysis.item.nodeId);
-  return item == null ? undefined : adoptedResultForRetainedItem(item, element);
+  return item == null ||
+    !aiAnalysisElementApplicationUsesAiValue(item.aiAnalysis.applications[element])
+    ? undefined
+    : adoptedResultForRetainedItem(item, element);
 }
 
-export function stateDependencyFingerprintForResults(
+function stateDependencyFingerprintForResults(
   analysis: DeterministicItemAnalysis,
   results: Readonly<Partial<Record<AiAnalysisElement, AiAnalysisElementMigrationResult>>>,
 ): AiAnalysisElementInputFingerprint {
@@ -98,7 +98,7 @@ export function stateDependencyFingerprintForResults(
   return hashCanonicalJson({ kind: "state", elements });
 }
 
-export function stateDependencyFingerprint(
+function stateDependencyFingerprint(
   state: RuntimeState,
   analysis: DeterministicItemAnalysis,
 ): AiAnalysisElementInputFingerprint {
@@ -107,26 +107,6 @@ export function stateDependencyFingerprint(
     const result = dependencyResultForElement(state, analysis, element);
     if (result != null) {
       results[element] = result;
-    }
-  }
-  return stateDependencyFingerprintForResults(analysis, results);
-}
-
-export function finalStateDependencyFingerprint(
-  analysis: DeterministicItemAnalysis,
-  current: TrackedItemAiAnalysisCurrentAdoptedElements,
-  migration: TrackedItemAiAnalysisMigrationElements,
-): AiAnalysisElementInputFingerprint {
-  const results: Partial<Record<AiAnalysisElement, AiAnalysisElementMigrationResult>> = {};
-  for (const element of ["status", "waitingOn", "nextAction"] as const) {
-    const currentElement = current[element];
-    if (currentElement != null) {
-      results[element] = currentElement.result;
-      continue;
-    }
-    const migrationResult = migration[element];
-    if (migrationResult != null) {
-      results[element] = migrationResult;
     }
   }
   return stateDependencyFingerprintForResults(analysis, results);
