@@ -20,17 +20,10 @@ import {
 import type { DailyRunInvocation } from "../../daily-transaction.js";
 import { safeCodexFallbackDiagnostic } from "../../error-diagnostic.js";
 import type { CodexRuntimeAdapters } from "../adapters.js";
-import { createAiAnalysisRunIdentity } from "../../../application/tracking-run/stages/collection-analysis-fingerprint.js";
-import { forcedAiAnalysisTarget } from "../ai-analysis-target.js";
-import type {
-  CodexAnalysis,
-  CollectedItems,
-  DeterministicAnalysis,
-  RuntimeConfiguration,
-  RuntimeState,
-} from "../contracts.js";
+import type { GenericAiPlannedRun } from "../../../application/tracking-run/stages/generic-ai-plan.js";
+import { projectLegacyGenericAiPlanning } from "../../tracking-run/migration-bridge/generic-ai-plan.js";
+import type { CodexAnalysis, RuntimeConfiguration, RuntimeState } from "../contracts.js";
 import { previousSnapshot } from "../previous-state/snapshot.js";
-import { createAiCandidates } from "./candidates.js";
 import { elementGenerationsByNodeId } from "./generations.js";
 
 function codexFallbackDiagnostic(failure: AiAnalysisRunFailure): string {
@@ -43,12 +36,14 @@ function codexFallbackDiagnostic(failure: AiAnalysisRunFailure): string {
   );
 }
 
-function countRetainedAiResults(state: RuntimeState, collection: CollectedItems): number {
+function countRetainedAiResults(state: RuntimeState, planned: GenericAiPlannedRun): number {
+  const trackedNodeIds = new Set(planned.data.facts.trackedNodeIds);
+  const analysisNodeIds = new Set(planned.data.facts.analysisNodeIds);
   return (previousSnapshot(state)?.items ?? []).filter(
     (item) =>
       item.aiAnalysis.status === "used" &&
-      collection.trackedNodeIds.has(item.nodeId) &&
-      !collection.analysisNodeIds.has(item.nodeId),
+      trackedNodeIds.has(item.nodeId) &&
+      !analysisNodeIds.has(item.nodeId),
   ).length;
 }
 
@@ -58,8 +53,7 @@ export async function analyzeCodex(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
   state: RuntimeState,
-  collection: CollectedItems,
-  deterministicAnalysis: DeterministicAnalysis,
+  planned: GenericAiPlannedRun,
 ): Promise<
   Readonly<{
     stage: CodexAnalysis;
@@ -71,15 +65,9 @@ export async function analyzeCodex(
     diagnostics: readonly string[];
   }>
 > {
-  const identity = createAiAnalysisRunIdentity(configuration.config);
-  const prepared = createAiCandidates(
-    configuration,
-    state,
-    collection,
-    deterministicAnalysis,
-    identity,
-  );
-  const target = forcedAiAnalysisTarget(configuration);
+  const identity = planned.data.plan.identity;
+  const prepared = projectLegacyGenericAiPlanning(planned);
+  const target = planned.data.plan.target;
   const diagnostics: CodexDiagnosticsContext | undefined =
     adapters.diagnosticsRecorder == null
       ? undefined
@@ -89,7 +77,7 @@ export async function analyzeCodex(
           invocationId: invocation.invocationId,
           stage: "codex_analysis",
         });
-  for (const impact of prepared.analysisImpactDecisions) {
+  for (const impact of planned.data.plan.analysisImpactDecisions) {
     await recordCodexDiagnostic(
       diagnostics == null
         ? undefined
@@ -116,33 +104,17 @@ export async function analyzeCodex(
       },
     );
   }
-  for (const failure of prepared.inputValidationFailures) {
-    await recordCodexDiagnostic(
-      diagnostics == null
-        ? undefined
-        : Object.freeze({
-            ...diagnostics,
-            candidateId: failure.candidateId,
-          }),
-      "codex.input.validation_failed",
-      {
-        phase: "input_validation",
-        errorType: failure.error instanceof Error ? failure.error.name : typeof failure.error,
-      },
-      failure.error,
-    );
-  }
   if (!configuration.config.ai.enabled) {
     if (target != null) {
       throw new TypeError("forced sandbox実行にはAIを有効にしてください");
     }
-    const fallback = prepared.failures.length > 0;
+    const fallback = planned.data.plan.failures.length > 0;
     await recordCodexDiagnostic(diagnostics, "codex.analysis.summary", {
       phase: "summary",
       candidateItemCount: prepared.candidates.length,
       aiCallCount: 0,
       deferredItemCount: 0,
-      inputValidationFailureCount: prepared.inputValidationFailures.length,
+      inputValidationFailureCount: planned.data.plan.failures.length,
     });
     return Object.freeze({
       stage: Object.freeze({
@@ -151,7 +123,7 @@ export async function analyzeCodex(
         elementPlanningByNodeId: prepared.elementPlanningByNodeId,
         elementGenerationsByNodeId: elementGenerationsByNodeId(
           state,
-          deterministicAnalysis.items,
+          planned.data.facts.items,
           prepared.elementPlanningByNodeId,
           undefined,
           target,
@@ -160,9 +132,9 @@ export async function analyzeCodex(
       status: fallback ? "fallback" : "success",
       aiCallCount: 0,
       aiCacheHitCount: 0,
-      aiRetainedResultCount: countRetainedAiResults(state, collection),
+      aiRetainedResultCount: countRetainedAiResults(state, planned),
       estimatedInputTokens: 0,
-      diagnostics: Object.freeze(prepared.failures.map(codexFallbackDiagnostic)),
+      diagnostics: Object.freeze(planned.data.plan.failures.map(codexFallbackDiagnostic)),
     });
   }
   const codexCredentials = configuration.credentials.codex;
@@ -239,12 +211,12 @@ export async function analyzeCodex(
                 }),
           }),
         ),
-      executedAt: () => collection.evaluatedAt,
+      executedAt: () => planned.data.collection.evaluatedAt,
     },
   );
   const run = Object.freeze({
     ...executedRun,
-    failures: Object.freeze([...prepared.failures, ...executedRun.failures]),
+    failures: Object.freeze([...planned.data.plan.failures, ...executedRun.failures]),
     skipped:
       target == null
         ? executedRun.skipped
@@ -265,7 +237,7 @@ export async function analyzeCodex(
     candidateItemCount: prepared.candidates.length,
     aiCallCount: run.usage.calls,
     deferredItemCount: run.deferred.length,
-    inputValidationFailureCount: prepared.inputValidationFailures.length,
+    inputValidationFailureCount: planned.data.plan.failures.length,
   });
   const semanticGenerationCounts = semanticGenerationCounter.read();
   const semanticGenerationPublicDiagnostic =
@@ -278,7 +250,7 @@ export async function analyzeCodex(
       elementPlanningByNodeId: prepared.elementPlanningByNodeId,
       elementGenerationsByNodeId: elementGenerationsByNodeId(
         state,
-        deterministicAnalysis.items,
+        planned.data.facts.items,
         prepared.elementPlanningByNodeId,
         run,
         target,
@@ -287,7 +259,7 @@ export async function analyzeCodex(
     status: fallback ? "fallback" : "success",
     aiCallCount: run.usage.calls,
     aiCacheHitCount: run.results.filter((result) => result.origin === "cache").length,
-    aiRetainedResultCount: countRetainedAiResults(state, collection),
+    aiRetainedResultCount: countRetainedAiResults(state, planned),
     estimatedInputTokens: Math.ceil(run.usage.inputCharacters / 4),
     diagnostics: Object.freeze([
       ...run.failures.map(codexFallbackDiagnostic),

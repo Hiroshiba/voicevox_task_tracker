@@ -16,18 +16,6 @@
 
 `selectedElements` に含まれる要素だけを判定してください。選択されていない要素は、`lockedElements` に値があっても出力しないでください。この指定は、以下に記載するすべての判定規則に優先します。`selectedElements` が空の場合は、`item` と `schemaVersion` だけを返す入力契約です。
 
-利用できる要素は次の9つです。
-
-- `status`: 現在のワークフローの状態
-- `waitingOn`: 次に行動することが期待される人または対象
-- `nextAction`: 次に行う具体的な行動
-- `relations`: 入力された関係候補の意味
-- `progress`: 最新の意味のある進捗イベント
-- `importance`: 対象項目の重要度
-- `deadline`: 対象項目自体の期限日
-- `notification`: 通知推奨の要否
-- `selfCommitment`: 本人が対象項目の次の対応を引き受けた根拠
-
 ## 出力契約
 
 - 出力の `schemaVersion` は文字列の `"7"` にしてください。

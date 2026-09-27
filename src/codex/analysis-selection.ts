@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { parseSha256Hash, serializeCanonicalJson } from "../canonical-json/index.js";
+import { parseSha256Hash } from "../canonical-json/sha256.js";
+import { serializeCanonicalJson } from "../canonical-json/value.js";
 import {
   AI_ANALYSIS_ELEMENTS,
   AI_ANALYSIS_ELEMENT_SCHEMA_VERSION,
@@ -8,7 +9,6 @@ import {
   type AiAnalysisElement,
 } from "./analysis-elements.js";
 import {
-  selectAiAnalysisElements,
   type AiAnalysisElementSelection,
   type AiAnalysisElementSelectionCandidate,
 } from "./element-selection.js";
@@ -133,14 +133,14 @@ function validatePromptFingerprint(value: string): void {
   parseSha256Hash(value);
 }
 
-/** 要素選別、正規化入力、入力文字数を候補へ付加する。 */
+/** 確定済みの要素選別と正規化入力を候補へ付加する。 */
 export function prepareAiAnalysisCandidate(
   candidate: AiAnalysisCandidate,
+  elementSelection: AiAnalysisElementSelection,
 ): PreparedAiAnalysisCandidate {
   validateCandidateId(candidate.id);
   validatePromptFingerprint(candidate.promptFingerprint);
   const normalizedInput = `${serializeCanonicalJson(candidate.input)}\n`;
-  const elementSelection = selectAiAnalysisElements(candidate.elements);
   return Object.freeze({
     ...candidate,
     elementSelection,

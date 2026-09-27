@@ -116,7 +116,6 @@ export {
   type PreparedAiAnalysisCandidate,
 } from "./analysis-selection.js";
 export {
-  selectAiAnalysisElements,
   selectAnalysisElements,
   type AnalysisElementSelection,
   type AnalysisElementSelectionCandidate,

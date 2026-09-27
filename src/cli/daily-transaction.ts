@@ -11,6 +11,7 @@ import type { InventoryCollectedRun } from "../application/tracking-run/stages/i
 import type { CollectedRun } from "../application/tracking-run/stages/collection.js";
 import type { RunEvaluatedAt } from "../application/tracking-run/contracts/evaluation-time.js";
 import type { DeterministicallyAnalyzedRun } from "../application/tracking-run/stages/deterministic.js";
+import type { GenericAiPlannedRun } from "../application/tracking-run/stages/generic-ai-plan.js";
 import {
   StateFormatError,
   StatePersonalReminderAiDependencyMismatchError,
@@ -48,6 +49,7 @@ export type DailyTransactionTypeMap = Readonly<{
   inventoryCollected: InventoryCollectedRun;
   collectedRun: CollectedRun<Readonly<{ evaluatedAt: RunEvaluatedAt }>>;
   deterministicallyAnalyzed: DeterministicallyAnalyzedRun;
+  genericAiPlanned: GenericAiPlannedRun;
   repositoryInventory: unknown;
   collection: unknown;
   codexAnalysis: unknown;
@@ -168,12 +170,20 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
   applyDeterministicRules: (
     collectedRun: Types["collectedRun"],
   ) => Types["deterministicallyAnalyzed"];
-  analyzeWithCodex: (
+  planGenericAi: (
     input: Readonly<{
       invocation: DailyRunInvocation;
       configuration: Types["configuration"];
       state: Types["state"];
       deterministicallyAnalyzed: Types["deterministicallyAnalyzed"];
+    }>,
+  ) => Promise<Types["genericAiPlanned"]>;
+  analyzeWithCodex: (
+    input: Readonly<{
+      invocation: DailyRunInvocation;
+      configuration: Types["configuration"];
+      state: Types["state"];
+      genericAiPlanned: Types["genericAiPlanned"];
     }>,
   ) => Promise<CodexAnalysisStageResult<Types["codexAnalysis"]>>;
   reduceAnalysis: (
@@ -648,11 +658,17 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
       stage = "deterministic_analysis";
       const deterministicallyAnalyzed = this.#dependencies.applyDeterministicRules(collectedRun);
       stage = "codex_analysis";
-      const codexAnalysis = await this.#dependencies.analyzeWithCodex({
+      const genericAiPlanned = await this.#dependencies.planGenericAi({
         invocation,
         configuration,
         state,
         deterministicallyAnalyzed,
+      });
+      const codexAnalysis = await this.#dependencies.analyzeWithCodex({
+        invocation,
+        configuration,
+        state,
+        genericAiPlanned,
       });
       diagnostics.push(...codexAnalysis.diagnostics);
       metrics = updateMetrics(metrics, {

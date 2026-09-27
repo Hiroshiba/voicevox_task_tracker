@@ -1,13 +1,9 @@
 import { hashCanonicalJson } from "../../canonical-json/index.js";
-import { CODEX_PROMPT_BUNDLE_VERSION } from "../../codex/index.js";
-import type { AiAnalysisRunIdentity } from "../../codex/index.js";
-
 import {
   createAiAnalysisElementResultSchema,
   createAiAnalysisMigrationElementResultSchema,
   type AiAnalysisElement,
   type AiAnalysisElementEvidence,
-  type AiAnalysisElementExecutionFingerprint,
   type AiAnalysisElementInputFingerprint,
   type AiAnalysisElementMigrationResult,
 } from "../../domain/ai-analysis-elements.js";
@@ -21,38 +17,6 @@ import type { DeterministicItemAnalysis } from "../../application/tracking-run/s
 import type { RuntimeState } from "./contracts.js";
 import { adoptedResultForRetainedItem } from "./previous-state/saved-ai-elements.js";
 import { previousTrackedItem } from "./previous-state/snapshot.js";
-
-type AnalysisElementExecutionFingerprintMap = Readonly<
-  Record<AiAnalysisElement, AiAnalysisElementExecutionFingerprint>
->;
-
-export const CODEX_PROMPT_FINGERPRINT = hashCanonicalJson({
-  bundleVersion: CODEX_PROMPT_BUNDLE_VERSION,
-});
-
-export function elementExecutionFingerprints(
-  identity: AiAnalysisRunIdentity,
-): AnalysisElementExecutionFingerprintMap {
-  const createFingerprint = (element: AiAnalysisElement): AiAnalysisElementExecutionFingerprint =>
-    hashCanonicalJson({
-      element,
-      model: identity.model,
-      reasoningEffort: identity.reasoningEffort,
-      backendVersion: identity.backendVersion,
-      schemaVersion: identity.schemaVersion,
-    });
-  return Object.freeze({
-    status: createFingerprint("status"),
-    waitingOn: createFingerprint("waitingOn"),
-    nextAction: createFingerprint("nextAction"),
-    relations: createFingerprint("relations"),
-    progress: createFingerprint("progress"),
-    importance: createFingerprint("importance"),
-    deadline: createFingerprint("deadline"),
-    notification: createFingerprint("notification"),
-    selfCommitment: createFingerprint("selfCommitment"),
-  });
-}
 
 export function deterministicElementResult(
   analysis: DeterministicItemAnalysis,

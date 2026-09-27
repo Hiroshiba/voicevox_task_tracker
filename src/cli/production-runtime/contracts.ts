@@ -23,6 +23,7 @@ import type {
 } from "../../application/tracking-run/stages/collection.js";
 import type { RunEvaluatedAt } from "../../application/tracking-run/contracts/evaluation-time.js";
 import type { DeterministicallyAnalyzedRun } from "../../application/tracking-run/stages/deterministic.js";
+import type { GenericAiPlannedRun } from "../../application/tracking-run/stages/generic-ai-plan.js";
 import type { AiCacheEntry } from "../../codex/cache.js";
 import type { PersonalReminderAiCacheEntry } from "../../codex/personal-reminder-cache.js";
 import type { AiAnalysisDependency } from "../../domain/ai-analysis-dependencies.js";
@@ -247,6 +248,7 @@ export type ProductionTypes = DailyTransactionTypeMap &
     inventoryCollected: InventoryCollectedRun;
     collectedRun: CollectedRun<CanonicalCollectedItems>;
     deterministicallyAnalyzed: DeterministicallyAnalyzedRun;
+    genericAiPlanned: GenericAiPlannedRun;
     repositoryInventory: RepositoryInventory;
     collection: CollectedItems;
     codexAnalysis: CodexAnalysis;

@@ -54,12 +54,22 @@ export type AnalysisRunCore = Readonly<{
   previousState: AnalysisPreviousState;
 }>;
 
+/** 汎用AI計画以後へ渡すrun識別と予算の投影。 */
+export type GenericAiRunCore = Readonly<{
+  identity: RunIdentity;
+  executionPolicy: RunExecutionPolicy;
+  configDigest: Sha256Hash;
+  baseRevision: BaseStateRevision;
+  aiBudget: InitialAiBudgetLedger;
+}>;
+
 /** 実装済み段階と段階ごとのcore型の唯一の対応表。 */
 export type CoreByStage = Readonly<{
   prepared: PreparedRunCore;
   inventory_collected: AnalysisRunCore;
   collected: AnalysisRunCore;
   deterministically_analyzed: AnalysisRunCore;
+  generic_ai_planned: GenericAiRunCore;
 }>;
 
 /** 段階名に対応したcoreとproofを持つ成果物。 */
@@ -80,5 +90,16 @@ export function projectAnalysisRunCore(prepared: PreparedRunCore): AnalysisRunCo
     baseRevision: prepared.baseState.revision,
     aiBudget: prepared.aiBudget,
     previousState: prepared.baseState.previousState,
+  });
+}
+
+/** 汎用AI計画へ必要なrun識別と予算だけを投影する。 */
+export function projectGenericAiRunCore(analyzed: AnalysisRunCore): GenericAiRunCore {
+  return Object.freeze({
+    identity: analyzed.identity,
+    executionPolicy: analyzed.executionPolicy,
+    configDigest: analyzed.configDigest,
+    baseRevision: analyzed.baseRevision,
+    aiBudget: analyzed.aiBudget,
   });
 }

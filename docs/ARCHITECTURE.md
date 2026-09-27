@@ -47,12 +47,14 @@ GitHub読取portは選定済みallowlist内の列挙と詳細取得、正規化�
 その`evaluatedAt`はrun開始時刻と異なる型で保持し、`CollectedRun`が正規source IDのcatalogと未来時刻の検証結果を確定します。
 `DeterministicallyAnalyzedRun`は初期項目判定、関係候補のID・端点・判定担当、追跡・終了・stale・詳細再取得の集合を確定します。
 収集段階で確定した追跡対象、再分析対象、関係候補が利用できない個人催促の対象項目は、このstageのfactsへ引き継ぎます。
-未移行のAI、reducer、graph、個人催促は同じfactsから入力を投影して利用します。
+汎用AIの計画はこのfactsを受け取り、9要素ごとの必要性、選択理由、意味入力、fingerprintを`GenericAiPlannedRun`へ固定します。
+未移行のreducer、graph、個人催促は同じfactsから入力を投影して利用します。
 Issueの明示依頼候補と実質担当候補は`deterministic-responsibility.ts`、IssueとPull Requestに共通するmention候補は`deterministic-mentions.ts`で抽出します。
 `src/application/tracking-run/stages/deterministic.ts`は`CollectedRun`から初期判定を生成し、`deterministic-item.ts`がIssueとPull Requestを1件ずつ判定します。
 初期判定は実行環境や永続化セッションを受け取らず、収集段階で固定した評価日時を使います。
 初期判定とAI結果を採用した再判定は、入力契約を分けます。
-`codex/candidates.ts`と`codex/input.ts`が汎用AIの候補と入力を組み立てます。
+`codex/planning-source.ts`は前回stateと収集値から計画用の事実を投影し、`src/application/tracking-run/stages/generic-ai-plan.ts`が要素の選択と実行候補を確定します。
+未移行のCodex実行器には`src/cli/tracking-run/migration-bridge/generic-ai-plan.ts`が確定済み候補を渡します。
 AI結果の採用と判定の統合は`reduction/`、暫定graphと最終graphの構築は`graph/`が担います。
 `personal-reminder/stage.ts`は既存の個人催促moduleを接続し、`validation/`はsnapshotと通知候補を作って完全性を検証します。
 日次runのinventory、collection、決定論的分析の成果物は`src/application/tracking-run/stages/`を契約とし、未移行stageの型は`production-runtime/contracts.ts`に置きます。
@@ -251,7 +253,7 @@ terminal項目も同じ扱いにし、次回runで必ずAI分析を再試行し�
 
 汎用AIの判定は状態、待ち相手、次の行動、関係、進捗、重要度、期限、通知推奨、selfCommitmentの9要素で選別します。
 入力schemaは5、出力schemaは7、snapshotは19とします。
-各要素のrevisionは`src/codex/analysis-elements.ts`、必要条件は`src/cli/production-runtime/codex/input.ts`と`src/codex/element-planning.ts`で定義します。`src/cli/production-runtime/codex/candidates.ts`が必要条件を使って実行対象を選び、`reduction/`が採用結果を統合します。表の意味入力は`src/codex/analysis-element-dependencies.ts`で作る要素別fingerprintの対象であり、汎用AIへ渡す入力全体ではありません。
+各要素のrevision、必要条件、入力投影、利用先、出力schemaは`src/codex/generic-ai-definition.ts`で対応付けます。`GenericAiPlannedRun`が選択要素と理由を項目ごとに固定し、`reduction/`が採用結果を統合します。表の意味入力は要素別fingerprintの対象であり、汎用AIへ渡す入力全体ではありません。
 
 | 要素             | revision | 必要条件                                                                                       | 意味入力fingerprintの対象                                                  | 主な利用先                     |
 | ---------------- | -------: | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------ |
@@ -264,6 +266,8 @@ terminal項目も同じ扱いにし、次回runで必ずAI分析を再試行し�
 | `deadline`       |        1 | 確定判定以外・実質担当候補・人の進捗候補・推定関係候補のいずれかがあるか、前回の評価が利用可能 | 項目基本情報、本文・コメント・レビュー                                     | 期限日と要対応度               |
 | `notification`   |        1 | 非terminalのCodex候補で、native blocker・自動化ノイズ・通知抑制ラベルがない                    | 項目基本情報、全候補、本文・コメント・レビュー、状態系の確定signal         | 通知推奨                       |
 | `selfCommitment` |        1 | 観測期間内の未編集human comment候補がある                                                      | 項目全体、自己申告候補、本文・コメント・レビュー                           | 自己申告原因による通知抑制     |
+
+要素別の計画は意味入力そのものと、そのcanonical JSONから作ったfingerprintを一緒に保持します。評価時刻の経過だけではfingerprintを変えません。AIを使う要素はcache照合を計画し、miss時の新規実行を明示します。AI無効、不要、現在の完了結果の再利用、強制解析による延期も要素ごとに区別します。
 
 selfCommitmentは他の要素から独立して扱い、他の要素のprojectionへ専用の観測期間を混ぜません。
 selfCommitmentの候補は前回`observedAt`より後、今回の評価時刻以前の未編集human commentに限り、source authorとtimeline event actorが同じhumanであることを確認します。前回観測がない場合は追加推論を行いません。通知時は現在の`waitingOn`が単独のhuman userであり、そのactorと一致することを決定論的に確認し、他者、混在、不明、依存解消の原因は通知を残します。
