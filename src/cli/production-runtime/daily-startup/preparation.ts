@@ -4,8 +4,8 @@ import type { ProductionTypes } from "../contracts.js";
 
 /** 同じbase revisionの前回stateと検証済み設定からrunを準備する。 */
 export function createPrepareRunStage(): DailyTransactionDependencies<ProductionTypes>["prepareRun"] {
-  return ({ request, identity, configuration, state }) =>
-    prepareRun({
+  return ({ request, identity, configuration, state }) => {
+    const prepared = prepareRun({
       request,
       identity,
       config: configuration.config,
@@ -20,4 +20,7 @@ export function createPrepareRunStage(): DailyTransactionDependencies<Production
         previousState: state.previousState,
       }),
     });
+    configuration.codexAttemptBudget.bind(prepared.core.aiBudget);
+    return prepared;
+  };
 }

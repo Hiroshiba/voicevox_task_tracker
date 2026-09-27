@@ -11,6 +11,7 @@ import {
 } from "./errors.js";
 import { validateCodexElementOutputSchema } from "./element-output.js";
 import { validateCodexAnalysisOutput } from "./output-validation.js";
+import { validateCodexAnalysisSemanticConstraints } from "./semantic-validation.js";
 import { type CodexElementOutput } from "./semantic-validation.js";
 import { type CodexElementEvidence, type SchemaValidCodexElementOutput } from "./element-output.js";
 import {
@@ -463,17 +464,21 @@ export async function executeCodexAnalysisWithTransportAliases(
     observer?.onGenerationStarted(generation);
     const context = createSemanticGenerationContext(generation, previousOutput, previousIssues);
     const rawOutput = await execute(transport.input, context);
-    let validatedOutput: SchemaValidCodexElementOutput;
+    const schemaValidOutput = validateCodexElementOutputSchema(
+      rawOutput,
+      transport.input.selectedElements,
+    );
+    let canonicalOutput: CodexElementOutput;
     try {
-      validatedOutput = validateCodexAnalysisOutput(rawOutput, transport.input);
+      const validatedOutput = validateCodexAnalysisSemanticConstraints(
+        schemaValidOutput,
+        transport.input,
+      );
+      canonicalOutput = restoreAndValidateCanonicalOutput(validatedOutput, transport.codec, input);
     } catch (error: unknown) {
       if (!(error instanceof CodexOutputSemanticValidationError)) {
         throw error;
       }
-      const schemaValidOutput = validateCodexElementOutputSchema(
-        rawOutput,
-        transport.input.selectedElements,
-      );
       const issues = semanticCorrectionIssues(error.issues);
       if (issues == null || !allSemanticIssuesAreCorrectable(issues)) {
         throw error;
@@ -492,11 +497,6 @@ export async function executeCodexAnalysisWithTransportAliases(
       }
       continue;
     }
-    const canonicalOutput = restoreAndValidateCanonicalOutput(
-      validatedOutput,
-      transport.codec,
-      input,
-    );
     if (generation > 1) {
       observer?.onCorrectionSucceeded(generation);
     }
@@ -544,6 +544,9 @@ function restoreAndValidateCanonicalOutput(
   try {
     return validateCodexAnalysisOutput(restoredOutput, input);
   } catch (error: unknown) {
+    if (error instanceof CodexOutputSemanticValidationError) {
+      throw error;
+    }
     throw new CodexTransportAliasError("canonical_validation", { cause: error });
   }
 }

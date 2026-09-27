@@ -4,7 +4,7 @@ import {
   createEmptyAiBudgetUsage,
   estimateAiInputCost,
   recordCodexDiagnostic,
-  runAiAnalyses,
+  runPlannedAiAnalyses,
   type AiAnalysisRunFailure,
   type AiAnalysisRunResult,
   type CodexDiagnosticsContext,
@@ -21,6 +21,11 @@ import type { DailyRunInvocation } from "../../daily-transaction.js";
 import { safeCodexFallbackDiagnostic } from "../../error-diagnostic.js";
 import type { CodexRuntimeAdapters } from "../adapters.js";
 import type { GenericAiPlannedRun } from "../../../application/tracking-run/stages/generic-ai-plan.js";
+import {
+  completeGenericAiExecution,
+  type GenericAiExecutedRun,
+} from "../../../application/tracking-run/stages/generic-ai-execution.js";
+import { summarizeAiBudgetLedger } from "../../../application/tracking-run/contracts/ai-budget-ledger.js";
 import { projectLegacyGenericAiPlanning } from "../../tracking-run/migration-bridge/generic-ai-plan.js";
 import type { CodexAnalysis, RuntimeConfiguration, RuntimeState } from "../contracts.js";
 import { previousSnapshot } from "../previous-state/snapshot.js";
@@ -57,6 +62,7 @@ export async function analyzeCodex(
 ): Promise<
   Readonly<{
     stage: CodexAnalysis;
+    executed: GenericAiExecutedRun;
     status: "success" | "fallback";
     aiCallCount: number;
     aiCacheHitCount: number;
@@ -117,6 +123,11 @@ export async function analyzeCodex(
       inputValidationFailureCount: planned.data.plan.failures.length,
     });
     return Object.freeze({
+      executed: completeGenericAiExecution(
+        planned,
+        undefined,
+        configuration.codexAttemptBudget.snapshot,
+      ),
       stage: Object.freeze({
         run: undefined,
         inputByNodeId: prepared.inputByNodeId,
@@ -178,14 +189,13 @@ export async function analyzeCodex(
               }),
             ),
         });
-  const executedRun = await runAiAnalyses(
-    prepared.candidates,
+  const executedRun = await runPlannedAiAnalyses(
+    planned.data.plan,
     {
       identity,
       budget: configuration.config.ai.budget,
       initialUsage: createEmptyAiBudgetUsage(),
       maxConcurrentCalls: configuration.config.ai.execution.maxConcurrentCalls,
-      ...(target == null ? {} : { target }),
     },
     {
       cache: state.session.aiCache,
@@ -214,6 +224,11 @@ export async function analyzeCodex(
       executedAt: () => planned.data.collection.evaluatedAt,
     },
   );
+  const executed = completeGenericAiExecution(
+    planned,
+    executedRun,
+    configuration.codexAttemptBudget.snapshot,
+  );
   const run = Object.freeze({
     ...executedRun,
     failures: Object.freeze([...planned.data.plan.failures, ...executedRun.failures]),
@@ -240,10 +255,18 @@ export async function analyzeCodex(
     inputValidationFailureCount: planned.data.plan.failures.length,
   });
   const semanticGenerationCounts = semanticGenerationCounter.read();
+  const genericAttempts = executed.core.aiBudget.events.filter(
+    (event) => event.action === "consumed" && event.reservation.kind.startsWith("generic_"),
+  ).length;
+  if (genericAttempts !== semanticGenerationCounts.processAttemptCount) {
+    throw new TypeError("汎用AIのprocess診断数とledger実試行数が一致しません");
+  }
   const semanticGenerationPublicDiagnostic =
     codexSemanticGenerationDiagnostic(semanticGenerationCounts);
   const fallback = run.failures.length > 0 || run.deferred.length > 0;
+  const ledgerSummary = summarizeAiBudgetLedger(executed.core.aiBudget);
   return Object.freeze({
+    executed,
     stage: Object.freeze({
       run,
       inputByNodeId: prepared.inputByNodeId,
@@ -257,10 +280,11 @@ export async function analyzeCodex(
       ),
     }),
     status: fallback ? "fallback" : "success",
-    aiCallCount: run.usage.calls,
+    aiCallCount:
+      ledgerSummary.logicalCandidateCount + ledgerSummary.authenticationPreflightAttemptCount,
     aiCacheHitCount: run.results.filter((result) => result.origin === "cache").length,
     aiRetainedResultCount: countRetainedAiResults(state, planned),
-    estimatedInputTokens: Math.ceil(run.usage.inputCharacters / 4),
+    estimatedInputTokens: ledgerSummary.estimatedInputTokens,
     diagnostics: Object.freeze([
       ...run.failures.map(codexFallbackDiagnostic),
       ...run.deferred.map(

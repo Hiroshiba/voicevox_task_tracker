@@ -15,7 +15,8 @@ import type { RelationAssessmentVerdict } from "../graph/index.js";
 import { CodexOutputSemanticValidationError, type CodexOutputValidationIssue } from "./errors.js";
 import { type CodexAnalysisInput } from "./input.js";
 import {
-  validateCodexElementOutput,
+  validateCodexElementOutputSchema,
+  validateCodexElementOutputSemantics,
   type SchemaValidCodexElementOutput,
 } from "./element-output.js";
 import { type CodexSemanticValidationIssueCode } from "./semantic-validation-issues.js";
@@ -897,11 +898,11 @@ function validateNativeRelationReferences(
 }
 
 /** schema検証済みのCodex出力を入力候補とsourceの範囲でsemantic検証する。 */
-export function validateCodexAnalysisSemantics(
-  value: unknown,
+export function validateCodexAnalysisSemanticConstraints(
+  value: SchemaValidCodexElementOutput,
   input: CodexAnalysisInput,
 ): SchemaValidCodexElementOutput {
-  const output = validateCodexElementOutput(value, input.selectedElements);
+  const output = validateCodexElementOutputSemantics(value, input.selectedElements);
   const knownSources = createKnownSources(input);
   const issues: CodexOutputValidationIssue[] = [];
 
@@ -933,4 +934,13 @@ export function validateCodexAnalysisSemantics(
     throw new CodexOutputSemanticValidationError(issues);
   }
   return output;
+}
+
+/** Codex出力をschemaとsemanticの順に検証する。 */
+export function validateCodexAnalysisSemantics(
+  value: unknown,
+  input: CodexAnalysisInput,
+): SchemaValidCodexElementOutput {
+  const schemaValid = validateCodexElementOutputSchema(value, input.selectedElements);
+  return validateCodexAnalysisSemanticConstraints(schemaValid, input);
 }

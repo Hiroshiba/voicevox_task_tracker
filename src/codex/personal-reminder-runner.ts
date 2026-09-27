@@ -10,6 +10,7 @@ import {
   type PersonalReminderCauseId,
 } from "../domain/personal-reminder-causes.js";
 import { type AiAnalysisElementInputFingerprint } from "../domain/ai-analysis-elements.js";
+import { summarizeAiBudgetLedger } from "../application/tracking-run/contracts/ai-budget-ledger.js";
 import type { DiagnosticsJsonValue } from "../diagnostics/error-serializer.js";
 import { type GitHubNodeId, type ReasoningEffort } from "../domain/types.js";
 import { assertNonNullable } from "../util/index.js";
@@ -675,6 +676,7 @@ export async function runPersonalReminderAiAnalyses(
 ): Promise<PersonalReminderAiRunResult> {
   validateConfiguration(configuration);
   validateCandidates(candidates);
+  const initialSummary = summarizeAiBudgetLedger(dependencies.attemptBudget.snapshot);
   const resolved = await resolveCache(candidates, configuration, dependencies.cache);
   const preparedBatches = createPreparedBatchStates(resolved.misses, configuration);
   const budgetCandidates = preparedBatches.states.map((state) => state.budgetCandidate);
@@ -691,21 +693,9 @@ export async function runPersonalReminderAiAnalyses(
     budgetPlan.selected,
     dependencies.attemptBudget,
     dependencies.ensureReady,
-    dependencies.preflight?.execute,
+    "personal_initial",
+    dependencies.preflight,
   );
-  const selected = reserved.selected.map((value) => value.candidate);
-  let usage = budgetPlan.usage;
-  if (selected.length !== budgetPlan.selected.length) {
-    usage =
-      dependencies.preflight == null
-        ? planAiAnalysisBudget(selected, configuration.budget, configuration.initialUsage).usage
-        : planAiAnalysisBudgetWithPreflight(
-            selected,
-            configuration.budget,
-            configuration.initialUsage,
-            dependencies.preflight,
-          ).usage;
-  }
   const outcomes = new Map<PersonalReminderCauseId, PersonalReminderAiCauseRunOutcome>();
   for (const [causeId, outcome] of resolved.outcomes) {
     addOutcome(outcomes, causeId, outcome);
@@ -763,13 +753,20 @@ export async function runPersonalReminderAiAnalyses(
       throw new TypeError(`個人催促AI候補の結果がありません。対象: ${candidate.cause.causeId}`);
     }
   }
+  const summary = summarizeAiBudgetLedger(dependencies.attemptBudget.snapshot);
   return Object.freeze({
     outcomesByCauseId: outcomes,
-    usage,
-    executedBatchCount: selected.length,
+    usage: Object.freeze({
+      calls: summary.logicalCandidateCount + summary.authenticationPreflightAttemptCount,
+      inputCharacters: summary.inputCharacters,
+      estimatedCostUsd: summary.estimatedCostUsd,
+    }),
+    executedBatchCount: summary.logicalCandidateCount - initialSummary.logicalCandidateCount,
     cacheHitCauseCount: [...resolved.outcomes.values()].filter(
       (outcome) => outcome.status === "accepted" && outcome.origin === "cache",
     ).length,
-    authenticationPreflightExecuted: reserved.authenticationPreflightExecuted,
+    authenticationPreflightExecuted:
+      summary.authenticationPreflightAttemptCount >
+      initialSummary.authenticationPreflightAttemptCount,
   });
 }

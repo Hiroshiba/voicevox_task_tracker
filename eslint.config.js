@@ -47,7 +47,7 @@ const pureLeafImportPaths = [
   "github/public-repository-allowlist.js",
   "github/stable-id.js",
 ];
-const typeOnlyLeafImportPaths = ["github/item-enumeration.js"];
+const typeOnlyLeafImportPaths = ["codex/analysis-runner.js", "github/item-enumeration.js"];
 const pureLeafImportPattern = pureLeafImportPaths
   .concat(typeOnlyLeafImportPaths)
   .map((path) => path.replaceAll(".", "\\."))

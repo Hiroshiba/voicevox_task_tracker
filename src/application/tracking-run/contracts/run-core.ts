@@ -3,6 +3,7 @@ import type { Config } from "../../../config/schema.js";
 import type { StageProofFor } from "./proofs.js";
 import type { AnalysisPreviousState } from "./previous-state.js";
 import type { RunExecutionPolicy, RunIdentity } from "../request.js";
+import type { AiBudgetLedgerSnapshot } from "./ai-budget-ledger.js";
 
 /** 固定したstate branchの先頭revision。 */
 export type BaseStateRevision =
@@ -22,16 +23,7 @@ export type PreparedBaseState = Readonly<{
 }>;
 
 /** run開始時に固定するAI予算の初期残量。 */
-export type InitialAiBudgetLedger = Readonly<{
-  ledgerId: string;
-  sequence: 0;
-  maxProcessAttempts: number;
-  maxInputCharacters: number;
-  maxEstimatedCostUsd: number;
-  consumedProcessAttempts: 0;
-  consumedInputCharacters: 0;
-  consumedEstimatedCostUsd: 0;
-}>;
+export type InitialAiBudgetLedger = AiBudgetLedgerSnapshot & Readonly<{ sequence: 0 }>;
 
 /** 前処理で確定しinventory遷移まで保持する値。 */
 export type PreparedRunCore = Readonly<{
@@ -60,7 +52,7 @@ export type GenericAiRunCore = Readonly<{
   executionPolicy: RunExecutionPolicy;
   configDigest: Sha256Hash;
   baseRevision: BaseStateRevision;
-  aiBudget: InitialAiBudgetLedger;
+  aiBudget: AiBudgetLedgerSnapshot;
 }>;
 
 /** 実装済み段階と段階ごとのcore型の唯一の対応表。 */
@@ -70,6 +62,7 @@ export type CoreByStage = Readonly<{
   collected: AnalysisRunCore;
   deterministically_analyzed: AnalysisRunCore;
   generic_ai_planned: GenericAiRunCore;
+  generic_ai_executed: GenericAiRunCore;
 }>;
 
 /** 段階名に対応したcoreとproofを持つ成果物。 */

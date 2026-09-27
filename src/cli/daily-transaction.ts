@@ -12,6 +12,7 @@ import type { CollectedRun } from "../application/tracking-run/stages/collection
 import type { RunEvaluatedAt } from "../application/tracking-run/contracts/evaluation-time.js";
 import type { DeterministicallyAnalyzedRun } from "../application/tracking-run/stages/deterministic.js";
 import type { GenericAiPlannedRun } from "../application/tracking-run/stages/generic-ai-plan.js";
+import type { GenericAiExecutedRun } from "../application/tracking-run/stages/generic-ai-execution.js";
 import {
   StateFormatError,
   StatePersonalReminderAiDependencyMismatchError,
@@ -50,6 +51,7 @@ export type DailyTransactionTypeMap = Readonly<{
   collectedRun: CollectedRun<Readonly<{ evaluatedAt: RunEvaluatedAt }>>;
   deterministicallyAnalyzed: DeterministicallyAnalyzedRun;
   genericAiPlanned: GenericAiPlannedRun;
+  genericAiExecuted: GenericAiExecutedRun;
   repositoryInventory: unknown;
   collection: unknown;
   codexAnalysis: unknown;
@@ -76,6 +78,7 @@ export type DailyRunInvocation = Readonly<{
 export type CodexAnalysisStageResult<Value> = Readonly<{
   status: "success" | "fallback";
   value: Value;
+  executed: GenericAiExecutedRun;
   aiCallCount: number;
   aiCacheHitCount: number;
   aiRetainedResultCount: number;
@@ -193,6 +196,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       state: Types["state"];
       repositoryInventory: Types["repositoryInventory"];
       deterministicallyAnalyzed: Types["deterministicallyAnalyzed"];
+      genericAiExecuted: Types["genericAiExecuted"];
       codexAnalysis: Types["codexAnalysis"];
     }>,
   ) => Promise<Types["reduction"]>;
@@ -212,6 +216,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       state: Types["state"];
       repositoryInventory: Types["repositoryInventory"];
       deterministicallyAnalyzed: Types["deterministicallyAnalyzed"];
+      genericAiExecuted: Types["genericAiExecuted"];
       codexAnalysis: Types["codexAnalysis"];
       reduction: Types["reduction"];
       graph: Types["graph"];
@@ -686,6 +691,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         state,
         repositoryInventory,
         deterministicallyAnalyzed,
+        genericAiExecuted: codexAnalysis.executed,
         codexAnalysis: codexAnalysis.value,
       });
 
@@ -708,6 +714,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         state,
         repositoryInventory,
         deterministicallyAnalyzed,
+        genericAiExecuted: codexAnalysis.executed,
         codexAnalysis: codexAnalysis.value,
         reduction,
         graph: graph.value,

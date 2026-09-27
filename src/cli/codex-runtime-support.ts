@@ -35,6 +35,7 @@ export function createCodexAdapterConfiguration(config: Config): CodexAdapterCon
   return Object.freeze({
     authentication: config.ai.authentication,
     model: config.ai.model,
+    inputCostUsdPerMillionTokens: config.ai.budget.estimatedInputCostUsdPerMillionTokens,
     execution: {
       timeoutSeconds: config.ai.execution.timeoutSeconds,
       maxAttempts: config.ai.execution.maxAttempts,

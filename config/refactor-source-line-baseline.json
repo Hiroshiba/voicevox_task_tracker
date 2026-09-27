@@ -7,11 +7,6 @@
       "sha256": "970d352590260691fbe3983b1845500ca5cc5b93aadbceec7b8491d14b6113ab"
     },
     {
-      "path": "src/codex/adapter.ts",
-      "lineCount": 1285,
-      "sha256": "42c257ea94b8ffe8030b57e45a68adfb24abbaebfc86c8ef621c715eb6096224"
-    },
-    {
       "path": "src/codex/personal-reminder-input.ts",
       "lineCount": 1690,
       "sha256": "5c05f5fd427494bb735f631c4c4dbd961b3e85b87b1219eb34df2c39785cf914"

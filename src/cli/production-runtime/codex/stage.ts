@@ -41,6 +41,7 @@ export function createAnalyzeWithCodexStage(
     return Object.freeze({
       status: analysis.status,
       value: analysis.stage,
+      executed: analysis.executed,
       aiCallCount: analysis.aiCallCount,
       aiCacheHitCount: analysis.aiCacheHitCount,
       aiRetainedResultCount: analysis.aiRetainedResultCount,

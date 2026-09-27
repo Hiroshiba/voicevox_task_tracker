@@ -89,7 +89,7 @@ export {
 } from "./preflight.js";
 export { recordCodexDiagnostic, type CodexDiagnosticsContext } from "./diagnostics.js";
 export {
-  runAiAnalyses,
+  runPlannedAiAnalyses,
   type AiAnalysisPreflight,
   type AiAnalysisRunConfiguration,
   type AiAnalysisRunDependencies,

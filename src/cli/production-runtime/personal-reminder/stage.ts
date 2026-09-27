@@ -1,7 +1,6 @@
 import {
   CODEX_AUTHENTICATION_PREFLIGHT_INPUT_CHARACTERS,
   CODEX_AUTHENTICATION_PREFLIGHT_PROMPT,
-  createEmptyAiBudgetUsage,
   estimateAiInputCost,
   recordCodexDiagnostic,
   runPersonalReminderAiAnalyses,
@@ -10,6 +9,7 @@ import {
   type PersonalReminderAiRunConfiguration,
   type PersonalReminderAiRunResult,
 } from "../../../codex/index.js";
+import { summarizeAiBudgetLedger } from "../../../application/tracking-run/contracts/ai-budget-ledger.js";
 import {
   createLabelEffectsResolver,
   type Evidence,
@@ -50,7 +50,6 @@ import { forcedAiAnalysisTarget } from "../ai-analysis-target.js";
 import { aiDependencyReconciliationContext } from "../ai-dependencies/reconciliation-context.js";
 import { CODEX_BACKEND_VERSION } from "../../../codex/backend-version.js";
 import type {
-  CodexAnalysis,
   CollectedItems,
   DeterministicAnalysis,
   GraphResult,
@@ -74,7 +73,6 @@ async function analyzePersonalReminders(
   inventory: RepositoryInventory,
   collection: CollectedItems,
   deterministicAnalysis: DeterministicAnalysis,
-  codexAnalysis: CodexAnalysis,
   reduction: ReducedAnalysis,
   graph: GraphResult,
 ): Promise<PersonalReminderAnalysisStageResult<PersonalReminderAnalysis>> {
@@ -131,7 +129,13 @@ async function analyzePersonalReminders(
       return candidate == null ? [] : [candidate];
     }),
   );
-  const initialUsage = codexAnalysis.run?.usage ?? createEmptyAiBudgetUsage();
+  const initialSummary = summarizeAiBudgetLedger(configuration.codexAttemptBudget.snapshot);
+  const initialUsage = Object.freeze({
+    calls:
+      initialSummary.logicalCandidateCount + initialSummary.authenticationPreflightAttemptCount,
+    inputCharacters: initialSummary.inputCharacters,
+    estimatedCostUsd: initialSummary.estimatedCostUsd,
+  });
   const diagnostics: CodexDiagnosticsContext | undefined =
     adapters.diagnosticsRecorder == null
       ? undefined
@@ -172,7 +176,7 @@ async function analyzePersonalReminders(
         : undefined;
     const preflightDiagnostics = createCodexPreflightDiagnostics(diagnostics, invocation);
     const preflight =
-      codexAnalysis.run?.authenticationPreflightExecuted === true || preflightInputCost == null
+      initialSummary.authenticationPreflightAttemptCount > 0 || preflightInputCost == null
         ? undefined
         : Object.freeze({
             inputCharacters: CODEX_AUTHENTICATION_PREFLIGHT_INPUT_CHARACTERS,
@@ -298,7 +302,12 @@ async function analyzePersonalReminders(
     resolveLabelEffects: createLabelEffectsResolver(normalizeLabelRules(configuration.config)),
   });
   const counts = personalReminderCauseAttemptCounts(result);
-  const usage = run?.usage ?? initialUsage;
+  const finalSummary = summarizeAiBudgetLedger(configuration.codexAttemptBudget.snapshot);
+  const usage = Object.freeze({
+    calls: finalSummary.logicalCandidateCount + finalSummary.authenticationPreflightAttemptCount,
+    inputCharacters: finalSummary.inputCharacters,
+    estimatedCostUsd: finalSummary.estimatedCostUsd,
+  });
   const usageDelta = personalReminderUsageDelta(usage, initialUsage);
   const status =
     personalReminderFallbackNodeIds.size > 0 ||
@@ -320,15 +329,18 @@ async function analyzePersonalReminders(
       result,
       run,
       budgetUsage: usage,
-      authenticationPreflightExecuted: run?.authenticationPreflightExecuted ?? false,
+      authenticationPreflightExecuted:
+        finalSummary.authenticationPreflightAttemptCount >
+        initialSummary.authenticationPreflightAttemptCount,
     }),
     aiCallCount: usage.calls,
-    estimatedInputTokens: Math.ceil(usage.inputCharacters / 4),
+    estimatedInputTokens: finalSummary.estimatedInputTokens,
     personalReminderCauseCount: [...result.itemsByNodeId.values()].reduce(
       (count, item) => count + item.causeResults.length,
       0,
     ),
-    personalReminderAiCallCount: run?.executedBatchCount ?? 0,
+    personalReminderAiCallCount:
+      finalSummary.logicalCandidateCount - initialSummary.logicalCandidateCount,
     personalReminderAiCacheHitCount: run?.cacheHitCauseCount ?? 0,
     personalReminderAssessmentReuseCount: personalReminderAssessmentReuseCount(plan),
     personalReminderUnknownCount: counts.unknown,
@@ -349,11 +361,18 @@ export function createAnalyzePersonalRemindersStage(
     state,
     repositoryInventory,
     deterministicallyAnalyzed,
-    codexAnalysis,
+    genericAiExecuted,
     reduction,
     graph,
-  }) =>
-    analyzePersonalReminders(
+  }) => {
+    const currentLedger = configuration.codexAttemptBudget.snapshot;
+    if (
+      currentLedger.ledgerId !== genericAiExecuted.core.aiBudget.ledgerId ||
+      currentLedger.sequence !== genericAiExecuted.core.aiBudget.sequence
+    ) {
+      throw new TypeError("個人催促AIへ渡す共有予算が汎用AI実行結果と一致しません");
+    }
+    return analyzePersonalReminders(
       adapters,
       invocation,
       configuration,
@@ -361,8 +380,8 @@ export function createAnalyzePersonalRemindersStage(
       repositoryInventory,
       projectLegacyAnalyzedCollection(deterministicallyAnalyzed),
       projectLegacyDeterministicAnalysis(deterministicallyAnalyzed),
-      codexAnalysis,
       reduction,
       graph,
     );
+  };
 }

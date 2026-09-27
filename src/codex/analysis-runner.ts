@@ -1,18 +1,18 @@
 import {
+  AI_ANALYSIS_ELEMENTS,
   AI_ANALYSIS_ELEMENT_REVISIONS,
   type AiAnalysisElement,
   type AiAnalysisElementGeneration,
   type AiAnalysisElementResult,
 } from "./analysis-elements.js";
 import {
-  createAiAnalysisTarget,
-  selectAiAnalysisCandidates,
-  selectAiAnalysisTarget,
   type AiAnalysisTarget,
   type AiAnalysisRunIdentity,
   type AiAnalysisSkipReason,
   type PreparedAiAnalysisCandidate,
 } from "./analysis-selection.js";
+import type { GenericAiPlan } from "../application/tracking-run/stages/generic-ai-plan.js";
+import { summarizeAiBudgetLedger } from "../application/tracking-run/contracts/ai-budget-ledger.js";
 import {
   planAiAnalysisBudget,
   planAiAnalysisBudgetWithPreflight,
@@ -36,28 +36,19 @@ import {
   type AiCacheKey,
   type AiCacheStore,
 } from "./cache.js";
-import {
-  hashCanonicalJson,
-  parseSha256Hash,
-  serializeCanonicalJson,
-} from "../canonical-json/index.js";
+import { hashCanonicalJson, parseSha256Hash } from "../canonical-json/index.js";
 import {
   CodexAttemptError,
   CodexOutputSchemaValidationError,
   CodexOutputSemanticValidationError,
   CodexOutputValidationError,
   CodexNonZeroExitError,
-  CodexTransportAliasError,
   type CodexNonZeroExitDiagnostic,
   type CodexOutputValidationDiagnostic,
 } from "./errors.js";
 import { recordCodexDiagnostic, type CodexDiagnosticsContext } from "./diagnostics.js";
 import type { DiagnosticsJsonValue } from "../diagnostics/error-serializer.js";
-import {
-  createCodexAnalysisInput,
-  projectCodexLockedElementResult,
-  type CodexAnalysisInput,
-} from "./input.js";
+import { createCodexAnalysisInput, type CodexAnalysisInput } from "./input.js";
 import { type SchemaValidCodexElementOutput } from "./element-output.js";
 import { CODEX_ELEMENT_OUTPUT_SCHEMA_VERSION } from "./element-output-schema.js";
 import { aiAnalysisElementGenerationSchema } from "./analysis-elements.js";
@@ -75,7 +66,6 @@ export type AiAnalysisRunConfiguration = Readonly<{
   budget: AiRunBudget;
   initialUsage: AiBudgetUsage;
   maxConcurrentCalls: number;
-  target?: AiAnalysisTarget;
 }>;
 
 /** AI分析前に実行するCodex認証preflight。 */
@@ -309,57 +299,6 @@ function validateComposedOutput(
   return validateCodexAnalysisSemantics(value, composedInput);
 }
 
-function createExecutionInput(state: CandidateCacheState): PreparedAiAnalysisCandidate {
-  const lockedElements: Record<string, unknown> = {
-    ...state.candidate.input.lockedElements,
-  };
-  for (const result of state.cached) {
-    lockedElements[result.element] = projectCodexLockedElementResult(
-      result.element,
-      result.generation.result,
-    );
-  }
-  const input = createCodexAnalysisInput({
-    ...state.candidate.input,
-    selectedElements: state.misses.map((value) => value.element),
-    lockedElements,
-  });
-  const normalizedInput = `${serializeCanonicalJson(input)}\n`;
-  const cachedSkipped = state.cached.map((result) => {
-    const elementCandidate = state.candidate.selectedElements.find(
-      (value) => value.element === result.element,
-    );
-    assertNonNullable(elementCandidate, `cache結果の要素候補がありません。対象: ${result.element}`);
-    return Object.freeze({
-      candidate: elementCandidate,
-      reason: "up_to_date" as const,
-    });
-  });
-  return Object.freeze({
-    ...state.candidate,
-    input,
-    elementSelection: Object.freeze({
-      selected: Object.freeze([...state.misses]),
-      skipped: Object.freeze([...state.candidate.elementSelection.skipped, ...cachedSkipped]),
-      shouldCallAi: state.misses.length !== 0,
-    }),
-    selectedElements: Object.freeze([...state.misses]),
-    normalizedInput,
-    inputCharacters: countUnicodeCharacters(normalizedInput),
-  });
-}
-
-function countUnicodeCharacters(value: string): number {
-  let count = 0;
-  for (const character of value) {
-    if (character.length === 0) {
-      throw new TypeError("空のUnicode文字を検出しました");
-    }
-    count += 1;
-  }
-  return count;
-}
-
 function createElementGeneration(
   candidate: PreparedAiAnalysisCandidate,
   elementCandidate: PreparedAiAnalysisCandidate["selectedElements"][number],
@@ -494,47 +433,65 @@ async function resolveCacheEntries(
   });
 }
 
-function sameSelectedElements(
-  candidate: PreparedAiAnalysisCandidate,
-  targetSelection: ReturnType<typeof selectAiAnalysisTarget>,
-): boolean {
-  if (candidate.selectedElements.length !== targetSelection.selectedElements.length) {
-    return false;
-  }
-  const selectedElementsMatch = candidate.selectedElements.every((candidateElement, index) => {
-    return candidateElement.element === targetSelection.selectedElements[index]?.element;
-  });
-  if (!selectedElementsMatch) {
-    return false;
-  }
-  if (candidate.input.selectedElements.length !== targetSelection.selectedElements.length) {
-    return false;
-  }
-  return candidate.input.selectedElements.every((element, index) => {
-    return element === targetSelection.selectedElements[index]?.element;
-  });
-}
-
-function selectCandidatesForRun(
-  candidates: readonly PreparedAiAnalysisCandidate[],
-  target: AiAnalysisTarget | undefined,
-): Readonly<{
+function selectPlannedCandidates(plan: GenericAiPlan): Readonly<{
   selected: readonly PreparedAiAnalysisCandidate[];
   skipped: readonly Readonly<{
     candidate: PreparedAiAnalysisCandidate;
     reason: AiAnalysisSkipReason;
   }>[];
 }> {
-  if (target == null) {
-    return selectAiAnalysisCandidates(candidates);
-  }
-  const targetSelection = selectAiAnalysisTarget(candidates, target);
-  if (!sameSelectedElements(targetSelection.candidate, targetSelection)) {
-    throw new TypeError("指定したAI分析対象のselectedElementsが一致しません");
+  const ids = new Set<string>();
+  for (const item of plan.items) {
+    if (ids.has(item.nodeId) || item.candidate.id !== item.nodeId) {
+      throw new TypeError(`AI計画の候補IDが不正です。対象: ${item.nodeId}`);
+    }
+    ids.add(item.nodeId);
+    const plannedElements = new Set(item.elements.map((value) => value.element));
+    const candidateElements = new Set(item.candidate.elements.map((value) => value.element));
+    if (
+      item.elements.length !== AI_ANALYSIS_ELEMENTS.length ||
+      plannedElements.size !== AI_ANALYSIS_ELEMENTS.length ||
+      item.candidate.elements.length !== AI_ANALYSIS_ELEMENTS.length ||
+      candidateElements.size !== AI_ANALYSIS_ELEMENTS.length ||
+      AI_ANALYSIS_ELEMENTS.some((element) => !plannedElements.has(element))
+    ) {
+      throw new TypeError(`AI計画の要素集合が9要素と一致しません。対象: ${item.nodeId}`);
+    }
+    const selected = item.candidate.selectedElements.map((value) => value.element);
+    const selectedFromPlan = item.elements
+      .filter((element) => element.selected)
+      .map((element) => element.element);
+    if (
+      new Set(selected).size !== selected.length ||
+      selected.length !== item.selectedElements.length ||
+      selected.some((element, index) => element !== item.selectedElements[index]) ||
+      selected.some((element, index) => element !== item.candidate.input.selectedElements[index]) ||
+      item.candidate.input.selectedElements.length !== selected.length ||
+      selectedFromPlan.length !== selected.length ||
+      selectedFromPlan.some((element, index) => element !== selected[index])
+    ) {
+      throw new TypeError(`AI計画の選択要素が候補入力と一致しません。対象: ${item.nodeId}`);
+    }
+    for (const element of item.elements) {
+      const candidate = item.candidate.elements.find((value) => value.element === element.element);
+      if (candidate?.inputFingerprint !== element.inputFingerprint) {
+        throw new TypeError(
+          `AI計画のfingerprintが候補と一致しません。対象: ${item.nodeId}/${element.element}`,
+        );
+      }
+    }
   }
   return Object.freeze({
-    selected: Object.freeze([targetSelection.candidate]),
-    skipped: Object.freeze([]),
+    selected: Object.freeze(
+      plan.items.filter((item) => item.selectedElements.length > 0).map((item) => item.candidate),
+    ),
+    skipped: Object.freeze(
+      plan.items
+        .filter((item) => item.selectedElements.length === 0)
+        .map((item) =>
+          Object.freeze({ candidate: item.candidate, reason: "not_required" as const }),
+        ),
+    ),
   });
 }
 
@@ -563,7 +520,7 @@ async function executeCandidate(
   dependencies: AiAnalysisRunDependencies,
   ticket: CodexInitialAttemptTicket,
 ): Promise<CandidateExecutionOutcome> {
-  const candidate = createExecutionInput(state);
+  const candidate = state.candidate;
   try {
     const output = validateCodexAnalysisSemantics(
       await dependencies.execute(candidate.input, {
@@ -614,7 +571,7 @@ async function executeCandidate(
     if (error instanceof CodexAttemptBudgetExceededError) {
       return Object.freeze({ status: "deferred", candidateId: candidate.id });
     }
-    if (error instanceof CodexTransportAliasError) {
+    if (!(error instanceof CodexAttemptError || error instanceof CodexOutputValidationError)) {
       throw error;
     }
     await recordCandidateFailure(dependencies.diagnostics, candidate.id, error, "execution");
@@ -703,15 +660,17 @@ async function executeSelectedCandidates(
   });
 }
 
-/** 選別済みの要素だけを項目ごとに一回のCodex呼び出しで分析する。 */
-export async function runAiAnalyses(
-  candidates: readonly PreparedAiAnalysisCandidate[],
+/** 確定済みplanの選択要素だけを項目ごとに一回のCodex呼び出しで分析する。 */
+export async function runPlannedAiAnalyses(
+  plan: GenericAiPlan,
   configuration: AiAnalysisRunConfiguration,
   dependencies: AiAnalysisRunDependencies,
 ): Promise<AiAnalysisRunResult> {
-  const target =
-    configuration.target == null ? undefined : createAiAnalysisTarget(configuration.target);
-  const selection = selectCandidatesForRun(candidates, target);
+  const target = plan.target;
+  if (configuration.identity !== plan.identity) {
+    throw new TypeError("AI実行設定のidentityが計画と一致しません");
+  }
+  const selection = selectPlannedCandidates(plan);
   const resolved = await resolveCacheEntries(
     selection.selected,
     configuration,
@@ -726,7 +685,7 @@ export async function runAiAnalyses(
     });
   const executionCandidates = resolved.states
     .filter((state) => state.misses.length !== 0)
-    .map((state) => createExecutionInput(state));
+    .map((state) => state.candidate);
   const budgetPlan =
     dependencies.preflight == null
       ? planAiAnalysisBudget(executionCandidates, configuration.budget, configuration.initialUsage)
@@ -740,21 +699,9 @@ export async function runAiAnalyses(
     budgetPlan.selected,
     dependencies.attemptBudget,
     dependencies.ensureReady,
-    dependencies.preflight?.execute,
+    "generic_initial",
+    dependencies.preflight,
   );
-  const selected = reserved.selected.map((value) => value.candidate);
-  let usage = budgetPlan.usage;
-  if (selected.length !== budgetPlan.selected.length) {
-    usage =
-      dependencies.preflight == null
-        ? planAiAnalysisBudget(selected, configuration.budget, configuration.initialUsage).usage
-        : planAiAnalysisBudgetWithPreflight(
-            selected,
-            configuration.budget,
-            configuration.initialUsage,
-            dependencies.preflight,
-          ).usage;
-  }
   const executed = await executeSelectedCandidates(
     resolved.states,
     reserved.selected,
@@ -762,9 +709,26 @@ export async function runAiAnalyses(
     configuration,
     dependencies,
   );
+  const summary = summarizeAiBudgetLedger(dependencies.attemptBudget.snapshot);
+  const itemOrder = new Map<string, number>(plan.items.map((item, index) => [item.nodeId, index]));
+  function byPlanOrder(left: string, right: string): number {
+    const leftIndex = itemOrder.get(left);
+    const rightIndex = itemOrder.get(right);
+    assertNonNullable(leftIndex, `AI結果の候補が計画にありません。対象: ${left}`);
+    assertNonNullable(rightIndex, `AI結果の候補が計画にありません。対象: ${right}`);
+    return leftIndex - rightIndex;
+  }
   const result = Object.freeze({
-    results: Object.freeze([...cachedOnlyResults, ...executed.results]),
-    failures: executed.failures,
+    results: Object.freeze(
+      [...cachedOnlyResults, ...executed.results].sort((left, right) =>
+        byPlanOrder(left.candidateId, right.candidateId),
+      ),
+    ),
+    failures: Object.freeze(
+      [...executed.failures].sort((left, right) =>
+        byPlanOrder(left.candidateId, right.candidateId),
+      ),
+    ),
     skipped: Object.freeze(
       selection.skipped.map((value) =>
         Object.freeze({
@@ -773,21 +737,27 @@ export async function runAiAnalyses(
         }),
       ),
     ),
-    deferred: Object.freeze([
-      ...budgetPlan.deferred.map((value) =>
-        Object.freeze({
-          candidateId: value.candidate.id,
-          reason: value.reason,
-        }),
-      ),
-      ...reserved.deferred.map((candidate): AiAnalysisRunResult["deferred"][number] =>
-        Object.freeze({ candidateId: candidate.id, reason: "call_limit" }),
-      ),
-      ...executed.deferred.map((candidateId): AiAnalysisRunResult["deferred"][number] =>
-        Object.freeze({ candidateId, reason: "call_limit" }),
-      ),
-    ]),
-    usage,
+    deferred: Object.freeze(
+      [
+        ...budgetPlan.deferred.map((value) =>
+          Object.freeze({
+            candidateId: value.candidate.id,
+            reason: value.reason,
+          }),
+        ),
+        ...reserved.deferred.map((candidate): AiAnalysisRunResult["deferred"][number] =>
+          Object.freeze({ candidateId: candidate.id, reason: "call_limit" }),
+        ),
+        ...executed.deferred.map((candidateId): AiAnalysisRunResult["deferred"][number] =>
+          Object.freeze({ candidateId, reason: "call_limit" }),
+        ),
+      ].sort((left, right) => byPlanOrder(left.candidateId, right.candidateId)),
+    ),
+    usage: Object.freeze({
+      calls: summary.logicalCandidateCount + summary.authenticationPreflightAttemptCount,
+      inputCharacters: summary.inputCharacters,
+      estimatedCostUsd: summary.estimatedCostUsd,
+    }),
     authenticationPreflightExecuted: reserved.authenticationPreflightExecuted,
   });
   if (target != null) {

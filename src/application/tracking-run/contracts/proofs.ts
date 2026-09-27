@@ -32,6 +32,10 @@ class StageProofToken<StageName extends AnalysisRunStageName> {
   public static genericAiPlanned(): StageProofToken<"generic_ai_planned"> {
     return new StageProofToken("generic_ai_planned");
   }
+
+  public static genericAiExecuted(): StageProofToken<"generic_ai_executed"> {
+    return new StageProofToken("generic_ai_executed");
+  }
 }
 
 class RunCompletenessProofToken {
@@ -96,6 +100,11 @@ export function createDeterministicallyAnalyzedStageProof(): StageProofFor<"dete
 /** 汎用AIの要素選択と入力対応を確認した段階を証明する。 */
 export function createGenericAiPlannedStageProof(): StageProofFor<"generic_ai_planned"> {
   return StageProofToken.genericAiPlanned();
+}
+
+/** 汎用AIの計画と実行結果を照合した段階を証明する。 */
+export function createGenericAiExecutedStageProof(): StageProofFor<"generic_ai_executed"> {
+  return StageProofToken.genericAiExecuted();
 }
 
 /** 公開前の完全性検証を通過した証明。 */

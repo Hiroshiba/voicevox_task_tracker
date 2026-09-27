@@ -1,7 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { rm } from "node:fs/promises";
 
 import { z } from "zod";
 
@@ -14,11 +11,9 @@ import {
 import { recordCodexDiagnostic, type CodexDiagnosticsContext } from "./diagnostics.js";
 import {
   CodexAttemptError,
-  CodexInvalidJsonError,
   CodexNonZeroExitError,
   CodexProcessStartError,
   CodexRateLimitError,
-  CodexResourceError,
   CodexTemporaryWorkspaceError,
   CodexTimeoutError,
 } from "./errors.js";
@@ -41,6 +36,12 @@ import {
   type SchemaValidPersonalReminderAiOutput,
 } from "./personal-reminder-output.js";
 import { serializeCanonicalJson } from "../canonical-json/index.js";
+import { hashCanonicalJson } from "../canonical-json/index.js";
+import { estimateAiInputCost } from "./budget.js";
+import type {
+  AiBudgetAttemptKind,
+  AiBudgetCharge,
+} from "../application/tracking-run/contracts/ai-budget-ledger.js";
 import {
   type CodexApiErrorDiagnostic,
   type CodexProcessRequest,
@@ -48,7 +49,6 @@ import {
   type CodexProcessRunner,
 } from "./process-runner.js";
 import { REASONING_EFFORTS } from "../domain/index.js";
-import { UnreachableError } from "../util/index.js";
 import { CODEX_AUTHENTICATION_PREFLIGHT_PROMPT } from "./preflight.js";
 import { type CodexElementOutput } from "./semantic-validation.js";
 import {
@@ -57,22 +57,33 @@ import {
   type CodexSemanticGenerationContext,
   type CodexSemanticGenerationObserver,
 } from "./transport-alias.js";
-import { listCodexSemanticValidationIssueGlossary } from "./semantic-validation-issues.js";
+import {
+  CODEX_COMMAND,
+  PERMANENT_CODEX_API_ERROR_TYPES,
+  createAuthenticationPreflightProcessRequest,
+  createProcessRequest,
+  createSemanticCorrectionSystemPrompt,
+  createTemporaryWorkspace,
+  inspectCodexStdout,
+  mergeCodexApiErrors,
+  normalizedProcessOutput,
+  readFixedPersonalReminderPrompt,
+  readFixedSemanticCorrectionPrompt,
+  readFixedSystemPrompt,
+  readLastMessage,
+  safeApiErrorDetails,
+  writeOutputSchema,
+  type CodexStdoutInspection,
+  type LastMessageReadResult,
+} from "./adapter-process-support.js";
 
-const CODEX_COMMAND = "codex";
-const CODEX_TEMPORARY_DIRECTORY_PREFIX = "voicevox-task-tracker-codex-";
-const SYSTEM_PROMPT_URL = new URL("../../prompts/codex-system.md", import.meta.url);
-const SEMANTIC_CORRECTION_PROMPT_URL = new URL(
-  "../../prompts/codex-semantic-correction.md",
-  import.meta.url,
-);
+export {
+  createCodexEnvironment,
+  getCodexEnvironmentVariableAllowlist,
+} from "./adapter-process-support.js";
+
 const OUTPUT_SCHEMA_FILE_NAME = "codex-element-output.schema.json";
-const PERSONAL_REMINDER_SYSTEM_PROMPT_URL = new URL(
-  "../../prompts/personal-reminder-causes.md",
-  import.meta.url,
-);
 const PERSONAL_REMINDER_OUTPUT_SCHEMA_FILE_NAME = "personal-reminder-output.schema.json";
-const OUTPUT_LAST_MESSAGE_FILE_NAME = "last-message.json";
 const MAX_TIMEOUT_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1000);
 const TEMPORARY_PROCESS_ERROR_CODES = new Set([
   "EAGAIN",
@@ -93,23 +104,10 @@ const codexAuthenticationSchema = z.enum(CODEX_AUTHENTICATIONS);
 /** Codex adapterが利用する認証方式。 */
 export type CodexAuthentication = z.output<typeof codexAuthenticationSchema>;
 
-/** 認証方式に応じてCodex subprocessへ渡せる環境変数名を返す。 */
-export function getCodexEnvironmentVariableAllowlist(
-  authentication: CodexAuthentication,
-): readonly string[] {
-  switch (authentication) {
-    case "api-key":
-      return Object.freeze(["HOME", "OPENAI_API_KEY", "PATH"]);
-    case "auth-json":
-      return Object.freeze(["CODEX_HOME", "HOME", "PATH"]);
-    default:
-      throw new UnreachableError(authentication);
-  }
-}
-
 const codexAdapterConfigurationSchema = z.strictObject({
   authentication: codexAuthenticationSchema,
   model: z.string().min(1, "modelは空にできません"),
+  inputCostUsdPerMillionTokens: z.number().positive(),
   execution: z.strictObject({
     timeoutSeconds: z.number().int().positive().max(MAX_TIMEOUT_SECONDS),
     maxAttempts: z.number().int().positive(),
@@ -137,6 +135,7 @@ function parseCodexAdapterConfiguration(
   return codexAdapterConfigurationSchema.parse({
     authentication: configurationValue.authentication,
     model: configurationValue.model,
+    inputCostUsdPerMillionTokens: configurationValue.inputCostUsdPerMillionTokens,
     execution: configurationValue.execution,
     retry: configurationValue.retry,
   });
@@ -148,6 +147,7 @@ export type CodexAdapterDependencies = Readonly<{
   processRunner: CodexProcessRunner;
   attemptBudget: CodexAttemptBudget;
   initialAttemptTicket?: CodexInitialAttemptTicket;
+  attemptOwner?: Readonly<{ kind: "generic" | "personal"; id: string }>;
   runtime: Readonly<{
     sleep: (delayMilliseconds: number) => Promise<void>;
     random: () => number;
@@ -166,166 +166,17 @@ type AttemptOutcome =
       error: unknown;
     }>;
 
-/** 認証方式に応じてCodex subprocessへ渡す環境を組み立てる。 */
-export function createCodexEnvironment(
-  authentication: CodexAuthentication,
-  sourceEnvironment: Readonly<NodeJS.ProcessEnv>,
-): Readonly<Record<string, string>> {
-  const environment: Record<string, string> = {};
-  for (const variableName of getCodexEnvironmentVariableAllowlist(authentication)) {
-    const value = sourceEnvironment[variableName];
-    if (value == null || value.trim().length === 0) {
-      throw new TypeError(`Codex subprocess用の${variableName}がありません`);
-    }
-    environment[variableName] = value;
-  }
-  return Object.freeze(environment);
-}
-
-async function readFixedPrompt(promptUrl: URL, resource: string): Promise<string> {
-  try {
-    return await readFile(fileURLToPath(promptUrl), "utf8");
-  } catch (error: unknown) {
-    throw new CodexResourceError(resource, { cause: error });
-  }
-}
-
-async function readFixedSystemPrompt(): Promise<string> {
-  return readFixedPrompt(SYSTEM_PROMPT_URL, "prompts/codex-system.md");
-}
-
-async function readFixedSemanticCorrectionPrompt(): Promise<string> {
-  return readFixedPrompt(SEMANTIC_CORRECTION_PROMPT_URL, "prompts/codex-semantic-correction.md");
-}
-
-function createSemanticCorrectionSystemPrompt(
-  systemPrompt: string,
-  correctionPrompt: string,
-): string {
-  const glossary = serializeCanonicalJson(listCodexSemanticValidationIssueGlossary());
-  return `${systemPrompt}\n\n${correctionPrompt}\n\n固定semantic issue glossary:\n${glossary}`;
-}
-
-async function readFixedPersonalReminderPrompt(): Promise<string> {
-  return readFixedPrompt(
-    PERSONAL_REMINDER_SYSTEM_PROMPT_URL,
-    "prompts/personal-reminder-causes.md",
-  );
-}
-
-async function writeOutputSchema(
-  workingDirectory: string,
-  schema: Readonly<Record<string, unknown>>,
-  fileName: string,
-  resource: string,
-): Promise<string> {
-  const outputSchemaPath = join(workingDirectory, fileName);
-  try {
-    await writeFile(outputSchemaPath, `${JSON.stringify(schema)}\n`, {
-      encoding: "utf8",
-      flag: "wx",
-    });
-    return outputSchemaPath;
-  } catch (error: unknown) {
-    throw new CodexResourceError(resource, { cause: error });
-  }
-}
-
-async function createTemporaryWorkspace(): Promise<string> {
-  try {
-    return await mkdtemp(join(tmpdir(), CODEX_TEMPORARY_DIRECTORY_PREFIX));
-  } catch (error: unknown) {
-    throw new CodexTemporaryWorkspaceError("create", { cause: error });
-  }
-}
-
-function createProcessRequest(
-  configuration: CodexAdapterConfiguration,
-  dependencies: CodexAdapterDependencies,
-  systemPrompt: string,
-  inputJson: string,
-  workingDirectory: string,
-  outputSchemaPath: string,
-): CodexProcessRequest {
-  const outputLastMessagePath = join(workingDirectory, OUTPUT_LAST_MESSAGE_FILE_NAME);
-  return {
-    command: CODEX_COMMAND,
-    arguments: [
-      "exec",
-      "--json",
-      "--output-last-message",
-      outputLastMessagePath,
-      "--strict-config",
-      "--ignore-user-config",
-      "--ignore-rules",
-      "--ephemeral",
-      "--skip-git-repo-check",
-      "--model",
-      configuration.model,
-      "-s",
-      configuration.execution.sandbox,
-      "-c",
-      `approval_policy="${configuration.execution.approvalPolicy}"`,
-      "-c",
-      `model_reasoning_effort="${configuration.execution.reasoningEffort}"`,
-      "-C",
-      workingDirectory,
-      "--output-schema",
-      outputSchemaPath,
-      "--color",
-      "never",
-      systemPrompt,
-    ],
-    workingDirectory,
-    environment: createCodexEnvironment(configuration.authentication, dependencies.environment),
-    standardInput: inputJson,
-    timeoutMilliseconds: configuration.execution.timeoutSeconds * 1000,
-  };
-}
-
-function createAuthenticationPreflightProcessRequest(
-  configuration: CodexAdapterConfiguration,
-  dependencies: CodexAdapterDependencies,
-  workingDirectory: string,
-): CodexProcessRequest {
-  return {
-    command: CODEX_COMMAND,
-    arguments: [
-      "exec",
-      "--json",
-      "--strict-config",
-      "--ignore-user-config",
-      "--ignore-rules",
-      "--ephemeral",
-      "--skip-git-repo-check",
-      "--model",
-      configuration.model,
-      "-s",
-      configuration.execution.sandbox,
-      "-c",
-      `approval_policy="${configuration.execution.approvalPolicy}"`,
-      "-c",
-      `model_reasoning_effort="${configuration.execution.reasoningEffort}"`,
-      "-C",
-      workingDirectory,
-      "--color",
-      "never",
-      CODEX_AUTHENTICATION_PREFLIGHT_PROMPT,
-    ],
-    workingDirectory,
-    environment: createCodexEnvironment(configuration.authentication, dependencies.environment),
-    standardInput: "",
-    timeoutMilliseconds: configuration.execution.timeoutSeconds * 1000,
-  };
-}
-
 async function runProcess(
   request: CodexProcessRequest,
   dependencies: CodexAdapterDependencies,
   attempts: number,
+  kind: AiBudgetAttemptKind,
+  ownerId: string,
+  charge: AiBudgetCharge,
+  initialTicket: CodexInitialAttemptTicket | undefined,
   onProcessAttemptStarted: (() => void) | undefined,
 ): Promise<CodexProcessResult> {
-  dependencies.attemptBudget.beginAttempt(dependencies.initialAttemptTicket);
+  dependencies.attemptBudget.beginAttempt(initialTicket, kind, ownerId, charge);
   onProcessAttemptStarted?.();
   try {
     return await dependencies.processRunner(request);
@@ -365,205 +216,6 @@ function assertSuccessfulProcess(
       mergeCodexApiErrors(stdoutApiError, result.apiError),
     );
   }
-}
-
-function createSafeJsonParseCause(error: unknown): Error {
-  const errorName = error instanceof Error ? error.name : typeof error;
-  return new Error(`Codex最終メッセージのJSON解析に失敗しました。エラー種別: ${errorName}`, {
-    cause: error,
-  });
-}
-
-type LastMessageReadResult =
-  | Readonly<{
-      status: "read";
-      source: string;
-      value: unknown;
-    }>
-  | Readonly<{
-      status: "read_failed" | "json_parse_failed";
-      source: string;
-      error: Error;
-    }>;
-
-async function readLastMessage(
-  request: CodexProcessRequest,
-  attempts: number,
-): Promise<LastMessageReadResult> {
-  const outputPathIndex = request.arguments.indexOf("--output-last-message");
-  const outputPath = request.arguments.at(outputPathIndex + 1);
-  if (outputPathIndex < 0 || outputPath == null) {
-    throw new TypeError("Codex CLI引数に最終メッセージの出力先がありません");
-  }
-
-  let source: string;
-  try {
-    source = await readFile(outputPath, "utf8");
-  } catch (error: unknown) {
-    return {
-      status: "read_failed",
-      source: "",
-      error: new CodexInvalidJsonError(attempts, { cause: error }),
-    };
-  }
-
-  const parseJson: (value: string) => unknown = JSON.parse;
-  try {
-    return {
-      status: "read",
-      source,
-      value: parseJson(source),
-    };
-  } catch (error: unknown) {
-    return {
-      status: "json_parse_failed",
-      source,
-      error: new CodexInvalidJsonError(attempts, {
-        cause: createSafeJsonParseCause(error),
-      }),
-    };
-  }
-}
-
-const CODEX_API_ERROR_VALUE_PATTERN = /^[A-Za-z0-9._:-]+$/u;
-const codexJsonObjectSchema = z.record(z.string(), z.unknown());
-const CODEX_API_ERROR_EVENT_TYPES = new Set(["error", "turn.failed"]);
-const PERMANENT_CODEX_API_ERROR_TYPES = new Set([
-  "invalid_request_error",
-  "authentication_error",
-  "permission_error",
-  "insufficient_quota",
-  "context_length_exceeded",
-  "model_not_found",
-  "invalid_api_key",
-]);
-
-type CodexStdoutInspection = Readonly<{
-  apiError: CodexApiErrorDiagnostic | undefined;
-  apiEvents: readonly ("turn.failed" | "error")[];
-  parseErrors: readonly Error[];
-}>;
-
-function safeApiErrorValue(value: unknown): string | undefined {
-  if (
-    typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= 300 &&
-    CODEX_API_ERROR_VALUE_PATTERN.test(value)
-  ) {
-    return value;
-  }
-  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) {
-    return value.toString();
-  }
-  return undefined;
-}
-
-function apiErrorValue(
-  source: Readonly<Record<string, unknown>>,
-  field: string,
-): string | undefined {
-  return safeApiErrorValue(source[field]);
-}
-
-function mergeCodexApiErrors(
-  primary: CodexApiErrorDiagnostic | undefined,
-  secondary: CodexApiErrorDiagnostic | undefined,
-): CodexApiErrorDiagnostic | undefined {
-  if (primary == null) {
-    return secondary;
-  }
-  if (secondary == null) {
-    return primary;
-  }
-  const primaryTypeIsGeneric =
-    primary.type != null && CODEX_API_ERROR_EVENT_TYPES.has(primary.type);
-  const type = primaryTypeIsGeneric ? (secondary.type ?? primary.type) : primary.type;
-  const code = primary.code ?? secondary.code;
-  const status = primary.status ?? secondary.status;
-  return Object.freeze({
-    ...(type == null ? {} : { type }),
-    ...(code == null ? {} : { code }),
-    ...(status == null ? {} : { status }),
-  });
-}
-
-function inspectCodexStdout(source: string): CodexStdoutInspection {
-  const apiEvents: ("turn.failed" | "error")[] = [];
-  const parseErrors: Error[] = [];
-  let apiError: CodexApiErrorDiagnostic | undefined;
-  for (const [index, line] of source.split(/\r?\n/u).entries()) {
-    if (line.trim().length === 0) {
-      continue;
-    }
-    let value: unknown;
-    try {
-      value = JSON.parse(line);
-    } catch (error: unknown) {
-      parseErrors.push(
-        new Error(`Codex --json stdoutのJSONL解析に失敗しました。行: ${(index + 1).toString()}`, {
-          cause: error,
-        }),
-      );
-      continue;
-    }
-    const objectResult = codexJsonObjectSchema.safeParse(value);
-    if (!objectResult.success) {
-      continue;
-    }
-    const eventType = objectResult.data["type"] ?? objectResult.data["event"];
-    if (eventType !== "turn.failed" && eventType !== "error") {
-      continue;
-    }
-    apiEvents.push(eventType);
-    const nested = codexJsonObjectSchema.safeParse(objectResult.data["error"]);
-    const errorObject = nested.success ? nested.data : objectResult.data;
-    const type = apiErrorValue(errorObject, "type");
-    const code = apiErrorValue(errorObject, "code");
-    const status = apiErrorValue(errorObject, "status");
-    apiError = mergeCodexApiErrors(
-      apiError,
-      Object.freeze({
-        type: type ?? eventType,
-        ...(code == null ? {} : { code }),
-        ...(status == null ? {} : { status }),
-      }),
-    );
-  }
-  return Object.freeze({
-    apiError,
-    apiEvents: Object.freeze(apiEvents),
-    parseErrors: Object.freeze(parseErrors),
-  });
-}
-
-function normalizedProcessOutput(value: string | undefined, name: string): string {
-  if (value == null) {
-    return "";
-  }
-  if (typeof value !== "string") {
-    throw new TypeError(`Codex process resultの${name}は文字列にしてください`);
-  }
-  return value;
-}
-
-function safeApiErrorDetails(
-  apiError: CodexApiErrorDiagnostic | undefined,
-): Readonly<Record<string, DiagnosticsJsonValue>> | undefined {
-  if (apiError == null) {
-    return undefined;
-  }
-  const details: Record<string, DiagnosticsJsonValue> = {};
-  if (apiError.type != null) {
-    details["type"] = apiError.type;
-  }
-  if (apiError.code != null) {
-    details["code"] = apiError.code;
-  }
-  if (apiError.status != null) {
-    details["status"] = apiError.status;
-  }
-  return Object.freeze(details);
 }
 
 function attemptDetails(
@@ -610,22 +262,6 @@ function attemptDetails(
   return details;
 }
 
-function attemptFailureEvent(error: unknown): string {
-  if (error instanceof CodexProcessStartError) {
-    return "codex.process.start_failed";
-  }
-  if (error instanceof CodexTimeoutError) {
-    return "codex.process.timeout";
-  }
-  if (error instanceof CodexNonZeroExitError) {
-    return "codex.process.non_zero_exit";
-  }
-  if (error instanceof CodexInvalidJsonError) {
-    return "codex.last_message.failed";
-  }
-  return "codex.attempt.failed";
-}
-
 async function executeAttempt(
   configuration: CodexAdapterConfiguration,
   dependencies: CodexAdapterDependencies,
@@ -639,15 +275,7 @@ async function executeAttempt(
   observer: CodexSemanticGenerationObserver | undefined,
 ): Promise<unknown> {
   const diagnostics = dependencies.diagnostics;
-  await recordCodexDiagnostic(diagnostics, "codex.attempt.started", {
-    attempt: attempts,
-    semanticGeneration: generation,
-    command: CODEX_COMMAND,
-    model: configuration.model,
-    timeoutMilliseconds: configuration.execution.timeoutSeconds * 1000,
-    standardInputCharacters: inputJson.length,
-  });
-
+  const processStarted = { value: false };
   let workingDirectory: string | undefined;
   let request: CodexProcessRequest | undefined;
   let processResult: CodexProcessResult | undefined;
@@ -681,8 +309,42 @@ async function executeAttempt(
       workingDirectory,
       outputSchemaPath,
     );
-    processResult = await runProcess(request, dependencies, attempts, () =>
-      observer?.onProcessAttemptStarted(generation, attempts),
+    const owner = dependencies.attemptOwner;
+    if (owner == null) {
+      throw new TypeError("Codex実試行の予算所有者がありません");
+    }
+    const kind: AiBudgetAttemptKind =
+      owner.kind === "generic"
+        ? generation > 1
+          ? attempts > 1
+            ? "generic_semantic_correction_transport_retry"
+            : "generic_semantic_correction"
+          : attempts > 1
+            ? "generic_transport_retry"
+            : "generic_initial"
+        : attempts > 1
+          ? "personal_transport_retry"
+          : "personal_initial";
+    const cost = estimateAiInputCost(
+      request.standardInput,
+      configuration.inputCostUsdPerMillionTokens,
+    );
+    processResult = await runProcess(
+      request,
+      dependencies,
+      attempts,
+      kind,
+      owner.id,
+      Object.freeze({
+        inputCharacters: Array.from(request.standardInput).length,
+        estimatedInputTokens: cost.estimatedInputTokens,
+        estimatedCostUsd: cost.estimatedCostUsd,
+      }),
+      attempts === 1 && generation === 1 ? dependencies.initialAttemptTicket : undefined,
+      () => {
+        processStarted.value = true;
+        observer?.onProcessAttemptStarted(generation, attempts);
+      },
     );
     stdout = normalizedProcessOutput(processResult.stdout, "stdout");
     stderr = normalizedProcessOutput(processResult.stderr, "stderr");
@@ -728,6 +390,13 @@ async function executeAttempt(
         }),
       };
     }
+  }
+
+  if (!processStarted.value) {
+    if (!outcome.success) {
+      throw outcome.error;
+    }
+    throw new TypeError("Codex processの開始前に成功結果が確定しました");
   }
 
   for (const parseError of stdoutInspection.parseErrors) {
@@ -789,23 +458,6 @@ async function executeAttempt(
     );
   }
   if (!outcome.success) {
-    await recordCodexDiagnostic(
-      diagnostics,
-      attemptFailureEvent(outcome.error),
-      attemptDetails(
-        configuration,
-        attempts,
-        generation,
-        request,
-        processResult,
-        stdout,
-        stderr,
-        lastMessage,
-        apiError,
-        "failure",
-      ),
-      outcome.error,
-    );
     await recordCodexDiagnostic(
       diagnostics,
       "codex.attempt.completed",
@@ -890,14 +542,7 @@ async function executeAuthenticationPreflightAttempt(
   attempts: number,
 ): Promise<void> {
   const diagnostics = dependencies.diagnostics;
-  await recordCodexDiagnostic(diagnostics, "codex.authentication_preflight.attempt.started", {
-    attempt: attempts,
-    command: CODEX_COMMAND,
-    model: configuration.model,
-    timeoutMilliseconds: configuration.execution.timeoutSeconds * 1000,
-    standardInputCharacters: 0,
-  });
-
+  const processStarted = { value: false };
   let workingDirectory: string | undefined;
   let request: CodexProcessRequest | undefined;
   let processResult: CodexProcessResult | undefined;
@@ -920,7 +565,26 @@ async function executeAuthenticationPreflightAttempt(
       dependencies,
       workingDirectory,
     );
-    processResult = await runProcess(request, dependencies, attempts, undefined);
+    const cost = estimateAiInputCost(
+      CODEX_AUTHENTICATION_PREFLIGHT_PROMPT,
+      configuration.inputCostUsdPerMillionTokens,
+    );
+    processResult = await runProcess(
+      request,
+      dependencies,
+      attempts,
+      attempts === 1 ? "authentication_preflight" : "authentication_preflight_transport_retry",
+      "authentication",
+      Object.freeze({
+        inputCharacters: Array.from(CODEX_AUTHENTICATION_PREFLIGHT_PROMPT).length,
+        estimatedInputTokens: cost.estimatedInputTokens,
+        estimatedCostUsd: cost.estimatedCostUsd,
+      }),
+      attempts === 1 ? dependencies.initialAttemptTicket : undefined,
+      () => {
+        processStarted.value = true;
+      },
+    );
     stdout = normalizedProcessOutput(processResult.stdout, "stdout");
     stderr = normalizedProcessOutput(processResult.stderr, "stderr");
     stdoutInspection = inspectCodexStdout(stdout);
@@ -955,6 +619,13 @@ async function executeAuthenticationPreflightAttempt(
         }),
       };
     }
+  }
+
+  if (!processStarted.value) {
+    if (!outcome.success) {
+      throw outcome.error;
+    }
+    throw new TypeError("Codex認証preflightの開始前に成功結果が確定しました");
   }
 
   for (const parseError of stdoutInspection.parseErrors) {
@@ -1001,12 +672,6 @@ async function executeAuthenticationPreflightAttempt(
       stderr,
       apiError,
       "failure",
-    );
-    await recordCodexDiagnostic(
-      diagnostics,
-      attemptFailureEvent(outcome.error),
-      details,
-      outcome.error,
     );
     await recordCodexDiagnostic(
       diagnostics,
@@ -1063,11 +728,7 @@ function isPermanentCodexApiError(apiError: CodexApiErrorDiagnostic): boolean {
 }
 
 function isTemporaryAttemptError(error: CodexAttemptError): boolean {
-  if (
-    error instanceof CodexTimeoutError ||
-    error instanceof CodexRateLimitError ||
-    error instanceof CodexInvalidJsonError
-  ) {
+  if (error instanceof CodexTimeoutError || error instanceof CodexRateLimitError) {
     return true;
   }
   if (error instanceof CodexProcessStartError) {
@@ -1256,10 +917,14 @@ export async function executeCodexAnalysis(
   dependencies: CodexAdapterDependencies,
 ): Promise<CodexElementOutput> {
   const configuration = parseCodexAdapterConfiguration(configurationValue);
+  const ownedDependencies = Object.freeze({
+    ...dependencies,
+    attemptOwner: Object.freeze({ kind: "generic" as const, id: input.item.nodeId }),
+  });
   return executeCodexAnalysisWithTransportAliases(
     input,
     (transportInput, context) =>
-      executeRawCodexAnalysis(transportInput, configuration, dependencies, context),
+      executeRawCodexAnalysis(transportInput, configuration, ownedDependencies, context),
     {
       maxSemanticGenerations: configuration.execution.maxSemanticGenerations,
       ...(dependencies.semanticGenerationObserver == null
@@ -1276,10 +941,17 @@ export async function executeCodexPersonalReminderAnalysis(
   dependencies: CodexAdapterDependencies,
 ): Promise<SchemaValidPersonalReminderAiOutput> {
   const validatedInput = createPersonalReminderAiInput(input);
+  const ownedDependencies = Object.freeze({
+    ...dependencies,
+    attemptOwner: Object.freeze({
+      kind: "personal" as const,
+      id: `personal-reminder-batch:${hashCanonicalJson(validatedInput)}`,
+    }),
+  });
   const output = await executeRawPersonalReminderAnalysis(
     validatedInput,
     configurationValue,
-    dependencies,
+    ownedDependencies,
   );
   return validatePersonalReminderAiOutput(output, validatedInput.item);
 }

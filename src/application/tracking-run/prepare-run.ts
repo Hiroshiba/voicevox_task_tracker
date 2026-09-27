@@ -2,6 +2,7 @@ import type { Config } from "../../config/schema.js";
 import { parseSha256Hash, type Sha256Hash } from "../../canonical-json/sha256.js";
 import { createPreparedStageProof } from "./contracts/proofs.js";
 import type { PreparedBaseState, StageState } from "./contracts/run-core.js";
+import { createInitialAiBudgetLedger } from "./contracts/ai-budget-ledger.js";
 import {
   runIdentitySchema,
   runRequestSchema,
@@ -49,16 +50,7 @@ export function prepareRun(
       config: input.config,
       configDigest: input.configDigest,
       baseState: input.baseState,
-      aiBudget: Object.freeze({
-        ledgerId: identity.runId,
-        sequence: 0,
-        maxProcessAttempts: input.config.ai.budget.maxCodexExecAttemptsPerRun,
-        maxInputCharacters: input.config.ai.budget.maxTotalInputCharactersPerRun,
-        maxEstimatedCostUsd: input.config.ai.budget.maxEstimatedCostUsdPerRun,
-        consumedProcessAttempts: 0,
-        consumedInputCharacters: 0,
-        consumedEstimatedCostUsd: 0,
-      }),
+      aiBudget: createInitialAiBudgetLedger(identity.runId, input.config.ai.budget),
     }),
     data: Object.freeze({ request }),
     proof: createPreparedStageProof(),
