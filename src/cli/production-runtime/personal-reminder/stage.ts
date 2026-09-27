@@ -10,6 +10,7 @@ import {
   type PersonalReminderAiRunResult,
 } from "../../../codex/index.js";
 import { summarizeAiBudgetLedger } from "../../../application/tracking-run/contracts/ai-budget-ledger.js";
+import type { GraphReconciledRun } from "../../../application/tracking-run/stages/graph-reconciliation.js";
 import {
   createLabelEffectsResolver,
   type Evidence,
@@ -27,11 +28,15 @@ import type {
   DailyTransactionDependencies,
   PersonalReminderAnalysisStageResult,
 } from "../../daily-transaction.js";
-import { personalReminderRuntimeGraph } from "../../personal-reminder-graph-projection.js";
 import {
   projectLegacyAnalyzedCollection,
   projectLegacyDeterministicAnalysis,
 } from "../../tracking-run/migration-bridge/deterministic.js";
+import { projectLegacyGraphReconciliation } from "../../tracking-run/migration-bridge/graph-reconciliation.js";
+import {
+  projectFinalAiDependencyContext,
+  projectPersonalReminderGraphContext,
+} from "../../tracking-run/migration-bridge/personal-reminder-graph.js";
 import {
   applyPersonalReminderCauseOutcomes,
   finalizePersonalReminderAnalysis,
@@ -47,15 +52,12 @@ import {
 } from "../../personal-reminder-runtime.js";
 import type { PersonalReminderRuntimeAdapters } from "../adapters.js";
 import { forcedAiAnalysisTarget } from "../ai-analysis-target.js";
-import { aiDependencyReconciliationContext } from "../ai-dependencies/reconciliation-context.js";
 import { CODEX_BACKEND_VERSION } from "../../../codex/backend-version.js";
 import type {
   CollectedItems,
   DeterministicAnalysis,
-  GraphResult,
   PersonalReminderAnalysis,
   ProductionTypes,
-  ReducedAnalysis,
   RepositoryInventory,
   RuntimeConfiguration,
   RuntimeState,
@@ -73,9 +75,9 @@ async function analyzePersonalReminders(
   inventory: RepositoryInventory,
   collection: CollectedItems,
   deterministicAnalysis: DeterministicAnalysis,
-  reduction: ReducedAnalysis,
-  graph: GraphResult,
+  graphReconciled: GraphReconciledRun,
 ): Promise<PersonalReminderAnalysisStageResult<PersonalReminderAnalysis>> {
+  const { reduction, graph } = projectLegacyGraphReconciliation(graphReconciled);
   const unavailableConsumerNodeIds = collection.unavailableConsumerNodeIds;
   const runtimeCollection = personalReminderRuntimeCollection(
     collection,
@@ -85,12 +87,7 @@ async function analyzePersonalReminders(
     graph,
     unavailableConsumerNodeIds,
   );
-  const runtimeGraph = personalReminderRuntimeGraph(
-    () => previousSnapshot(state),
-    collection,
-    reduction,
-    graph,
-  );
+  const runtimeGraph = projectPersonalReminderGraphContext(graphReconciled);
   const currentEvidenceGroups: readonly (readonly Evidence[])[] = [
     ...reduction.items.map((item) => item.evidence),
     ...graph.edges.map((edge) => edge.evidence),
@@ -103,11 +100,7 @@ async function analyzePersonalReminders(
     state: previousState,
     collection: runtimeCollection.collection,
     graph: runtimeGraph,
-    aiDependencyContext: aiDependencyReconciliationContext(
-      reduction.items,
-      collection.relationCandidates,
-      graph,
-    ),
+    aiDependencyContext: projectFinalAiDependencyContext(graphReconciled),
     currentEvidenceBySourceId,
   });
   const plan = planPersonalReminderCauses(context);
@@ -362,8 +355,7 @@ export function createAnalyzePersonalRemindersStage(
     repositoryInventory,
     deterministicallyAnalyzed,
     genericAiExecuted,
-    reduction,
-    graph,
+    graphReconciled,
   }) => {
     const currentLedger = configuration.codexAttemptBudget.snapshot;
     if (
@@ -380,8 +372,7 @@ export function createAnalyzePersonalRemindersStage(
       repositoryInventory,
       projectLegacyAnalyzedCollection(deterministicallyAnalyzed),
       projectLegacyDeterministicAnalysis(deterministicallyAnalyzed),
-      reduction,
-      graph,
+      graphReconciled,
     );
   };
 }

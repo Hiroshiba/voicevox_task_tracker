@@ -59,8 +59,6 @@ export type DailyTransactionTypeMap = Readonly<{
   repositoryInventory: unknown;
   collection: unknown;
   codexAnalysis: unknown;
-  reduction: unknown;
-  graph: unknown;
   personalReminderAnalysis: unknown;
   validated: unknown;
   persisted: unknown;
@@ -193,9 +191,6 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
     }>,
   ) => Types["genericAiAdopted"];
   reconcileAdoptedGraph: (adopted: Types["genericAiAdopted"]) => Types["graphReconciled"];
-  projectLegacyGraphReconciliation: (
-    reconciled: Types["graphReconciled"],
-  ) => Readonly<{ reduction: Types["reduction"]; graph: Types["graph"] }>;
   analyzePersonalReminders: (
     input: Readonly<{
       invocation: DailyRunInvocation;
@@ -206,8 +201,6 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       genericAiExecuted: Types["genericAiExecuted"];
       codexAnalysis: Types["codexAnalysis"];
       graphReconciled: Types["graphReconciled"];
-      reduction: Types["reduction"];
-      graph: Types["graph"];
     }>,
   ) => Promise<PersonalReminderAnalysisStageResult<Types["personalReminderAnalysis"]>>;
   validateCompleteness: (
@@ -220,8 +213,6 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       codexAnalysis: Types["codexAnalysis"];
       genericAiAdopted: Types["genericAiAdopted"];
       graphReconciled: Types["graphReconciled"];
-      reduction: Types["reduction"];
-      graph: Types["graph"];
       personalReminderAnalysis: Types["personalReminderAnalysis"];
     }>,
   ) => Promise<CompletenessValidationResult<Types["validated"]>>;
@@ -680,8 +671,6 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
 
       stage = "graph_analysis";
       const graphReconciled = this.#dependencies.reconcileAdoptedGraph(genericAiAdopted);
-      const { reduction, graph } =
-        this.#dependencies.projectLegacyGraphReconciliation(graphReconciled);
       metrics = updateMetrics(metrics, {
         activeEdgeCount: graphReconciled.data.graph.edges.filter((edge) => edge.active).length,
       });
@@ -696,8 +685,6 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         genericAiExecuted: codexAnalysis.executed,
         codexAnalysis: codexAnalysis.value,
         graphReconciled,
-        reduction,
-        graph,
       });
       diagnostics.push(...personalReminderAnalysis.diagnostics);
       metrics = updateMetrics(metrics, {
@@ -728,8 +715,6 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         codexAnalysis: codexAnalysis.value,
         genericAiAdopted,
         graphReconciled,
-        reduction,
-        graph,
         personalReminderAnalysis: personalReminderAnalysis.value,
       });
       diagnostics.push(...validation.diagnostics);

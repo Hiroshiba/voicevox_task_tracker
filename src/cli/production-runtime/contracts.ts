@@ -256,8 +256,6 @@ export type ProductionTypes = DailyTransactionTypeMap &
     repositoryInventory: RepositoryInventory;
     collection: CollectedItems;
     codexAnalysis: CodexAnalysis;
-    reduction: ReducedAnalysis;
-    graph: GraphResult;
     personalReminderAnalysis: PersonalReminderAnalysis;
     validated: ValidatedRunWithPreview;
     persisted: PersistedRun;

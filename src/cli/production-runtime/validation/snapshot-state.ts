@@ -28,10 +28,8 @@ import type { DailyRunInvocation } from "../../daily-transaction.js";
 import type {
   CodexAnalysis,
   CollectedItems,
-  GraphResult,
   PendingTrackedItem,
   PersonalReminderAnalysis,
-  ReducedAnalysis,
   RuntimeConfiguration,
   RuntimeState,
 } from "../contracts.js";
@@ -245,10 +243,9 @@ export function createValidatedSnapshot(
   codexAnalysis: CodexAnalysis,
   adopted: GenericAiAdoptedRun,
   reconciled: GraphReconciledRun,
-  reduction: ReducedAnalysis,
-  graph: GraphResult,
   personalReminderAnalysis: PersonalReminderAnalysis,
 ): StateSnapshot {
+  const { reduction, graph } = reconciled.data;
   const items = snapshotItems(reconciled, personalReminderAnalysis);
   const itemsByNodeId = new Map(items.map((item) => [item.nodeId, item]));
   const snapshot = createStateSnapshot({

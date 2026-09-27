@@ -2,11 +2,17 @@ import {
   createLabelEffectsResolver,
   type GitHubNodeId,
   type GitHubRepositoryId,
-  type GraphNodeId,
   type NormalizedEvent,
   type TrackedItem,
   type UtcIsoDateTime,
 } from "../../../domain/index.js";
+import type {
+  GraphFinalItem,
+  GraphReconciliationResult,
+  GraphReducedItem,
+  GraphTrackedItemStaleness,
+} from "../../../application/tracking-run/stages/graph-reconciliation-contracts.js";
+import type { GraphReconciledRun } from "../../../application/tracking-run/stages/graph-reconciliation.js";
 import {
   createNotificationCauses,
   type DiscordNotificationItem,
@@ -18,22 +24,17 @@ import { assertNonNullable } from "../../../util/index.js";
 import { requirePersonalReminderAnalyzedItem } from "../../personal-reminder/index.js";
 import type {
   CollectedItems,
-  GraphResult,
-  PendingTrackedItem,
   PersonalReminderAnalysis,
-  ReducedAnalysis,
-  ReducedItemAnalysis,
   RepositoryInventory,
   RuntimeConfiguration,
   RuntimeState,
-  TrackedItemStaleness,
 } from "../contracts.js";
 import { normalizeLabelRules } from "../label-rules.js";
 import { previousTrackedItem } from "../previous-state/snapshot.js";
 import { findRepository, repositoryFullName } from "../repository-lookup.js";
 
 function notificationLatestChange(
-  current: ReducedItemAnalysis,
+  current: GraphReducedItem,
   previous: TrackedItem | undefined,
 ): DiscordNotificationItem["latestChange"] {
   if (previous == null || current.item.githubUpdatedAt === previous.githubUpdatedAt) {
@@ -52,12 +53,12 @@ type NotificationAnalysisState =
     }>
   | Readonly<{
       availability: "available";
-      value: ReducedItemAnalysis;
+      value: GraphReducedItem;
     }>;
 
 function notificationDecisionBasis(
-  item: PendingTrackedItem,
-  staleness: TrackedItemStaleness,
+  item: GraphFinalItem,
+  staleness: GraphTrackedItemStaleness,
   analysisState: NotificationAnalysisState,
 ): DiscordNotificationItem["decisionBasis"] {
   if (analysisState.availability === "available") {
@@ -81,7 +82,7 @@ function notificationDecisionBasis(
 }
 
 function notificationDraftState(
-  item: PendingTrackedItem,
+  item: GraphFinalItem,
   enumeratedItemsByNodeId: ReadonlyMap<GitHubNodeId, EnumeratedGitHubItem>,
   repositoryFreshness: DiscordNotificationItem["repositoryFreshness"],
 ): DiscordNotificationItem["draftState"] {
@@ -122,34 +123,15 @@ function hasUnobservedPullRequestHeadChange(
   return headEvent.occurredAt <= previous.observedAt || headEvent.occurredAt > evaluatedAt;
 }
 
-function hasOpenBlockers(
-  itemNodeId: GitHubNodeId,
-  graph: GraphResult,
-  nodeStateById: ReadonlyMap<GraphNodeId, PendingTrackedItem["state"]>,
-): boolean {
-  for (const edge of graph.edges) {
-    if (!edge.active || edge.type !== "blocks" || edge.toNodeId !== itemNodeId) {
-      continue;
-    }
-    const sourceState = nodeStateById.get(edge.fromNodeId);
-    assertNonNullable(sourceState, `blocks関係元 ${edge.fromNodeId}の状態がありません`);
-    if (sourceState === "open") {
-      return true;
-    }
-  }
-  return false;
-}
-
 function notificationItem(
   configuration: RuntimeConfiguration,
   state: RuntimeState,
   inventory: RepositoryInventory,
   enumeratedItemsByNodeId: ReadonlyMap<GitHubNodeId, EnumeratedGitHubItem>,
-  graph: GraphResult,
+  graph: GraphReconciliationResult,
   evaluatedAt: UtcIsoDateTime,
-  nodeStateById: ReadonlyMap<GraphNodeId, PendingTrackedItem["state"]>,
-  item: PendingTrackedItem,
-  staleness: TrackedItemStaleness,
+  item: GraphFinalItem,
+  staleness: GraphTrackedItemStaleness,
   analysisState: NotificationAnalysisState,
   personalReminderAnalysis: PersonalReminderAnalysis,
   retainedNotificationRecommendation:
@@ -269,7 +251,9 @@ function notificationItem(
     graph: Object.freeze({
       downstreamImpact,
       newlyUnblocked: graph.analysis.newlyUnblockedNodeIds.includes(item.nodeId),
-      hasOpenBlockers: hasOpenBlockers(item.nodeId, graph, nodeStateById),
+      hasOpenBlockers:
+        graph.openNodeIds.includes(item.nodeId) &&
+        !graph.analysis.actionableFrontier.includes(item.nodeId),
       currentDependencyCycleIds: cycleIds,
       previousDependencyCycles,
     }),
@@ -282,10 +266,10 @@ export function notificationItems(
   state: RuntimeState,
   inventory: RepositoryInventory,
   collection: CollectedItems,
-  reduction: ReducedAnalysis,
-  graph: GraphResult,
+  reconciled: GraphReconciledRun,
   personalReminderAnalysis: PersonalReminderAnalysis,
 ): readonly DiscordNotificationItem[] {
+  const { reduction, graph, finalItems } = reconciled.data;
   const staleRepositoryIds = new Set<GitHubRepositoryId>(
     collection.repositoryResults
       .filter((result) => result.freshness === "stale")
@@ -294,14 +278,17 @@ export function notificationItems(
   const currentItemsByNodeId = new Map(
     reduction.currentItems.map((current) => [current.item.nodeId, current]),
   );
-  const nodeStateById = graph.effectiveStateByNodeId;
+  const stalenessByNodeId = new Map(reduction.stalenessByNodeId);
+  const retainedNotificationRecommendations = new Map(
+    reduction.retainedNotificationRecommendations,
+  );
   const enumeratedItemsByNodeId = new Map(
     collection.enumeratedItems.map((item) => [item.nodeId, item]),
   );
   return Object.freeze(
-    reduction.items.flatMap((item) => {
+    finalItems.flatMap((item) => {
       const repositoryFreshness = staleRepositoryIds.has(item.repositoryId) ? "stale" : "fresh";
-      const staleness = reduction.stalenessByNodeId.get(item.nodeId);
+      const staleness = stalenessByNodeId.get(item.nodeId);
       assertNonNullable(staleness, `通知対象 ${item.nodeId}のseverity再計算結果がありません`);
       const current = currentItemsByNodeId.get(item.nodeId);
       return [
@@ -312,7 +299,6 @@ export function notificationItems(
           enumeratedItemsByNodeId,
           graph,
           collection.evaluatedAt,
-          nodeStateById,
           item,
           staleness,
           current == null
@@ -324,7 +310,7 @@ export function notificationItems(
                 value: current,
               }),
           personalReminderAnalysis,
-          reduction.retainedNotificationRecommendations.get(item.nodeId),
+          retainedNotificationRecommendations.get(item.nodeId),
           repositoryFreshness,
         ),
       ];

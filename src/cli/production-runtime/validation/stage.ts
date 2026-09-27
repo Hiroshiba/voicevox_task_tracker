@@ -5,10 +5,8 @@ import type { GraphReconciledRun } from "../../../application/tracking-run/stage
 import type {
   CodexAnalysis,
   CollectedItems,
-  GraphResult,
   PersonalReminderAnalysis,
   ProductionTypes,
-  ReducedAnalysis,
   RepositoryInventory,
   RuntimeConfiguration,
   RuntimeState,
@@ -30,8 +28,6 @@ function validateRunCompleteness(
   codexAnalysis: CodexAnalysis,
   genericAiAdopted: GenericAiAdoptedRun,
   graphReconciled: GraphReconciledRun,
-  reduction: ReducedAnalysis,
-  graph: GraphResult,
   personalReminderAnalysis: PersonalReminderAnalysis,
 ): ValidatedRunWithPreview {
   const snapshot = createValidatedSnapshot(
@@ -42,8 +38,6 @@ function validateRunCompleteness(
     codexAnalysis,
     genericAiAdopted,
     graphReconciled,
-    reduction,
-    graph,
     personalReminderAnalysis,
   );
   const notification = selectValidationNotifications(
@@ -52,13 +46,12 @@ function validateRunCompleteness(
     state,
     inventory,
     collection,
-    reduction,
-    graph,
+    graphReconciled,
     personalReminderAnalysis,
   );
   return Object.freeze({
     snapshot,
-    historyInputEvents: stateHistoryInputEvents(reduction),
+    historyInputEvents: stateHistoryInputEvents(graphReconciled.data.reduction),
     notificationLedger: mergeSelectedNotificationLedger(state, notification),
     notificationSelection: notification.notificationSelection,
     notificationPreview: notification.notificationPreview,
@@ -78,8 +71,6 @@ export function createValidateCompletenessStage(
     codexAnalysis,
     genericAiAdopted,
     graphReconciled,
-    reduction,
-    graph,
     personalReminderAnalysis,
   }) => {
     try {
@@ -92,8 +83,6 @@ export function createValidateCompletenessStage(
         codexAnalysis,
         genericAiAdopted,
         graphReconciled,
-        reduction,
-        graph,
         personalReminderAnalysis,
       );
       sessions.assertPublicBoundary(invocation.runId, [

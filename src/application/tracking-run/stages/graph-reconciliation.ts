@@ -10,6 +10,7 @@ import type {
   GraphWorkingResult,
 } from "./graph-reconciliation-contracts.js";
 import { blockerValueAiDependencies } from "./graph-reconciliation-blocker-values.js";
+import { createGraphFinalContext, type GraphFinalContext } from "./graph-reconciliation-context.js";
 import { finalizeGraphItems } from "./graph-reconciliation-final-items.js";
 import { reconcileGraphPass } from "./graph-reconciliation-graph.js";
 import {
@@ -34,6 +35,7 @@ export type GraphReconciledRun = StageState<
     reduction: GraphReduction;
     graph: GraphReconciliationResult;
     finalItems: readonly GraphFinalItem[];
+    context: GraphFinalContext;
   }>
 >;
 
@@ -149,6 +151,7 @@ export function reconcileAdoptedGraph(adopted: GenericAiAdoptedRun): GraphReconc
       reduction: canonicalReduction(secondReduction, finalGraph, finalItems),
       graph: canonicalGraph(finalGraph),
       finalItems,
+      context: createGraphFinalContext(state, collection, finalItems, finalGraph),
     }),
     proof: createGraphReconciledStageProof(),
   });

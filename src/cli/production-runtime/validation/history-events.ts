@@ -2,11 +2,11 @@ import {
   createStateHistoryInputEvents,
   type StateHistoryInputEvent,
 } from "../../../persistence/index.js";
-import type { ReducedAnalysis } from "../contracts.js";
+import type { GraphReduction } from "../../../application/tracking-run/stages/graph-reconciliation-contracts.js";
 
 /** 履歴へ保存する入力イベントを抽出する。 */
 export function stateHistoryInputEvents(
-  reduction: ReducedAnalysis,
+  reduction: Pick<GraphReduction, "currentItems">,
 ): readonly StateHistoryInputEvent[] {
   return createStateHistoryInputEvents(
     reduction.currentItems.flatMap((analysis) =>

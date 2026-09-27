@@ -5,12 +5,11 @@ import {
   type DiscordNotificationSelection,
 } from "../../../discord/index.js";
 import type { StateNotificationLedger } from "../../../persistence/index.js";
+import type { GraphReconciledRun } from "../../../application/tracking-run/stages/graph-reconciliation.js";
 import type { DailyRunInvocation } from "../../daily-transaction.js";
 import type {
   CollectedItems,
-  GraphResult,
   PersonalReminderAnalysis,
-  ReducedAnalysis,
   RepositoryInventory,
   RuntimeConfiguration,
   RuntimeState,
@@ -32,8 +31,7 @@ export function selectValidationNotifications(
   state: RuntimeState,
   inventory: RepositoryInventory,
   collection: CollectedItems,
-  reduction: ReducedAnalysis,
-  graph: GraphResult,
+  reconciled: GraphReconciledRun,
   personalReminderAnalysis: PersonalReminderAnalysis,
 ): ValidationNotificationSelection {
   const notificationInput = {
@@ -43,11 +41,10 @@ export function selectValidationNotifications(
       state,
       inventory,
       collection,
-      reduction,
-      graph,
+      reconciled,
       personalReminderAnalysis,
     ),
-    ledger: notificationLedgerEntries(state, reduction.items),
+    ledger: notificationLedgerEntries(state, reconciled.data.finalItems),
     pendingNotifications: state.notificationLedger.pendingNotifications,
     settings: {
       maxItemsPerDigest: configuration.config.notifications.discord.maxItemsPerDigest,
