@@ -25,13 +25,14 @@ pnpm install --frozen-lockfile
 | `pnpm build:workflow-cli` | 日次workflowの後続jobが使うES module bundleを作る                                            | `artifacts/workflow/runtime/tracker-run.mjs` |
 | `pnpm dev:web`            | Web UIの開発serverを起動する                                                                 | なし                                         |
 | `pnpm typecheck`          | Node.js側とWeb UI側を型検査する                                                              | なし                                         |
-| `pnpm lint`               | ESLintでコードを検査する                                                                     | なし                                         |
+| `pnpm lint`               | sourceの行数とESLint規則を検査する                                                           | なし                                         |
+| `pnpm check:source-lines` | sourceの1000行上限と既存違反の内容固定を検査する                                             | なし                                         |
 | `pnpm format`             | Prettierで対象ファイルを整形する                                                             | 対象ファイル                                 |
 | `pnpm format:check`       | Prettierによる整形差分がないことを検査する                                                   | なし                                         |
 | `pnpm perf:profile`       | CLIをビルドし、モックした日次runの処理時間、API使用率、AI論理call数、summaryサイズを確認する | `artifacts/performance-profile.json`         |
 | `pnpm tracker:run`        | ビルド済みの`dist/cli/tracker-run.js`を起動する                                              | サブコマンドによる                           |
 
-`typecheck`、`lint`、`format`、`format:check`のキャッシュは`node_modules/.cache/voicevox-task-tracker/`に保存します。
+`typecheck`、`lint`、`check:source-lines`、`format`、`format:check`のキャッシュは`node_modules/.cache/voicevox-task-tracker/`に保存します。
 
 `build:web`は`index.html`に加えて`404.html`と`items/index.html`、`people/index.html`、`notification-history/index.html`、`status/index.html`、`guide/index.html`、`notifications/index.html`を生成します。
 GitHub Pagesは任意のrewrite設定を持たないため、pathベースのdeep linkをこの複製で受けます。
@@ -227,27 +228,29 @@ CIの`verify-state`は、本番と同じ移行処理を使ってstate全体を�
 
 ## ディレクトリ構成
 
-| パス                  | 責務                                                                                                 |
-| --------------------- | ---------------------------------------------------------------------------------------------------- |
-| `src/cli/`            | 引数解析、日次トランザクション、workflow stage、実アダプターの合成、run report                       |
-| `src/canonical-json/` | Node.js専用のcanonical JSON直列化、末尾改行、SHA-256 hashの共有                                      |
-| `src/codex/`          | 分析候補選定、予算、cache、隔離process、schema検証、semantic検証、reducer                            |
-| `src/config/`         | `config.yml`の読み込みとZod schema検証                                                               |
-| `src/diagnostics/`    | 詳細診断のJSONL記録、Error直列化、暗号化、復号                                                       |
-| `src/discord/`        | 通知候補選別、通知管理記録による重複抑制、payload生成、Webhook送信                                   |
-| `src/domain/`         | 状態機械、maintainerとlabelの解決、追跡選定、停滞時間、停滞レベル、重要度、要対応度のpure TypeScript |
-| `src/github/`         | GitHub App認証、読み取り専用API、収集、正規化、公開allowlist、rate limit管理                         |
-| `src/graph/`          | 関係候補、edge reconcile、cycle、frontier、downstream impactのpure TypeScript                        |
-| `src/pages/`          | 独立した公開guard、公開DTO生成、gzip上限検査、JSON出力                                               |
-| `src/performance/`    | 外部接続をモックした日次runの処理時間、API使用率、AI論理call数、summaryサイズのprofile               |
-| `src/persistence/`    | snapshot、履歴、AI cache、通知管理記録、run report、state branch transaction                         |
-| `src/util/`           | null検査、到達不能検査、共通エラー、Zod診断                                                          |
-| `web/`                | ViteとPreactによる静的Web UIとサンプル公開DTO                                                        |
-| `fixtures/`           | 性能profileへ渡す固定入力                                                                            |
-| `schemas/`            | Codex分析出力とsnapshotのJSON Schema                                                                 |
-| `prompts/`            | Codexへ渡す固定system prompt                                                                         |
-| `docs/`               | 要求定義、アーキテクチャ、デプロイ、運用、開発手順、調査資料                                         |
-| `.github/workflows/`  | CI、日次run、性能profile、マージゲートのGitHub Actions workflow                                      |
+| パス                               | 責務                                                                                                 |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `src/cli/`                         | 引数解析、日次トランザクション、workflow stage、実アダプターの合成、run report                       |
+| `src/application/tracking-run/`    | 日次runの閉じた値、proof型、副作用を要求するport契約                                                 |
+| `src/canonical-json/`              | pure leafでcanonical JSON直列化とSHA-256値を検証し、`index.ts`からNode.js hashを公開する             |
+| `src/codex/`                       | 分析候補選定、予算、cache、隔離process、schema検証、semantic検証、reducer                            |
+| `src/config/`                      | `config.yml`の読み込みとZod schema検証                                                               |
+| `src/diagnostics/`                 | 詳細診断のJSONL記録、Error直列化、暗号化、復号                                                       |
+| `src/discord/`                     | 通知候補選別、通知管理記録による重複抑制、payload生成、Webhook送信                                   |
+| `src/domain/`                      | 状態機械、maintainerとlabelの解決、追跡選定、停滞時間、停滞レベル、重要度、要対応度のpure TypeScript |
+| `src/github/`                      | GitHub App認証、読み取り専用API、収集、正規化、公開allowlist、rate limit管理                         |
+| `src/graph/`                       | 関係候補、edge reconcile、cycle、frontier、downstream impactのpure TypeScript                        |
+| `src/infrastructure/tracking-run/` | `ContentDigestPort`のNode.js実装                                                                     |
+| `src/pages/`                       | 独立した公開guard、公開DTO生成、gzip上限検査、JSON出力                                               |
+| `src/performance/`                 | 外部接続をモックした日次runの処理時間、API使用率、AI論理call数、summaryサイズのprofile               |
+| `src/persistence/`                 | snapshot、履歴、AI cache、通知管理記録、run report、state branch transaction                         |
+| `src/util/`                        | null検査、到達不能検査、共通エラー、Zod診断                                                          |
+| `web/`                             | ViteとPreactによる静的Web UIとサンプル公開DTO                                                        |
+| `fixtures/`                        | 性能profileへ渡す固定入力                                                                            |
+| `schemas/`                         | Codex分析出力とsnapshotのJSON Schema                                                                 |
+| `prompts/`                         | Codexへ渡す固定system prompt                                                                         |
+| `docs/`                            | 要求定義、アーキテクチャ、デプロイ、運用、開発手順、調査資料                                         |
+| `.github/workflows/`               | CI、日次run、性能profile、マージゲートのGitHub Actions workflow                                      |
 
 ## コードの方針
 
@@ -256,6 +259,9 @@ CIの`verify-state`は、本番と同じ移行処理を使ってstate全体を�
 
 `src/domain`と`src/graph`はネットワークやファイルシステムへ依存しないpure TypeScriptにします。
 同じ入力から同じ結果を返す処理だけを置き、pureな判定層から副作用のあるadapterを呼びません。
+`src/application/tracking-run`はCLI、環境変数、ファイルシステム、副作用を持つbarrelを参照せず、pureなleafとport契約だけを使います。
+checkpoint、artifact、receiptのdigest計算は`ContentDigestPort`を通して`src/infrastructure/tracking-run`へ置きます。
+sourceの1000行上限はTypeScriptとJavaScriptをESLint、shell、CSS、Vue、Python、workflow YAMLを`check:source-lines`で確認します。
 GitHub、Codex、永続化、Pages、Discordへの副作用はそれぞれのadapterへ閉じ込め、一つのrunとしての順序制御を`src/cli`で行います。
 
 GitHub由来の本文、コメント、label、ユーザー名は信頼できない入力として扱い、命令として解釈しません。
@@ -358,7 +364,7 @@ pnpm build:web
 ```
 
 `format:check`が失敗した場合は`pnpm format`で整形し、意図しないファイルまで変わっていないことを確認します。
-型情報を使うESLint規則を含むため、最終確認前に`node_modules/.cache/voicevox-task-tracker/eslint`だけを削除し、`pnpm lint`でキャッシュを再構築します。
+型情報を使うESLint規則を含むため、最終確認でもcacheを有効にしたまま`pnpm lint`を実行します。
 サンプル公開DTOを実データで上書きしたままにしていないかも確認してください。
 
 日次runの処理時間、API予算、AI論理call数、Pages summaryのサイズに影響する変更では`pnpm perf:profile`も実行し、`artifacts/performance-profile.json`を確認します。

@@ -4,6 +4,10 @@ import {
   type UtcIsoDateTime,
 } from "../domain/index.js";
 import { z } from "zod";
+import {
+  notificationActionSchema,
+  type NotificationAction,
+} from "../application/tracking-run/contracts/closed-values.js";
 import { assertNonNullable } from "../util/index.js";
 import { CliUsageError } from "./errors.js";
 import { type WorkflowJobResult, type WorkflowJobResults } from "./workflow-run-report.js";
@@ -17,8 +21,7 @@ const DEFAULT_COLLECT_ANALYZE_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/collect
 const DEFAULT_WORKFLOW_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/workflow.json`;
 const REPOSITORY_FILTER_PATTERN = /^VOICEVOX\/[A-Za-z0-9._-]+$/u;
 const DELIVERY_ID_PATTERN = /^discord-digest:v1:[0-9a-f]{24}:message:[1-9][0-9]*$/u;
-export const notificationActionSchema = z.enum(["send", "hold", "acknowledge-current"]);
-export type NotificationAction = z.output<typeof notificationActionSchema>;
+export { notificationActionSchema, type NotificationAction };
 const deliveryIdSchema = z.string().regex(DELIVERY_ID_PATTERN);
 const resolveDiscordDeliveryResolutionSchema = z.enum(["retry", "acknowledge"]);
 

@@ -1,8 +1,17 @@
 import eslint from "@eslint/js";
+import { readFileSync } from "node:fs";
 import { builtinModules } from "node:module";
 import { defineConfig } from "eslint/config";
 import eslintConfigPrettier from "eslint-config-prettier/flat";
 import tseslint from "typescript-eslint";
+import {
+  SOURCE_LINE_ESLINT_GLOBS,
+  SOURCE_LINE_PERMANENT_EXCLUSIONS,
+} from "./config/source-line-policy.mjs";
+
+const sourceLineBaseline = JSON.parse(
+  readFileSync("config/refactor-source-line-baseline.json", "utf8"),
+);
 
 const productionRuntimeStageDirectories = [
   "ai-dependencies",
@@ -20,7 +29,7 @@ const productionRuntimeStageDirectories = [
 
 export default defineConfig([
   {
-    ignores: ["artifacts/workflow/runtime/**", "coverage/**", "dist/**", "node_modules/**"],
+    ignores: SOURCE_LINE_PERMANENT_EXCLUSIONS,
   },
   {
     files: ["**/*.{cjs,js,mjs}"],
@@ -71,9 +80,113 @@ export default defineConfig([
     },
   },
   {
-    files: ["src/cli/initial-item-analysis.ts"],
+    files: SOURCE_LINE_ESLINT_GLOBS,
     rules: {
       "max-lines": ["error", { max: 1000, skipBlankLines: false, skipComments: false }],
+    },
+  },
+  {
+    files: ["src/application/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: builtinModules
+            .filter((moduleName) => !moduleName.startsWith("node:"))
+            .map((name) => ({ name, message: "applicationはNode.jsへ依存しないでください" })),
+          patterns: [
+            {
+              group: [
+                "node:*",
+                "**/cli/**",
+                "**/infrastructure/**",
+                "**/canonical-json/index*",
+                "**/codex/index*",
+                "**/persistence/index*",
+                "**/pages/index*",
+                "**/discord/index*",
+                "**/github/index*",
+              ],
+              message: "applicationは実行環境や副作用のbarrelを参照せずleaf moduleを使ってください",
+            },
+          ],
+        },
+      ],
+      "no-restricted-globals": [
+        "error",
+        { name: "fetch", message: "applicationから外部接続を直接行わないでください" },
+        { name: "process", message: "applicationから実行環境を直接参照しないでください" },
+      ],
+    },
+  },
+  {
+    files: ["src/domain/**/*.{ts,tsx}", "src/graph/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: builtinModules
+            .filter((name) => name !== "path" && name !== "node:path")
+            .flatMap((name) => (name.startsWith("node:") ? [name] : [name, `node:${name}`]))
+            .map((name) => ({
+              name,
+              message: "domainとgraphはNode.jsの実行環境へ依存しないでください",
+            })),
+          patterns: [
+            {
+              group: [
+                "**/application/**",
+                "**/infrastructure/**",
+                "**/cli/**",
+                "**/canonical-json/index*",
+              ],
+              message: "domainとgraphはpure leafだけを参照してください",
+            },
+          ],
+        },
+      ],
+      "no-restricted-globals": [
+        "error",
+        { name: "fetch", message: "domainとgraphから外部接続を行わないでください" },
+        { name: "process", message: "domainとgraphから実行環境を参照しないでください" },
+      ],
+    },
+  },
+  {
+    files: ["src/pages/**/*.{ts,tsx}", "src/discord/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["**/cli/**"],
+              message: "PagesとDiscordからCLIを参照しないでください",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["src/canonical-json/{value,sha256,sha256-hex}.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            {
+              group: ["node:*", "**/infrastructure/**", "**/cli/**"],
+              message: "canonical JSON leafは実行環境へ依存しないでください",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["src/cli/initial-item-analysis.ts"],
+    rules: {
       "no-restricted-imports": [
         "error",
         {
@@ -105,7 +218,6 @@ export default defineConfig([
   {
     files: ["src/cli/personal-reminder/**/*.ts"],
     rules: {
-      "max-lines": ["error", { max: 1000, skipBlankLines: false, skipComments: false }],
       "no-restricted-imports": [
         "error",
         {
@@ -140,12 +252,6 @@ export default defineConfig([
     files: ["src/cli/production-runtime.ts"],
     rules: {
       "max-lines": ["error", { max: 150, skipBlankLines: false, skipComments: false }],
-    },
-  },
-  {
-    files: ["src/cli/production-runtime/**/*.ts"],
-    rules: {
-      "max-lines": ["error", { max: 1000, skipBlankLines: false, skipComments: false }],
     },
   },
   {
@@ -251,7 +357,6 @@ export default defineConfig([
   {
     files: ["src/cli/run-publication/**/*.ts"],
     rules: {
-      "max-lines": ["error", { max: 1000, skipBlankLines: false, skipComments: false }],
       "no-restricted-imports": [
         "error",
         {
@@ -273,6 +378,12 @@ export default defineConfig([
         { name: "fetch", message: "公開処理ではglobal fetchを使わないでください" },
         { name: "process", message: "公開処理ではglobal processを使わないでください" },
       ],
+    },
+  },
+  {
+    files: sourceLineBaseline.entries.map((entry) => entry.path),
+    rules: {
+      "max-lines": "off",
     },
   },
 ]);

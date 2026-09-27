@@ -2,6 +2,11 @@ import { readFile } from "node:fs/promises";
 
 import { z } from "zod";
 
+import {
+  notificationActionSchema,
+  type NotificationAction,
+} from "../application/tracking-run/contracts/closed-values.js";
+
 import { serializeCanonicalJson } from "../canonical-json/index.js";
 import {
   createAiCacheEntry,
@@ -42,7 +47,6 @@ import {
   type StateSnapshot,
 } from "../persistence/index.js";
 import { assertNonNullable } from "../util/index.js";
-import { notificationActionSchema, type NotificationAction } from "./command.js";
 import { CliWorkflowArtifactError } from "./errors.js";
 
 const actionsSecretNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
