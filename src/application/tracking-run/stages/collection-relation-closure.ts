@@ -1,50 +1,41 @@
 import { provisionalCollectionEvaluationTime } from "../../../domain/collection-evaluation-time.js";
-import type { RunEvaluatedAt } from "../../../application/tracking-run/contracts/evaluation-time.js";
-import type { GitHubNodeId, GitHubRepositoryId } from "../../../domain/index.js";
-import { collectRepositoryValues } from "../../../application/tracking-run/stages/collection-stale.js";
-import type { RepositoryCollectionResult } from "../../../application/tracking-run/stages/collection-stale.js";
+import type { RunEvaluatedAt } from "../contracts/evaluation-time.js";
+import type { GitHubNodeId, GitHubRepositoryId } from "../../../domain/types.js";
+import { collectRepositoryValues, type RepositoryCollectionResult } from "./collection-stale.js";
 import {
   collectRepositoryItemObservations,
   mergeFreshRepositoryRuntimeCollection,
   type FreshRepositoryRuntimeCollection,
-} from "../../../application/tracking-run/stages/collection-repositories.js";
-import type { CollectionPlanningContext } from "../../../application/tracking-run/stages/collection-incremental-plan.js";
-import type { CollectionGitHubReadPort } from "../../../application/tracking-run/ports.js";
-import {
-  type EnumeratedGitHubItem,
-  type GitHubClient,
-  type PublicRepository,
-  type PublicRepositoryAllowlist,
-} from "../../../github/index.js";
+} from "./collection-repositories.js";
+import type { CollectionPlanningContext } from "./collection-incremental-plan.js";
+import type { CollectionGitHubReadPort, DelayPort } from "../ports.js";
+import type { EnumeratedGitHubItem } from "../../../github/item-enumeration.js";
+import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
 import { planRelationExpansion, type RelationCandidate } from "../../../graph/index.js";
-import type { SnapshotCollectionRepository } from "../../../persistence/index.js";
+import type { PreviousCollectionRepository } from "../contracts/previous-state.js";
 import { assertNonNullable } from "../../../util/index.js";
-import type { DailyRunInvocation } from "../../daily-transaction.js";
-import { CliRelationExpansionLimitError } from "../../errors.js";
-import type { CollectionRuntimeAdapters } from "../adapters.js";
-import type { RepositoryInventory, RuntimeConfiguration, RuntimeState } from "../contracts.js";
-import { previousRepositoryValues } from "../previous-state/collection.js";
+import { CollectionRelationExpansionLimitError } from "./collection-errors.js";
 import {
   collectedTrackingCandidateNodeIds,
   completeRelationCandidates,
   staleTrackedNodeIdsForRelationExpansion,
   type FreshRuntimeCollectionAggregate,
-} from "./relation-candidates.js";
+} from "./collection-relation-candidates.js";
 import {
   relationExpansionRepositoriesByNodeId,
   personalReminderRelationExpansionRepositoriesByNodeId,
   changedTrackedImplementationTargetNodeIds,
   trackedPotentialBlockerTargetNodeIds,
-} from "./relation-expansion-targets.js";
+} from "./collection-relation-targets.js";
 import {
   extractAllRelationCandidates,
   type RelationReferenceRetryBudget,
-} from "./relation-refresh.js";
+} from "./collection-relation-refresh.js";
 import {
   collectTrackingCandidates,
   relationExpansionTrackingState,
   type RuntimeTrackingSelection,
-} from "./tracking-selection.js";
+} from "./collection-tracking.js";
 
 type RelationExpandedRuntimeCollection = FreshRuntimeCollectionAggregate &
   Readonly<{
@@ -76,12 +67,8 @@ function validateRelationExpansionEnumeration(
 
 /** 関係先の追加項目を収集する。 */
 async function collectAdditionalRelationItems(
-  adapters: CollectionRuntimeAdapters,
-  invocation: DailyRunInvocation,
-  authentication: GitHubClient,
   read: CollectionGitHubReadPort,
   context: CollectionPlanningContext,
-  allowlist: PublicRepositoryAllowlist,
   repository: PublicRepository,
   requestedNodeIds: readonly GitHubNodeId[],
   current: FreshRepositoryRuntimeCollection,
@@ -91,13 +78,7 @@ async function collectAdditionalRelationItems(
   const individuallyEnumeratedItems =
     missingNodeIds.length === 0
       ? Object.freeze([])
-      : await adapters.enumerateGitHubItemsByIdentifiers({
-          allowlist,
-          identifiers: missingNodeIds,
-          observedAt: invocation.startedAt,
-          request: authentication.request,
-          graphql: authentication.graphql,
-        });
+      : await read.enumerateByIdentifiers(missingNodeIds, context.startedAt);
   validateRelationExpansionEnumeration(repository, missingNodeIds, individuallyEnumeratedItems);
   const individuallyEnumeratedItemsByNodeId = new Map(
     individuallyEnumeratedItems.map((item) => [item.nodeId, item]),
@@ -121,21 +102,17 @@ async function collectAdditionalRelationItems(
 }
 
 async function collectRelationExpansionBatch(
-  adapters: CollectionRuntimeAdapters,
-  invocation: DailyRunInvocation,
-  state: RuntimeState,
-  authentication: GitHubClient,
   read: CollectionGitHubReadPort,
   context: CollectionPlanningContext,
-  allowlist: PublicRepositoryAllowlist,
+  allowlist: readonly PublicRepository[],
   targetNodeIdsByRepositoryId: ReadonlyMap<GitHubRepositoryId, readonly GitHubNodeId[]>,
   freshCollectionsByRepositoryId: Map<GitHubRepositoryId, FreshRepositoryRuntimeCollection>,
   repositoryResultsById: Map<
     GitHubRepositoryId,
-    RepositoryCollectionResult<SnapshotCollectionRepository>
+    RepositoryCollectionResult<PreviousCollectionRepository>
   >,
 ): Promise<void> {
-  const targetRepositories = allowlist.repositories.filter((repository) =>
+  const targetRepositories = allowlist.filter((repository) =>
     targetNodeIdsByRepositoryId.has(repository.id),
   );
   const expandedCollectionsByRepositoryId = new Map<
@@ -144,20 +121,24 @@ async function collectRelationExpansionBatch(
   >();
   const results = await collectRepositoryValues({
     repositories: targetRepositories,
-    observedAt: invocation.startedAt,
-    previousValues: previousRepositoryValues(state),
+    observedAt: context.startedAt,
+    previousValues: new Map(
+      (context.previousState.snapshot.status === "available"
+        ? context.previousState.snapshot.collectionRepositories
+        : []
+      ).map((repository) => [
+        repository.repositoryId,
+        Object.freeze({ value: repository, observedAt: repository.successfulAt }),
+      ]),
+    ),
     collect: async (repository) => {
       const requestedNodeIds = targetNodeIdsByRepositoryId.get(repository.id);
       assertNonNullable(requestedNodeIds, "関係先追加取得対象のnode IDがありません");
       const current = freshCollectionsByRepositoryId.get(repository.id);
       assertNonNullable(current, "関係先追加取得対象の最新repository収集結果がありません");
       const expanded = await collectAdditionalRelationItems(
-        adapters,
-        invocation,
-        authentication,
         read,
         context,
-        allowlist,
         repository,
         requestedNodeIds,
         current,
@@ -180,46 +161,41 @@ async function collectRelationExpansionBatch(
 
 /** 関係先を追加取得して収集結果を展開する。 */
 export async function collectRelationExpandedItems(
-  adapters: CollectionRuntimeAdapters,
-  invocation: DailyRunInvocation,
-  configuration: RuntimeConfiguration,
-  state: RuntimeState,
-  authentication: GitHubClient,
   read: CollectionGitHubReadPort,
+  delay: DelayPort,
   context: CollectionPlanningContext,
-  repositoryInventory: RepositoryInventory,
+  repositories: readonly PublicRepository[],
   freshCollectionsByRepositoryId: Map<GitHubRepositoryId, FreshRepositoryRuntimeCollection>,
   repositoryResultsById: Map<
     GitHubRepositoryId,
-    RepositoryCollectionResult<SnapshotCollectionRepository>
+    RepositoryCollectionResult<PreviousCollectionRepository>
   >,
   captureEvaluationTime: () => RunEvaluatedAt,
 ): Promise<RelationExpandedRuntimeCollection> {
   const requestedNodeIds = new Set<GitHubNodeId>();
   const expandedNodeIds = new Set<GitHubNodeId>();
   const relationReferenceRetryBudget: RelationReferenceRetryBudget = {
-    maxRefreshes: Math.min(2, configuration.config.operations.retry.maxAttempts - 1),
+    maxRefreshes: Math.min(2, context.config.operations.retry.maxAttempts - 1),
     refreshes: 0,
   };
   for (;;) {
     const extractedRelations = await extractAllRelationCandidates(
-      adapters,
-      invocation,
-      configuration,
-      authentication,
       read,
+      delay,
       context,
       freshCollectionsByRepositoryId,
       repositoryResultsById,
-      configuration.config,
-      repositoryInventory.allowlist,
+      repositories,
       relationReferenceRetryBudget,
     );
     const discoveredRelationCandidates = extractedRelations.candidates;
     const refreshedAggregate = extractedRelations.aggregate;
-    const collectedCandidateNodeIds = collectedTrackingCandidateNodeIds(state, refreshedAggregate);
+    const collectedCandidateNodeIds = collectedTrackingCandidateNodeIds(
+      context.previousState,
+      refreshedAggregate,
+    );
     const staleTrackedNodeIds = staleTrackedNodeIdsForRelationExpansion(
-      state,
+      context.previousState,
       repositoryResultsById,
     );
     const completedTrackingRelationCandidates = completeRelationCandidates(
@@ -233,16 +209,16 @@ export async function collectRelationExpandedItems(
       staleTrackedNodeIds,
     );
     const provisionalTime = provisionalCollectionEvaluationTime(
-      invocation.startedAt,
+      context.startedAt,
       refreshedAggregate.enumeratedItems,
       refreshedAggregate.observedItems,
     );
     const tracking = collectTrackingCandidates(
-      invocation,
       provisionalTime,
-      configuration,
-      state,
-      repositoryInventory,
+      context.config,
+      context.executionPolicy,
+      context.previousState,
+      repositories,
       refreshedAggregate.enumeratedItems,
       refreshedAggregate.observedItems,
       completedTrackingRelationCandidates.candidates,
@@ -254,26 +230,23 @@ export async function collectRelationExpandedItems(
       relationCandidates: discoveredRelationCandidates,
       nativeDepthByNodeId: trackingState.nativeDepthByNodeId,
       requestedNodeIds,
-      maximumNativeDepth: configuration.config.tracking.autoInclude.nativeRelations
-        ? configuration.config.tracking.autoInclude.relationDepth
+      maximumNativeDepth: context.config.tracking.autoInclude.nativeRelations
+        ? context.config.tracking.autoInclude.relationDepth
         : 0,
     });
     const repositoriesByNodeId = new Map(
-      relationExpansionRepositoriesByNodeId(
-        discoveredRelationCandidates,
-        repositoryInventory.allowlist,
-      ),
+      relationExpansionRepositoriesByNodeId(discoveredRelationCandidates, repositories),
     );
     const observedNodeIds = new Set<string>(
       refreshedAggregate.observedItems.map((item) => item.nodeId),
     );
     const personalReminderSeedRepositoriesByNodeId =
       personalReminderRelationExpansionRepositoriesByNodeId(
-        state,
+        context.previousState,
         refreshedAggregate,
         tracking,
         discoveredRelationCandidates,
-        repositoryInventory.allowlist,
+        repositories,
       );
     const effectiveAssigneeTargetNodeIds = changedTrackedImplementationTargetNodeIds(
       refreshedAggregate,
@@ -328,11 +301,11 @@ export async function collectRelationExpandedItems(
     if (nextRequests.length === 0) {
       const evaluatedAt = captureEvaluationTime();
       const finalTracking = collectTrackingCandidates(
-        invocation,
         evaluatedAt,
-        configuration,
-        state,
-        repositoryInventory,
+        context.config,
+        context.executionPolicy,
+        context.previousState,
+        repositories,
         refreshedAggregate.enumeratedItems,
         refreshedAggregate.observedItems,
         completedTrackingRelationCandidates.candidates,
@@ -366,9 +339,9 @@ export async function collectRelationExpandedItems(
       }
     }
     const targetNodeIds = [...targetNodeIdsByRepositoryId.values()].flat();
-    const maximumItemCount = configuration.config.tracking.relationExpansion.maxItemsPerRun;
+    const maximumItemCount = context.config.tracking.relationExpansion.maxItemsPerRun;
     if (expandedNodeIds.size + targetNodeIds.length > maximumItemCount) {
-      throw new CliRelationExpansionLimitError(
+      throw new CollectionRelationExpansionLimitError(
         maximumItemCount,
         expandedNodeIds.size,
         targetNodeIds.length,
@@ -382,13 +355,9 @@ export async function collectRelationExpandedItems(
       continue;
     }
     await collectRelationExpansionBatch(
-      adapters,
-      invocation,
-      state,
-      authentication,
       read,
       context,
-      repositoryInventory.allowlist,
+      repositories,
       targetNodeIdsByRepositoryId,
       freshCollectionsByRepositoryId,
       repositoryResultsById,

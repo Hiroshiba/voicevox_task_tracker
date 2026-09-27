@@ -17,6 +17,7 @@ export function projectLegacyCollectedItems(collection: CanonicalCollectedItems)
     trackingNotificationClassByNodeId,
     analysisNodeIds,
     staleBlockerTopologyNodeIds,
+    unavailableConsumerNodeIds,
     changedNodeIds,
     ...fields
   } = collection;
@@ -26,6 +27,7 @@ export function projectLegacyCollectedItems(collection: CanonicalCollectedItems)
     trackingNotificationClassByNodeId: new Map(trackingNotificationClassByNodeId),
     analysisNodeIds: new Set(analysisNodeIds),
     staleBlockerTopologyNodeIds: new Set(staleBlockerTopologyNodeIds),
+    unavailableConsumerNodeIds: new Set(unavailableConsumerNodeIds),
     changedNodeIds: new Set(changedNodeIds),
   }) satisfies CollectedItems;
   projectedCollections.set(collection, value);

@@ -43,6 +43,7 @@ export type DeterministicCollection = Readonly<{
   details: readonly Readonly<{ nodeId: GitHubNodeId }>[];
   trackedNodeIds: readonly GitHubNodeId[];
   analysisNodeIds: readonly GitHubNodeId[];
+  unavailableConsumerNodeIds: readonly GitHubNodeId[];
   changedNodeIds: readonly GitHubNodeId[];
 }>;
 
@@ -57,6 +58,7 @@ export type DeterministicFacts<Item extends AnalyzedItem> = Readonly<{
   staleNodeIds: readonly GitHubNodeId[];
   refetchedNodeIds: readonly GitHubNodeId[];
   analysisNodeIds: readonly GitHubNodeId[];
+  unavailableConsumerNodeIds: readonly GitHubNodeId[];
   changedNodeIds: readonly GitHubNodeId[];
 }>;
 
@@ -154,6 +156,7 @@ export function analyzeDeterministically<
     staleNodeIds: orderedNodeIds(collection.staleItems.map((item) => item.nodeId)),
     refetchedNodeIds: orderedNodeIds(collection.details.map((detail) => detail.nodeId)),
     analysisNodeIds: orderedNodeIds(collection.analysisNodeIds),
+    unavailableConsumerNodeIds: orderedNodeIds(collection.unavailableConsumerNodeIds),
     changedNodeIds: orderedNodeIds(collection.changedNodeIds),
   }) satisfies DeterministicFacts<Item>;
   return Object.freeze({

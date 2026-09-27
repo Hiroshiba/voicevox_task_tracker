@@ -3,7 +3,6 @@ export {
   type CliApplicationDependencies,
   type CliExecutionResult,
 } from "./application.js";
-export { createTrackingBackfillRequest } from "./backfill.js";
 export {
   formatCliUsage,
   parseCliArguments,

@@ -1,14 +1,22 @@
-import { hashCanonicalJson } from "../../../canonical-json/index.js";
+import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import {
   type AiAnalysisDependency,
   type AiAnalysisDependencyElement,
   type AiAnalysisDependencyProducer,
 } from "../../../domain/ai-analysis-dependencies.js";
 import { createGitHubNodeId, type GitHubNodeId } from "../../../domain/index.js";
-import type { SnapshotTrackedItem } from "../../../persistence/index.js";
-import { normalizedBlockerRelationEndpointNodeIds } from "../../relation-driven-analysis-targets.js";
-import type { RuntimeState } from "../contracts.js";
-import { previousSnapshot } from "./snapshot.js";
+import type {
+  AnalysisPreviousState,
+  PreviousCollectionItem,
+  PreviousTrackedItem,
+} from "../contracts/previous-state.js";
+import { normalizedBlockerRelationEndpointNodeIds } from "./collection-analysis-targets.js";
+
+function previousSnapshot(
+  state: AnalysisPreviousState,
+): Extract<AnalysisPreviousState["snapshot"], { status: "available" }> | undefined {
+  return state.snapshot.status === "available" ? state.snapshot : undefined;
+}
 
 const STALE_BLOCKER_TOPOLOGY_DEPENDENCY_ELEMENTS = Object.freeze([
   "status",
@@ -33,7 +41,7 @@ type PreviousPersonalReminderRelationCandidateDependency = Readonly<{
 }>;
 
 function personalReminderAiDependencies(
-  item: SnapshotTrackedItem,
+  item: PreviousTrackedItem,
 ): readonly AiAnalysisDependency[] {
   return Object.freeze([
     ...(item.personalReminderCausePlanning.status === "completed"
@@ -48,12 +56,12 @@ function personalReminderAiDependencies(
 
 /** 前回の関係候補依存の生成元を参照する。 */
 export function previousRelationCandidateDependencyProducers(
-  state: RuntimeState,
+  state: AnalysisPreviousState,
 ): readonly PreviousRelationCandidateDependencyProducer[] {
   const producersByCandidateId = new Map<string, PreviousRelationCandidateDependencyProducer>();
   const snapshot = previousSnapshot(state);
   const dependencies = [
-    ...(snapshot?.items ?? []).flatMap((item) => [
+    ...(snapshot?.trackedItems ?? []).flatMap((item) => [
       ...Object.values(item.aiDependencies),
       ...personalReminderAiDependencies(item),
     ]),
@@ -68,7 +76,10 @@ export function previousRelationCandidateDependencyProducers(
         continue;
       }
       const existing = producersByCandidateId.get(producer.candidateId);
-      if (existing != null && hashCanonicalJson(existing) !== hashCanonicalJson(producer)) {
+      if (
+        existing != null &&
+        serializeCanonicalJson(existing) !== serializeCanonicalJson(producer)
+      ) {
         throw new TypeError(
           `前回snapshotのrelation candidate producer定義が一致しません。対象: ${producer.candidateId}`,
         );
@@ -81,14 +92,14 @@ export function previousRelationCandidateDependencyProducers(
 
 /** 前回の個人催促の関係候補依存を参照する。 */
 export function previousPersonalReminderRelationCandidateDependencies(
-  state: RuntimeState,
+  state: AnalysisPreviousState,
 ): readonly PreviousPersonalReminderRelationCandidateDependency[] {
   const producersByCandidateId = new Map<string, PreviousRelationCandidateDependencyProducer>();
   const dependenciesByConsumerAndCandidate = new Map<
     string,
     PreviousPersonalReminderRelationCandidateDependency
   >();
-  for (const item of previousSnapshot(state)?.items ?? []) {
+  for (const item of previousSnapshot(state)?.trackedItems ?? []) {
     const dependencies = personalReminderAiDependencies(item);
     for (const dependency of dependencies) {
       if (dependency.status === "not_dependent" || dependency.producers == null) {
@@ -144,7 +155,7 @@ export function previousPersonalReminderRelationCandidateDependencies(
 
 /** 前回の個人催促の関係候補依存先を参照する。 */
 export function previousPersonalReminderRelationCandidateConsumerNodeIds(
-  state: RuntimeState,
+  state: AnalysisPreviousState,
 ): ReadonlySet<GitHubNodeId> {
   return new Set(
     previousPersonalReminderRelationCandidateDependencies(state).map(
@@ -155,10 +166,10 @@ export function previousPersonalReminderRelationCandidateConsumerNodeIds(
 
 /** 前回の古いリポジトリの阻害関係対象を参照する。 */
 export function previousStaleRepositoryBlockerTopologyNodeIds(
-  state: RuntimeState,
+  state: AnalysisPreviousState,
 ): ReadonlySet<GitHubNodeId> {
   const nodeIds = new Set<GitHubNodeId>();
-  for (const item of previousSnapshot(state)?.items ?? []) {
+  for (const item of previousSnapshot(state)?.trackedItems ?? []) {
     const hasMarker = STALE_BLOCKER_TOPOLOGY_DEPENDENCY_ELEMENTS.every((element) => {
       const dependency = item.aiDependencies[element];
       return dependency.status === "unknown" && dependency.reasons.includes("stale_repository");
@@ -171,10 +182,12 @@ export function previousStaleRepositoryBlockerTopologyNodeIds(
 }
 
 /** 前回のグラフに隣接する追跡項目を参照する。 */
-export function previousGraphAdjacentNodeIds(state: RuntimeState): ReadonlySet<GitHubNodeId> {
+export function previousGraphAdjacentNodeIds(
+  state: AnalysisPreviousState,
+): ReadonlySet<GitHubNodeId> {
   const nodeIds = new Set<GitHubNodeId>();
   const snapshot = previousSnapshot(state);
-  const trackedNodeIds = new Set<string>(snapshot?.items.map((item) => item.nodeId) ?? []);
+  const trackedNodeIds = new Set<string>(snapshot?.trackedItems.map((item) => item.nodeId) ?? []);
   for (const relation of snapshot?.relations ?? []) {
     if (!relation.active) {
       continue;
@@ -194,4 +207,17 @@ export function previousGraphAdjacentNodeIds(state: RuntimeState): ReadonlySet<G
     }
   }
   return nodeIds;
+}
+
+/** 前回収集項目をnode IDで参照する。 */
+export function previousCollectionItemsByNodeId(
+  state: AnalysisPreviousState,
+): ReadonlyMap<GitHubNodeId, PreviousCollectionItem> {
+  const repositories =
+    state.snapshot.status === "available" ? state.snapshot.collectionRepositories : [];
+  return new Map(
+    repositories.flatMap((repository) =>
+      repository.items.map((item) => [item.nodeId, item] as const),
+    ),
+  );
 }

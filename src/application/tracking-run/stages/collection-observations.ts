@@ -1,14 +1,12 @@
 import type { UtcIsoDateTime } from "../../../domain/index.js";
-import type { RepositoryCollectionResult } from "../../../application/tracking-run/stages/collection-stale.js";
+import type { RepositoryCollectionResult } from "./collection-stale.js";
+import type { EnumeratedGitHubItem } from "../../../github/item-enumeration.js";
+import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";
+import type { GitHubItemDetail } from "../../../github/item-detail-types.js";
 import type {
-  EnumeratedGitHubItem,
-  FreshObservedGitHubItem,
-  GitHubItemDetail,
-} from "../../../github/index.js";
-import type {
-  SnapshotCollectionItem,
-  SnapshotCollectionRepository,
-} from "../../../persistence/index.js";
+  PreviousCollectionItem,
+  PreviousCollectionRepository,
+} from "../contracts/previous-state.js";
 
 /** 列挙項目の観測時刻を確定する。 */
 export function finalizeEnumeratedItemObservation(
@@ -43,10 +41,10 @@ export function finalizeObservedItemObservation(
   } satisfies FreshObservedGitHubItem);
 }
 
-function finalizeSnapshotCollectionRepository(
-  repository: SnapshotCollectionRepository,
+function finalizePreviousCollectionRepository(
+  repository: PreviousCollectionRepository,
   evaluatedAt: UtcIsoDateTime,
-): SnapshotCollectionRepository {
+): PreviousCollectionRepository {
   return Object.freeze({
     ...repository,
     successfulAt: evaluatedAt,
@@ -55,7 +53,7 @@ function finalizeSnapshotCollectionRepository(
         Object.freeze({
           ...item,
           observedAt: evaluatedAt,
-        } satisfies SnapshotCollectionItem),
+        } satisfies PreviousCollectionItem),
       ),
     ),
   });
@@ -63,13 +61,13 @@ function finalizeSnapshotCollectionRepository(
 
 /** リポジトリ収集結果の観測時刻を確定する。 */
 export function finalizeRepositoryCollectionResult(
-  result: RepositoryCollectionResult<SnapshotCollectionRepository>,
+  result: RepositoryCollectionResult<PreviousCollectionRepository>,
   evaluatedAt: UtcIsoDateTime,
-): RepositoryCollectionResult<SnapshotCollectionRepository> {
+): RepositoryCollectionResult<PreviousCollectionRepository> {
   if (result.freshness === "fresh") {
     return Object.freeze({
       ...result,
-      value: finalizeSnapshotCollectionRepository(result.value, evaluatedAt),
+      value: finalizePreviousCollectionRepository(result.value, evaluatedAt),
       observedAt: evaluatedAt,
     });
   }

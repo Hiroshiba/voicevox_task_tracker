@@ -62,7 +62,6 @@ import type {
   RuntimeState,
 } from "../contracts.js";
 import { normalizeLabelRules } from "../label-rules.js";
-import { selectPersonalReminderRelationCandidateConsumers } from "../personal-reminder-relation-selection.js";
 import { previousSnapshot } from "../previous-state/snapshot.js";
 import { findRepository, repositoryFullName } from "../repository-lookup.js";
 import { personalReminderPreviousState, personalReminderRuntimeCollection } from "./context.js";
@@ -79,10 +78,7 @@ async function analyzePersonalReminders(
   reduction: ReducedAnalysis,
   graph: GraphResult,
 ): Promise<PersonalReminderAnalysisStageResult<PersonalReminderAnalysis>> {
-  const personalReminderRelationCandidateSelection =
-    selectPersonalReminderRelationCandidateConsumers(state, collection, collection.trackedNodeIds);
-  const unavailableConsumerNodeIds =
-    personalReminderRelationCandidateSelection.unavailableConsumerNodeIds;
+  const unavailableConsumerNodeIds = collection.unavailableConsumerNodeIds;
   const runtimeCollection = personalReminderRuntimeCollection(
     collection,
     deterministicAnalysis,

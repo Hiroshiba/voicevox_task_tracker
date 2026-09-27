@@ -1,14 +1,20 @@
-import { hashCanonicalJson } from "../canonical-json/index.js";
-import type { AiAnalysisDependencyProducer } from "../domain/ai-analysis-dependencies.js";
-import type { GitHubNodeId, GraphNodeId, Relation, TrackedItemState } from "../domain/index.js";
-import type { FreshObservedGitHubItem, GitHubItemDetail } from "../github/index.js";
-import type { RelationCandidate } from "../graph/index.js";
+import { serializeCanonicalJson } from "../../../canonical-json/value.js";
+import type { AiAnalysisDependencyProducer } from "../../../domain/ai-analysis-dependencies.js";
+import type {
+  GitHubNodeId,
+  GraphNodeId,
+  Relation,
+  TrackedItemState,
+} from "../../../domain/index.js";
+import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";
+import type { GitHubItemDetail } from "../../../github/item-detail-types.js";
+import type { RelationCandidate } from "../../../graph/index.js";
 import {
   relationAssessmentOwnerNodeId,
   relationNodes,
-} from "../graph/relation-candidate-endpoints.js";
-import { snapshotEffectiveGraphStateByNodeId, type StateSnapshot } from "../persistence/index.js";
-import { assertNonNullable } from "../util/index.js";
+} from "../../../graph/relation-candidate-endpoints.js";
+import type { PreviousSnapshotProjection } from "../contracts/previous-state.js";
+import { assertNonNullable } from "../../../util/index.js";
 
 type PreviousRelationCandidateDependencyProducer = Extract<
   AiAnalysisDependencyProducer,
@@ -34,7 +40,7 @@ type BlockerRelationAnalysisTargets = Readonly<{
 }>;
 
 type BlockerRelationAnalysisInput = Readonly<{
-  snapshot: StateSnapshot | undefined;
+  snapshot: Extract<PreviousSnapshotProjection, { status: "available" }> | undefined;
   relationCandidates: readonly RelationCandidate[];
   changedNodeIds: ReadonlySet<GitHubNodeId>;
   initialAnalysisNodeIds: ReadonlySet<GitHubNodeId>;
@@ -79,8 +85,10 @@ function addPotentialBlockerRelationAnalysis(
     return;
   }
   if (
-    hashCanonicalJson(existing.endpointNodeIds) !== hashCanonicalJson(normalized.endpointNodeIds) ||
-    hashCanonicalJson(existing.targetNodeIds) !== hashCanonicalJson(normalized.targetNodeIds) ||
+    serializeCanonicalJson(existing.endpointNodeIds) !==
+      serializeCanonicalJson(normalized.endpointNodeIds) ||
+    serializeCanonicalJson(existing.targetNodeIds) !==
+      serializeCanonicalJson(normalized.targetNodeIds) ||
     existing.native !== normalized.native
   ) {
     throw new TypeError(`blocker関係候補の定義が一致しません。対象: ${candidate.candidateId}`);
@@ -141,7 +149,7 @@ function previousInferredRelationOwnerNodeId(relation: Relation): GitHubNodeId |
 }
 
 function previousBlockerRelationAnalysisIndex(
-  snapshot: StateSnapshot | undefined,
+  snapshot: Extract<PreviousSnapshotProjection, { status: "available" }> | undefined,
   trackedNodeIdsByValue: ReadonlyMap<string, GitHubNodeId>,
   previousRelationCandidateDependencyProducers: () => readonly PreviousRelationCandidateDependencyProducer[],
 ): BlockerRelationAnalysisIndex {
@@ -286,7 +294,7 @@ export function blockerRelationAnalysisTargets(
   );
   const changedGraphNodeIds = new Set<GraphNodeId>(input.changedNodeIds);
   if (input.snapshot != null) {
-    const previousEffectiveStates = snapshotEffectiveGraphStateByNodeId(input.snapshot);
+    const previousEffectiveStates = new Map(input.snapshot.effectiveGraphStates);
     const currentNativeStates = input.currentNativeStatesByStaleNodeId();
     for (const [nodeId, currentState] of currentNativeStates) {
       const previousState = previousEffectiveStates.get(nodeId);

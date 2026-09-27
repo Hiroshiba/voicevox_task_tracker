@@ -1,64 +1,16 @@
 import type { Config } from "../../config/index.js";
-import {
-  createUtcIsoDateTime,
-  resolveTrackingStartAt,
-  type TrackingRunCompletion,
-  type TrackingStartAtState,
-  type UtcIsoDateTime,
-} from "../../domain/index.js";
+import type { TrackingStartAtState, UtcIsoDateTime } from "../../domain/index.js";
+import { resolveConfiguredTrackingStartAt } from "../../application/tracking-run/stages/collection-tracking-request.js";
 import type { StateSnapshot } from "../../persistence/index.js";
 import type { RuntimeConfiguration, RuntimeState } from "./contracts.js";
 import { previousSnapshot } from "./previous-state/snapshot.js";
-
-export function resolveProductionTrackingStartAt(
-  config: Config,
-  previousState: TrackingStartAtState,
-  run: TrackingRunCompletion,
-): TrackingStartAtState {
-  const configured = config.tracking.startAt;
-  return resolveTrackingStartAt({
-    configuredStartAt:
-      configured == null
-        ? Object.freeze({
-            status: "not_configured",
-          })
-        : Object.freeze({
-            status: "configured",
-            value: createUtcIsoDateTime(configured),
-          }),
-    previousState,
-    run,
-  });
-}
-
-export function trackingSelectionStartAt(
-  configuration: RuntimeConfiguration,
-  state: RuntimeState,
-  evaluatedAt: UtcIsoDateTime,
-): UtcIsoDateTime {
-  const resolved = resolveProductionTrackingStartAt(
-    configuration.config,
-    previousSnapshot(state)?.trackingStartAt ??
-      Object.freeze({
-        status: "not_fixed",
-      }),
-    Object.freeze({
-      outcome: "incomplete",
-      finishedAt: evaluatedAt,
-    }),
-  );
-  if (resolved.status === "not_fixed") {
-    return evaluatedAt;
-  }
-  return resolved.value;
-}
 
 export function pendingSnapshotTrackingStartAt(
   configuration: RuntimeConfiguration,
   state: RuntimeState,
   evaluatedAt: UtcIsoDateTime,
 ): TrackingStartAtState {
-  return resolveProductionTrackingStartAt(
+  return resolveConfiguredTrackingStartAt(
     configuration.config,
     previousSnapshot(state)?.trackingStartAt ??
       Object.freeze({
@@ -76,7 +28,7 @@ export function completedSnapshotTrackingStartAt(
   snapshot: StateSnapshot,
   completedAt: UtcIsoDateTime,
 ): TrackingStartAtState {
-  const resolved = resolveProductionTrackingStartAt(
+  const resolved = resolveConfiguredTrackingStartAt(
     config,
     snapshot.trackingStartAt,
     Object.freeze({

@@ -3,16 +3,21 @@ import type { GitHubNodeId, TrackingNotificationClass } from "../../../domain/ty
 import { createRunEvaluatedAt, type RunEvaluatedAt } from "../contracts/evaluation-time.js";
 import { createCollectedStageProof } from "../contracts/proofs.js";
 import type { StageState } from "../contracts/run-core.js";
-import type { ClockPort, CollectionGitHubReadPort, ContentDigestPort } from "../ports.js";
-import type { InventoryCollectedRun } from "./inventory.js";
 import type {
-  CollectionPlanningContext,
-  CollectionPlanningReferences,
-} from "./collection-incremental-plan.js";
+  ClockPort,
+  CollectionGitHubReadPort,
+  ContentDigestPort,
+  DelayPort,
+} from "../ports.js";
+import type { InventoryCollectedRun } from "./inventory.js";
+import type { CollectionPlanningContext } from "./collection-incremental-plan.js";
+import { collectInitialRepositoryItems } from "./collection-repositories.js";
 import {
-  collectInitialRepositoryItems,
-  type InitialRepositoryCollection,
-} from "./collection-repositories.js";
+  previousGraphAdjacentNodeIds,
+  previousPersonalReminderRelationCandidateConsumerNodeIds,
+  previousStaleRepositoryBlockerTopologyNodeIds,
+} from "./collection-previous-state.js";
+import { collectProductionItems, type CollectedItemObservations } from "./collection-production.js";
 import {
   assertCollectionSourceTimes,
   createCollectionSourceCatalog,
@@ -24,6 +29,7 @@ export type CollectionSource = Readonly<{
   trackingNotificationClassByNodeId: ReadonlyMap<GitHubNodeId, TrackingNotificationClass>;
   analysisNodeIds: ReadonlySet<GitHubNodeId>;
   staleBlockerTopologyNodeIds: ReadonlySet<GitHubNodeId>;
+  unavailableConsumerNodeIds: ReadonlySet<GitHubNodeId>;
   changedNodeIds: ReadonlySet<GitHubNodeId>;
 }>;
 
@@ -39,28 +45,15 @@ export type CanonicalCollection<Collection extends CollectionSource> = Readonly<
     ])[];
     analysisNodeIds: readonly GitHubNodeId[];
     staleBlockerTopologyNodeIds: readonly GitHubNodeId[];
+    unavailableConsumerNodeIds: readonly GitHubNodeId[];
     changedNodeIds: readonly GitHubNodeId[];
   }
 >;
 
-type CollectionObservation<Collection extends CollectionSource> = Readonly<{
-  value: Collection;
-  itemCount: number;
-  changedItemCount: number;
-  githubApiRemaining: number;
-  staleRepositoryCount: number;
-  diagnostics: readonly string[];
-}>;
-
-/** GitHub読取と関係端点の閉包を要求する収集境界。 */
-export type CollectionPort<Collection extends CollectionSource> = Readonly<{
+/** GitHub読取と競合再取得までの待機を行う収集境界。 */
+export type CollectionPort = Readonly<{
   read: CollectionGitHubReadPort;
-  references: CollectionPlanningReferences;
-  completeRelationClosure: (
-    initial: InitialRepositoryCollection,
-    context: CollectionPlanningContext,
-    captureEvaluationTime: () => RunEvaluatedAt,
-  ) => Promise<CollectionObservation<Collection>>;
+  delay: DelayPort;
 }>;
 
 /** 一度固定した評価時刻と正規化sourceを持つrun。 */
@@ -82,18 +75,25 @@ export type CollectedRun<Collection extends Readonly<{ evaluatedAt: RunEvaluated
 >;
 
 /** 収集結果を検証し、一つの評価時刻とsource catalogを確定する。 */
-export async function collectRunItems<Collection extends CollectionSource>(
+export async function collectRunItems(
   inventory: InventoryCollectedRun,
-  port: CollectionPort<Collection>,
+  port: CollectionPort,
   clock: ClockPort,
   digest: ContentDigestPort,
-): Promise<CollectedRun<CanonicalCollection<Collection>>> {
+): Promise<CollectedRun<CanonicalCollection<CollectedItemObservations>>> {
   const context: CollectionPlanningContext = Object.freeze({
     startedAt: inventory.core.identity.startedAt,
     config: inventory.core.config,
     executionPolicy: inventory.core.executionPolicy,
     previousState: inventory.core.previousState,
-    references: port.references,
+    references: Object.freeze({
+      adjacentNodeIds: previousGraphAdjacentNodeIds(inventory.core.previousState),
+      personalReminderRelationCandidateConsumerNodeIds:
+        previousPersonalReminderRelationCandidateConsumerNodeIds(inventory.core.previousState),
+      staleBlockerTopologyNodeIds: previousStaleRepositoryBlockerTopologyNodeIds(
+        inventory.core.previousState,
+      ),
+    }),
     digest,
   });
   const initial = await collectInitialRepositoryItems(inventory, port.read, context);
@@ -101,14 +101,21 @@ export async function collectRunItems<Collection extends CollectionSource>(
     current:
       Readonly<{ status: "pending" }> | Readonly<{ status: "captured"; value: RunEvaluatedAt }>;
   } = { current: Object.freeze({ status: "pending" }) };
-  const observation = await port.completeRelationClosure(initial, context, () => {
-    if (evaluation.current.status === "captured") {
-      throw new TypeError("評価時刻は一度だけ取得できます");
-    }
-    const value = createRunEvaluatedAt(clock.now());
-    evaluation.current = Object.freeze({ status: "captured", value });
-    return value;
-  });
+  const observation = await collectProductionItems(
+    port.read,
+    port.delay,
+    context,
+    inventory.data.approvedRepositories,
+    initial,
+    () => {
+      if (evaluation.current.status === "captured") {
+        throw new TypeError("評価時刻は一度だけ取得できます");
+      }
+      const value = createRunEvaluatedAt(clock.now());
+      evaluation.current = Object.freeze({ status: "captured", value });
+      return value;
+    },
+  );
   if (
     evaluation.current.status !== "captured" ||
     observation.value.evaluatedAt !== evaluation.current.value
@@ -123,6 +130,7 @@ export async function collectRunItems<Collection extends CollectionSource>(
     trackingNotificationClassByNodeId,
     analysisNodeIds,
     staleBlockerTopologyNodeIds,
+    unavailableConsumerNodeIds,
     changedNodeIds,
     ...collectionFields
   } = observation.value;
@@ -141,8 +149,9 @@ export async function collectRunItems<Collection extends CollectionSource>(
     ),
     analysisNodeIds: Object.freeze([...analysisNodeIds].sort()),
     staleBlockerTopologyNodeIds: Object.freeze([...staleBlockerTopologyNodeIds].sort()),
+    unavailableConsumerNodeIds: Object.freeze([...unavailableConsumerNodeIds].sort()),
     changedNodeIds: Object.freeze([...changedNodeIds].sort()),
-  }) satisfies CanonicalCollection<Collection>;
+  }) satisfies CanonicalCollection<CollectedItemObservations>;
   assertCollectionSourceTimes(collection, collection.evaluatedAt);
   const sourceCatalog = createCollectionSourceCatalog(collection);
   return Object.freeze({
@@ -154,9 +163,9 @@ export async function collectRunItems<Collection extends CollectionSource>(
       collection,
       sourceCatalog,
       metrics: Object.freeze({
-        itemCount: observation.itemCount,
+        itemCount: collection.trackedNodeIds.length,
         changedItemCount: observation.changedItemCount,
-        githubApiRemaining: observation.githubApiRemaining,
+        githubApiRemaining: port.read.rateLimitSnapshot()?.remaining ?? 0,
         staleRepositoryCount: observation.staleRepositoryCount,
       }),
       diagnostics: Object.freeze([...observation.diagnostics]),

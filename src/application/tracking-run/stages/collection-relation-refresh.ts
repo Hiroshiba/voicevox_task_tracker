@@ -1,35 +1,28 @@
-import type { Config } from "../../../config/index.js";
-import type { CollectionGitHubReadPort } from "../../../application/tracking-run/ports.js";
-import type { CollectionPlanningContext } from "../../../application/tracking-run/stages/collection-incremental-plan.js";
-import type { RepositoryCollectionResult } from "../../../application/tracking-run/stages/collection-stale.js";
+import type { Config } from "../../../config/schema.js";
+import type { CollectionGitHubReadPort, DelayPort } from "../ports.js";
+import type { CollectionPlanningContext } from "./collection-incremental-plan.js";
+import type { RepositoryCollectionResult } from "./collection-stale.js";
 import {
   collectRepositoryItemObservations,
   mergeFreshRepositoryRuntimeCollection,
   type FreshRepositoryRuntimeCollection,
-} from "../../../application/tracking-run/stages/collection-repositories.js";
-import type { GitHubNodeId, GitHubRepositoryId } from "../../../domain/index.js";
-import {
-  type EnumeratedGitHubItem,
-  type GitHubClient,
-  type GitHubItemDetail,
-  type PublicRepository,
-  type PublicRepositoryAllowlist,
-} from "../../../github/index.js";
+} from "./collection-repositories.js";
+import type { GitHubNodeId, GitHubRepositoryId } from "../../../domain/types.js";
+import type { EnumeratedGitHubItem } from "../../../github/item-enumeration.js";
+import type { GitHubItemDetail } from "../../../github/item-detail-types.js";
+import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
 import {
   RelationReferenceConflictError,
   type PublicGitHubRelationItem,
   type RelationCandidate,
 } from "../../../graph/index.js";
-import type { SnapshotCollectionRepository } from "../../../persistence/index.js";
-import type { DailyRunInvocation } from "../../daily-transaction.js";
-import type { CollectionRuntimeAdapters } from "../adapters.js";
-import type { RuntimeConfiguration } from "../contracts.js";
+import type { PreviousCollectionRepository } from "../contracts/previous-state.js";
 import {
   aggregateFreshRepositoryCollections,
   createPublicRelationItem,
   extractRelationCandidatesOnce,
   type FreshRuntimeCollectionAggregate,
-} from "./relation-candidates.js";
+} from "./collection-relation-candidates.js";
 
 type RelationReferenceRefreshTarget = Readonly<{
   repository: PublicRepository;
@@ -47,14 +40,25 @@ type ExtractedRelationCandidates = Readonly<{
 }>;
 
 function findRelationReferenceRepository(
-  allowlist: PublicRepositoryAllowlist,
+  allowlist: readonly PublicRepository[],
   reference: PublicGitHubRelationItem,
 ): PublicRepository | undefined {
-  return allowlist.repositories.find(
+  return allowlist.find(
     (repository) =>
       repository.owner.toLowerCase() === reference.repositoryOwner.toLowerCase() &&
       repository.name.toLowerCase() === reference.repositoryName.toLowerCase(),
   );
+}
+
+function requireRepository(
+  repositories: readonly PublicRepository[],
+  repositoryId: GitHubRepositoryId,
+): PublicRepository {
+  const repository = repositories.find((item) => item.id === repositoryId);
+  if (repository == null) {
+    throw new TypeError(`公開repositoryがありません。対象: ${repositoryId}`);
+  }
+  return repository;
 }
 
 function detailReferencesRelationNode(detail: GitHubItemDetail, nodeId: GitHubNodeId): boolean {
@@ -79,7 +83,7 @@ function detailReferencesRelationNode(detail: GitHubItemDetail, nodeId: GitHubNo
 function relationReferenceRefreshTargets(
   aggregate: FreshRuntimeCollectionAggregate,
   error: RelationReferenceConflictError,
-  allowlist: PublicRepositoryAllowlist,
+  allowlist: readonly PublicRepository[],
 ): readonly RelationReferenceRefreshTarget[] {
   const nodeIds = new Set<GitHubNodeId>([error.existing.nodeId]);
   for (const detail of aggregate.details) {
@@ -104,10 +108,10 @@ function relationReferenceRefreshTargets(
     if (enumeratedItem == null) {
       throw new TypeError("関係参照競合の親詳細に対応する列挙項目がありません", { cause: error });
     }
-    if (!allowlist.has(enumeratedItem.repositoryId)) {
+    if (!allowlist.some((repository) => repository.id === enumeratedItem.repositoryId)) {
       throw error;
     }
-    const repository = allowlist.require(enumeratedItem.repositoryId);
+    const repository = requireRepository(allowlist, enumeratedItem.repositoryId);
     targets.push(
       Object.freeze({
         repository,
@@ -144,18 +148,14 @@ function validateRelationReferenceRefresh(
 }
 
 async function refreshRelationReferences(
-  adapters: CollectionRuntimeAdapters,
-  invocation: DailyRunInvocation,
-  authentication: GitHubClient,
   read: CollectionGitHubReadPort,
   context: CollectionPlanningContext,
-  allowlist: PublicRepositoryAllowlist,
   targets: readonly RelationReferenceRefreshTarget[],
   error: RelationReferenceConflictError,
   freshCollectionsByRepositoryId: Map<GitHubRepositoryId, FreshRepositoryRuntimeCollection>,
   repositoryResultsById: Map<
     GitHubRepositoryId,
-    RepositoryCollectionResult<SnapshotCollectionRepository>
+    RepositoryCollectionResult<PreviousCollectionRepository>
   >,
 ): Promise<void> {
   const targetsByRepositoryId = new Map<
@@ -184,13 +184,7 @@ async function refreshRelationReferences(
     if (new Set(identifiers).size !== identifiers.length) {
       throw new TypeError("関係参照競合の再取得対象URLが重複しています", { cause: error });
     }
-    const items = await adapters.enumerateGitHubItemsByIdentifiers({
-      allowlist,
-      identifiers,
-      observedAt: invocation.startedAt,
-      request: authentication.request,
-      graphql: authentication.graphql,
-    });
+    const items = await read.enumerateByIdentifiers(identifiers, context.startedAt);
     if (items.length !== repositoryTargets.length) {
       throw new TypeError("関係参照競合の再取得結果件数が不正です", { cause: error });
     }
@@ -244,7 +238,7 @@ async function refreshRelationReferences(
         freshness: "fresh",
         repository,
         value: refreshedCollection.state,
-        observedAt: invocation.startedAt,
+        observedAt: context.startedAt,
       }),
     );
   }
@@ -265,19 +259,15 @@ function calculateRetryDelayMilliseconds(
 
 /** 関係参照競合を限定的に再取得して候補を抽出する。 */
 export async function extractAllRelationCandidates(
-  adapters: CollectionRuntimeAdapters,
-  invocation: DailyRunInvocation,
-  configuration: RuntimeConfiguration,
-  authentication: GitHubClient,
   read: CollectionGitHubReadPort,
+  delay: DelayPort,
   context: CollectionPlanningContext,
   freshCollectionsByRepositoryId: Map<GitHubRepositoryId, FreshRepositoryRuntimeCollection>,
   repositoryResultsById: Map<
     GitHubRepositoryId,
-    RepositoryCollectionResult<SnapshotCollectionRepository>
+    RepositoryCollectionResult<PreviousCollectionRepository>
   >,
-  config: Config,
-  allowlist: PublicRepositoryAllowlist,
+  allowlist: readonly PublicRepository[],
   retryBudget: RelationReferenceRetryBudget,
 ): Promise<ExtractedRelationCandidates> {
   for (;;) {
@@ -288,7 +278,7 @@ export async function extractAllRelationCandidates(
     try {
       return Object.freeze({
         candidates: extractRelationCandidatesOnce(
-          config,
+          context.config,
           allowlist,
           aggregate.enumeratedItems,
           aggregate.details,
@@ -304,17 +294,13 @@ export async function extractAllRelationCandidates(
       }
       const targets = relationReferenceRefreshTargets(aggregate, error, allowlist);
       const retryNumber = retryBudget.refreshes + 1;
-      await adapters.sleep(
-        calculateRetryDelayMilliseconds(retryNumber, configuration.config.operations.retry),
+      await delay.sleep(
+        calculateRetryDelayMilliseconds(retryNumber, context.config.operations.retry),
       );
       retryBudget.refreshes = retryNumber;
       await refreshRelationReferences(
-        adapters,
-        invocation,
-        authentication,
         read,
         context,
-        allowlist,
         targets,
         error,
         freshCollectionsByRepositoryId,

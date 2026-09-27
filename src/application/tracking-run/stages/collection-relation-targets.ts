@@ -1,24 +1,25 @@
 import type { GitHubNodeId, GitHubRepositoryId, GraphNodeId } from "../../../domain/index.js";
-import type {
-  FreshObservedGitHubItem,
-  PublicRepository,
-  PublicRepositoryAllowlist,
-} from "../../../github/index.js";
+import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";
+import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
 import type { RelationCandidate } from "../../../graph/index.js";
 import { relationNodes } from "../../../graph/relation-candidate-endpoints.js";
-import type { SnapshotCollectionItem, SnapshotTrackedItem } from "../../../persistence/index.js";
+import type {
+  AnalysisPreviousState,
+  PreviousCollectionItem,
+  PreviousTrackedItem,
+} from "../contracts/previous-state.js";
 import { assertNonNullable } from "../../../util/index.js";
-import type { RuntimeState } from "../contracts.js";
-import { previousPersonalReminderRelationCandidateDependencies } from "../previous-state/analysis.js";
-import { previousCollectionItemsByNodeId } from "../previous-state/collection.js";
-import { previousSnapshot } from "../previous-state/snapshot.js";
-import type { FreshRuntimeCollectionAggregate } from "./relation-candidates.js";
-import type { RuntimeTrackingSelection } from "./tracking-selection.js";
+import {
+  previousPersonalReminderRelationCandidateDependencies,
+  previousCollectionItemsByNodeId,
+} from "./collection-previous-state.js";
+import type { FreshRuntimeCollectionAggregate } from "./collection-relation-candidates.js";
+import type { RuntimeTrackingSelection } from "./collection-tracking.js";
 
 /** 関係候補の端点を公開リポジトリへ対応付ける。 */
 export function relationExpansionRepositoriesByNodeId(
   candidates: readonly RelationCandidate[],
-  allowlist: PublicRepositoryAllowlist,
+  allowlist: readonly PublicRepository[],
 ): ReadonlyMap<GitHubNodeId, PublicRepository> {
   const repositoriesByNodeId = new Map<GitHubNodeId, PublicRepository>();
   for (const candidate of candidates) {
@@ -26,7 +27,7 @@ export function relationExpansionRepositoriesByNodeId(
       if (node.scope !== "organization") {
         continue;
       }
-      const repository = allowlist.repositories.find(
+      const repository = allowlist.find(
         (current) =>
           current.owner.toLowerCase() === node.repositoryOwner.toLowerCase() &&
           current.name.toLowerCase() === node.repositoryName.toLowerCase(),
@@ -46,15 +47,15 @@ export function relationExpansionRepositoriesByNodeId(
 
 /** 個人催促の関係先追加取得対象を公開リポジトリへ対応付ける。 */
 export function personalReminderRelationExpansionRepositoriesByNodeId(
-  state: RuntimeState,
+  state: AnalysisPreviousState,
   aggregate: FreshRuntimeCollectionAggregate,
   tracking: RuntimeTrackingSelection,
   relationCandidates: readonly RelationCandidate[],
-  allowlist: PublicRepositoryAllowlist,
+  allowlist: readonly PublicRepository[],
 ): ReadonlyMap<GitHubNodeId, PublicRepository> {
   const freshObservedNodeIds = new Set<string>(aggregate.observedItems.map((item) => item.nodeId));
   const trackedNodeIds = new Set<string>(tracking.workByNodeId.keys());
-  const previousItemsByNodeId = new Map<string, SnapshotCollectionItem>();
+  const previousItemsByNodeId = new Map<string, PreviousCollectionItem>();
   for (const [nodeId, item] of previousCollectionItemsByNodeId(state)) {
     previousItemsByNodeId.set(nodeId, item);
   }
@@ -82,7 +83,7 @@ export function personalReminderRelationExpansionRepositoriesByNodeId(
       if (previousCollectionItem == null) {
         continue;
       }
-      const repository = allowlist.repositories.find(
+      const repository = allowlist.find(
         (candidate) => candidate.id === previousCollectionItem.repositoryId,
       );
       if (repository == null) {
@@ -184,14 +185,14 @@ function effectiveAssigneeImplementationRelationKey(
 }
 
 function previousAuthoritativeImplementationRelations(
-  state: RuntimeState,
+  state: AnalysisPreviousState,
 ): readonly EffectiveAssigneeImplementationRelation[] {
-  const snapshot = previousSnapshot(state);
+  const snapshot = state.snapshot.status === "available" ? state.snapshot : undefined;
   if (snapshot == null) {
     return Object.freeze([]);
   }
-  const itemsByNodeId = new Map<GraphNodeId, SnapshotTrackedItem>(
-    snapshot.items.map((item) => [item.nodeId, item]),
+  const itemsByNodeId = new Map<GraphNodeId, PreviousTrackedItem>(
+    snapshot.trackedItems.map((item) => [item.nodeId, item]),
   );
   return Object.freeze(
     snapshot.relations.flatMap((relation) => {
@@ -246,7 +247,7 @@ function trackedAuthoritativeImplementationRelationKeys(
 
 /** 実質担当関係が変わったIssueを再評価対象に選ぶ。 */
 export function effectiveAssigneeRelationChangeTargetNodeIds(
-  state: RuntimeState,
+  state: AnalysisPreviousState,
   observedItems: readonly FreshObservedGitHubItem[],
   relationCandidates: readonly RelationCandidate[],
   tracking: RuntimeTrackingSelection,
@@ -277,19 +278,19 @@ export function effectiveAssigneeRelationChangeTargetNodeIds(
 
 /** 収集が古い実質担当関係のIssueを保持対象に選ぶ。 */
 export function staleEffectiveAssigneeTargetsToRetain(
-  state: RuntimeState,
+  state: AnalysisPreviousState,
   observedItems: readonly FreshObservedGitHubItem[],
   staleRepositoryIds: ReadonlySet<GitHubRepositoryId>,
 ): ReadonlySet<GitHubNodeId> {
-  const snapshot = previousSnapshot(state);
+  const snapshot = state.snapshot.status === "available" ? state.snapshot : undefined;
   if (snapshot == null || staleRepositoryIds.size === 0) {
     return new Set<GitHubNodeId>();
   }
-  const previousItemsByNodeId = new Map<GraphNodeId, SnapshotTrackedItem>(
-    snapshot.items.map((item) => [item.nodeId, item]),
+  const previousItemsByNodeId = new Map<GraphNodeId, PreviousTrackedItem>(
+    snapshot.trackedItems.map((item) => [item.nodeId, item]),
   );
   const previousEffectiveAssigneeIssueNodeIds = new Set(
-    snapshot.items
+    snapshot.trackedItems
       .filter(
         (item) =>
           item.type === "issue" &&

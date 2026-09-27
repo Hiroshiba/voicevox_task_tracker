@@ -134,6 +134,7 @@ export type CollectedItems = Readonly<{
   trackingNotificationClassByNodeId: ReadonlyMap<GitHubNodeId, TrackingNotificationClass>;
   analysisNodeIds: ReadonlySet<GitHubNodeId>;
   staleBlockerTopologyNodeIds: ReadonlySet<GitHubNodeId>;
+  unavailableConsumerNodeIds: ReadonlySet<GitHubNodeId>;
   changedNodeIds: ReadonlySet<GitHubNodeId>;
   externalReferences: readonly ExternalGhostNode[];
   relationCandidates: readonly RelationCandidate[];

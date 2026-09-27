@@ -12,28 +12,28 @@ import {
   type TrackedItemWorkDecision,
   type UtcIsoDateTime,
 } from "../../../domain/index.js";
-import {
-  deduplicateByStableId,
-  type EnumeratedGitHubItem,
-  type FreshObservedGitHubItem,
-} from "../../../github/index.js";
+import { deduplicateByStableId } from "../../../github/stable-id.js";
+import type { EnumeratedGitHubItem } from "../../../github/item-enumeration.js";
+import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";
+import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
 import type { RelationCandidate } from "../../../graph/index.js";
 import { relationNodes } from "../../../graph/relation-candidate-endpoints.js";
 import { assertNonNullable, UnreachableError } from "../../../util/index.js";
-import { createTrackingBackfillRequest } from "../../backfill.js";
-import type { DailyRunInvocation } from "../../daily-transaction.js";
-import type { RepositoryInventory, RuntimeConfiguration, RuntimeState } from "../contracts.js";
-import { normalizeLabelRules } from "../label-rules.js";
-import { staleAiAnalysisElementsForLifecycle } from "../../../application/tracking-run/stages/collection-lifecycle.js";
-import { previousCollectionItemsByNodeId } from "../previous-state/collection.js";
-import { previousSnapshot } from "../previous-state/snapshot.js";
-import { findRepository, repositoryFullName } from "../repository-lookup.js";
-import { trackingSelectionStartAt } from "../tracking-start-at.js";
+import type { Config } from "../../../config/schema.js";
+import type { AnalysisPreviousState } from "../contracts/previous-state.js";
+import type { RunExecutionPolicy } from "../request.js";
+import { normalizeLabelRules } from "./collection-label-rules.js";
+import { staleAiAnalysisElementsForLifecycle } from "./collection-lifecycle.js";
+import { previousCollectionItemsByNodeId } from "./collection-previous-state.js";
+import {
+  trackingBackfillRequest,
+  trackingSelectionStartAt,
+} from "./collection-tracking-request.js";
 import {
   enumeratedRetentionItemState,
   normalizeTrackingIdentifier,
   shouldKeepPreviousTrackedItemInActiveDataset,
-} from "../../../application/tracking-run/stages/collection-incremental-plan.js";
+} from "./collection-incremental-plan.js";
 
 export type RuntimeTrackingSelection = Readonly<{
   result: ReturnType<typeof selectTrackingItems>;
@@ -131,27 +131,31 @@ function enumeratedAuthorType(
 
 /** 追跡対象と後続の処理対象を選ぶ。 */
 export function collectTrackingCandidates(
-  invocation: DailyRunInvocation,
   evaluatedAt: UtcIsoDateTime,
-  configuration: RuntimeConfiguration,
-  state: RuntimeState,
-  inventory: RepositoryInventory,
+  config: Config,
+  executionPolicy: RunExecutionPolicy,
+  state: AnalysisPreviousState,
+  repositories: readonly PublicRepository[],
   enumeratedItems: readonly EnumeratedGitHubItem[],
   observedItems: readonly FreshObservedGitHubItem[],
   relationCandidates: readonly RelationCandidate[],
 ): RuntimeTrackingSelection {
-  const resolveLabelEffects = createLabelEffectsResolver(normalizeLabelRules(configuration.config));
+  const resolveLabelEffects = createLabelEffectsResolver(normalizeLabelRules(config));
   const previousItems = new Map(
-    (previousSnapshot(state)?.items ?? []).map((item) => [item.nodeId, item]),
+    (state.snapshot.status === "available" ? state.snapshot.trackedItems : []).map((item) => [
+      item.nodeId,
+      item,
+    ]),
   );
   const observedItemsByNodeId = new Map(observedItems.map((item) => [item.nodeId, item]));
   const enumeratedItemsByNodeId = new Map(enumeratedItems.map((item) => [item.nodeId, item]));
-  const isBot = createGitHubBotPredicate(configuration.config.actors.bots);
+  const isBot = createGitHubBotPredicate(config.actors.bots);
   let excludedCandidateCount = 0;
   const organizationCandidates: OrganizationTrackingCandidate[] = enumeratedItems.flatMap(
     (item): OrganizationTrackingCandidate[] => {
-      const repository = findRepository(inventory, item.repositoryId);
-      const fullName = repositoryFullName(repository);
+      const repository = repositories.find((entry) => entry.id === item.repositoryId);
+      assertNonNullable(repository, `公開repositoryがありません。対象: ${item.repositoryId}`);
+      const fullName = `${repository.owner}/${repository.name}`;
       const previous = previousItems.get(item.nodeId);
       const observed = observedItemsByNodeId.get(item.nodeId);
       const activity =
@@ -168,7 +172,7 @@ export function collectTrackingCandidates(
               events: observed.events,
               dependencyResolutions: [],
               naturalLanguageAssessments: [],
-              minimumAiConfidence: configuration.config.ai.confidence.medium,
+              minimumAiConfidence: config.ai.confidence.medium,
               previousActivity:
                 previous == null
                   ? {
@@ -190,7 +194,7 @@ export function collectTrackingCandidates(
       const notificationClass = classifyTrackingNotification({
         authorType: itemAuthorType,
         title: item.title,
-        automationNoiseTitles: configuration.config.notifications.automationNoiseTitles,
+        automationNoiseTitles: config.notifications.automationNoiseTitles,
         notificationsSuppressedByLabel: resolveLabelEffects(fullName, item.labels)
           .suppressNotifications,
       });
@@ -260,7 +264,7 @@ export function collectTrackingCandidates(
     ...externalCandidates,
   ]);
   const result = selectTrackingItems({
-    startAt: trackingSelectionStartAt(configuration, state, evaluatedAt),
+    startAt: trackingSelectionStartAt(config, state, evaluatedAt),
     evaluatedAt,
     candidates,
     connections: createTrackingConnections(relationCandidates),
@@ -273,27 +277,22 @@ export function collectTrackingCandidates(
         const itemState = enumeratedRetentionItemState(currentItem);
         return shouldKeepPreviousTrackedItemInActiveDataset(
           evaluatedAt,
-          configuration.config,
+          config,
           currentItem,
           itemState,
         );
       }),
     ),
-    explicitIncludes: configuration.config.tracking.include
+    explicitIncludes: config.tracking.include
       .map(normalizeTrackingIdentifier)
       .filter((identifier) =>
         candidates.some(
           (candidate) => candidate.nodeId === identifier || candidate.url === identifier,
         ),
       ),
-    autoInclude: configuration.config.tracking.autoInclude,
-    backfill: createTrackingBackfillRequest(
-      invocation.command,
-      Object.freeze({
-        status: "start",
-      }),
-    ),
-    maxBackfillItemsPerRun: configuration.config.tracking.backfill.maxItemsPerRun,
+    autoInclude: config.tracking.autoInclude,
+    backfill: trackingBackfillRequest(executionPolicy),
+    maxBackfillItemsPerRun: config.tracking.backfill.maxItemsPerRun,
   });
   const previousCollectionItems = previousCollectionItemsByNodeId(state);
   const workByNodeId = new Map<GitHubNodeId, TrackedItemWorkDecision>();

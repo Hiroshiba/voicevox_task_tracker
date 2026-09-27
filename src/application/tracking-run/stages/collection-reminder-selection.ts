@@ -1,9 +1,19 @@
-import type { GitHubNodeId, GraphNodeId } from "../../domain/index.js";
-import { relationNodes } from "../../graph/relation-candidate-endpoints.js";
-import { normalizedBlockerRelationEndpointNodeIds } from "../relation-driven-analysis-targets.js";
-import type { CollectedItems, RuntimeState } from "./contracts.js";
-import { previousPersonalReminderRelationCandidateDependencies } from "./previous-state/analysis.js";
-import { currentRelationCandidatesById } from "./relation-candidate-index.js";
+import type { GitHubNodeId, GraphNodeId } from "../../../domain/index.js";
+import { relationNodes } from "../../../graph/relation-candidate-endpoints.js";
+import { normalizedBlockerRelationEndpointNodeIds } from "./collection-analysis-targets.js";
+import type { AnalysisPreviousState } from "../contracts/previous-state.js";
+import { previousPersonalReminderRelationCandidateDependencies } from "./collection-previous-state.js";
+import { currentRelationCandidatesById } from "./collection-relation-index.js";
+import type { RelationCandidate } from "../../../graph/relation-candidate-types.js";
+import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";
+import type { PreviousCollectionItem } from "../contracts/previous-state.js";
+import type { StaleObservedGitHubItem } from "./collection-stale.js";
+
+type ReminderCollection = Readonly<{
+  observedItems: readonly FreshObservedGitHubItem[];
+  staleItems: readonly StaleObservedGitHubItem<PreviousCollectionItem>[];
+  relationCandidates: readonly RelationCandidate[];
+}>;
 
 type PersonalReminderEndpointAvailability =
   "github_observed" | "github_stale" | "external_public" | "unknown";
@@ -23,7 +33,7 @@ function addPersonalReminderEndpointAvailability(
 }
 
 function personalReminderEndpointAvailabilityByNodeId(
-  collection: Pick<CollectedItems, "observedItems" | "staleItems" | "relationCandidates">,
+  collection: ReminderCollection,
 ): ReadonlyMap<GraphNodeId, PersonalReminderEndpointAvailability> {
   const availabilityByNodeId = new Map<GraphNodeId, PersonalReminderEndpointAvailability>();
   for (const item of collection.observedItems) {
@@ -53,8 +63,8 @@ type PersonalReminderRelationCandidateSelection = Readonly<{
 
 /** 個人向け催促の関係候補を使う解析対象を選ぶ。 */
 export function selectPersonalReminderRelationCandidateConsumers(
-  state: RuntimeState,
-  collection: Pick<CollectedItems, "observedItems" | "staleItems" | "relationCandidates">,
+  state: AnalysisPreviousState,
+  collection: ReminderCollection,
   trackedNodeIds: ReadonlySet<GitHubNodeId>,
 ): PersonalReminderRelationCandidateSelection {
   const endpointAvailabilityByNodeId = personalReminderEndpointAvailabilityByNodeId(collection);

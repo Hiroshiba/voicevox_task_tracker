@@ -1,15 +1,12 @@
 import type { Config } from "../../../config/index.js";
-import type { RepositoryCollectionResult } from "../../../application/tracking-run/stages/collection-stale.js";
-import type { FreshRepositoryRuntimeCollection } from "../../../application/tracking-run/stages/collection-repositories.js";
+import type { RepositoryCollectionResult } from "./collection-stale.js";
+import type { FreshRepositoryRuntimeCollection } from "./collection-repositories.js";
 import type { GitHubNodeId, GitHubRepositoryId } from "../../../domain/index.js";
-import {
-  deduplicateByStableId,
-  type EnumeratedGitHubItem,
-  type FreshObservedGitHubItem,
-  type GitHubItemDetail,
-  type PublicRepository,
-  type PublicRepositoryAllowlist,
-} from "../../../github/index.js";
+import { deduplicateByStableId } from "../../../github/stable-id.js";
+import type { EnumeratedGitHubItem } from "../../../github/item-enumeration.js";
+import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";
+import type { GitHubItemDetail } from "../../../github/item-detail-types.js";
+import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
 import {
   extractRelationCandidatesForItems,
   type PublicGitHubRelationItem,
@@ -17,10 +14,11 @@ import {
   type RelationExtractionItem,
 } from "../../../graph/index.js";
 import { relationNodes } from "../../../graph/relation-candidate-endpoints.js";
-import type { SnapshotCollectionRepository } from "../../../persistence/index.js";
+import type {
+  PreviousCollectionRepository,
+  AnalysisPreviousState,
+} from "../contracts/previous-state.js";
 import { assertNonNullable } from "../../../util/index.js";
-import type { RuntimeState } from "../contracts.js";
-import { previousSnapshot } from "../previous-state/snapshot.js";
 
 export type FreshRuntimeCollectionAggregate = Readonly<{
   enumeratedItems: readonly EnumeratedGitHubItem[];
@@ -30,6 +28,15 @@ export type FreshRuntimeCollectionAggregate = Readonly<{
   analysisPlanChangedNodeIds: ReadonlySet<GitHubNodeId>;
   personalReminderReplanNodeIds: ReadonlySet<GitHubNodeId>;
 }>;
+
+function requireRepository(
+  repositories: readonly PublicRepository[],
+  repositoryId: GitHubRepositoryId,
+): PublicRepository {
+  const repository = repositories.find((item) => item.id === repositoryId);
+  assertNonNullable(repository, `公開repositoryがありません。対象: ${repositoryId}`);
+  return repository;
+}
 
 /** 公開関係項目を構築する。 */
 export function createPublicRelationItem(
@@ -52,12 +59,12 @@ export function createPublicRelationItem(
 /** 取得済み詳細から関係候補を抽出する。 */
 export function extractRelationCandidatesOnce(
   config: Config,
-  allowlist: PublicRepositoryAllowlist,
+  allowlist: readonly PublicRepository[],
   items: readonly EnumeratedGitHubItem[],
   details: readonly GitHubItemDetail[],
 ): readonly RelationCandidate[] {
   const knownItems = items.map((item) =>
-    createPublicRelationItem(item, allowlist.require(item.repositoryId)),
+    createPublicRelationItem(item, requireRepository(allowlist, item.repositoryId)),
   );
   const itemByNodeId = new Map(knownItems.map((item) => [item.nodeId, item]));
   const extractionItems = details.map((detail) => {
@@ -121,12 +128,12 @@ export function completeRelationCandidates(
 
 /** 収集済みの追跡候補端点を返す。 */
 export function collectedTrackingCandidateNodeIds(
-  state: RuntimeState,
+  state: AnalysisPreviousState,
   aggregate: FreshRuntimeCollectionAggregate,
 ): ReadonlySet<GitHubNodeId> {
   const enumeratedNodeIds = new Set(aggregate.enumeratedItems.map((item) => item.nodeId));
   const candidateNodeIds = new Set(aggregate.details.map((detail) => detail.nodeId));
-  for (const item of previousSnapshot(state)?.items ?? []) {
+  for (const item of state.snapshot.status === "available" ? state.snapshot.trackedItems : []) {
     if (enumeratedNodeIds.has(item.nodeId)) {
       candidateNodeIds.add(item.nodeId);
     }
@@ -136,10 +143,10 @@ export function collectedTrackingCandidateNodeIds(
 
 /** 前回値を保持した追跡端点を返す。 */
 export function staleTrackedNodeIdsForRelationExpansion(
-  state: RuntimeState,
+  state: AnalysisPreviousState,
   repositoryResultsById: ReadonlyMap<
     GitHubRepositoryId,
-    RepositoryCollectionResult<SnapshotCollectionRepository>
+    RepositoryCollectionResult<PreviousCollectionRepository>
   >,
 ): ReadonlySet<GitHubNodeId> {
   const staleRepositoryIds = new Set<GitHubRepositoryId>(
@@ -148,7 +155,7 @@ export function staleTrackedNodeIdsForRelationExpansion(
       .map((result) => result.repository.id),
   );
   return new Set(
-    (previousSnapshot(state)?.items ?? [])
+    (state.snapshot.status === "available" ? state.snapshot.trackedItems : [])
       .filter((item) => staleRepositoryIds.has(item.repositoryId))
       .map((item) => item.nodeId),
   );
@@ -156,7 +163,7 @@ export function staleTrackedNodeIdsForRelationExpansion(
 
 /** 公開リポジトリの収集結果を集約する。 */
 export function aggregateFreshRepositoryCollections(
-  allowlist: PublicRepositoryAllowlist,
+  allowlist: readonly PublicRepository[],
   freshCollectionsByRepositoryId: ReadonlyMap<GitHubRepositoryId, FreshRepositoryRuntimeCollection>,
 ): FreshRuntimeCollectionAggregate {
   const enumeratedItems: EnumeratedGitHubItem[] = [];
@@ -165,7 +172,7 @@ export function aggregateFreshRepositoryCollections(
   const changedNodeIds = new Set<GitHubNodeId>();
   const analysisPlanChangedNodeIds = new Set<GitHubNodeId>();
   const personalReminderReplanNodeIds = new Set<GitHubNodeId>();
-  for (const repository of allowlist.repositories) {
+  for (const repository of allowlist) {
     const collection = freshCollectionsByRepositoryId.get(repository.id);
     if (collection == null) {
       continue;
