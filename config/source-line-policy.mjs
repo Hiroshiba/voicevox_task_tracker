@@ -1,6 +1,13 @@
 export const SOURCE_LINE_CHECKER_VERSION = 1;
 
-export const SOURCE_LINE_ROOTS = ["src", "web/src", ".github/scripts", ".github/workflows"];
+export const SOURCE_LINE_ROOTS = [
+  "src",
+  "web/src",
+  ".github/scripts",
+  ".github/workflows",
+  "scripts",
+  "config",
+];
 
 export const SOURCE_LINE_EXTENSIONS = [
   ".ts",
@@ -23,6 +30,8 @@ export const SOURCE_LINE_ESLINT_GLOBS = [
   "src/**/*.{ts,tsx,cts,mts,js,jsx,cjs,mjs}",
   "web/src/**/*.{ts,tsx,cts,mts,js,jsx,cjs,mjs}",
   ".github/scripts/**/*.{ts,tsx,cts,mts,js,jsx,cjs,mjs}",
+  "scripts/**/*.{ts,tsx,cts,mts,js,jsx,cjs,mjs}",
+  "config/**/*.{ts,tsx,cts,mts,js,jsx,cjs,mjs}",
 ];
 
 export const SOURCE_LINE_PERMANENT_EXCLUSIONS = [

@@ -27,6 +27,16 @@ const productionRuntimeStageDirectories = [
   "workflow",
 ];
 
+const pureLeafImportPaths = [
+  "canonical-json/sha256-hex.js",
+  "canonical-json/sha256.js",
+  "canonical-json/value.js",
+];
+const pureLeafImportPattern = pureLeafImportPaths
+  .map((path) => path.replaceAll(".", "\\."))
+  .join("|");
+const restrictedModulePattern = `(?:^|/)(?!(?:${pureLeafImportPattern})$)(?:canonical-json|codex|persistence|pages|discord|github)(?:/|$)`;
+
 export default defineConfig([
   {
     ignores: SOURCE_LINE_PERMANENT_EXCLUSIONS,
@@ -96,18 +106,12 @@ export default defineConfig([
             .map((name) => ({ name, message: "applicationはNode.jsへ依存しないでください" })),
           patterns: [
             {
-              group: [
-                "node:*",
-                "**/cli/**",
-                "**/infrastructure/**",
-                "**/canonical-json/index*",
-                "**/codex/index*",
-                "**/persistence/index*",
-                "**/pages/index*",
-                "**/discord/index*",
-                "**/github/index*",
-              ],
-              message: "applicationは実行環境や副作用のbarrelを参照せずleaf moduleを使ってください",
+              group: ["node:*", "**/cli/**", "**/infrastructure/**"],
+              message: "applicationは実行環境へ依存しないでください",
+            },
+            {
+              regex: restrictedModulePattern,
+              message: "applicationは許可されたpure leaf moduleだけを参照してください",
             },
           ],
         },
@@ -134,13 +138,12 @@ export default defineConfig([
             })),
           patterns: [
             {
-              group: [
-                "**/application/**",
-                "**/infrastructure/**",
-                "**/cli/**",
-                "**/canonical-json/index*",
-              ],
-              message: "domainとgraphはpure leafだけを参照してください",
+              group: ["**/application/**", "**/infrastructure/**", "**/cli/**"],
+              message: "domainとgraphは上位層へ依存しないでください",
+            },
+            {
+              regex: restrictedModulePattern,
+              message: "domainとgraphは許可されたpure leaf moduleだけを参照してください",
             },
           ],
         },

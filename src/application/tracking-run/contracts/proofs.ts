@@ -46,8 +46,12 @@ class ReceiptChainProofToken {
   }
 }
 
+type StageProofByStage = {
+  [StageName in AnalysisRunStageName]: StageProofToken<StageName>;
+};
+
 /** 段階ごとの検証を通過した証明。 */
-export type StageProofFor<StageName extends AnalysisRunStageName> = StageProofToken<StageName>;
+export type StageProofFor<StageName extends AnalysisRunStageName> = StageProofByStage[StageName];
 
 /** 公開前の完全性検証を通過した証明。 */
 export type RunCompletenessProof = RunCompletenessProofToken;
