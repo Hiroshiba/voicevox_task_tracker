@@ -46,6 +46,12 @@ export type AnalysisRunCore = Readonly<{
   previousState: AnalysisPreviousState;
 }>;
 
+/** 汎用AI採用後のグラフ統合に必要な設定と前回観測。 */
+export type GraphReconciliationInput = Readonly<{
+  config: Pick<Config, "ai" | "maintainers" | "labels" | "staleness" | "importance" | "attention">;
+  previousSnapshot: AnalysisPreviousState["snapshot"];
+}>;
+
 /** 汎用AI計画以後へ渡すrun識別と予算の投影。 */
 export type GenericAiRunCore = Readonly<{
   identity: RunIdentity;
@@ -53,7 +59,11 @@ export type GenericAiRunCore = Readonly<{
   configDigest: Sha256Hash;
   baseRevision: BaseStateRevision;
   aiBudget: AiBudgetLedgerSnapshot;
+  graphInput: GraphReconciliationInput;
 }>;
+
+/** グラフ統合後に必要なrun識別と予算だけを持つcore。 */
+export type GraphReconciledRunCore = Omit<GenericAiRunCore, "graphInput">;
 
 /** 実装済み段階と段階ごとのcore型の唯一の対応表。 */
 export type CoreByStage = Readonly<{
@@ -64,6 +74,7 @@ export type CoreByStage = Readonly<{
   generic_ai_planned: GenericAiRunCore;
   generic_ai_executed: GenericAiRunCore;
   generic_ai_adopted: GenericAiRunCore;
+  graph_reconciled: GraphReconciledRunCore;
 }>;
 
 /** 段階名に対応したcoreとproofを持つ成果物。 */
@@ -95,5 +106,27 @@ export function projectGenericAiRunCore(analyzed: AnalysisRunCore): GenericAiRun
     configDigest: analyzed.configDigest,
     baseRevision: analyzed.baseRevision,
     aiBudget: analyzed.aiBudget,
+    graphInput: Object.freeze({
+      config: Object.freeze({
+        ai: analyzed.config.ai,
+        maintainers: analyzed.config.maintainers,
+        labels: analyzed.config.labels,
+        staleness: analyzed.config.staleness,
+        importance: analyzed.config.importance,
+        attention: analyzed.config.attention,
+      }),
+      previousSnapshot: analyzed.previousState.snapshot,
+    }),
+  });
+}
+
+/** グラフ統合後に不要な前回観測と設定をcoreから除く。 */
+export function projectGraphReconciledRunCore(adopted: GenericAiRunCore): GraphReconciledRunCore {
+  return Object.freeze({
+    identity: adopted.identity,
+    executionPolicy: adopted.executionPolicy,
+    configDigest: adopted.configDigest,
+    baseRevision: adopted.baseRevision,
+    aiBudget: adopted.aiBudget,
   });
 }

@@ -40,6 +40,10 @@ class StageProofToken<StageName extends AnalysisRunStageName> {
   public static genericAiAdopted(): StageProofToken<"generic_ai_adopted"> {
     return new StageProofToken("generic_ai_adopted");
   }
+
+  public static graphReconciled(): StageProofToken<"graph_reconciled"> {
+    return new StageProofToken("graph_reconciled");
+  }
 }
 
 class RunCompletenessProofToken {
@@ -114,6 +118,11 @@ export function createGenericAiExecutedStageProof(): StageProofFor<"generic_ai_e
 /** 汎用AIの要素別採用と現在性を照合した段階を証明する。 */
 export function createGenericAiAdoptedStageProof(): StageProofFor<"generic_ai_adopted"> {
   return StageProofToken.genericAiAdopted();
+}
+
+/** 最終graphと項目値の確定を証明する。 */
+export function createGraphReconciledStageProof(): StageProofFor<"graph_reconciled"> {
+  return StageProofToken.graphReconciled();
 }
 
 /** 公開前の完全性検証を通過した証明。 */

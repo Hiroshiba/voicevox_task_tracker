@@ -38,6 +38,7 @@ const pureLeafImportPaths = [
   "codex/analysis-selection.js",
   "codex/backend-version.js",
   "codex/budget.js",
+  "codex/confidence.js",
   "codex/element-planning.js",
   "codex/generic-ai-definition.js",
   "codex/input.js",
