@@ -53,7 +53,7 @@ export function createDailyDependencies(
     reduceAnalysis: createReduceAnalysisStage(),
     reconcileGraph: createReconcileGraphStage(),
     analyzePersonalReminders: createAnalyzePersonalRemindersStage(adapters),
-    validateCompleteness: createValidateCompletenessStage(),
+    validateCompleteness: createValidateCompletenessStage(githubSessions),
     persistState: createPersistStateStage(),
     buildPages: createBuildPagesStage(adapters),
     sendDiscord: createSendDiscordStage(adapters),

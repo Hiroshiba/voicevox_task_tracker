@@ -1,6 +1,7 @@
 import type { RepositoryInventoryPort } from "../../application/tracking-run/stages/inventory.js";
 import type { InventoryCollectedRun } from "../../application/tracking-run/stages/inventory.js";
 import type { GitHubReadPort } from "../../application/tracking-run/ports.js";
+import type { Repository } from "../../domain/index.js";
 import type { GitHubClient, CreateGitHubClientOptions } from "../../github/client.js";
 import type { GitHubAppCredentials } from "../../github/credentials.js";
 import type { GitHubRateLimitSnapshot } from "../../github/errors.js";
@@ -33,16 +34,34 @@ type GitHubReadDependencies = Readonly<{
   collectDetails: typeof collectGitHubItemDetails;
 }>;
 
-/** runごとのGitHub clientをstage成果物の外で保持する。 */
+type PrivateRepositoryReference = Pick<Repository, "id" | "owner" | "name" | "visibility">;
+
+/** runごとのGitHub clientと非公開repository参照をstage成果物の外で保持する。 */
 export class GitHubRunSessions {
   readonly #clients = new Map<string, GitHubClient>();
+  readonly #privateRepositories = new Map<string, readonly PrivateRepositoryReference[]>();
 
-  /** 認証済みclientをrunへ結び付ける。 */
-  public register(runId: string, client: GitHubClient): void {
-    if (this.#clients.has(runId)) {
+  /** 認証済みclientと非公開repository参照をrunへ結び付ける。 */
+  public register(runId: string, client: GitHubClient, inventory: readonly Repository[]): void {
+    if (this.#privateRepositories.has(runId)) {
       throw new TypeError("同じrunのGitHub sessionが既にあります");
     }
     this.#clients.set(runId, client);
+    this.#privateRepositories.set(
+      runId,
+      Object.freeze(
+        inventory
+          .filter((repository) => repository.visibility !== "public")
+          .map((repository) =>
+            Object.freeze({
+              id: repository.id,
+              owner: repository.owner,
+              name: repository.name,
+              visibility: repository.visibility,
+            }),
+          ),
+      ),
+    );
   }
 
   /** 収集段階で認証済みclientを使う。 */
@@ -54,9 +73,26 @@ export class GitHubRunSessions {
     return client;
   }
 
-  /** 収集後のclient参照を破棄する。 */
+  /** runの値が既知の非公開repositoryを参照しないことを確認する。 */
+  public assertPublicBoundary(runId: string, values: readonly unknown[]): void {
+    const privateRepositories = this.#privateRepositories.get(runId);
+    if (privateRepositories == null) {
+      throw new TypeError("runのGitHub sessionがありません");
+    }
+    if (containsPrivateRepositoryReference(values, privateRepositories)) {
+      throw new GitHubPublicBoundaryViolationError(1);
+    }
+  }
+
+  /** 収集後に認証済みclientへの参照を破棄する。 */
+  public releaseClient(runId: string): void {
+    this.#clients.delete(runId);
+  }
+
+  /** 検査完了後にrunの参照を破棄する。 */
   public release(runId: string): void {
     this.#clients.delete(runId);
+    this.#privateRepositories.delete(runId);
   }
 }
 
@@ -94,7 +130,7 @@ export function createGitHubRepositoryInventoryPort(
       });
       assertStoredPrivateRepositoryBoundary(inventory, prepared);
       const allowlist = createPublicRepositoryAllowlist(inventory);
-      dependencies.sessions.register(prepared.core.identity.runId, client);
+      dependencies.sessions.register(prepared.core.identity.runId, client, inventory);
       return Object.freeze({
         allowlist,
         installationId: client.installationId,

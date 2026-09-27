@@ -21,14 +21,18 @@ export function createCollectItemsStage(
         enumerateByIdentifiers: adapters.enumerateGitHubItemsByIdentifiers,
         collectDetails: adapters.collectGitHubItemDetails,
       });
-      return await collectRunItems(
+      const collected = await collectRunItems(
         inventoryCollected,
         { read, delay: { sleep: adapters.sleep } },
         { now: () => currentRuntimeTime(adapters) },
         nodeContentDigestPort,
       );
-    } finally {
+      sessions.assertPublicBoundary(invocation.runId, [collected.data]);
+      sessions.releaseClient(invocation.runId);
+      return collected;
+    } catch (error: unknown) {
       sessions.release(invocation.runId);
+      throw error;
     }
   };
 }

@@ -1,4 +1,5 @@
 import type { DailyRunInvocation, DailyTransactionDependencies } from "../../daily-transaction.js";
+import type { GitHubRunSessions } from "../../../infrastructure/tracking-run/github-port.js";
 import type {
   CodexAnalysis,
   CollectedItems,
@@ -60,7 +61,9 @@ function validateRunCompleteness(
 }
 
 /** 完全性検証段階を作る。 */
-export function createValidateCompletenessStage(): DailyTransactionDependencies<ProductionTypes>["validateCompleteness"] {
+export function createValidateCompletenessStage(
+  sessions: GitHubRunSessions,
+): DailyTransactionDependencies<ProductionTypes>["validateCompleteness"] {
   return ({
     invocation,
     configuration,
@@ -71,22 +74,33 @@ export function createValidateCompletenessStage(): DailyTransactionDependencies<
     reduction,
     graph,
     personalReminderAnalysis,
-  }) =>
-    Promise.resolve(
-      Object.freeze({
-        status: "complete",
-        value: validateRunCompleteness(
-          invocation,
-          configuration,
-          state,
-          repositoryInventory,
-          collection,
-          codexAnalysis,
-          reduction,
-          graph,
-          personalReminderAnalysis,
-        ),
-        diagnostics: Object.freeze([]),
-      }),
-    );
+  }) => {
+    try {
+      const value = validateRunCompleteness(
+        invocation,
+        configuration,
+        state,
+        repositoryInventory,
+        collection,
+        codexAnalysis,
+        reduction,
+        graph,
+        personalReminderAnalysis,
+      );
+      sessions.assertPublicBoundary(invocation.runId, [
+        value,
+        state.session.pendingAiCacheEntries(),
+        state.session.pendingPersonalReminderAiCacheEntries(),
+      ]);
+      return Promise.resolve(
+        Object.freeze({
+          status: "complete",
+          value,
+          diagnostics: Object.freeze([]),
+        }),
+      );
+    } finally {
+      sessions.release(invocation.runId);
+    }
+  };
 }
