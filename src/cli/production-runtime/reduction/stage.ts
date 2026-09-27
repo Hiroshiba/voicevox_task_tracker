@@ -1,4 +1,8 @@
 import type { DailyTransactionDependencies } from "../../daily-transaction.js";
+import {
+  projectLegacyAnalyzedCollection,
+  projectLegacyDeterministicAnalysis,
+} from "../../tracking-run/migration-bridge/deterministic.js";
 import type {
   CodexAnalysis,
   CollectedItems,
@@ -48,14 +52,20 @@ function reduceAllAnalyses(
 
 /** 解析結果の統合段階を作る。 */
 export function createReduceAnalysisStage(): DailyTransactionDependencies<ProductionTypes>["reduceAnalysis"] {
-  return ({ configuration, collection, deterministicAnalysis, codexAnalysis }) =>
+  return ({
+    configuration,
+    state,
+    repositoryInventory,
+    deterministicallyAnalyzed,
+    codexAnalysis,
+  }) =>
     Promise.resolve(
       reduceAllAnalyses(
         configuration,
-        deterministicAnalysis.state,
-        deterministicAnalysis.inventory,
-        collection,
-        deterministicAnalysis,
+        state,
+        repositoryInventory,
+        projectLegacyAnalyzedCollection(deterministicallyAnalyzed),
+        projectLegacyDeterministicAnalysis(deterministicallyAnalyzed),
         codexAnalysis,
       ),
     );

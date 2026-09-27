@@ -1,7 +1,8 @@
-import type { GitHubNodeId, GitHubRepositoryId, UtcIsoDateTime } from "../../../domain/index.js";
+import { provisionalCollectionEvaluationTime } from "../../../domain/collection-evaluation-time.js";
+import type { RunEvaluatedAt } from "../../../application/tracking-run/contracts/evaluation-time.js";
+import type { GitHubNodeId, GitHubRepositoryId } from "../../../domain/index.js";
 import {
   collectRepositoriesWithStaleFallback,
-  createPublicRepositoryAllowlist,
   type EnumeratedGitHubItem,
   type GitHubClient,
   type PublicRepository,
@@ -14,7 +15,6 @@ import { assertNonNullable } from "../../../util/index.js";
 import type { DailyRunInvocation } from "../../daily-transaction.js";
 import { CliRelationExpansionLimitError } from "../../errors.js";
 import type { CollectionRuntimeAdapters } from "../adapters.js";
-import { currentRuntimeTime } from "../clock.js";
 import type { RepositoryInventory, RuntimeConfiguration, RuntimeState } from "../contracts.js";
 import { previousRepositoryValues } from "../previous-state/collection.js";
 import {
@@ -46,7 +46,7 @@ import {
 
 type RelationExpandedRuntimeCollection = FreshRuntimeCollectionAggregate &
   Readonly<{
-    evaluatedAt: UtcIsoDateTime;
+    evaluatedAt: RunEvaluatedAt;
     relationCandidates: readonly RelationCandidate[];
     blockerTopologyRelationCandidates: readonly RelationCandidate[];
     droppedRelationCandidateCount: number;
@@ -79,6 +79,7 @@ async function collectAdditionalRelationItems(
   configuration: RuntimeConfiguration,
   state: RuntimeState,
   authentication: GitHubClient,
+  allowlist: PublicRepositoryAllowlist,
   repository: PublicRepository,
   requestedNodeIds: readonly GitHubNodeId[],
   current: FreshRepositoryRuntimeCollection,
@@ -89,7 +90,7 @@ async function collectAdditionalRelationItems(
     missingNodeIds.length === 0
       ? Object.freeze([])
       : await adapters.enumerateGitHubItemsByIdentifiers({
-          allowlist: createPublicRepositoryAllowlist([repository]),
+          allowlist,
           identifiers: missingNodeIds,
           observedAt: invocation.startedAt,
           request: authentication.request,
@@ -112,6 +113,7 @@ async function collectAdditionalRelationItems(
     configuration,
     state,
     authentication,
+    allowlist,
     repository,
     detailTargets,
     new Set(requestedNodeIds),
@@ -142,7 +144,8 @@ async function collectRelationExpansionBatch(
     FreshRepositoryRuntimeCollection
   >();
   const results = await collectRepositoriesWithStaleFallback({
-    allowlist: createPublicRepositoryAllowlist(targetRepositories),
+    allowlist,
+    repositories: targetRepositories,
     observedAt: invocation.startedAt,
     previousValues: previousRepositoryValues(state),
     collect: async (repository) => {
@@ -156,6 +159,7 @@ async function collectRelationExpansionBatch(
         configuration,
         state,
         authentication,
+        allowlist,
         repository,
         requestedNodeIds,
         current,
@@ -189,6 +193,7 @@ export async function collectRelationExpandedItems(
     GitHubRepositoryId,
     RepositoryCollectionResult<SnapshotCollectionRepository>
   >,
+  captureEvaluationTime: () => RunEvaluatedAt,
 ): Promise<RelationExpandedRuntimeCollection> {
   const requestedNodeIds = new Set<GitHubNodeId>();
   const expandedNodeIds = new Set<GitHubNodeId>();
@@ -226,10 +231,14 @@ export async function collectRelationExpandedItems(
       collectedCandidateNodeIds,
       staleTrackedNodeIds,
     );
-    const evaluatedAt = currentRuntimeTime(adapters);
+    const provisionalTime = provisionalCollectionEvaluationTime(
+      invocation.startedAt,
+      refreshedAggregate.enumeratedItems,
+      refreshedAggregate.observedItems,
+    );
     const tracking = collectTrackingCandidates(
       invocation,
-      evaluatedAt,
+      provisionalTime,
       configuration,
       state,
       repositoryInventory,
@@ -316,13 +325,24 @@ export async function collectRelationExpandedItems(
     }
     const nextRequests = [...requestsByNodeId.values()];
     if (nextRequests.length === 0) {
+      const evaluatedAt = captureEvaluationTime();
+      const finalTracking = collectTrackingCandidates(
+        invocation,
+        evaluatedAt,
+        configuration,
+        state,
+        repositoryInventory,
+        refreshedAggregate.enumeratedItems,
+        refreshedAggregate.observedItems,
+        completedTrackingRelationCandidates.candidates,
+      );
       return Object.freeze({
         ...refreshedAggregate,
         evaluatedAt,
         relationCandidates: completedRelationCandidates.candidates,
         blockerTopologyRelationCandidates: discoveredRelationCandidates,
         droppedRelationCandidateCount: completedRelationCandidates.droppedCount,
-        tracking,
+        tracking: finalTracking,
       });
     }
     const targetNodeIdsByRepositoryId = new Map<GitHubRepositoryId, GitHubNodeId[]>();

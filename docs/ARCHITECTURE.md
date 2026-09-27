@@ -8,8 +8,8 @@ VOICEVOX Task Trackerは、GitHubから得た確定情報を決定論的に評�
 | モジュール                        | 責務                                                                                             | 主な依存先                                                                     |
 | --------------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
 | `src/canonical-json`              | pure leafでcanonical JSON直列化とSHA-256値を検証し、`index.ts`からNode.js hashを公開する         | `src/infrastructure/tracking-run`                                              |
-| `src/application/tracking-run`    | 日次runの閉じた値、proof型、副作用を要求するport契約                                             | `src/canonical-json`のleaf、Zod                                                |
-| `src/infrastructure/tracking-run` | `ContentDigestPort`のNode.js実装                                                                 | `src/application/tracking-run`、Node.js標準module                              |
+| `src/application/tracking-run`    | 日次runの閉じた値、inventory・collection・決定論的分析のstage、proof型、port契約                 | `src/canonical-json`と公開allowlistのpure leaf、`src/domain`、`src/graph`、Zod |
+| `src/infrastructure/tracking-run` | GitHub sessionをstage出力の外で保持するportと`ContentDigestPort`のNode.js実装                    | `src/application/tracking-run`、`src/github`、Node.js標準module                |
 | `src/config`                      | YAMLの読み込み、Zod schemaとsemantic validation                                                  | `src/codex`、`src/domain`、`src/util`                                          |
 | `src/diagnostics`                 | 詳細診断のJSONL記録、Error直列化、暗号化、復号                                                   | `src/canonical-json`、Node.js標準module                                        |
 | `src/github`                      | GitHub App認証、RESTとGraphQLの読み取り、公開allowlist、収集、正規化、rate limit管理             | `src/config`、`src/domain`                                                     |
@@ -32,15 +32,23 @@ canonical JSONの値と直列化は`src/canonical-json/value.ts`に置き、chec
 `src/cli/production-runtime.ts`は`ProductionTypes`、`ProductionRuntimeAdapters`、`createProductionCliApplication`を再公開するファサードです。
 `production-runtime/create-application.ts`がCLIアプリケーションを組み立て、`daily-dependencies.ts`が日次runの各stageを実アダプターへ接続します。
 分割workflowの組み立ては`workflow/create-runner.ts`が担います。
-`production-runtime/daily-startup/`は設定、state、認証、公開repository inventoryを準備し、`collection/`は詳細収集と追跡対象の選定を担います。
+`production-runtime/daily-startup/`は設定とstateを準備し、GitHub portをinventory stageへ接続します。
+GitHub portは認証とrepository inventoryを取得し、公開かつ非archived・有効なrepositoryをrunごとに一度選びます。
+`InventoryCollectedRun`には公開allowlistとdigest、非secretのinstallation ID、収集指標を残し、GitHub clientとtokenは残しません。
+増分列挙、詳細取得、関係端点の追加収集、競合時の再取得、503時の前回値保持は`collection/`が実行します。
+追加収集は同じallowlistを参照し、別の公開可否判定を作りません。
+関係端点の探索中は取得済みsourceの発生時刻から計画用の時刻を定め、読み取り完了後に時計を一度だけ読みます。
+その`evaluatedAt`はrun開始時刻と異なる型で保持し、`CollectedRun`が正規source IDのcatalogと未来時刻の検証結果を確定します。
+`DeterministicallyAnalyzedRun`は初期項目判定、関係候補のID・端点・判定担当、追跡・終了・stale・詳細再取得の集合を確定します。
+未移行のAI、reducer、graph、個人催促は同じ決定論的stageから入力を投影して利用します。
 Issueの明示依頼候補と実質担当候補、IssueとPull Requestに共通するmention候補は`src/cli/issue-responsibility-candidates.ts`で抽出します。
 `src/cli/initial-item-analysis.ts`は、設定解決済みの値と収集済みの情報から、AI分析前のIssueとPull Requestを1件ずつ判定します。
 初期判定は実行環境や永続化セッションを受け取らず、評価日時も入力で受け取ります。
 初期判定とAI結果を採用した再判定は、入力契約を分けます。
-`production-runtime/deterministic/stage.ts`が初期判定を段階へ接続し、`codex/candidates.ts`と`codex/input.ts`が汎用AIの候補と入力を組み立てます。
+`production-runtime/deterministic/stage.ts`が初期判定をcanonical stageへ接続し、`codex/candidates.ts`と`codex/input.ts`が汎用AIの候補と入力を組み立てます。
 AI結果の採用と判定の統合は`reduction/`、暫定graphと最終graphの構築は`graph/`が担います。
 `personal-reminder/stage.ts`は既存の個人催促moduleを接続し、`validation/`はsnapshotと通知候補を作って完全性を検証します。
-日次runの各stageの入出力は`DailyTransactionDependencies<ProductionTypes>`を契約とし、段階をまたぐ型は`production-runtime/contracts.ts`に置きます。
+日次runのinventory、collection、決定論的分析の成果物は`src/application/tracking-run/stages/`を契約とし、未移行stageの型は`production-runtime/contracts.ts`に置きます。
 実アダプターの契約は`adapters.ts`に置きます。
 前回stateの参照は`previous-state/`、解析identityは`analysis-identity.ts`、AI依存は`ai-dependencies/`、関係候補とgraphの索引は`relation-candidate-index.ts`と`graph-result-indexes.ts`で共有します。
 新しい判断は対応するstageを唯一の所有先とし、組み立て側から各stageへ一方向に依存します。

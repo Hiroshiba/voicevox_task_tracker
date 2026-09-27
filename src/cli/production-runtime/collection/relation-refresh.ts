@@ -1,7 +1,6 @@
 import type { Config } from "../../../config/index.js";
 import type { GitHubNodeId, GitHubRepositoryId } from "../../../domain/index.js";
 import {
-  createPublicRepositoryAllowlist,
   type EnumeratedGitHubItem,
   type GitHubClient,
   type GitHubItemDetail,
@@ -148,6 +147,7 @@ async function refreshRelationReferences(
   configuration: RuntimeConfiguration,
   state: RuntimeState,
   authentication: GitHubClient,
+  allowlist: PublicRepositoryAllowlist,
   targets: readonly RelationReferenceRefreshTarget[],
   error: RelationReferenceConflictError,
   freshCollectionsByRepositoryId: Map<GitHubRepositoryId, FreshRepositoryRuntimeCollection>,
@@ -183,7 +183,7 @@ async function refreshRelationReferences(
       throw new TypeError("関係参照競合の再取得対象URLが重複しています", { cause: error });
     }
     const items = await adapters.enumerateGitHubItemsByIdentifiers({
-      allowlist: createPublicRepositoryAllowlist([repository]),
+      allowlist,
       identifiers,
       observedAt: invocation.startedAt,
       request: authentication.request,
@@ -221,6 +221,7 @@ async function refreshRelationReferences(
       configuration,
       state,
       authentication,
+      allowlist,
       repository,
       refreshedItems,
       new Set(refreshedItems.map((item) => item.nodeId)),
@@ -314,6 +315,7 @@ export async function extractAllRelationCandidates(
         configuration,
         state,
         authentication,
+        allowlist,
         targets,
         error,
         freshCollectionsByRepositoryId,

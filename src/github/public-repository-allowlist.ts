@@ -78,6 +78,18 @@ export class PublicRepositoryAllowlist {
     return new PublicRepositoryAllowlist(repositories);
   }
 
+  /** 検証済みの公開repository配列を旧下流APIへ投影する。 */
+  public static fromApprovedRepositories(
+    repositories: readonly PublicRepository[],
+  ): PublicRepositoryAllowlist {
+    if (new Set(repositories.map((repository) => repository.id)).size !== repositories.length) {
+      throw new GitHubRepositoryInventoryError({
+        cause: new TypeError("公開リポジトリIDが重複しています"),
+      });
+    }
+    return new PublicRepositoryAllowlist(repositories);
+  }
+
   /** allowlist内の公開リポジトリを変更不能な配列で返す。 */
   public get repositories(): readonly PublicRepository[] {
     return this.#repositories;

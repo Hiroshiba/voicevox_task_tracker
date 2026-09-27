@@ -11,6 +11,13 @@ import type {
 import type { Config } from "../../config/index.js";
 import type { Sha256Hash } from "../../canonical-json/sha256.js";
 import type { PreparedRun } from "../../application/tracking-run/prepare-run.js";
+import type { InventoryCollectedRun } from "../../application/tracking-run/stages/inventory.js";
+import type {
+  CanonicalCollection,
+  CollectedRun,
+} from "../../application/tracking-run/stages/collection.js";
+import type { RunEvaluatedAt } from "../../application/tracking-run/contracts/evaluation-time.js";
+import type { DeterministicallyAnalyzedRun } from "../../application/tracking-run/stages/deterministic.js";
 import type { AiCacheEntry } from "../../codex/cache.js";
 import type { PersonalReminderAiCacheEntry } from "../../codex/personal-reminder-cache.js";
 import type { AiAnalysisDependency } from "../../domain/ai-analysis-dependencies.js";
@@ -33,7 +40,6 @@ import type {
   TrackedItemAiAnalysisApplications,
   TrackedItemState,
   TrackingNotificationClass,
-  UtcIsoDateTime,
 } from "../../domain/index.js";
 import type {
   DiscordNotificationItem,
@@ -44,7 +50,6 @@ import type {
 import type {
   EnumeratedGitHubItem,
   FreshObservedGitHubItem,
-  GitHubClient,
   GitHubItemDetail,
   PublicRepositoryAllowlist,
   RepositoryCollectionResult,
@@ -125,7 +130,7 @@ export type RepositoryInventory = Readonly<{
 }>;
 
 export type CollectedItems = Readonly<{
-  evaluatedAt: UtcIsoDateTime;
+  evaluatedAt: RunEvaluatedAt;
   enumeratedItems: readonly EnumeratedGitHubItem[];
   details: readonly GitHubItemDetail[];
   observedItems: readonly FreshObservedGitHubItem[];
@@ -141,10 +146,10 @@ export type CollectedItems = Readonly<{
   collectionRepositories: readonly SnapshotCollectionRepository[];
 }>;
 
+export type CanonicalCollectedItems = CanonicalCollection<CollectedItems>;
+
 export type DeterministicAnalysis = Readonly<{
   items: readonly DeterministicItemAnalysis[];
-  state: RuntimeState;
-  inventory: RepositoryInventory;
 }>;
 
 export type CodexAnalysis = Readonly<{
@@ -242,10 +247,15 @@ export type ProductionTypes = DailyTransactionTypeMap &
     configuration: RuntimeConfiguration;
     state: RuntimeState;
     prepared: PreparedRun<NormalizedBaseState>;
-    authentication: GitHubClient;
+    inventoryCollected: InventoryCollectedRun<NormalizedBaseState>;
+    collectedRun: CollectedRun<NormalizedBaseState, CanonicalCollectedItems>;
+    deterministicallyAnalyzed: DeterministicallyAnalyzedRun<
+      NormalizedBaseState,
+      CanonicalCollectedItems,
+      DeterministicItemAnalysis
+    >;
     repositoryInventory: RepositoryInventory;
     collection: CollectedItems;
-    deterministicAnalysis: DeterministicAnalysis;
     codexAnalysis: CodexAnalysis;
     reduction: ReducedAnalysis;
     graph: GraphResult;

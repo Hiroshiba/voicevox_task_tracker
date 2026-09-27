@@ -29,6 +29,10 @@ import type {
 } from "../../daily-transaction.js";
 import { personalReminderRuntimeGraph } from "../../personal-reminder-graph-projection.js";
 import {
+  projectLegacyAnalyzedCollection,
+  projectLegacyDeterministicAnalysis,
+} from "../../tracking-run/migration-bridge/deterministic.js";
+import {
   applyPersonalReminderCauseOutcomes,
   finalizePersonalReminderAnalysis,
   personalReminderAiCandidate,
@@ -53,6 +57,7 @@ import type {
   PersonalReminderAnalysis,
   ProductionTypes,
   ReducedAnalysis,
+  RepositoryInventory,
   RuntimeConfiguration,
   RuntimeState,
 } from "../contracts.js";
@@ -67,6 +72,7 @@ async function analyzePersonalReminders(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
   state: RuntimeState,
+  inventory: RepositoryInventory,
   collection: CollectedItems,
   deterministicAnalysis: DeterministicAnalysis,
   codexAnalysis: CodexAnalysis,
@@ -80,6 +86,7 @@ async function analyzePersonalReminders(
   const runtimeCollection = personalReminderRuntimeCollection(
     collection,
     deterministicAnalysis,
+    inventory,
     reduction,
     graph,
     unavailableConsumerNodeIds,
@@ -242,7 +249,7 @@ async function analyzePersonalReminders(
       repositoryId,
       `個人催促causeのrepository IDがありません。対象: ${item.nodeId}`,
     );
-    const repository = findRepository(deterministicAnalysis.inventory, repositoryId);
+    const repository = findRepository(inventory, repositoryId);
     const repositoryName = repositoryFullName(repository);
     const currentLabels = observedItem?.labels ?? previousItem?.labels ?? item.labels;
     const runtimeItem = runtimeItemsByNodeId.get(item.nodeId);
@@ -344,8 +351,8 @@ export function createAnalyzePersonalRemindersStage(
     invocation,
     configuration,
     state,
-    collection,
-    deterministicAnalysis,
+    repositoryInventory,
+    deterministicallyAnalyzed,
     codexAnalysis,
     reduction,
     graph,
@@ -355,8 +362,9 @@ export function createAnalyzePersonalRemindersStage(
       invocation,
       configuration,
       state,
-      collection,
-      deterministicAnalysis,
+      repositoryInventory,
+      projectLegacyAnalyzedCollection(deterministicallyAnalyzed),
+      projectLegacyDeterministicAnalysis(deterministicallyAnalyzed),
       codexAnalysis,
       reduction,
       graph,

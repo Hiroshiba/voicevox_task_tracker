@@ -31,6 +31,7 @@ const pureLeafImportPaths = [
   "canonical-json/sha256-hex.js",
   "canonical-json/sha256.js",
   "canonical-json/value.js",
+  "github/public-repository-allowlist.js",
 ];
 const pureLeafImportPattern = pureLeafImportPaths
   .map((path) => path.replaceAll(".", "\\."))

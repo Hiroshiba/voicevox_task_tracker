@@ -8,6 +8,7 @@ import {
 import { relationNodes } from "../../../graph/relation-candidate-endpoints.js";
 import { assertNonNullable } from "../../../util/index.js";
 import type { DailyTransactionDependencies } from "../../daily-transaction.js";
+import { projectLegacyAnalyzedCollection } from "../../tracking-run/migration-bridge/deterministic.js";
 import type {
   CollectedItems,
   GraphResult,
@@ -242,7 +243,8 @@ export function reconcileCurrentGraph(
 
 /** グラフ構築段階を作る。 */
 export function createReconcileGraphStage(): DailyTransactionDependencies<ProductionTypes>["reconcileGraph"] {
-  return ({ configuration, state, collection, reduction }) => {
+  return ({ configuration, state, deterministicallyAnalyzed, reduction }) => {
+    const collection = projectLegacyAnalyzedCollection(deterministicallyAnalyzed);
     const graph = reconcileCurrentGraph(configuration, state, collection, reduction);
     return Promise.resolve(
       Object.freeze({

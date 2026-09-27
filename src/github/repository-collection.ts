@@ -39,6 +39,7 @@ export type RepositoryCollectionResult<Value> =
 
 export type CollectRepositoriesOptions<Value> = Readonly<{
   allowlist: PublicRepositoryAllowlist;
+  repositories: readonly PublicRepository[];
   observedAt: UtcIsoDateTime;
   previousValues: ReadonlyMap<GitHubRepositoryId, PreviousRepositoryValue<Value>>;
   collect: (repository: PublicRepository) => Promise<Value>;
@@ -54,7 +55,8 @@ export async function collectRepositoriesWithStaleFallback<Value>(
 ): Promise<readonly RepositoryCollectionResult<Value>[]> {
   const results: RepositoryCollectionResult<Value>[] = [];
 
-  for (const repository of options.allowlist.repositories) {
+  for (const repository of options.repositories) {
+    options.allowlist.require(repository.id);
     try {
       const value = await options.collect(repository);
       results.push(

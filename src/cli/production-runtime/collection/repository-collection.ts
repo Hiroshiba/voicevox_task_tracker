@@ -8,7 +8,6 @@ import {
   type UtcIsoDateTime,
 } from "../../../domain/index.js";
 import {
-  createPublicRepositoryAllowlist,
   deduplicateByStableId,
   normalizeObservedGitHubItems,
   type EnumeratedGitHubItem,
@@ -16,6 +15,7 @@ import {
   type GitHubClient,
   type GitHubItemDetail,
   type PublicRepository,
+  type PublicRepositoryAllowlist,
 } from "../../../github/index.js";
 import type {
   SnapshotAnalysisPlanFingerprint,
@@ -170,12 +170,12 @@ export async function collectFreshRepositoryItemObservations(
   configuration: RuntimeConfiguration,
   state: RuntimeState,
   authentication: GitHubClient,
+  allowlist: PublicRepositoryAllowlist,
   repository: PublicRepository,
   enumeratedItems: readonly EnumeratedGitHubItem[],
   adjacentNodeIds: ReadonlySet<GitHubNodeId>,
   forcedDetailNodeIds: ReadonlySet<GitHubNodeId>,
 ): Promise<FreshRepositoryItemCollection> {
-  const allowlist = createPublicRepositoryAllowlist([repository]);
   const detailPlan = planRepositoryItemDetails(
     invocation,
     configuration,
@@ -220,13 +220,14 @@ export async function collectFreshRepositoryItems(
   configuration: RuntimeConfiguration,
   state: RuntimeState,
   authentication: GitHubClient,
+  allowlist: PublicRepositoryAllowlist,
   repository: PublicRepository,
   explicitNodeItems: readonly EnumeratedGitHubItem[],
   adjacentNodeIds: ReadonlySet<GitHubNodeId>,
 ): Promise<FreshRepositoryRuntimeCollection> {
-  const allowlist = createPublicRepositoryAllowlist([repository]);
   const openItems = await adapters.enumerateOpenGitHubItems({
     allowlist,
+    repositories: Object.freeze([repository]),
     observedAt: invocation.startedAt,
     request: authentication.request,
   });
@@ -258,6 +259,7 @@ export async function collectFreshRepositoryItems(
     configuration,
     state,
     authentication,
+    allowlist,
     repository,
     enumeratedItems,
     adjacentNodeIds,

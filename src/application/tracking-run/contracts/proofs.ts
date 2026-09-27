@@ -16,6 +16,18 @@ class StageProofToken<StageName extends AnalysisRunStageName> {
   public static prepared(): StageProofToken<"prepared"> {
     return new StageProofToken("prepared");
   }
+
+  public static inventoryCollected(): StageProofToken<"inventory_collected"> {
+    return new StageProofToken("inventory_collected");
+  }
+
+  public static collected(): StageProofToken<"collected"> {
+    return new StageProofToken("collected");
+  }
+
+  public static deterministicallyAnalyzed(): StageProofToken<"deterministically_analyzed"> {
+    return new StageProofToken("deterministically_analyzed");
+  }
 }
 
 class RunCompletenessProofToken {
@@ -60,6 +72,21 @@ export type StageProofFor<StageName extends AnalysisRunStageName> = StageProofBy
 /** ingress検証を終えたrunの準備段階を証明する。 */
 export function createPreparedStageProof(): StageProofFor<"prepared"> {
   return StageProofToken.prepared();
+}
+
+/** 公開repository一覧とdigestが確定した段階を証明する。 */
+export function createInventoryCollectedStageProof(): StageProofFor<"inventory_collected"> {
+  return StageProofToken.inventoryCollected();
+}
+
+/** 正規化済みsourceと評価時刻が確定した段階を証明する。 */
+export function createCollectedStageProof(): StageProofFor<"collected"> {
+  return StageProofToken.collected();
+}
+
+/** 決定論的な候補と判定を確定した段階を証明する。 */
+export function createDeterministicallyAnalyzedStageProof(): StageProofFor<"deterministically_analyzed"> {
+  return StageProofToken.deterministicallyAnalyzed();
 }
 
 /** 公開前の完全性検証を通過した証明。 */

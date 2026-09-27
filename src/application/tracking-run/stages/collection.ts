@@ -1,0 +1,156 @@
+import type { SourceId } from "../../../domain/source-id.js";
+import type { GitHubNodeId, TrackingNotificationClass } from "../../../domain/types.js";
+import type { UtcIsoDateTime } from "../../../domain/types.js";
+import { createRunEvaluatedAt, type RunEvaluatedAt } from "../contracts/evaluation-time.js";
+import { createCollectedStageProof, type StageProofFor } from "../contracts/proofs.js";
+import type { PreparedBaseStateShape } from "../prepare-run.js";
+import type { InventoryCollectedRun } from "./inventory.js";
+import {
+  assertCollectionSourceTimes,
+  createCollectionSourceCatalog,
+} from "./collection-source-catalog.js";
+
+export type CollectionSource = Readonly<{
+  evaluatedAt: RunEvaluatedAt;
+  trackedNodeIds: ReadonlySet<GitHubNodeId>;
+  trackingNotificationClassByNodeId: ReadonlyMap<GitHubNodeId, TrackingNotificationClass>;
+  analysisNodeIds: ReadonlySet<GitHubNodeId>;
+  staleBlockerTopologyNodeIds: ReadonlySet<GitHubNodeId>;
+  changedNodeIds: ReadonlySet<GitHubNodeId>;
+}>;
+
+type CollectionIndexField = Exclude<keyof CollectionSource, "evaluatedAt">;
+
+/** 収集中の索引を配列へ固定したcanonical collection。 */
+export type CanonicalCollection<Collection extends CollectionSource> = Readonly<
+  Omit<Collection, CollectionIndexField> & {
+    trackedNodeIds: readonly GitHubNodeId[];
+    trackingNotificationClassByNodeId: readonly (readonly [
+      GitHubNodeId,
+      TrackingNotificationClass,
+    ])[];
+    analysisNodeIds: readonly GitHubNodeId[];
+    staleBlockerTopologyNodeIds: readonly GitHubNodeId[];
+    changedNodeIds: readonly GitHubNodeId[];
+  }
+>;
+
+type CollectionObservation<Collection extends CollectionSource> = Readonly<{
+  value: Collection;
+  itemCount: number;
+  changedItemCount: number;
+  githubApiRemaining: number;
+  staleRepositoryCount: number;
+  diagnostics: readonly string[];
+}>;
+
+/** 増分収集と関係端点の閉包を要求する境界。 */
+export type CollectionPort<
+  BaseState extends PreparedBaseStateShape,
+  Collection extends CollectionSource,
+> = Readonly<{
+  clock: () => UtcIsoDateTime;
+  collect: (
+    inventory: InventoryCollectedRun<BaseState>,
+    captureEvaluationTime: () => RunEvaluatedAt,
+  ) => Promise<CollectionObservation<Collection>>;
+}>;
+
+/** 一度固定した評価時刻と正規化sourceを持つrun。 */
+export type CollectedRun<
+  BaseState extends PreparedBaseStateShape,
+  Collection extends Readonly<{ evaluatedAt: RunEvaluatedAt }>,
+> = Readonly<{
+  stage: "collected";
+  core: InventoryCollectedRun<BaseState>["core"];
+  data: Readonly<{
+    approvedRepositories: InventoryCollectedRun<BaseState>["data"]["approvedRepositories"];
+    allowlistDigest: InventoryCollectedRun<BaseState>["data"]["allowlistDigest"];
+    collection: Collection;
+    sourceCatalog: readonly SourceId[];
+    metrics: Readonly<{
+      itemCount: number;
+      changedItemCount: number;
+      githubApiRemaining: number;
+      staleRepositoryCount: number;
+    }>;
+    diagnostics: readonly string[];
+  }>;
+  proof: StageProofFor<"collected">;
+}>;
+
+/** 収集結果を検証し、一つの評価時刻とsource catalogを確定する。 */
+export async function collectRunItems<
+  BaseState extends PreparedBaseStateShape,
+  Collection extends CollectionSource,
+>(
+  inventory: InventoryCollectedRun<BaseState>,
+  port: CollectionPort<BaseState, Collection>,
+): Promise<CollectedRun<BaseState, CanonicalCollection<Collection>>> {
+  const evaluation: {
+    current:
+      Readonly<{ status: "pending" }> | Readonly<{ status: "captured"; value: RunEvaluatedAt }>;
+  } = { current: Object.freeze({ status: "pending" }) };
+  const observation = await port.collect(inventory, () => {
+    if (evaluation.current.status === "captured") {
+      throw new TypeError("評価時刻は一度だけ取得できます");
+    }
+    const value = createRunEvaluatedAt(port.clock());
+    evaluation.current = Object.freeze({ status: "captured", value });
+    return value;
+  });
+  if (
+    evaluation.current.status !== "captured" ||
+    observation.value.evaluatedAt !== evaluation.current.value
+  ) {
+    throw new TypeError("収集結果の評価時刻が段階内の取得時刻と一致しません");
+  }
+  if (observation.value.evaluatedAt < inventory.core.identity.startedAt) {
+    throw new RangeError("評価時刻がrun開始時刻より前です");
+  }
+  const {
+    trackedNodeIds,
+    trackingNotificationClassByNodeId,
+    analysisNodeIds,
+    staleBlockerTopologyNodeIds,
+    changedNodeIds,
+    ...collectionFields
+  } = observation.value;
+  const collection = Object.freeze({
+    ...collectionFields,
+    trackedNodeIds: Object.freeze([...trackedNodeIds].sort()),
+    trackingNotificationClassByNodeId: Object.freeze(
+      [...trackingNotificationClassByNodeId]
+        .map(([nodeId, notificationClass]) =>
+          Object.freeze([nodeId, notificationClass] satisfies [
+            GitHubNodeId,
+            TrackingNotificationClass,
+          ]),
+        )
+        .sort(([left], [right]) => left.localeCompare(right)),
+    ),
+    analysisNodeIds: Object.freeze([...analysisNodeIds].sort()),
+    staleBlockerTopologyNodeIds: Object.freeze([...staleBlockerTopologyNodeIds].sort()),
+    changedNodeIds: Object.freeze([...changedNodeIds].sort()),
+  }) satisfies CanonicalCollection<Collection>;
+  assertCollectionSourceTimes(collection, collection.evaluatedAt);
+  const sourceCatalog = createCollectionSourceCatalog(collection);
+  return Object.freeze({
+    stage: "collected",
+    core: inventory.core,
+    data: Object.freeze({
+      approvedRepositories: inventory.data.approvedRepositories,
+      allowlistDigest: inventory.data.allowlistDigest,
+      collection,
+      sourceCatalog,
+      metrics: Object.freeze({
+        itemCount: observation.itemCount,
+        changedItemCount: observation.changedItemCount,
+        githubApiRemaining: observation.githubApiRemaining,
+        staleRepositoryCount: observation.staleRepositoryCount,
+      }),
+      diagnostics: Object.freeze([...observation.diagnostics]),
+    }),
+    proof: createCollectedStageProof(),
+  });
+}

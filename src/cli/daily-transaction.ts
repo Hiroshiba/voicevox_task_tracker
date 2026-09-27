@@ -10,6 +10,10 @@ import type {
   PreparedBaseStateShape,
   PreparedRun,
 } from "../application/tracking-run/prepare-run.js";
+import type { InventoryCollectedRun } from "../application/tracking-run/stages/inventory.js";
+import type { CollectedRun } from "../application/tracking-run/stages/collection.js";
+import type { RunEvaluatedAt } from "../application/tracking-run/contracts/evaluation-time.js";
+import type { DeterministicallyAnalyzedRun } from "../application/tracking-run/stages/deterministic.js";
 import {
   StateFormatError,
   StatePersonalReminderAiDependencyMismatchError,
@@ -43,10 +47,11 @@ export type DailyTransactionTypeMap = Readonly<{
   configuration: unknown;
   state: unknown;
   prepared: PreparedRun<PreparedBaseStateShape>;
-  authentication: unknown;
+  inventoryCollected: InventoryCollectedRun<PreparedBaseStateShape>;
+  collectedRun: CollectedRun<PreparedBaseStateShape, Readonly<{ evaluatedAt: RunEvaluatedAt }>>;
+  deterministicallyAnalyzed: DeterministicallyAnalyzedRun<PreparedBaseStateShape>;
   repositoryInventory: unknown;
   collection: unknown;
-  deterministicAnalysis: unknown;
   codexAnalysis: unknown;
   reduction: unknown;
   graph: unknown;
@@ -65,23 +70,6 @@ export type DailyRunInvocation = Readonly<{
   command: OnlineCliCommand;
   scheduledFor: UtcIsoDateTime;
   startedAt: UtcIsoDateTime;
-}>;
-
-/** repository inventory段階の値と観測指標。 */
-export type RepositoryInventoryStageResult<Value> = Readonly<{
-  value: Value;
-  repositoryCount: number;
-  githubApiRemaining: number;
-}>;
-
-/** 増分収集段階の値と観測指標。 */
-export type IncrementalCollectionStageResult<Value> = Readonly<{
-  value: Value;
-  itemCount: number;
-  changedItemCount: number;
-  githubApiRemaining: number;
-  staleRepositoryCount: number;
-  diagnostics: readonly string[];
 }>;
 
 /** Codex段階の値、縮退状態、予算指標。 */
@@ -160,53 +148,48 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       state: Types["state"];
     }>,
   ) => Types["prepared"];
-  authenticateGitHub: (
+  collectInventory: (
     input: Readonly<{
-      invocation: DailyRunInvocation;
+      prepared: Types["prepared"];
       configuration: Types["configuration"];
     }>,
-  ) => Promise<Types["authentication"]>;
-  collectRepositoryInventory: (
-    input: Readonly<{
-      invocation: DailyRunInvocation;
-      configuration: Types["configuration"];
-      state: Types["state"];
-      authentication: Types["authentication"];
-    }>,
-  ) => Promise<RepositoryInventoryStageResult<Types["repositoryInventory"]>>;
+  ) => Promise<Types["inventoryCollected"]>;
+  projectLegacyRepositoryInventory: (
+    inventoryCollected: Types["inventoryCollected"],
+  ) => Types["repositoryInventory"];
   collectIncrementalItems: (
     input: Readonly<{
       invocation: DailyRunInvocation;
       configuration: Types["configuration"];
       state: Types["state"];
-      authentication: Types["authentication"];
+      inventoryCollected: Types["inventoryCollected"];
       repositoryInventory: Types["repositoryInventory"];
     }>,
-  ) => Promise<IncrementalCollectionStageResult<Types["collection"]>>;
+  ) => Promise<Types["collectedRun"]>;
+  projectLegacyCollection: (collected: Types["collectedRun"]) => Types["collection"];
   applyDeterministicRules: (
     input: Readonly<{
       invocation: DailyRunInvocation;
       configuration: Types["configuration"];
-      state: Types["state"];
       repositoryInventory: Types["repositoryInventory"];
-      collection: Types["collection"];
+      collectedRun: Types["collectedRun"];
     }>,
-  ) => Promise<Types["deterministicAnalysis"]>;
+  ) => Promise<Types["deterministicallyAnalyzed"]>;
   analyzeWithCodex: (
     input: Readonly<{
       invocation: DailyRunInvocation;
       configuration: Types["configuration"];
       state: Types["state"];
-      collection: Types["collection"];
-      deterministicAnalysis: Types["deterministicAnalysis"];
+      deterministicallyAnalyzed: Types["deterministicallyAnalyzed"];
     }>,
   ) => Promise<CodexAnalysisStageResult<Types["codexAnalysis"]>>;
   reduceAnalysis: (
     input: Readonly<{
       invocation: DailyRunInvocation;
       configuration: Types["configuration"];
-      collection: Types["collection"];
-      deterministicAnalysis: Types["deterministicAnalysis"];
+      state: Types["state"];
+      repositoryInventory: Types["repositoryInventory"];
+      deterministicallyAnalyzed: Types["deterministicallyAnalyzed"];
       codexAnalysis: Types["codexAnalysis"];
     }>,
   ) => Promise<Types["reduction"]>;
@@ -215,7 +198,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       invocation: DailyRunInvocation;
       configuration: Types["configuration"];
       state: Types["state"];
-      collection: Types["collection"];
+      deterministicallyAnalyzed: Types["deterministicallyAnalyzed"];
       reduction: Types["reduction"];
     }>,
   ) => Promise<GraphAnalysisStageResult<Types["graph"]>>;
@@ -224,8 +207,8 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       invocation: DailyRunInvocation;
       configuration: Types["configuration"];
       state: Types["state"];
-      collection: Types["collection"];
-      deterministicAnalysis: Types["deterministicAnalysis"];
+      repositoryInventory: Types["repositoryInventory"];
+      deterministicallyAnalyzed: Types["deterministicallyAnalyzed"];
       codexAnalysis: Types["codexAnalysis"];
       reduction: Types["reduction"];
       graph: Types["graph"];
@@ -635,56 +618,49 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
       const prepared = this.#dependencies.prepareRun({ request, identity, configuration, state });
       invocation = projectPreparedLegacyDailyInvocation(prepared);
 
-      stage = "authentication";
-      const authentication = await this.#dependencies.authenticateGitHub({
-        invocation,
-        configuration,
-      });
-
       stage = "repository_inventory";
-      const repositoryInventory = await this.#dependencies.collectRepositoryInventory({
-        invocation,
+      const inventoryCollected = await this.#dependencies.collectInventory({
+        prepared,
         configuration,
-        state,
-        authentication,
       });
+      const repositoryInventory =
+        this.#dependencies.projectLegacyRepositoryInventory(inventoryCollected);
+      diagnostics.push(...inventoryCollected.data.diagnostics);
       metrics = updateMetrics(metrics, {
-        repositoryCount: repositoryInventory.repositoryCount,
-        githubApiRemaining: repositoryInventory.githubApiRemaining,
+        repositoryCount: inventoryCollected.data.metrics.repositoryCount,
+        githubApiRemaining: inventoryCollected.data.metrics.githubApiRemaining,
       });
 
       stage = "incremental_collection";
-      const collection = await this.#dependencies.collectIncrementalItems({
+      const collectedRun = await this.#dependencies.collectIncrementalItems({
         invocation,
         configuration,
         state,
-        authentication,
-        repositoryInventory: repositoryInventory.value,
+        inventoryCollected,
+        repositoryInventory,
       });
-      diagnostics.push(...collection.diagnostics);
+      const collection = this.#dependencies.projectLegacyCollection(collectedRun);
+      diagnostics.push(...collectedRun.data.diagnostics);
       metrics = updateMetrics(metrics, {
-        itemCount: collection.itemCount,
-        changedItemCount: collection.changedItemCount,
-        githubApiRemaining: collection.githubApiRemaining,
-        staleRepositoryCount: collection.staleRepositoryCount,
+        itemCount: collectedRun.data.metrics.itemCount,
+        changedItemCount: collectedRun.data.metrics.changedItemCount,
+        githubApiRemaining: collectedRun.data.metrics.githubApiRemaining,
+        staleRepositoryCount: collectedRun.data.metrics.staleRepositoryCount,
       });
 
       stage = "deterministic_analysis";
-      const deterministicAnalysis = await this.#dependencies.applyDeterministicRules({
+      const deterministicallyAnalyzed = await this.#dependencies.applyDeterministicRules({
         invocation,
         configuration,
-        state,
-        repositoryInventory: repositoryInventory.value,
-        collection: collection.value,
+        repositoryInventory,
+        collectedRun,
       });
-
       stage = "codex_analysis";
       const codexAnalysis = await this.#dependencies.analyzeWithCodex({
         invocation,
         configuration,
         state,
-        collection: collection.value,
-        deterministicAnalysis,
+        deterministicallyAnalyzed,
       });
       diagnostics.push(...codexAnalysis.diagnostics);
       metrics = updateMetrics(metrics, {
@@ -699,8 +675,9 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
       const reduction = await this.#dependencies.reduceAnalysis({
         invocation,
         configuration,
-        collection: collection.value,
-        deterministicAnalysis,
+        state,
+        repositoryInventory,
+        deterministicallyAnalyzed,
         codexAnalysis: codexAnalysis.value,
       });
 
@@ -709,7 +686,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         invocation,
         configuration,
         state,
-        collection: collection.value,
+        deterministicallyAnalyzed,
         reduction,
       });
       metrics = updateMetrics(metrics, {
@@ -721,8 +698,8 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         invocation,
         configuration,
         state,
-        collection: collection.value,
-        deterministicAnalysis,
+        repositoryInventory,
+        deterministicallyAnalyzed,
         codexAnalysis: codexAnalysis.value,
         reduction,
         graph: graph.value,
@@ -751,8 +728,8 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         invocation,
         configuration,
         state,
-        repositoryInventory: repositoryInventory.value,
-        collection: collection.value,
+        repositoryInventory,
+        collection,
         codexAnalysis: codexAnalysis.value,
         reduction,
         graph: graph.value,
@@ -796,7 +773,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           invocation,
           configuration,
           state,
-          repositoryInventory: repositoryInventory.value,
+          repositoryInventory,
           validated: validation.value,
           metrics,
           status: runStatus,
@@ -811,7 +788,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           invocation,
           configuration,
           state,
-          repositoryInventory: repositoryInventory.value,
+          repositoryInventory,
           validated: validation.value,
           metrics,
           status: runStatus,
@@ -823,7 +800,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         const pages = await this.#dependencies.buildPages({
           invocation,
           configuration,
-          repositoryInventory: repositoryInventory.value,
+          repositoryInventory,
           validated: validation.value,
           persisted,
         });
@@ -835,7 +812,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           invocation,
           configuration,
           state,
-          repositoryInventory: repositoryInventory.value,
+          repositoryInventory,
           validated: validation.value,
           persisted,
           pages,
@@ -850,7 +827,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           invocation,
           configuration,
           state,
-          repositoryInventory: repositoryInventory.value,
+          repositoryInventory,
           validated: validation.value,
           discord: discord.value,
           metrics,

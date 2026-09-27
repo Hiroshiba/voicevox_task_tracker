@@ -1,6 +1,8 @@
 import { createLabelEffectsResolver, resolveRepositoryMaintainers } from "../../../domain/index.js";
+import { analyzeDeterministically } from "../../../application/tracking-run/stages/deterministic.js";
 import { assertNonNullable } from "../../../util/index.js";
 import type { DailyTransactionDependencies } from "../../daily-transaction.js";
+import { projectLegacyCollection } from "../../tracking-run/migration-bridge/collection.js";
 import {
   analyzeInitialItem,
   createNativeBlockers,
@@ -9,11 +11,9 @@ import {
 import type { EffectiveAssigneeCollectionContext } from "../../issue-responsibility-candidates.js";
 import type {
   CollectedItems,
-  DeterministicAnalysis,
   ProductionTypes,
   RepositoryInventory,
   RuntimeConfiguration,
-  RuntimeState,
 } from "../contracts.js";
 import { normalizeLabelRules } from "../label-rules.js";
 import {
@@ -22,12 +22,11 @@ import {
 } from "../relation-candidate-index.js";
 import { findRepository, repositoryFullName } from "../repository-lookup.js";
 
-function applyDeterministicAnalysis(
+function analyzeInitialItems(
   configuration: RuntimeConfiguration,
-  state: RuntimeState,
   inventory: RepositoryInventory,
   collection: CollectedItems,
-): DeterministicAnalysis {
+): readonly DeterministicItemAnalysis[] {
   const resolveLabelEffects = createLabelEffectsResolver(normalizeLabelRules(configuration.config));
   const observedItemsByNodeId = new Map(
     collection.observedItems.map((item) => [item.nodeId, item]),
@@ -72,17 +71,20 @@ function applyDeterministicAnalysis(
       }),
     );
   }
-  return Object.freeze({
-    items: Object.freeze(items),
-    state,
-    inventory,
-  });
+  return Object.freeze(items);
 }
 
-/** 決定的規則の適用段階を作る。 */
-export function createApplyDeterministicRulesStage(): DailyTransactionDependencies<ProductionTypes>["applyDeterministicRules"] {
-  return ({ configuration, state, repositoryInventory, collection }) =>
+/** 収集成果物から決定論的な候補factsを確定する。 */
+export function createAnalyzeDeterministicRunStage(): DailyTransactionDependencies<ProductionTypes>["applyDeterministicRules"] {
+  return ({ configuration, repositoryInventory, collectedRun }) =>
     Promise.resolve(
-      applyDeterministicAnalysis(configuration, state, repositoryInventory, collection),
+      analyzeDeterministically(collectedRun, {
+        analyze: () =>
+          analyzeInitialItems(
+            configuration,
+            repositoryInventory,
+            projectLegacyCollection(collectedRun),
+          ),
+      }),
     );
 }

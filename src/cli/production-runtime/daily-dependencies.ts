@@ -1,17 +1,19 @@
 import type { DailyTransactionDependencies } from "../daily-transaction.js";
 import type { ProductionRuntimeAdapters } from "./adapters.js";
 import { createAnalyzeWithCodexStage } from "./codex/stage.js";
-import { createCollectIncrementalItemsStage } from "./collection/stage.js";
+import { createCollectItemsStage } from "./collection/stage.js";
 import type { ProductionTypes } from "./contracts.js";
 import {
   createReadAiProcessAttemptCountStage,
   createValidateConfigurationStage,
 } from "./daily-startup/configuration.js";
-import { createAuthenticateGitHubStage } from "./daily-startup/github-authentication.js";
-import { createCollectRepositoryInventoryStage } from "./daily-startup/repository-inventory.js";
+import { GitHubRunSessions } from "../../infrastructure/tracking-run/github-port.js";
+import { projectLegacyRepositoryInventory } from "../tracking-run/migration-bridge/inventory.js";
+import { projectLegacyCollection } from "../tracking-run/migration-bridge/collection.js";
+import { createCollectInventoryStage } from "./daily-startup/inventory.js";
 import { createLoadStateStage } from "./daily-startup/state.js";
 import { createPrepareRunStage } from "./daily-startup/preparation.js";
-import { createApplyDeterministicRulesStage } from "./deterministic/stage.js";
+import { createAnalyzeDeterministicRunStage } from "./deterministic/stage.js";
 import { createReconcileGraphStage } from "./graph/stage.js";
 import { createAnalyzePersonalRemindersStage } from "./personal-reminder/stage.js";
 import {
@@ -33,6 +35,7 @@ import { createValidateCompletenessStage } from "./validation/stage.js";
 export function createDailyDependencies(
   adapters: ProductionRuntimeAdapters,
 ): DailyTransactionDependencies<ProductionTypes> {
+  const githubSessions = new GitHubRunSessions();
   return Object.freeze({
     ...(adapters.diagnosticsRecorder == null
       ? {}
@@ -41,10 +44,11 @@ export function createDailyDependencies(
     validateConfiguration: createValidateConfigurationStage(adapters),
     loadState: createLoadStateStage(adapters),
     prepareRun: createPrepareRunStage(),
-    authenticateGitHub: createAuthenticateGitHubStage(adapters),
-    collectRepositoryInventory: createCollectRepositoryInventoryStage(adapters),
-    collectIncrementalItems: createCollectIncrementalItemsStage(adapters),
-    applyDeterministicRules: createApplyDeterministicRulesStage(),
+    collectInventory: createCollectInventoryStage(adapters, githubSessions),
+    projectLegacyRepositoryInventory,
+    collectIncrementalItems: createCollectItemsStage(adapters, githubSessions),
+    projectLegacyCollection,
+    applyDeterministicRules: createAnalyzeDeterministicRunStage(),
     analyzeWithCodex: createAnalyzeWithCodexStage(adapters),
     reduceAnalysis: createReduceAnalysisStage(),
     reconcileGraph: createReconcileGraphStage(),

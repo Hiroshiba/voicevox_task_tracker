@@ -1,4 +1,6 @@
 import { type GitHubNodeId, type GitHubRepositoryId } from "../../../domain/index.js";
+import { collectRunItems } from "../../../application/tracking-run/stages/collection.js";
+import type { RunEvaluatedAt } from "../../../application/tracking-run/contracts/evaluation-time.js";
 import {
   collectRepositoriesWithStaleFallback,
   markObservedGitHubItemsStale,
@@ -13,6 +15,7 @@ import { assertNonNullable } from "../../../util/index.js";
 import type { DailyRunInvocation, DailyTransactionDependencies } from "../../daily-transaction.js";
 import { blockerRelationAnalysisTargets } from "../../relation-driven-analysis-targets.js";
 import type { CollectionRuntimeAdapters } from "../adapters.js";
+import type { GitHubRunSessions } from "../../../infrastructure/tracking-run/github-port.js";
 import type {
   CollectedItems,
   ProductionTypes,
@@ -21,6 +24,7 @@ import type {
   RuntimeState,
 } from "../contracts.js";
 import { githubApiRemaining } from "../github-rate-limit.js";
+import { currentRuntimeTime } from "../clock.js";
 import { selectPersonalReminderRelationCandidateConsumers } from "../personal-reminder-relation-selection.js";
 import {
   previousGraphAdjacentNodeIds,
@@ -58,6 +62,7 @@ async function collectProductionItems(
   state: RuntimeState,
   authentication: GitHubClient,
   repositoryInventory: RepositoryInventory,
+  captureEvaluationTime: () => RunEvaluatedAt,
 ): Promise<
   Readonly<{
     value: CollectedItems;
@@ -84,6 +89,7 @@ async function collectProductionItems(
   >();
   const initialRepositoryResults = await collectRepositoriesWithStaleFallback({
     allowlist: repositoryInventory.allowlist,
+    repositories: repositoryInventory.allowlist.repositories,
     observedAt: invocation.startedAt,
     previousValues: previousRepositoryValues(state),
     collect: async (repository) => {
@@ -93,6 +99,7 @@ async function collectProductionItems(
         configuration,
         state,
         authentication,
+        repositoryInventory.allowlist,
         repository,
         explicitNodeItems,
         adjacentNodeIds,
@@ -113,6 +120,7 @@ async function collectProductionItems(
     repositoryInventory,
     freshCollectionsByRepositoryId,
     repositoryResultsById,
+    captureEvaluationTime,
   );
   const repositoryResults = Object.freeze(
     repositoryInventory.allowlist.repositories.map((repository) => {
@@ -333,25 +341,36 @@ async function collectProductionItems(
 }
 
 /** 増分収集段階を既存adapterへ接続する。 */
-export function createCollectIncrementalItemsStage(
+export function createCollectItemsStage(
   adapters: CollectionRuntimeAdapters,
+  sessions: GitHubRunSessions,
 ): DailyTransactionDependencies<ProductionTypes>["collectIncrementalItems"] {
-  return async ({ invocation, configuration, state, authentication, repositoryInventory }) => {
-    const collection = await collectProductionItems(
-      adapters,
-      invocation,
-      configuration,
-      state,
-      authentication,
-      repositoryInventory,
-    );
-    return Object.freeze({
-      value: collection.value,
-      itemCount: collection.value.trackedNodeIds.size,
-      changedItemCount: collection.changedItemCount,
-      githubApiRemaining: githubApiRemaining(authentication),
-      staleRepositoryCount: collection.staleRepositoryCount,
-      diagnostics: collection.diagnostics,
+  return ({ invocation, configuration, state, inventoryCollected, repositoryInventory }) =>
+    collectRunItems(inventoryCollected, {
+      clock: () => currentRuntimeTime(adapters),
+      async collect(_inventory, captureEvaluationTime) {
+        const authentication = sessions.require(invocation.runId);
+        try {
+          const collection = await collectProductionItems(
+            adapters,
+            invocation,
+            configuration,
+            state,
+            authentication,
+            repositoryInventory,
+            captureEvaluationTime,
+          );
+          return Object.freeze({
+            value: collection.value,
+            itemCount: collection.value.trackedNodeIds.size,
+            changedItemCount: collection.changedItemCount,
+            githubApiRemaining: githubApiRemaining(authentication),
+            staleRepositoryCount: collection.staleRepositoryCount,
+            diagnostics: collection.diagnostics,
+          });
+        } finally {
+          sessions.release(invocation.runId);
+        }
+      },
     });
-  };
 }

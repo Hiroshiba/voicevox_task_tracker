@@ -25,6 +25,7 @@ import type {
   GraphResult,
   ReducedAnalysis,
   ReducedItemAnalysis,
+  RepositoryInventory,
   RuntimeState,
 } from "../contracts.js";
 import { previousSnapshot } from "../previous-state/snapshot.js";
@@ -144,6 +145,7 @@ function personalReminderRelatedContexts(
 export function personalReminderRuntimeCollection(
   collection: CollectedItems,
   deterministicAnalysis: DeterministicAnalysis,
+  inventory: RepositoryInventory,
   reduction: ReducedAnalysis,
   graph: GraphResult,
   unavailableConsumerNodeIds: ReadonlySet<GitHubNodeId>,
@@ -190,7 +192,7 @@ export function personalReminderRuntimeCollection(
         relatedContexts: relatedProjection.contexts,
         completeness: Object.freeze({ status: "complete" }),
         repositoryFullName: repositoryFullName(
-          findRepository(deterministicAnalysis.inventory, analysis.item.repositoryId),
+          findRepository(inventory, analysis.item.repositoryId),
         ),
         currentLabels: analysis.item.labels,
       }),
