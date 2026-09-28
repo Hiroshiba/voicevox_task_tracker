@@ -5,6 +5,7 @@ import {
 } from "../../../domain/ai-analysis-dependencies.js";
 import {
   calculateStaleness,
+  currentAiResult,
   createLabelEffectsResolver,
   resolveWaitingOnAccountIdentifiers,
   type GitHubNodeId,
@@ -310,7 +311,7 @@ export function reduceAnalysisPass(
         ),
       );
       const retainedNotification = notificationRecommendationFromResult(
-        previousItem.aiAnalysis.adoptedElements.notification?.result,
+        currentAiResult(previousItem.aiAnalysis, "notification"),
         configuration.config.ai.confidence,
       );
       if (retainedNotification.availability === "available") {

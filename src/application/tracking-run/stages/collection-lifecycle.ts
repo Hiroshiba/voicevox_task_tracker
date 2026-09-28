@@ -30,7 +30,8 @@ function staleMigrationAiAnalysisElementsForLifecycle(
     AI_ANALYSIS_ELEMENTS.filter((element) => {
       const evaluated = aiAnalysis.elements[element];
       const adopted = aiAnalysis.adoptedElements[element];
-      if (evaluated == null && adopted == null) {
+      const retained = aiAnalysis.retainedElements[element];
+      if (evaluated == null && adopted == null && retained == null) {
         return false;
       }
       const evaluationIsCurrent =
@@ -67,7 +68,8 @@ export function staleAiAnalysisElementsForLifecycle(
     const staleElements = AI_ANALYSIS_ELEMENTS.filter((element) => {
       const evaluated = item.aiAnalysis.elements[element];
       const adopted = item.aiAnalysis.adoptedElements[element];
-      return evaluated != null || adopted != null;
+      const retained = item.aiAnalysis.retainedElements[element];
+      return evaluated != null || adopted != null || retained != null;
     });
     return Object.freeze(
       staleElements.includes("status") ? staleElements : ["status", ...staleElements],
@@ -80,7 +82,8 @@ export function staleAiAnalysisElementsForLifecycle(
     AI_ANALYSIS_ELEMENTS.filter((element) => {
       const evaluated = item.aiAnalysis.elements[element];
       const adopted = item.aiAnalysis.adoptedElements[element];
-      if (evaluated == null && adopted == null) {
+      const retained = item.aiAnalysis.retainedElements[element];
+      if (evaluated == null && adopted == null && retained == null) {
         return false;
       }
       const evaluationIsCurrent =

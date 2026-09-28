@@ -13,6 +13,7 @@ import {
   AI_ANALYSIS_ELEMENTS,
   type AiAnalysisElement,
 } from "../../../domain/ai-analysis-elements.js";
+import { reusableAiAdoptedElement } from "../../../domain/ai-analysis-current.js";
 import {
   createAiAnalysisElementSourceGenerationSchema,
   type AiAnalysisElementSourceGeneration,
@@ -92,7 +93,7 @@ export function analysisImpactProofsForItem(
     const adoptedResult = analysisImpactValue(adopted?.result, "not_adopted");
     const evaluatedResult = analysisImpactValue(evaluated?.result, "not_evaluated");
     const evaluatedGeneration = previousItem.aiAnalysis.elements[element];
-    const adoptedElement = previousItem.aiAnalysis.adoptedElements[element];
+    const adoptedElement = reusableAiAdoptedElement(previousItem.aiAnalysis, element);
     const adoptedGeneration =
       adoptedElement?.origin === "current"
         ? createAiAnalysisElementSourceGenerationSchema(element).parse(adoptedElement.generation)

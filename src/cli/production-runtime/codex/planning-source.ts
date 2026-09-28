@@ -20,6 +20,7 @@ import type { CodexAnalysisInput } from "../../../codex/input.js";
 import { serializeCodexTransportAnalysisInput } from "../../../codex/transport-alias.js";
 import type { GraphNodeId, Relation } from "../../../domain/index.js";
 import { AI_ANALYSIS_ELEMENTS } from "../../../domain/ai-analysis-elements.js";
+import { reusableAiAdoptedElements } from "../../../domain/ai-analysis-current.js";
 import type { AnalyzeGraphResult } from "../../../graph/index.js";
 import { relationNodes } from "../../../graph/relation-candidate-endpoints.js";
 import { createCodexInput } from "../../codex-input-projection.js";
@@ -197,16 +198,14 @@ export function createGenericAiPlanningPort(
         inputFingerprints,
         source.dependencyFingerprints,
       );
+      const previous = previousTrackedItem(state, analysis.item.nodeId);
       return Object.freeze({
         generations: savedGenerationsForItem(state, analysis.item.nodeId),
         evaluations: impact.evaluation,
         reuses: impact.adopted,
         adopted:
-          previousTrackedItem(state, analysis.item.nodeId)?.aiAnalysis.adoptedElements ??
-          Object.freeze({}),
-        evaluated:
-          previousTrackedItem(state, analysis.item.nodeId)?.aiAnalysis.elements ??
-          Object.freeze({}),
+          previous == null ? Object.freeze({}) : reusableAiAdoptedElements(previous.aiAnalysis),
+        evaluated: previous?.aiAnalysis.elements ?? Object.freeze({}),
         impacts: impact.decisions,
       });
     },

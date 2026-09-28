@@ -1,4 +1,11 @@
 export {
+  currentAiAdoptedElement,
+  currentAiResult,
+  historicalAiAdoptedElement,
+  reusableAiAdoptedElement,
+  reusableAiAdoptedElements,
+} from "./ai-analysis-current.js";
+export {
   createGitHubBotPredicate,
   type BotLoginRules,
   type BotPredicate,

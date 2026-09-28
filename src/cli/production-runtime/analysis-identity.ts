@@ -1,6 +1,5 @@
 import { hashCanonicalJson } from "../../canonical-json/index.js";
 import {
-  aiAnalysisElementApplicationUsesAiValue,
   createAiAnalysisElementResultSchema,
   createAiAnalysisMigrationElementResultSchema,
   type AiAnalysisElement,
@@ -8,11 +7,11 @@ import {
   type AiAnalysisElementInputFingerprint,
   type AiAnalysisElementMigrationResult,
 } from "../../domain/ai-analysis-elements.js";
+import { currentAiResult } from "../../domain/ai-analysis-current.js";
 import type { AnalysisElementDependencyFingerprintMap } from "../../codex/analysis-element-dependencies.js";
 import { UnreachableError } from "../../util/index.js";
 import type { DeterministicItemAnalysis } from "../../application/tracking-run/stages/deterministic-item.js";
 import type { RuntimeState } from "./contracts.js";
-import { adoptedResultForRetainedItem } from "./previous-state/saved-ai-elements.js";
 import { previousTrackedItem } from "./previous-state/snapshot.js";
 
 export function deterministicElementResult(
@@ -65,10 +64,7 @@ function dependencyResultForElement(
   element: AiAnalysisElement,
 ): AiAnalysisElementMigrationResult | undefined {
   const item = previousTrackedItem(state, analysis.item.nodeId);
-  return item == null ||
-    !aiAnalysisElementApplicationUsesAiValue(item.aiAnalysis.applications[element])
-    ? undefined
-    : adoptedResultForRetainedItem(item, element);
+  return item == null ? undefined : currentAiResult(item.aiAnalysis, element);
 }
 
 function stateDependencyFingerprintForResults(

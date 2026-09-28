@@ -1,59 +1,37 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 
-import snapshotSchema from "../../schemas/snapshot-v20.schema.json" with { type: "json" };
-import snapshotVersion19Schema from "../../schemas/snapshot.schema.json" with { type: "json" };
+import snapshotSchema from "../../schemas/snapshot-v21.schema.json" with { type: "json" };
 import { serializeCanonicalJsonLine, type Sha256Hash } from "../canonical-json/index.js";
+import { AI_ANALYSIS_ELEMENTS } from "../domain/ai-analysis-elements.js";
 import type {
   GraphNodeId,
   SourceId,
+  TrackedItem,
   TrackedItemAiAnalysis,
-  TrackedItemAiAnalysisMigrationAdoptedElements,
   TrackedItemState,
 } from "../domain/index.js";
 import type { FinalGraphProjection } from "../graph/final-graph-projection.js";
+import { createStateSnapshot as createVersion20Snapshot } from "./snapshot-v20.js";
 import {
   assertPersonalReminderEvidenceClosure as assertVersion19PersonalReminderEvidenceClosure,
   assertPersonalReminderEvidenceRecordsClosure as assertVersion19PersonalReminderEvidenceRecordsClosure,
   createStateSnapshot as createVersion19Snapshot,
-  type SnapshotCollectionItem,
-  type SnapshotTrackedItem,
   type StateSnapshot as StateSnapshotVersion19,
 } from "./snapshot.js";
 import { StateFormatError, StateSnapshotSchemaError } from "./errors.js";
 import { assertFinalGraphProjectionSemantics } from "./snapshot-final-graph-validation.js";
 import type { Evidence } from "../domain/index.js";
 
-type Version20AiAnalysis =
-  | Omit<Extract<TrackedItemAiAnalysis, { origin: "current" }>, "retainedElements">
-  | (Omit<
-      Extract<TrackedItemAiAnalysis, { origin: "migration" }>,
-      "adoptedElements" | "retainedElements"
-    > &
-      Readonly<{ adoptedElements: TrackedItemAiAnalysisMigrationAdoptedElements }>);
-
-type Version20TrackedItem = Omit<SnapshotTrackedItem, "aiAnalysis"> &
-  Readonly<{ aiAnalysis: Version20AiAnalysis }>;
-type Version20CollectionItem = Omit<SnapshotCollectionItem, "aiAnalysis"> &
-  Readonly<{ aiAnalysis: Version20AiAnalysis }>;
-
-/** tracker-stateへ保存するschema version 20のsnapshot。 */
-export type StateSnapshot = Omit<StateSnapshotVersion19, "schemaVersion" | "items" | "collection"> &
+/** tracker-stateへ保存するschema version 21のcurrent snapshot。 */
+export type StateSnapshot = Omit<StateSnapshotVersion19, "schemaVersion"> &
   Readonly<{
-    schemaVersion: "20";
-    items: readonly Version20TrackedItem[];
-    collection: Readonly<{
-      repositories: readonly (Omit<
-        StateSnapshotVersion19["collection"]["repositories"][number],
-        "items"
-      > &
-        Readonly<{ items: readonly Version20CollectionItem[] }>)[];
-    }>;
+    schemaVersion: "21";
     finalGraphProjection: FinalGraphProjection;
     finalGraphProjectionDigest: Sha256Hash;
   }>;
 
-const snapshotVersionSchema = z.object({ schemaVersion: z.literal("20") });
+const snapshotVersionSchema = z.object({ schemaVersion: z.literal("21") });
 const ajv = new Ajv2020({
   allErrors: true,
   coerceTypes: false,
@@ -70,15 +48,58 @@ ajv.addFormat("date-time", {
     return !Number.isNaN(Date.parse(value));
   },
 });
-ajv.addSchema(snapshotVersion19Schema);
 const validateSnapshotSchema = ajv.compile<StateSnapshot>(snapshotSchema);
 
 /** 現行snapshotから旧版の共通保存値を取り出す。 */
 export function version19SnapshotFields(snapshot: StateSnapshot): StateSnapshotVersion19 {
-  const { finalGraphProjection, finalGraphProjectionDigest, ...fields } = snapshot;
+  const { finalGraphProjection, finalGraphProjectionDigest, items, collection, ...fields } =
+    snapshot;
   void finalGraphProjection;
   void finalGraphProjectionDigest;
-  return createVersion19Snapshot({ ...fields, schemaVersion: "19" });
+  return createVersion19Snapshot({
+    ...fields,
+    schemaVersion: "19",
+    items: items.map(legacyAiAnalysisItem),
+    collection: {
+      repositories: collection.repositories.map((repository) => ({
+        ...repository,
+        items: repository.items.map(legacyAiAnalysisItem),
+      })),
+    },
+  });
+}
+
+function legacyAiAnalysisItem<Item extends Pick<TrackedItem, "aiAnalysis">>(
+  item: Item,
+): Omit<Item, "aiAnalysis"> &
+  Readonly<{ aiAnalysis: Omit<TrackedItemAiAnalysis, "retainedElements"> }> {
+  const { retainedElements, adoptedElements, ...analysis } = item.aiAnalysis;
+  return {
+    ...item,
+    aiAnalysis: {
+      ...analysis,
+      adoptedElements: { ...retainedElements, ...adoptedElements },
+    },
+  };
+}
+
+function assertCurrentAiElements(snapshot: StateSnapshot): void {
+  for (const item of [
+    ...snapshot.items,
+    ...snapshot.collection.repositories.flatMap((repository) => repository.items),
+  ]) {
+    for (const element of AI_ANALYSIS_ELEMENTS) {
+      const application = item.aiAnalysis.applications[element];
+      const current = item.aiAnalysis.adoptedElements[element];
+      const retained = item.aiAnalysis.retainedElements[element];
+      if (current != null && retained != null) {
+        throw new StateSnapshotSchemaError(1);
+      }
+      if (application.status === "current_ai" ? current == null : current != null) {
+        throw new StateSnapshotSchemaError(1);
+      }
+    }
+  }
 }
 
 /** 未検証の値をschema検証済みの現行snapshotへ変換する。 */
@@ -87,13 +108,41 @@ export function createStateSnapshot(value: unknown): StateSnapshot {
   if (!validateSnapshotSchema(value)) {
     throw new StateSnapshotSchemaError(validateSnapshotSchema.errors?.length ?? 1);
   }
-  const { finalGraphProjection, finalGraphProjectionDigest, ...fields } = value;
-  const base = createVersion19Snapshot({ ...fields, schemaVersion: "19" });
+  const base = createVersion20Snapshot({
+    ...version19SnapshotFields(value),
+    schemaVersion: "20",
+    finalGraphProjection: value.finalGraphProjection,
+    finalGraphProjectionDigest: value.finalGraphProjectionDigest,
+  });
+  assertCurrentAiElements(value);
+  const itemsByNodeId = new Map(value.items.map((item) => [item.nodeId, item]));
+  const collectionItemsByNodeId = new Map(
+    value.collection.repositories.flatMap((repository) =>
+      repository.items.map((item) => [item.nodeId, item] as const),
+    ),
+  );
   const snapshot = Object.freeze({
     ...base,
-    schemaVersion: "20",
-    finalGraphProjection,
-    finalGraphProjectionDigest,
+    schemaVersion: "21",
+    items: base.items.map((item) => {
+      const current = itemsByNodeId.get(item.nodeId);
+      if (current == null) {
+        throw new StateSnapshotSchemaError(1);
+      }
+      return current;
+    }),
+    collection: {
+      repositories: base.collection.repositories.map((repository) => ({
+        ...repository,
+        items: repository.items.map((item) => {
+          const current = collectionItemsByNodeId.get(item.nodeId);
+          if (current == null) {
+            throw new StateSnapshotSchemaError(1);
+          }
+          return current;
+        }),
+      })),
+    },
   } satisfies StateSnapshot);
   assertFinalGraphProjectionSemantics(snapshot);
   return snapshot;

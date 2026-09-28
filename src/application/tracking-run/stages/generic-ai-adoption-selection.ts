@@ -246,8 +246,10 @@ function adoptValue(
       reason: "not_required",
     });
   }
-  if (stateElement && (!aiEnabled || attempt === "disabled")) {
-    return Object.freeze({ status: "deterministic", currentness: "current", reason: "disabled" });
+  if (!aiEnabled || attempt === "disabled") {
+    return stateElement
+      ? Object.freeze({ status: "deterministic", currentness: "current", reason: "disabled" })
+      : Object.freeze({ status: "unavailable", currentness: "not_applicable", reason: "disabled" });
   }
   if (stateElement && (item.deterministicStatePriority || forceDeterministicState)) {
     return Object.freeze({

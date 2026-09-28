@@ -73,6 +73,7 @@ function createSnapshotCollectionItem(
       status: "not_recorded",
       elements: Object.freeze({}),
       adoptedElements: Object.freeze({}),
+      retainedElements: Object.freeze({}),
       applications,
     }),
     observedAt: item.observedAt,

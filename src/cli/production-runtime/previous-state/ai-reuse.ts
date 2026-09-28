@@ -19,6 +19,7 @@ import {
   type AiAnalysisElementMigrationResult,
   type AiAnalysisElementReuseProof,
 } from "../../../domain/ai-analysis-elements.js";
+import { reusableAiAdoptedElement } from "../../../domain/ai-analysis-current.js";
 import {
   createAiAnalysisElementSourceGenerationSchema,
   type AiAnalysisElementSourceGeneration,
@@ -93,7 +94,7 @@ export function savedAdoptionRecordsForItem(
     return Object.freeze(records);
   }
   for (const element of AI_ANALYSIS_ELEMENTS) {
-    const adopted = item.aiAnalysis.adoptedElements[element];
+    const adopted = reusableAiAdoptedElement(item.aiAnalysis, element);
     if (adopted == null) {
       continue;
     }

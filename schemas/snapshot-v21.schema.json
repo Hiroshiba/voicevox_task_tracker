@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://voicevox.github.io/voicevox_task_tracker/schemas/snapshot-v21.schema.json",
+  "type": "object",
+  "required": ["schemaVersion", "items", "collection"],
+  "properties": {
+    "schemaVersion": {
+      "const": "21"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/item"
+      }
+    },
+    "collection": {
+      "type": "object",
+      "required": ["repositories"],
+      "properties": {
+        "repositories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["items"],
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/item"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "required": ["aiAnalysis"],
+      "properties": {
+        "aiAnalysis": {
+          "type": "object",
+          "required": ["adoptedElements", "retainedElements"],
+          "properties": {
+            "adoptedElements": {
+              "type": "object"
+            },
+            "retainedElements": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  }
+}

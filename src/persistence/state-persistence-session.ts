@@ -16,7 +16,7 @@ import {
 } from "../codex/personal-reminder-cache.js";
 import type { AiCacheMigrationPlan } from "./ai-cache-migration.js";
 import { parseSha256Hash, serializeCanonicalJsonLine } from "../canonical-json/index.js";
-import { migrateStateSnapshot } from "./snapshot-v20-migration.js";
+import { migrateStateSnapshot } from "./snapshot-v21-migration.js";
 import {
   joinStatePath,
   validateStatePersistenceConfiguration,
@@ -60,7 +60,7 @@ import {
   serializeStateSnapshot,
   version19SnapshotFields,
   type StateSnapshot,
-} from "./snapshot-v20.js";
+} from "./snapshot-v21.js";
 import { readAiCacheMigrationPlan } from "./state-ai-cache-migration-plan.js";
 import { decodeStateFile, encodeStateFile } from "./state-file-codec.js";
 import { createPersonalReminderEvidenceSourceIndex } from "./snapshot.js";

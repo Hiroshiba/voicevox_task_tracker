@@ -3,8 +3,8 @@ import {
   resolveStateHistoryNotificationItemDisplayReference,
   type StateHistoryNotificationEvent,
 } from "./history.js";
-import type { StateSnapshot } from "./snapshot-v20.js";
-import { version19SnapshotFields } from "./snapshot-v20.js";
+import type { StateSnapshot } from "./snapshot-v21.js";
+import { version19SnapshotFields } from "./snapshot-v21.js";
 import type { StateRunReport } from "./state-documents.js";
 
 /** snapshotとrun reportの整合性を検証する。 */

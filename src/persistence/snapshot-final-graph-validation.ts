@@ -19,7 +19,9 @@ function assertOrderedUnique(values: readonly string[], description: string): vo
 }
 
 /** 保存済み公開graph投影の参照、値、現在性をsnapshotと照合する。 */
-export function assertFinalGraphProjectionSemantics(snapshot: StateSnapshot): void {
+export function assertFinalGraphProjectionSemantics(
+  snapshot: Omit<StateSnapshot, "schemaVersion">,
+): void {
   const projection = snapshot.finalGraphProjection;
   if (hashCanonicalJson(projection) !== snapshot.finalGraphProjectionDigest) {
     throw new StateSnapshotSemanticError("最終graph投影のdigestが一致しません");

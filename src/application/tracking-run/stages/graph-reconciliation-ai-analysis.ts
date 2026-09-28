@@ -75,6 +75,34 @@ function storedElement<Result, Generation>(
   record: GenericAiElementAdoption,
   resultSchema: z.ZodType<Result>,
   generationSchema: z.ZodType<Generation>,
+  kind: "current",
+):
+  | Readonly<{
+      origin: "current";
+      generation: Generation;
+      result: Result;
+      reuseProof: AiAnalysisElementReuseProof;
+    }>
+  | undefined;
+function storedElement<Result, Generation>(
+  record: GenericAiElementAdoption,
+  resultSchema: z.ZodType<Result>,
+  generationSchema: z.ZodType<Generation>,
+  kind: "retained",
+):
+  | Readonly<{ origin: "migration"; result: Result; reuseProof: AiAnalysisElementReuseProof }>
+  | Readonly<{
+      origin: "current";
+      generation: Generation;
+      result: Result;
+      reuseProof: AiAnalysisElementReuseProof;
+    }>
+  | undefined;
+function storedElement<Result, Generation>(
+  record: GenericAiElementAdoption,
+  resultSchema: z.ZodType<Result>,
+  generationSchema: z.ZodType<Generation>,
+  kind: "current" | "retained",
 ):
   | Readonly<{ origin: "migration"; result: Result; reuseProof: AiAnalysisElementReuseProof }>
   | Readonly<{
@@ -85,12 +113,22 @@ function storedElement<Result, Generation>(
     }>
   | undefined {
   const adopted = record.adopted;
-  const value = adopted.status === "ai" ? adopted : record.retained;
+  let value:
+    | GenericAiElementAdoption["retained"]
+    | Extract<GenericAiElementAdoption["adopted"], { status: "ai" }>;
+  if (kind === "current") {
+    value = adopted.status === "ai" ? adopted : undefined;
+  } else {
+    value = adopted.status === "ai" ? undefined : record.retained;
+  }
   if (value == null) {
     return undefined;
   }
   const result = resultSchema.parse(value.result);
   if (value.origin === "migration") {
+    if (kind === "current") {
+      throw new TypeError(`移行履歴を現在のAI採用値にできません。対象: ${record.element}`);
+    }
     return Object.freeze({
       origin: "migration",
       result,
@@ -173,46 +211,55 @@ export function trackedItemAiAnalysisFromAdoption(
     records.status,
     codecs.status.result,
     codecs.status.generation,
+    "current",
   );
   const waitingOnAdopted = storedElement(
     records.waitingOn,
     codecs.waitingOn.result,
     codecs.waitingOn.generation,
+    "current",
   );
   const nextActionAdopted = storedElement(
     records.nextAction,
     codecs.nextAction.result,
     codecs.nextAction.generation,
+    "current",
   );
   const relationsAdopted = storedElement(
     records.relations,
     codecs.relations.result,
     codecs.relations.generation,
+    "current",
   );
   const progressAdopted = storedElement(
     records.progress,
     codecs.progress.result,
     codecs.progress.generation,
+    "current",
   );
   const importanceAdopted = storedElement(
     records.importance,
     codecs.importance.result,
     codecs.importance.generation,
+    "current",
   );
   const deadlineAdopted = storedElement(
     records.deadline,
     codecs.deadline.result,
     codecs.deadline.generation,
+    "current",
   );
   const notificationAdopted = storedElement(
     records.notification,
     codecs.notification.result,
     codecs.notification.generation,
+    "current",
   );
   const selfCommitmentAdopted = storedElement(
     records.selfCommitment,
     codecs.selfCommitment.result,
     codecs.selfCommitment.generation,
+    "current",
   );
   const adoptedElements = Object.freeze({
     ...(statusAdopted == null ? {} : { status: statusAdopted }),
@@ -225,6 +272,71 @@ export function trackedItemAiAnalysisFromAdoption(
     ...(notificationAdopted == null ? {} : { notification: notificationAdopted }),
     ...(selfCommitmentAdopted == null ? {} : { selfCommitment: selfCommitmentAdopted }),
   });
+  const statusRetained = storedElement(
+    records.status,
+    codecs.status.result,
+    codecs.status.generation,
+    "retained",
+  );
+  const waitingOnRetained = storedElement(
+    records.waitingOn,
+    codecs.waitingOn.result,
+    codecs.waitingOn.generation,
+    "retained",
+  );
+  const nextActionRetained = storedElement(
+    records.nextAction,
+    codecs.nextAction.result,
+    codecs.nextAction.generation,
+    "retained",
+  );
+  const relationsRetained = storedElement(
+    records.relations,
+    codecs.relations.result,
+    codecs.relations.generation,
+    "retained",
+  );
+  const progressRetained = storedElement(
+    records.progress,
+    codecs.progress.result,
+    codecs.progress.generation,
+    "retained",
+  );
+  const importanceRetained = storedElement(
+    records.importance,
+    codecs.importance.result,
+    codecs.importance.generation,
+    "retained",
+  );
+  const deadlineRetained = storedElement(
+    records.deadline,
+    codecs.deadline.result,
+    codecs.deadline.generation,
+    "retained",
+  );
+  const notificationRetained = storedElement(
+    records.notification,
+    codecs.notification.result,
+    codecs.notification.generation,
+    "retained",
+  );
+  const selfCommitmentRetained = storedElement(
+    records.selfCommitment,
+    codecs.selfCommitment.result,
+    codecs.selfCommitment.generation,
+    "retained",
+  );
+  const retainedElements = Object.freeze({
+    ...(statusRetained == null ? {} : { status: statusRetained }),
+    ...(waitingOnRetained == null ? {} : { waitingOn: waitingOnRetained }),
+    ...(nextActionRetained == null ? {} : { nextAction: nextActionRetained }),
+    ...(relationsRetained == null ? {} : { relations: relationsRetained }),
+    ...(progressRetained == null ? {} : { progress: progressRetained }),
+    ...(importanceRetained == null ? {} : { importance: importanceRetained }),
+    ...(deadlineRetained == null ? {} : { deadline: deadlineRetained }),
+    ...(notificationRetained == null ? {} : { notification: notificationRetained }),
+    ...(selfCommitmentRetained == null ? {} : { selfCommitment: selfCommitmentRetained }),
+  });
   const applications = Object.freeze({
     status: records.status.application,
     waitingOn: records.waitingOn.application,
@@ -236,47 +348,22 @@ export function trackedItemAiAnalysisFromAdoption(
     notification: records.notification.application,
     selfCommitment: records.selfCommitment.application,
   });
-  if (Object.values(adoptedElements).some((value) => value.origin === "migration")) {
+  if (Object.values(retainedElements).some((value) => value.origin === "migration")) {
     return Object.freeze({
       origin: "migration",
       status: item.status,
       elements,
       adoptedElements,
+      retainedElements,
       applications,
     });
   }
-  const currentAdoptedElements = Object.freeze({
-    ...(adoptedElements.status?.origin === "current" ? { status: adoptedElements.status } : {}),
-    ...(adoptedElements.waitingOn?.origin === "current"
-      ? { waitingOn: adoptedElements.waitingOn }
-      : {}),
-    ...(adoptedElements.nextAction?.origin === "current"
-      ? { nextAction: adoptedElements.nextAction }
-      : {}),
-    ...(adoptedElements.relations?.origin === "current"
-      ? { relations: adoptedElements.relations }
-      : {}),
-    ...(adoptedElements.progress?.origin === "current"
-      ? { progress: adoptedElements.progress }
-      : {}),
-    ...(adoptedElements.importance?.origin === "current"
-      ? { importance: adoptedElements.importance }
-      : {}),
-    ...(adoptedElements.deadline?.origin === "current"
-      ? { deadline: adoptedElements.deadline }
-      : {}),
-    ...(adoptedElements.notification?.origin === "current"
-      ? { notification: adoptedElements.notification }
-      : {}),
-    ...(adoptedElements.selfCommitment?.origin === "current"
-      ? { selfCommitment: adoptedElements.selfCommitment }
-      : {}),
-  });
   return Object.freeze({
     origin: "current",
     status: item.status,
     elements,
-    adoptedElements: currentAdoptedElements,
+    adoptedElements,
+    retainedElements,
     applications,
   });
 }

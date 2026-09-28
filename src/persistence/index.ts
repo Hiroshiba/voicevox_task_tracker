@@ -90,8 +90,8 @@ export {
   serializeStateSnapshot,
   snapshotEffectiveGraphStateByNodeId,
   type StateSnapshot,
-} from "./snapshot-v20.js";
-export { migrateStateSnapshot } from "./snapshot-v20-migration.js";
+} from "./snapshot-v21.js";
+export { migrateStateSnapshot } from "./snapshot-v21-migration.js";
 export {
   StatePersistenceSession,
   type PersistNotificationDeliveryInput,

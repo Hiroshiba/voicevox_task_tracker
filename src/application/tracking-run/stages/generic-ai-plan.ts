@@ -41,6 +41,7 @@ import {
   type AiAnalysisElement,
   type AiAnalysisElementInputFingerprint,
 } from "../../../domain/ai-analysis-elements.js";
+import { reusableAiAdoptedElements } from "../../../domain/ai-analysis-current.js";
 import type { GitHubNodeId } from "../../../domain/types.js";
 import { z } from "zod";
 import type { AiAnalysisElementSourceGeneration } from "../../../domain/ai-analysis-source-generations.js";
@@ -261,7 +262,8 @@ export async function planGenericAi(
           candidateId: nodeId,
           reason: "input_validation_failed",
           errorType: error instanceof Error ? error.name : typeof error,
-          previousAdopted: previous?.aiAnalysis.adoptedElements ?? Object.freeze({}),
+          previousAdopted:
+            previous == null ? Object.freeze({}) : reusableAiAdoptedElements(previous.aiAnalysis),
           previousEvaluated: previous?.aiAnalysis.elements ?? Object.freeze({}),
         }),
       );

@@ -11,6 +11,10 @@ import {
   type AiAnalysisElementMigrationResult,
 } from "../../../domain/ai-analysis-elements.js";
 import {
+  currentAiAdoptedElement,
+  historicalAiAdoptedElement,
+} from "../../../domain/ai-analysis-current.js";
+import {
   createAiAnalysisElementSourceGenerationSchema,
   type AiAnalysisElementSourceGeneration,
 } from "../../../domain/ai-analysis-source-generations.js";
@@ -155,13 +159,10 @@ export function savedCurrentAdoptedElementsForItem(
   if (item == null) {
     return Object.freeze({});
   }
-  if (item.aiAnalysis.origin === "current") {
-    return item.aiAnalysis.adoptedElements;
-  }
   const adopted: MutablePartial<TrackedItemAiAnalysisCurrentAdoptedElements> = {};
   for (const element of AI_ANALYSIS_ELEMENTS) {
-    const value = item.aiAnalysis.adoptedElements[element];
-    if (value?.origin !== "current") {
+    const value = currentAiAdoptedElement(item.aiAnalysis, element);
+    if (value == null) {
       continue;
     }
     setCurrentAdoptedElement(adopted, element, value);
@@ -193,26 +194,16 @@ export function savedMigrationAdoptedElementsForItem(
   if (item?.aiAnalysis.origin !== "migration") {
     return Object.freeze({});
   }
-  return item.aiAnalysis.adoptedElements;
+  return item.aiAnalysis.retainedElements;
 }
 
-export function adoptedResultForRetainedItem(
+export function historicalAdoptedResultForItem(
   item: SnapshotTrackedItem,
   element: AiAnalysisElement,
 ): AiAnalysisElementMigrationResult | undefined {
-  if (item.aiAnalysis.origin === "current") {
-    const adopted = item.aiAnalysis.adoptedElements[element];
-    if (adopted == null) {
-      return undefined;
-    }
-    return createAiAnalysisMigrationElementResultSchema(element).parse(adopted.result);
-  }
-  const adopted = item.aiAnalysis.adoptedElements[element];
+  const adopted = historicalAiAdoptedElement(item.aiAnalysis, element);
   if (adopted == null) {
     return undefined;
-  }
-  if (adopted.origin === "current") {
-    return createAiAnalysisMigrationElementResultSchema(element).parse(adopted.result);
   }
   return createAiAnalysisMigrationElementResultSchema(element).parse(adopted.result);
 }
@@ -220,8 +211,8 @@ export function adoptedResultForRetainedItem(
 export function preservedElementsForRetainedItem(
   item: SnapshotTrackedItem,
 ): Pick<CodexPreservedElements, "relations" | "notification"> {
-  const relations = adoptedResultForRetainedItem(item, "relations");
-  const notification = adoptedResultForRetainedItem(item, "notification");
+  const relations = historicalAdoptedResultForItem(item, "relations");
+  const notification = historicalAdoptedResultForItem(item, "notification");
   return Object.freeze({
     ...(relations == null ? {} : { relations }),
     ...(notification == null ? {} : { notification }),

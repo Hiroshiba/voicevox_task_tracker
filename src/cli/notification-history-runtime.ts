@@ -12,7 +12,7 @@ import {
   type DiscordNotificationSelection,
 } from "../discord/index.js";
 import { resolveStateHistoryNotificationItemDisplayReference } from "../persistence/history.js";
-import { version19SnapshotFields } from "../persistence/snapshot-v20.js";
+import { version19SnapshotFields } from "../persistence/snapshot-v21.js";
 import type { StateHistoryNotificationEvent, StateSnapshot } from "../persistence/index.js";
 import { assertNonNullable, UnreachableError } from "../util/index.js";
 

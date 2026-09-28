@@ -722,13 +722,15 @@ export type TrackedItemAiAnalysis =
       status: TrackedItemAiAnalysisStatus;
       elements: TrackedItemAiAnalysisCurrentElements;
       adoptedElements: TrackedItemAiAnalysisCurrentAdoptedElements;
+      retainedElements: TrackedItemAiAnalysisMigrationAdoptedElements;
       applications: TrackedItemAiAnalysisApplications;
     }>
   | Readonly<{
       origin: "migration";
       status: TrackedItemAiAnalysisStatus;
       elements: TrackedItemAiAnalysisCurrentElements;
-      adoptedElements: TrackedItemAiAnalysisMigrationAdoptedElements;
+      adoptedElements: TrackedItemAiAnalysisCurrentAdoptedElements;
+      retainedElements: TrackedItemAiAnalysisMigrationAdoptedElements;
       applications: TrackedItemAiAnalysisApplications;
     }>;
 

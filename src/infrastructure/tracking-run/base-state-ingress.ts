@@ -22,7 +22,7 @@ import type { AiCacheEntry } from "../../codex/cache.js";
 import type { StateHistoryRecord } from "../../persistence/history.js";
 import type { StateSnapshotReadResult } from "../../persistence/state-persistence-session.js";
 import type { StateNotificationLedger } from "../../persistence/state-documents.js";
-import { snapshotEffectiveGraphStateByNodeId } from "../../persistence/snapshot-v20.js";
+import { snapshotEffectiveGraphStateByNodeId } from "../../persistence/snapshot-v21.js";
 
 /** 旧下流が必要とするsessionと現行形式へ変換したbase state。 */
 export type BaseStateIngress = Readonly<{
