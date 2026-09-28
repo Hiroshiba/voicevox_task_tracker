@@ -5,7 +5,7 @@ import {
 } from "../../../domain/index.js";
 import {
   createStateNotificationLedger,
-  NOTIFICATION_LEDGER_SCHEMA_VERSION_8,
+  NOTIFICATION_LEDGER_SCHEMA_VERSION_9,
   type StateNotificationLedger,
 } from "../../../persistence/index.js";
 import type { PendingTrackedItem, RuntimeState } from "../contracts.js";
@@ -90,7 +90,7 @@ export function mergeNotificationLedger(
     entries.set(entry.notificationKey, entry);
   }
   return createStateNotificationLedger({
-    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_8,
+    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_9,
     entries: [...entries.values()],
     operationsAlerts: state.notificationLedger.operationsAlerts,
     pendingNotifications,

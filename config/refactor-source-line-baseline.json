@@ -62,11 +62,6 @@
       "sha256": "4304c75c6155b6bc2d3170c25d8b389cc79efdb86fbd720a6fef5c601f2e4898"
     },
     {
-      "path": "src/persistence/state-documents.ts",
-      "lineCount": 1092,
-      "sha256": "51ce68178a2cd4dc981ebfabeae16b2b5f530924755f56e61834294d01cc04df"
-    },
-    {
       "path": "web/src/model.ts",
       "lineCount": 1689,
       "sha256": "1f3fbba7a23881818aa0a4253b2c95b97109f3610dedc9612f810fde5dad4f4d"

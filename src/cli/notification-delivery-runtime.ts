@@ -26,7 +26,7 @@ import {
   assertStatePublicSafety,
   assertExistingStatePublicSafety,
   createStateNotificationLedger,
-  NOTIFICATION_LEDGER_SCHEMA_VERSION_8,
+  NOTIFICATION_LEDGER_SCHEMA_VERSION_9,
   type StateBranchAdapter,
   type StateHistoryNotificationEvent,
   type StateNotificationLedger,
@@ -292,7 +292,7 @@ function createNotificationLedgerFromMaps(
   pendingNotifications: readonly PendingNotification[],
 ): StateNotificationLedger {
   return createStateNotificationLedger({
-    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_8,
+    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_9,
     entries: [...entriesByKey.values()],
     operationsAlerts: [...operationsAlertsByKey.values()],
     pendingNotifications,
@@ -656,7 +656,7 @@ export async function deliverOperationsAlert(
     });
   }
   const notificationLedger = createStateNotificationLedger({
-    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_8,
+    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_9,
     entries: [...notificationEntriesByKey.values()],
     operationsAlerts: [...operationsAlertsByKey.values()],
     pendingNotifications: currentNotificationLedger.pendingNotifications,
@@ -665,6 +665,7 @@ export async function deliverOperationsAlert(
     notificationLedger,
     committedAt: operationsDelivery.ledgerEntry.sentAt,
     knownSecrets,
+    commitScope: "operations_alert" satisfies "operations_alert",
   });
   if (state.snapshot.status === "missing_branch") {
     await state.session.persistInitialOperationsNotificationLedger(persistenceInput);
@@ -753,7 +754,7 @@ export async function resolveDiscordDelivery(
     );
   }
   const notificationLedger = createStateNotificationLedger({
-    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_8,
+    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_9,
     entries: nextEntries,
     operationsAlerts: currentLedger.operationsAlerts,
     pendingNotifications,
@@ -769,6 +770,7 @@ export async function resolveDiscordDelivery(
     notificationLedger,
     committedAt: resolvedAt,
     knownSecrets: [],
+    commitScope: "manual_resolution",
   });
   await session.publish();
 }

@@ -8,7 +8,11 @@ import { StateFormatError } from "./errors.js";
 import { readAiCacheMigrationPlan } from "./state-ai-cache-migration-plan.js";
 import { decodeStateFile } from "./state-file-codec.js";
 import { migrateStateSnapshot } from "./snapshot-v21-migration.js";
-import { parseStateNotificationLedger } from "./state-documents.js";
+import {
+  OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
+  parseStateNotificationLedger,
+  parseStateOperationsAlertLedger,
+} from "./state-documents.js";
 import type { StateSnapshotReadResult } from "./state-persistence-session.js";
 
 /** 指定したGit revisionのsnapshotと移行依存をそのtreeだけから読む。 */
@@ -32,18 +36,29 @@ export async function readExactStateSnapshot(
       await adapter.readFile(revision.revision, configuration.notificationLedgerPath),
       "notification ledger",
     );
-    if (ledgerSource == null) {
+    const operationsSource = decodeStateFile(
+      await adapter.readFile(revision.revision, OPERATIONS_ALERT_LEDGER_STATE_PATH_V1),
+      "operations alert ledger",
+    );
+    if (ledgerSource == null && operationsSource == null) {
       throw new StateFormatError("notification ledger", {
         cause: new TypeError("既存state branchにnotification ledgerがありません"),
       });
     }
-    const ledger = parseStateNotificationLedger(ledgerSource);
+    const ledger = ledgerSource == null ? undefined : parseStateNotificationLedger(ledgerSource);
+    const operationsCount =
+      operationsSource == null
+        ? (ledger?.operationsAlerts.length ?? 0)
+        : parseStateOperationsAlertLedger(operationsSource).operationsAlerts.length;
     const paths = await adapter.listFiles(revision.revision, "state");
     if (
-      ledger.entries.length === 0 &&
-      ledger.operationsAlerts.length > 0 &&
-      paths.length === 1 &&
-      paths[0] === configuration.notificationLedgerPath
+      (ledger?.entries.length ?? 0) === 0 &&
+      operationsCount > 0 &&
+      paths.every(
+        (path) =>
+          path === configuration.notificationLedgerPath ||
+          path === OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
+      )
     ) {
       return Object.freeze({ status: "operations_only" });
     }

@@ -6,6 +6,7 @@ export {
   type StateBranchAdapter,
   type StateBranchCommitRequest,
   type StateBranchCommitResult,
+  type StateBranchCommitInspection,
   type StateBranchHead,
   type StateBranchPublishRequest,
   type StateFileReadResult,
@@ -103,16 +104,35 @@ export {
 } from "./state-persistence-session.js";
 export { readExactStateSnapshot } from "./exact-state-snapshot.js";
 export {
+  createStateCommitIdentity,
+  createStateCommitOperationId,
+  readStateCommitMetadataBootstrap,
+  STATE_CHANGED_PATH_MANIFEST_SCHEMA_VERSION_V1,
+  STATE_COMMIT_METADATA_SCHEMA_VERSION_V1,
+  STATE_COMMIT_TRAILER_KEYS_V1,
+  type StateChangedPathManifest,
+  type StateCommitIdentity,
+  type StateCommitMetadataV1,
+  type StateCommitScope,
+} from "./state-commit-metadata.js";
+export {
   createEmptyStateNotificationLedger,
   createStateNotificationLedger,
+  createStateOperationsAlertLedger,
   createStateRunReport,
   NOTIFICATION_LEDGER_SCHEMA_VERSION_6,
   NOTIFICATION_LEDGER_SCHEMA_VERSION_7,
   NOTIFICATION_LEDGER_SCHEMA_VERSION_8,
+  NOTIFICATION_LEDGER_SCHEMA_VERSION_9,
+  OPERATIONS_ALERT_LEDGER_SCHEMA_VERSION_1,
+  OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
   NOTIFICATION_LEDGER_SCHEMA_VERSION_5,
   parseStateNotificationLedger,
+  parseStateOperationsAlertLedger,
   serializeStateNotificationLedger,
+  serializeStateOperationsAlertLedger,
   serializeStateRunReport,
   type StateNotificationLedger,
+  type StateOperationsAlertLedger,
   type StateRunReport,
 } from "./state-documents.js";

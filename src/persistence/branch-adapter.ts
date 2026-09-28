@@ -1,4 +1,15 @@
 import { StateConfigurationError } from "./errors.js";
+import type {
+  StateCommitIdentity,
+  StateCommitMetadataV1,
+  StateChangedPathManifest,
+} from "./state-commit-metadata.js";
+import {
+  DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
+  INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1,
+  RUN_TRANSACTION_MARKER_STATE_PATH_V1,
+} from "../application/tracking-run/contracts/recovery-paths.js";
+import { OPERATIONS_ALERT_LEDGER_STATE_PATH_V1 } from "./operations-alert-ledger.js";
 
 const STATE_ROOT_DIRECTORY = "state";
 const STATE_PATH_PREFIX = "state/";
@@ -56,12 +67,23 @@ export type StateBranchCommitRequest = Readonly<{
   deletions: readonly string[];
   message: string;
   committedAt: string;
+  commitIdentity: StateCommitIdentity;
 }>;
 
 /** state branchのatomic commit結果。 */
 export type StateBranchCommitResult = Readonly<{
   revision: string;
   branchCreated: boolean;
+  metadata: StateCommitMetadataV1;
+  changedPathManifest: StateChangedPathManifest;
+}>;
+
+/** exact commitから独立して検証したstate metadata。 */
+export type StateBranchCommitInspection = Readonly<{
+  revision: string;
+  parent: StateBranchHead;
+  metadata: StateCommitMetadataV1;
+  changedPathManifest: StateChangedPathManifest;
 }>;
 
 /** state branchをリモートへ公開する要求。 */
@@ -81,6 +103,7 @@ export type StateBranchAdapter = Readonly<{
     paths: readonly string[],
   ) => Promise<ReadonlyMap<string, StateFileReadResult>>;
   listFiles: (revision: string, directory: string) => Promise<readonly string[]>;
+  readCommit: (revision: string) => Promise<StateBranchCommitInspection>;
   commit: (request: StateBranchCommitRequest) => Promise<StateBranchCommitResult>;
   publish: (request: StateBranchPublishRequest) => Promise<void>;
 }>;
@@ -135,6 +158,15 @@ export function validateStatePersistenceConfiguration(
   }
   if (new Set(paths).size !== paths.length) {
     throw new StateConfigurationError("保存先パスが重複しています");
+  }
+  const fixedPaths = new Set([
+    DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
+    INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1,
+    RUN_TRANSACTION_MARKER_STATE_PATH_V1,
+    OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
+  ]);
+  if (paths.some((path) => fixedPaths.has(path))) {
+    throw new StateConfigurationError("保存先パスが固定run transaction pathと重複しています");
   }
 }
 

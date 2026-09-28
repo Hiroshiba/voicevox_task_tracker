@@ -15,7 +15,8 @@ import {
   type PersonalReminderAiCacheStore,
 } from "../codex/personal-reminder-cache.js";
 import type { AiCacheMigrationPlan } from "./ai-cache-migration.js";
-import { parseSha256Hash, serializeCanonicalJsonLine } from "../canonical-json/index.js";
+import { createStateCommitIdentity } from "./state-commit-metadata.js";
+import { serializeCanonicalJsonLine } from "../canonical-json/index.js";
 import { migrateStateSnapshot } from "./snapshot-v21-migration.js";
 import {
   joinStatePath,
@@ -62,14 +63,15 @@ import {
   type StateSnapshot,
 } from "./snapshot-v21.js";
 import { readAiCacheMigrationPlan } from "./state-ai-cache-migration-plan.js";
+import { cachePath, personalReminderAiCachePath } from "./state-cache-paths.js";
+import { compareStateKeys as compareStrings } from "./state-key-order.js";
+import { createStateLedgerUpdates, loadStateNotificationLedgers } from "./state-ledger-files.js";
 import { decodeStateFile, encodeStateFile } from "./state-file-codec.js";
+import { OPERATIONS_ALERT_LEDGER_STATE_PATH_V1 } from "./operations-alert-ledger.js";
 import { createPersonalReminderEvidenceSourceIndex } from "./snapshot.js";
 import {
-  createEmptyStateNotificationLedger,
   createStateNotificationLedger,
   createStateRunReport,
-  parseStateNotificationLedger,
-  serializeStateNotificationLedger,
   serializeStateRunReport,
   type StateNotificationLedger,
   type StateRunReport,
@@ -81,7 +83,6 @@ import {
   type InitialPublicationBaseState,
 } from "./initial-publication-base-state.js";
 
-const CACHE_KEY_PREFIX = "sha256:";
 const HISTORY_FILE_PATTERN = /^(\d{4}-\d{2}-\d{2})\.jsonl$/u;
 const STATE_ROOT_DIRECTORY = "state";
 
@@ -122,6 +123,7 @@ export type PersistNotificationLedgerInput = Readonly<{
   notificationLedger: StateNotificationLedger;
   committedAt: UtcIsoDateTime;
   knownSecrets: readonly string[];
+  commitScope: "operations_alert" | "manual_resolution";
 }>;
 
 /** 通知送信結果と対応する履歴を保存する入力。 */
@@ -152,16 +154,6 @@ type PreparedNotificationHistory = Readonly<{
   historyRecords: readonly StateHistoryRecord[];
 }>;
 
-function compareStrings(left: string, right: string): number {
-  if (left < right) {
-    return -1;
-  }
-  if (left > right) {
-    return 1;
-  }
-  return 0;
-}
-
 function createAiCacheStateFormatError(error: unknown): StateFormatError {
   if (error instanceof z.ZodError) {
     return StateFormatError.fromZodError("AI cache", error);
@@ -182,25 +174,6 @@ function createPersonalReminderAiCacheStateFormatError(error: unknown): StateFor
       cause: error,
     }),
   });
-}
-
-function cachePath(configuration: StatePersistenceConfiguration, cacheKey: AiCacheKey): string {
-  parseSha256Hash(cacheKey);
-  return joinStatePath(
-    configuration.aiCacheDirectory,
-    `${cacheKey.slice(CACHE_KEY_PREFIX.length)}.json`,
-  );
-}
-
-function personalReminderAiCachePath(
-  configuration: StatePersistenceConfiguration,
-  cacheKey: PersonalReminderAiCacheKey,
-): string {
-  parseSha256Hash(cacheKey);
-  return joinStatePath(
-    configuration.personalReminderAiCacheDirectory,
-    `${cacheKey.slice(CACHE_KEY_PREFIX.length)}.json`,
-  );
 }
 
 /** 同じbranch revisionを読み、全成果物を一つのcommitへまとめるsession。 */
@@ -443,8 +416,11 @@ export class StatePersistenceSession {
       if (
         notificationLedger.entries.length === 0 &&
         notificationLedger.operationsAlerts.length > 0 &&
-        statePaths.length === 1 &&
-        statePaths[0] === this.#configuration.notificationLedgerPath
+        statePaths.every(
+          (path) =>
+            path === this.#configuration.notificationLedgerPath ||
+            path === OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
+        )
       ) {
         return Object.freeze({
           status: "operations_only",
@@ -466,20 +442,14 @@ export class StatePersistenceSession {
 
   /** session開始時点のnotification ledgerを読み取る。 */
   public async loadNotificationLedger(): Promise<StateNotificationLedger> {
-    if (this.#head.status === "missing") {
-      return createEmptyStateNotificationLedger();
-    }
-    const result = await this.#adapter.readFile(
-      this.#head.revision,
-      this.#configuration.notificationLedgerPath,
-    );
-    const source = decodeStateFile(result, "notification ledger");
-    if (source == null) {
-      throw new StateFormatError("notification ledger", {
-        cause: new TypeError("既存state branchにnotification ledgerがありません"),
-      });
-    }
-    return parseStateNotificationLedger(source);
+    return loadStateNotificationLedgers(this.#adapter, this.#configuration, this.#head);
+  }
+
+  async #ledgerUpdates(
+    ledger: StateNotificationLedger,
+    scope: "tracking_run" | "operations_alert" | "manual_resolution",
+  ): Promise<readonly StateFileUpdate[]> {
+    return createStateLedgerUpdates(this.#adapter, this.#configuration, this.#head, ledger, scope);
   }
 
   async #readHistorySource(path: string): Promise<string | undefined> {
@@ -647,29 +617,40 @@ export class StatePersistenceSession {
         input.knownSecrets,
       );
     }
-    const update = Object.freeze({
-      path: this.#configuration.notificationLedgerPath,
-      bytes: encodeStateFile(serializeStateNotificationLedger(notificationLedger)),
-    } satisfies StateFileUpdate);
     const updates: StateFileUpdate[] = [];
-    if (snapshot != null) {
+    if (snapshot != null && input.commitScope === "manual_resolution") {
       updates.push(this.#snapshotUpdate(snapshot));
     }
-    updates.push(update);
+    updates.push(...(await this.#ledgerUpdates(notificationLedger, input.commitScope)));
     updates.sort((left, right) => compareStrings(left.path, right.path));
+    const commitScope =
+      input.commitScope === "operations_alert" &&
+      updates.some((update) => update.path === this.#configuration.notificationLedgerPath)
+        ? "tracking_run"
+        : input.commitScope;
     const result = await this.#adapter.commit({
       branch: this.#configuration.branch,
       expectedHead: this.#head,
       updates,
-      deletions: this.#pendingAiCacheDeletionPaths,
+      deletions: input.commitScope === "operations_alert" ? [] : this.#pendingAiCacheDeletionPaths,
       message: `tracker notification ledger ${input.committedAt}`,
       committedAt: input.committedAt,
+      commitIdentity: createStateCommitIdentity(
+        commitScope,
+        undefined,
+        this.#head,
+        `tracker notification ledger ${input.committedAt}`,
+        updates,
+        input.commitScope === "operations_alert" ? [] : this.#pendingAiCacheDeletionPaths,
+      ),
     });
     this.#head = Object.freeze({
       status: "present",
       revision: result.revision,
     });
-    this.#consumeAiCacheMigration();
+    if (input.commitScope === "manual_resolution") {
+      this.#consumeAiCacheMigration();
+    }
     return Object.freeze({
       ...result,
       updatedPaths: Object.freeze(updates.map((value) => value.path)),
@@ -709,6 +690,7 @@ export class StatePersistenceSession {
     return this.#commitNotificationLedger({
       ...input,
       notificationLedger,
+      commitScope: "operations_alert",
     });
   }
 
@@ -753,10 +735,7 @@ export class StatePersistenceSession {
     });
     const updates: StateFileUpdate[] = [
       this.#snapshotUpdate(snapshot),
-      {
-        path: this.#configuration.notificationLedgerPath,
-        bytes: encodeStateFile(serializeStateNotificationLedger(notificationLedger)),
-      },
+      ...(await this.#ledgerUpdates(notificationLedger, "tracking_run")),
       {
         path: history.historyPath,
         bytes: encodeStateFile(history.historySource),
@@ -770,6 +749,14 @@ export class StatePersistenceSession {
       deletions: this.#pendingAiCacheDeletionPaths,
       message: `tracker notification delivery ${snapshot.run.id}`,
       committedAt: input.committedAt,
+      commitIdentity: createStateCommitIdentity(
+        "tracking_run",
+        snapshot.run.id,
+        this.#head,
+        `tracker notification delivery ${snapshot.run.id}`,
+        updates,
+        this.#pendingAiCacheDeletionPaths,
+      ),
     });
     this.#head = Object.freeze({
       status: "present",
@@ -853,10 +840,7 @@ export class StatePersistenceSession {
     });
     const updates: StateFileUpdate[] = [
       ...snapshotUpdates,
-      {
-        path: this.#configuration.notificationLedgerPath,
-        bytes: encodeStateFile(serializeStateNotificationLedger(notificationLedger)),
-      },
+      ...(await this.#ledgerUpdates(notificationLedger, "tracking_run")),
       {
         path: joinStatePath(this.#configuration.runReportsDirectory, `${runReport.date}.json`),
         bytes: encodeStateFile(serializeStateRunReport(runReport)),
@@ -874,6 +858,14 @@ export class StatePersistenceSession {
       deletions: this.#pendingAiCacheDeletionPaths,
       message: `tracker run completion ${snapshot.run.id}`,
       committedAt: runReport.finishedAt,
+      commitIdentity: createStateCommitIdentity(
+        "tracking_run",
+        snapshot.run.id,
+        this.#head,
+        `tracker run completion ${snapshot.run.id}`,
+        updates,
+        this.#pendingAiCacheDeletionPaths,
+      ),
     });
     this.#head = Object.freeze({
       status: "present",
@@ -962,10 +954,7 @@ export class StatePersistenceSession {
         path: historyPath,
         bytes: encodeStateFile(historySource),
       },
-      {
-        path: this.#configuration.notificationLedgerPath,
-        bytes: encodeStateFile(serializeStateNotificationLedger(notificationLedger)),
-      },
+      ...(await this.#ledgerUpdates(notificationLedger, "tracking_run")),
       ...pendingAiCacheEntries.map((entry) => ({
         path: cachePath(this.#configuration, entry.cacheKey),
         bytes: encodeStateFile(serializeCanonicalJsonLine(entry)),
@@ -984,6 +973,14 @@ export class StatePersistenceSession {
       deletions: input.deletions,
       message: `tracker state ${runDate} ${snapshot.run.id}`,
       committedAt: snapshot.generatedAt,
+      commitIdentity: createStateCommitIdentity(
+        "tracking_run",
+        snapshot.run.id,
+        this.#head,
+        `tracker state ${runDate} ${snapshot.run.id}`,
+        updates,
+        input.deletions,
+      ),
     });
     this.#head = Object.freeze({
       status: "present",
