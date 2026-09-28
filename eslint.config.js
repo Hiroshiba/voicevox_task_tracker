@@ -51,6 +51,7 @@ const pureLeafImportPaths = [
   "github/incremental-item-collection.js",
   "github/item-detail-types.js",
   "github/item-normalization.js",
+  "github/production-source-id.js",
   "github/public-repository-allowlist.js",
   "github/stable-id.js",
 ];
