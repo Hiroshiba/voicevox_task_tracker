@@ -11,6 +11,7 @@ import type { ContentDigestPort } from "./ports.js";
 const MAX_BOOTSTRAP_BYTES = 8 * 1024 * 1024;
 const MAX_BOOTSTRAP_DEPTH = 64;
 const MAX_BOOTSTRAP_NODES = 100_000;
+const MAX_BOOTSTRAP_KEYS = 100_000;
 const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const nonEmptyStringSchema = z.string().min(1).max(1000);
 const positiveIntegerSchema = z.number().int().positive();
@@ -20,6 +21,7 @@ export const normalizedBundlePathSchema = z
   .max(1000)
   .refine(
     (value) =>
+      /^[A-Za-z0-9._/-]+$/u.test(value) &&
       !value.startsWith("/") &&
       !value.includes("\\") &&
       !value.includes("\0") &&
@@ -73,7 +75,7 @@ export const runtimeRecoveryPlanSchema = z.discriminatedUnion("kind", [
 const recordBootstrapSchema = z.looseObject({
   recoveryBootstrapVersion: z.literal(1),
   schemaVersion: positiveIntegerSchema,
-  runIdentity: z.looseObject({ runId: nonEmptyStringSchema }),
+  runIdentity: z.looseObject({ runId: z.string().regex(/^tracker-run:[0-9a-f]{64}$/u) }),
   checkpointDigest: sha256Schema,
   checkpointFileDigest: sha256Schema,
   runtimeIdentity: runtimeIdentitySchema,
@@ -84,7 +86,7 @@ const recordBootstrapSchema = z.looseObject({
 const markerBootstrapSchema = z.looseObject({
   recoveryBootstrapVersion: z.literal(1),
   schemaVersion: positiveIntegerSchema,
-  runId: nonEmptyStringSchema,
+  runId: z.string().regex(/^tracker-run:[0-9a-f]{64}$/u),
   checkpointDigest: sha256Schema,
   phase: z.enum([
     "initial_state_committed",
@@ -122,6 +124,7 @@ export type RunTransactionMarkerRecoveryBootstrapV1 = Readonly<{
 function assertBounded(value: unknown): void {
   const pending: { value: unknown; depth: number }[] = [{ value, depth: 0 }];
   let nodes = 0;
+  let keys = 0;
   while (pending.length > 0) {
     const current = pending.pop();
     if (current == null) {
@@ -136,7 +139,12 @@ function assertBounded(value: unknown): void {
         pending.push({ value: item, depth: current.depth + 1 });
       }
     } else if (current.value != null && typeof current.value === "object") {
-      for (const item of Object.values(current.value)) {
+      const values = Object.values(current.value);
+      keys += values.length;
+      if (keys > MAX_BOOTSTRAP_KEYS) {
+        throw new TypeError("bootstrap JSONのkey数が上限を超えています");
+      }
+      for (const item of values) {
         pending.push({ value: item, depth: current.depth + 1 });
       }
     }

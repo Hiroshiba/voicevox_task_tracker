@@ -40,6 +40,7 @@ export function createValidateConfigurationStage(
     const bootstrap = await inspectRunBootstrapState(
       adapters.createStateBranchAdapter(),
       target.state.branch,
+      { kind: "start_new" },
     );
     if (bootstrap.kind === "manual_resolution_required") {
       throw new TypeError("state bootstrapが不整合のため手動解決が必要です", {
@@ -48,6 +49,9 @@ export function createValidateConfigurationStage(
     }
     if (bootstrap.kind === "resume_with_exact_runtime") {
       throw new TypeError("未完了runは元のruntimeによる再開が必要です");
+    }
+    if (bootstrap.kind === "operator_conflict_resolution") {
+      throw new TypeError("state bootstrapのrunが起動要求と一致しません");
     }
     const credentials = readRuntimeCredentials(adapters.environment, config, request);
     let codexReadinessPromise: Promise<void> | undefined;

@@ -23,6 +23,20 @@ export const runtimeRecoveryOutputV1Schema = z.discriminatedUnion("status", [
   z.strictObject({
     protocolVersion: z.literal(1),
     outputContract: z.literal("tracking-run-recovery-output-v1"),
+    status: z.literal("ready"),
+    stateRevision: gitCommitRevisionSchema,
+    nextStage: z.enum([
+      "initial_pages_build",
+      "initial_pages_deploy",
+      "notifications",
+      "run_finalization",
+      "notification_history_build",
+      "notification_history_deploy",
+    ]),
+  }),
+  z.strictObject({
+    protocolVersion: z.literal(1),
+    outputContract: z.literal("tracking-run-recovery-output-v1"),
     status: z.literal("manual_resolution_required"),
     reason: z.enum(["recovery_stage_unavailable", "state_conflict", "effect_uncertain"]),
   }),

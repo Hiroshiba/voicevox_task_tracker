@@ -17,6 +17,10 @@ import { PUBLIC_DTO_SCHEMA_VERSION } from "../pages/public-dto.js";
 import { publicationInputsSchema } from "../application/tracking-run/contracts/publication-inputs.js";
 import { runMetricsSchema } from "./run-report.js";
 import { discordSettingsSchema, notificationSelectionSchema } from "./validated-run-payload.js";
+import {
+  assertBoundPublicationCheckpoint,
+  type BoundPublicationCheckpoint,
+} from "./publication-checkpoint-binding.js";
 
 const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const MAX_RECORD_BYTES = 8 * 1024 * 1024;
@@ -154,6 +158,67 @@ export type DurablePublicationRecordTemplate = z.output<
 
 /** 初回state commitで保存する全field確定済みrecord。 */
 export type DurablePublicationRecord = z.output<typeof durablePublicationRecordSchema>;
+
+/** 検証済みcheckpointの業務値とbindingから永続recordを作る。 */
+export function materializeDurablePublicationRecord(
+  bound: BoundPublicationCheckpoint,
+  digest: ContentDigestPort,
+): DurablePublicationRecord {
+  assertBoundPublicationCheckpoint(bound);
+  const template = durablePublicationRecordTemplateSchema.parse(
+    bound.publicationPlan.durableRecordTemplate,
+  );
+  if (
+    serializeCanonicalJson(template) !==
+      serializeCanonicalJson(bound.publicationPlan.initialStateWriteSet.durableRecordTemplate) ||
+    serializeCanonicalJson(template.runIdentity) !==
+      serializeCanonicalJson(bound.checkpoint.runIdentity) ||
+    serializeCanonicalJson(template.executionPolicy) !==
+      serializeCanonicalJson(bound.checkpoint.executionPolicy) ||
+    serializeCanonicalJson(template.baseStateRevision) !==
+      serializeCanonicalJson(bound.checkpoint.baseStateRevision) ||
+    template.configDigest !== bound.checkpoint.configDigest ||
+    bound.bindingProof.checkpointDigest !== bound.checkpointDigest ||
+    bound.bindingProof.checkpointFileDigest !== bound.binding.checkpointFileDigest ||
+    bound.bindingProof.runtimeIdentityDigest !==
+      digest.sha256Utf8(serializeCanonicalJson(bound.runtimeIdentity)) ||
+    bound.bindingProof.runtimeRecoveryPlanDigest !==
+      digest.sha256Utf8(serializeCanonicalJson(bound.binding.runtimeRecoveryPlan))
+  ) {
+    throw new TypeError("checkpointと永続record templateの結合が一致しません");
+  }
+  const payload = {
+    recoveryBootstrapVersion: 1,
+    schemaVersion: DURABLE_PUBLICATION_RECORD_SCHEMA_VERSION,
+    runIdentity: template.runIdentity,
+    executionPolicy: template.executionPolicy,
+    checkpointDigest: bound.checkpointDigest,
+    checkpointFileDigest: bound.binding.checkpointFileDigest,
+    runtimeIdentity: bound.runtimeIdentity,
+    runtimeRecoveryPlan: bound.binding.runtimeRecoveryPlan,
+    configDigest: template.configDigest,
+    baseStateRevision: template.baseStateRevision,
+    initialStateContentDigests: template.initialStateValueDigests,
+    initialPagesProjection: template.initialPagesProjection,
+    notificationOutbox: template.notificationOutbox,
+    runFinalizationPolicy: template.runFinalizationPolicy,
+    notificationHistoryPagesPolicy: template.notificationHistoryPagesPolicy,
+  };
+  return parseDurablePublicationRecord(
+    { ...payload, recordDigest: digest.sha256Utf8(serializeCanonicalJson(payload)) },
+    digest,
+  );
+}
+
+/** 永続recordを末尾改行付きcanonical JSONへ変換する。 */
+export function encodeDurablePublicationRecord(
+  record: DurablePublicationRecord,
+  digest: ContentDigestPort,
+): Uint8Array {
+  return new TextEncoder().encode(
+    serializeCanonicalJsonLine(parseDurablePublicationRecord(record, digest)),
+  );
+}
 
 /** full recordの業務field、相互参照、canonical digestを検証する。 */
 export function parseDurablePublicationRecord(

@@ -77,6 +77,11 @@ export function verifyRunTransactionFiles(
   }
   const marker = decodeRunTransactionMarker(markerBytes);
   const record = decodeDurablePublicationRecord(recordBytes, nodeContentDigestPort);
+  if (record.runtimeRecoveryPlan.kind === "not_reproducible") {
+    throw new StateFormatError("run transaction", {
+      cause: new TypeError("永続stateに回復不能なruntimeを保存できません"),
+    });
+  }
   const snapshotSource = source(requiredFile(files, configuration.snapshotPath));
   const snapshot = parseStateSnapshot(snapshotSource);
   if (snapshotSource !== serializeStateSnapshot(snapshot)) {
