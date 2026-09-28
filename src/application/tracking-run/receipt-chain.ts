@@ -96,6 +96,20 @@ function assertObservedReceiptEvidence(
       receipt.result.reservationStateRevision !== state.reservation.revision ||
       receipt.result.ledgerStateRevision !==
         (state.result?.revision ?? state.reservation.revision) ||
+      receipt.result.reservationCommit.expectedTrackingStateRevision !==
+        state.reservation.expectedTrackingStateRevision ||
+      receipt.result.reservationCommit.actualParentStateRevision !==
+        state.reservation.parentRevision ||
+      serializeCanonicalJson(receipt.result.reservationCommit.interveningOperationsAlertCommits) !==
+        serializeCanonicalJson(state.reservation.interveningOperationsAlertCommits) ||
+      (receipt.result.resultCommit == null) !== (state.result == null) ||
+      (receipt.result.resultCommit != null &&
+        state.result != null &&
+        (receipt.result.resultCommit.expectedTrackingStateRevision !==
+          state.result.expectedTrackingStateRevision ||
+          receipt.result.resultCommit.actualParentStateRevision !== state.result.parentRevision ||
+          serializeCanonicalJson(receipt.result.resultCommit.interveningOperationsAlertCommits) !==
+            serializeCanonicalJson(state.result.interveningOperationsAlertCommits))) ||
       receipt.result.discordMessageId !== attempt.discordMessageId ||
       receipt.effectOccurredAt !== attempt.completedAt ||
       state.reservation.commitOperationId !== commitOperationId("reservation") ||

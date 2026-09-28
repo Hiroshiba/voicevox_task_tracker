@@ -13,6 +13,7 @@ import { notificationActionSchema, parseCliArguments, type CliCommand } from "./
 import { createDefaultCliApplication } from "./composition-root.js";
 import { safeErrorDiagnostic } from "./error-diagnostic.js";
 import { RecordedFailureError } from "./failure-diagnostic.js";
+import { NotificationSettlementFailureError } from "./notification-settlement.js";
 import { isPublicBoundaryViolation } from "./public-boundary-error.js";
 import {
   CliCodexAuthenticationError,
@@ -224,7 +225,8 @@ function safeTopLevelMessage(error: unknown): string {
     error instanceof CliUsageError ||
     error instanceof CliCredentialsError ||
     error instanceof CliExecutableError ||
-    error instanceof CliWorkflowArtifactError
+    error instanceof CliWorkflowArtifactError ||
+    error instanceof NotificationSettlementFailureError
   ) {
     return error.message;
   }
@@ -345,6 +347,31 @@ export async function runTrackerCliMain(args: readonly string[]): Promise<number
     );
   }
   if (failure != null) {
+    if (
+      githubOutputPath != null &&
+      command === "settle-notifications" &&
+      failure instanceof NotificationSettlementFailureError
+    ) {
+      const outcome = failure.outcome;
+      await appendFile(
+        githubOutputPath,
+        [
+          `notification_settlement_kind=${outcome.kind}`,
+          ...(outcome.kind === "structural_failure"
+            ? [
+                `notification_marker_phase=${outcome.markerPhase}`,
+                `notification_failed_operation_effect_certainty=${outcome.failedOperationEffectCertainty}`,
+                `notification_recovery_disposition=${outcome.recoveryDisposition}`,
+                `notification_state_revision=${outcome.stateRevision}`,
+                ...(outcome.lastReceipt == null
+                  ? []
+                  : [`notification_last_receipt_digest=${outcome.lastReceipt.receiptDigest}`]),
+              ]
+            : []),
+        ].join("\n") + "\n",
+        "utf8",
+      );
+    }
     if (
       githubOutputPath != null &&
       command !== "collect-analyze" &&

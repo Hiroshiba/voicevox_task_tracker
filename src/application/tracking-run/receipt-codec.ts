@@ -179,9 +179,23 @@ function assertReceiptSemantics(receipt: Receipt): void {
     }
   }
   if (receipt.receiptType === "notification_message") {
+    const reservationCommit = receipt.result.reservationCommit;
+    const resultCommit = receipt.result.resultCommit;
     if (
       typeof receipt.expectedStateRevision !== "string" ||
       receipt.result.ledgerStateRevision === receipt.expectedStateRevision ||
+      reservationCommit.expectedTrackingStateRevision !== receipt.expectedStateRevision ||
+      (reservationCommit.interveningOperationsAlertCommits.length === 0
+        ? reservationCommit.actualParentStateRevision !== receipt.expectedStateRevision
+        : reservationCommit.interveningOperationsAlertCommits.at(-1) !==
+          reservationCommit.actualParentStateRevision) ||
+      (resultCommit == null) !== (receipt.status === "ambiguous") ||
+      (resultCommit != null &&
+        (resultCommit.expectedTrackingStateRevision !== receipt.result.reservationStateRevision ||
+          (resultCommit.interveningOperationsAlertCommits.length === 0
+            ? resultCommit.actualParentStateRevision !== receipt.result.reservationStateRevision
+            : resultCommit.interveningOperationsAlertCommits.at(-1) !==
+              resultCommit.actualParentStateRevision))) ||
       new Set(receipt.result.notificationKeys).size !== receipt.result.notificationKeys.length ||
       (receipt.status === "ambiguous") !==
         (receipt.result.ledgerStateRevision === receipt.result.reservationStateRevision) ||

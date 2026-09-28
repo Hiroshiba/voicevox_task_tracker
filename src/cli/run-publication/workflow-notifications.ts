@@ -8,7 +8,10 @@ import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content
 import { decodeInitialPagesBuildArtifact } from "../initial-pages-build-artifact.js";
 import { readInitialPagesDeploymentOutcome } from "../initial-pages-deployment.js";
 import { readNotificationMessageState } from "../notification-message-state.js";
-import { settleNotifications } from "../notification-settlement.js";
+import {
+  NotificationSettlementFailureError,
+  settleNotifications,
+} from "../notification-settlement.js";
 import { createNotificationSettlementPort } from "../notification-stage-runtime.js";
 import { requireEnvironmentValue } from "../production-runtime-setup.js";
 import { finalizeRun } from "../run-finalization.js";
@@ -112,7 +115,7 @@ export async function settleWorkflowNotifications(
     ),
   );
   if (outcome.kind !== "settled") {
-    throw new TypeError(`workflow通知settlementを確定できません。状態: ${outcome.kind}`);
+    throw new NotificationSettlementFailureError(outcome);
   }
   await adapters.writeJsonArtifact(
     resolve(adapters.repositoryPath, command.settlementReceiptPath),

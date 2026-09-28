@@ -13,6 +13,7 @@ import {
   serializeRunTransactionMarker,
 } from "../application/tracking-run/run-transaction-marker.js";
 import type { NotificationMessageReceipt } from "../application/tracking-run/receipt-schema.js";
+import { NotificationStructureError } from "./notification-structure-error.js";
 import type { PreparedDiscordDigestMessage } from "../discord/payload.js";
 import { nodeContentDigestPort as digest } from "../infrastructure/tracking-run/content-digest.js";
 import { assertStatePublicSafety } from "../persistence/public-safety.js";
@@ -78,7 +79,10 @@ export async function commitNotificationSettlement(
             serializeCanonicalJson(state.transaction.initialPagesEvidence) !==
               serializeCanonicalJson(evidence)))
       ) {
-        throw new TypeError("通知settlementの親stateが未確定runの段階と一致しません");
+        throw new NotificationStructureError(
+          "通知settlementの親stateが未確定runの段階と一致しません",
+          "no_effect",
+        );
       }
       const content = assertSettledNotificationContent(
         input.record,

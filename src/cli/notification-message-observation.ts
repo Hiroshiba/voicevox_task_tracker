@@ -145,8 +145,18 @@ export async function observeNotificationMessageDelivery(
   const resultOperationId = commitOperationId(identity.operationId, attempt.attemptId, "result");
   let reservationRevision: string | undefined;
   let resultRevision: string | undefined;
-  let reservationCommit: NotificationMessageStateEvidence["reservation"] | undefined;
-  let resultCommit: NotificationMessageStateEvidence["result"];
+  let reservationCommit:
+    | Omit<
+        NotificationMessageStateEvidence["reservation"],
+        "expectedTrackingStateRevision" | "interveningOperationsAlertCommits"
+      >
+    | undefined;
+  let resultCommit:
+    | Omit<
+        NotificationMessageStateEvidence["reservation"],
+        "expectedTrackingStateRevision" | "interveningOperationsAlertCommits"
+      >
+    | undefined;
   let revision = observedHeadRevision;
   for (let count = 0; count < MAX_INTERVENING_COMMITS; count += 1) {
     if (revision === input.expectedStateRevision) {
@@ -238,6 +248,21 @@ export async function observeNotificationMessageDelivery(
   ) {
     throw new TypeError("通知messageの予約と結果をGit祖先から一意に再観測できません");
   }
+  const reservationAdvance = await authorizeAdvanceAfterOrthogonalCommits(
+    adapter,
+    configuration,
+    input.expectedStateRevision,
+    reservationCommit.parentRevision,
+  );
+  const resultAdvance =
+    resultCommit == null
+      ? undefined
+      : await authorizeAdvanceAfterOrthogonalCommits(
+          adapter,
+          configuration,
+          reservationRevision,
+          resultCommit.parentRevision,
+        );
   const resultRevisionForReceipt = resultRevision ?? reservationRevision;
   const status =
     attempt.result === "started" ? "ambiguous" : attempt.result === "sent" ? "sent" : "no_effect";
@@ -267,6 +292,22 @@ export async function observeNotificationMessageDelivery(
         notificationKeys: [...context.notificationKeys],
         reservationStateRevision: reservationRevision,
         ledgerStateRevision: resultRevisionForReceipt,
+        reservationCommit: {
+          ...reservationAdvance,
+          interveningOperationsAlertCommits: [
+            ...reservationAdvance.interveningOperationsAlertCommits,
+          ],
+        },
+        ...(resultAdvance == null
+          ? {}
+          : {
+              resultCommit: {
+                ...resultAdvance,
+                interveningOperationsAlertCommits: [
+                  ...resultAdvance.interveningOperationsAlertCommits,
+                ],
+              },
+            }),
         ...(attempt.discordMessageId == null ? {} : { discordMessageId: attempt.discordMessageId }),
       },
     },
@@ -283,8 +324,20 @@ export async function observeNotificationMessageDelivery(
     initialPagesPublicationEvidenceDigest: evidence.evidenceDigest,
     deliveryId: context.deliveryId,
     attempt,
-    reservation: reservationCommit,
-    ...(resultCommit == null ? {} : { result: resultCommit }),
+    reservation: {
+      ...reservationCommit,
+      expectedTrackingStateRevision: reservationAdvance.expectedTrackingStateRevision,
+      interveningOperationsAlertCommits: [...reservationAdvance.interveningOperationsAlertCommits],
+    },
+    ...(resultCommit == null || resultAdvance == null
+      ? {}
+      : {
+          result: {
+            ...resultCommit,
+            expectedTrackingStateRevision: resultAdvance.expectedTrackingStateRevision,
+            interveningOperationsAlertCommits: [...resultAdvance.interveningOperationsAlertCommits],
+          },
+        }),
   });
   return Object.freeze({
     receipt,

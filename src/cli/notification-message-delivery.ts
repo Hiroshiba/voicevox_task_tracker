@@ -44,6 +44,7 @@ import {
   type MessageAttempt,
 } from "./notification-message-state.js";
 import { createGitHubRepositoryId, type Repository } from "../domain/index.js";
+import { NotificationStructureError } from "./notification-structure-error.js";
 
 /** 初回Pages成功のreceipt列またはstateへ保存済みの証拠。 */
 export type NotificationInitialPagesSource =
@@ -300,6 +301,8 @@ export async function deliverNotificationMessage(
       context,
       reserved.revision,
       reserved.revision,
+      reserved.advance,
+      undefined,
       "ambiguous",
       outcome.observedAt,
       undefined,
@@ -317,15 +320,27 @@ export async function deliverNotificationMessage(
     completedAt: outcome.observedAt,
     ...(outcome.status === "sent" ? { discordMessageId: outcome.discordMessageId } : {}),
   });
-  const result = await commitMessageTransition(
-    input,
-    port,
-    context,
-    evidence,
-    resultAttempt,
-    reserved.revision,
-    outcome.status === "sent" ? "sent" : "clear_rejection",
-  );
+  let result: Awaited<ReturnType<typeof commitMessageTransition>>;
+  try {
+    result = await commitMessageTransition(
+      input,
+      port,
+      context,
+      evidence,
+      resultAttempt,
+      reserved.revision,
+      outcome.status === "sent" ? "sent" : "clear_rejection",
+    );
+  } catch (cause: unknown) {
+    if (!(cause instanceof NotificationStructureError)) {
+      throw cause;
+    }
+    throw new NotificationStructureError(
+      "通知messageの結果をstateへ保存できません",
+      outcome.status === "sent" ? "committed" : "no_effect",
+      { cause },
+    );
+  }
   if (result.kind !== "committed") {
     const observedHead = await port.adapter.resolveHead(port.configuration.branch);
     if (observedHead.status === "present") {
@@ -363,6 +378,8 @@ export async function deliverNotificationMessage(
     context,
     reserved.revision,
     result.revision,
+    reserved.advance,
+    result.advance,
     outcome.status === "sent" ? "sent" : "no_effect",
     outcome.observedAt,
     outcome.status === "sent" ? outcome.discordMessageId : undefined,

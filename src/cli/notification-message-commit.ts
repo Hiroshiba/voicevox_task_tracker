@@ -1,9 +1,11 @@
 import { createStateCommitOperationId } from "../persistence/state-commit-metadata.js";
 import type { StateCommitIdentity } from "../persistence/state-commit-metadata.js";
 import { writeStateCas, type StateCasCommitRequestFactory } from "../persistence/state-cas.js";
+import type { OrthogonalCommitAdvance } from "../persistence/state-orthogonal-advance.js";
 import { verifyRunTransactionFiles } from "../persistence/state-transaction-files.js";
 import { parseStateNotificationLedger } from "../persistence/state-documents.js";
 import type { InitialPagesPublicationEvidence } from "../application/tracking-run/initial-pages-evidence.js";
+import { NotificationStructureError } from "./notification-structure-error.js";
 import type {
   NotificationMessageDeliveryInput,
   NotificationMessageDeliveryPort,
@@ -32,7 +34,12 @@ export async function commitMessageTransition(
   expectedStateRevision: string,
   result: "started" | "sent" | "clear_rejection",
 ): Promise<
-  | Readonly<{ kind: "committed"; revision: string; observed: boolean }>
+  | Readonly<{
+      kind: "committed";
+      revision: string;
+      observed: boolean;
+      advance: OrthogonalCommitAdvance;
+    }>
   | Readonly<{ kind: "state_unconfirmed" }>
   | Readonly<{ kind: "conflict"; revision: string }>
 > {
@@ -75,7 +82,7 @@ export async function commitMessageTransition(
       }
       const outbox = input.record.notificationOutbox;
       if (outbox.action !== "send" || outbox.selectedContext.action !== "create_digest") {
-        throw new TypeError("通知messageの送信対象がありません");
+        throw new NotificationStructureError("通知messageの送信対象がありません", "no_effect");
       }
       const nextLedger = transitionMessageLedger(
         state.ledger,
@@ -151,5 +158,10 @@ export async function commitMessageTransition(
         written.observedHead.status === "present" ? written.observedHead.revision : "unborn",
     };
   }
-  return { kind: "committed", revision: written.commit.revision, observed: written.observed };
+  return {
+    kind: "committed",
+    revision: written.commit.revision,
+    observed: written.observed,
+    advance: written.advance,
+  };
 }

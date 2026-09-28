@@ -41,6 +41,7 @@ import {
   readNotificationMessageState,
   type NotificationMessageState,
 } from "./notification-message-state.js";
+import { NotificationStructureError } from "./notification-structure-error.js";
 
 /** 初回Pages公開後の固定outboxとstateを結合する通知settlement入力。 */
 export type NotificationSettlementInput = Readonly<{
@@ -86,7 +87,74 @@ export type NotificationSettlementOutcome =
       kind: "conflict";
       messageReceipts: readonly SettledMessageReceipt[];
       observedHeadRevision: string;
+    }>
+  | Readonly<{
+      kind: "structural_failure";
+      messageReceipts: readonly SettledMessageReceipt[];
+      stateRevision: string;
+      markerPhase: "initial_state_committed" | "notifications_in_progress";
+      lastReceipt?: Receipt;
+      failedOperationEffectCertainty: "no_effect" | "committed";
+      recoveryDisposition: "operator_conflict_resolution" | "manual_resolution_required";
+      cause: NotificationStructureError;
     }>;
+
+/** 通知stageの失敗結果と元の診断をCLI境界へ渡す。 */
+export class NotificationSettlementFailureError extends Error {
+  public readonly outcome: Exclude<NotificationSettlementOutcome, { kind: "settled" }>;
+
+  public constructor(outcome: Exclude<NotificationSettlementOutcome, { kind: "settled" }>) {
+    super(`通知settlementを確定できません。状態: ${outcome.kind}`, {
+      cause: outcome.kind === "structural_failure" ? outcome.cause : undefined,
+    });
+    this.name = "NotificationSettlementFailureError";
+    this.outcome = outcome;
+  }
+}
+
+interface NotificationSettlementProgress {
+  messageReceipts: SettledMessageReceipt[];
+  previousReceipt: Receipt | undefined;
+}
+
+async function structuralFailure(
+  input: NotificationSettlementInput,
+  port: NotificationSettlementPort,
+  progress: NotificationSettlementProgress,
+  cause: NotificationStructureError,
+): Promise<NotificationSettlementOutcome> {
+  const head = await port.adapter.resolveHead(port.configuration.branch);
+  if (head.status !== "present") {
+    throw new TypeError("通知構造エラー後のstate branchがありません", { cause });
+  }
+  const state = await readNotificationMessageState(port.adapter, port.configuration, head.revision);
+  if (
+    state.transaction.record.recordDigest !== input.record.recordDigest ||
+    state.transaction.marker.runId !== input.record.runIdentity.runId ||
+    (state.transaction.marker.phase !== "initial_state_committed" &&
+      state.transaction.marker.phase !== "notifications_in_progress")
+  ) {
+    throw new TypeError("通知構造エラー後のstateが同じ保留runではありません", { cause });
+  }
+  const markerPhase = state.transaction.marker.phase;
+  if (markerPhase === "initial_state_committed" && cause.effectCertainty !== "no_effect") {
+    throw new TypeError("通知の外部効果と初回markerの段階が一致しません", { cause });
+  }
+  return {
+    kind: "structural_failure",
+    messageReceipts: progress.messageReceipts,
+    stateRevision: head.revision,
+    markerPhase,
+    ...(progress.previousReceipt == null ? {} : { lastReceipt: progress.previousReceipt }),
+    failedOperationEffectCertainty: cause.effectCertainty,
+    recoveryDisposition:
+      cause.effectCertainty === "committed" ||
+      state.ledger.entries.some((entry) => entry.status === "delivery_started")
+        ? "manual_resolution_required"
+        : "operator_conflict_resolution",
+    cause,
+  };
+}
 
 function assertPagesReceipt(input: NotificationSettlementInput): void {
   const pages = parseReceipt(input.pagesReceipt, digest);
@@ -104,7 +172,10 @@ function assertPagesReceipt(input: NotificationSettlementInput): void {
     pages.result.pageUrl !== evidence.pageUrl ||
     pages.operationId !== evidence.deploymentOperationId
   ) {
-    throw new TypeError("通知settlementの初回Pages receiptが永続runと一致しません");
+    throw new NotificationStructureError(
+      "通知settlementの初回Pages receiptが永続runと一致しません",
+      "no_effect",
+    );
   }
   if (input.initialPages.kind === "published") {
     if (
@@ -113,14 +184,20 @@ function assertPagesReceipt(input: NotificationSettlementInput): void {
       pages.previousReceiptDigest !== input.initialPages.buildReceipt.receiptDigest ||
       pages.phaseSequence !== input.initialPages.buildReceipt.phaseSequence + 1
     ) {
-      throw new TypeError("通知settlementのPages成功receipt列が一致しません");
+      throw new NotificationStructureError(
+        "通知settlementのPages成功receipt列が一致しません",
+        "no_effect",
+      );
     }
   } else if (
     pages.receiptKind !== "observed" ||
     pages.result.evidenceDigest !== evidence.evidenceDigest ||
     pages.result.observedSourceReceiptDigest !== evidence.deploymentReceiptDigest
   ) {
-    throw new TypeError("通知settlementのPages再観測receiptがstate証拠と一致しません");
+    throw new NotificationStructureError(
+      "通知settlementのPages再観測receiptがstate証拠と一致しません",
+      "no_effect",
+    );
   }
 }
 
@@ -139,7 +216,10 @@ async function assertObservedPagesReceipt(
   }
   const revision = input.pagesReceipt.expectedStateRevision;
   if (typeof revision !== "string") {
-    throw new TypeError("再観測した初回Pages receiptにexact state revisionがありません");
+    throw new NotificationStructureError(
+      "再観測した初回Pages receiptにexact state revisionがありません",
+      "no_effect",
+    );
   }
   const state = await readNotificationMessageState(port.adapter, port.configuration, revision);
   const marker = state.transaction.marker;
@@ -149,7 +229,10 @@ async function assertObservedPagesReceipt(
     evidence == null ||
     serializeCanonicalJson(evidence) !== serializeCanonicalJson(input.initialPages.evidence)
   ) {
-    throw new TypeError("再観測した初回Pages receiptのexact state証拠が一致しません");
+    throw new NotificationStructureError(
+      "再観測した初回Pages receiptのexact state証拠が一致しません",
+      "no_effect",
+    );
   }
   verifyReceiptChain(
     [
@@ -200,23 +283,27 @@ async function initialState(
       : { status: "present", revision: base.revision },
   );
   if (initial.transaction.record.recordDigest !== input.record.recordDigest) {
-    throw new TypeError("通知settlementの初回stateと永続recordが一致しません");
+    throw new NotificationStructureError(
+      "通知settlementの初回stateと永続recordが一致しません",
+      "no_effect",
+    );
   }
   assertInitialNotificationLedger(input.record, initial, previous);
   return initial;
 }
 
-/** 固定outboxを順に確定し、成功actionを単一のstate settlementへ進める。 */
-export async function settleNotifications(
+async function settleNotificationsChecked(
   input: NotificationSettlementInput,
   port: NotificationSettlementPort,
+  progress: NotificationSettlementProgress,
 ): Promise<NotificationSettlementOutcome> {
   const record = parseDurablePublicationRecord(input.record, digest);
   if (record.recordDigest !== input.record.recordDigest) {
-    throw new TypeError("通知settlementの永続recordが一致しません");
+    throw new NotificationStructureError("通知settlementの永続recordが一致しません", "no_effect");
   }
   assertPagesReceipt(input);
   await assertObservedPagesReceipt(input, port);
+  progress.previousReceipt = input.pagesReceipt;
   const initial = await initialState(input, port);
   const head = await port.adapter.resolveHead(port.configuration.branch);
   if (head.status !== "present") {
@@ -244,14 +331,17 @@ export async function settleNotifications(
     serializeCanonicalJson(current.transaction.initialPagesEvidence) !==
       serializeCanonicalJson(evidence)
   ) {
-    throw new TypeError("通知settlementの保存済みPages証拠が入力と一致しません");
+    throw new NotificationStructureError(
+      "通知settlementの保存済みPages証拠が入力と一致しません",
+      "no_effect",
+    );
   }
   const messages = plannedNotificationMessages(record, initial, evidence);
   for (let index = 0; index < messages.length; index += 1) {
     prepareNotificationMessageContext(record, initial.snapshot, initial.ledger, evidence, index);
   }
   const invocationId = randomUUID();
-  const messageReceipts: SettledMessageReceipt[] = [];
+  const messageReceipts = progress.messageReceipts;
   let expectedRevision = input.initialStateReceipt.result.resultingStateRevision;
   let previousReceipt: Receipt = input.pagesReceipt;
   if (current.transaction.marker.phase === "notifications_settled") {
@@ -282,6 +372,7 @@ export async function settleNotifications(
         evidence: { kind: "notification_message_state", state: observed.evidence },
       });
       previousReceipt = observed.receipt;
+      progress.previousReceipt = observed.receipt;
       expectedRevision = observed.stateRevision;
     }
     assertMessageChain(messageReceipts);
@@ -341,6 +432,7 @@ export async function settleNotifications(
     messageReceipts.push({ receipt: outcome.receipt, evidence: outcome.receiptEvidence });
     assertMessageChain(messageReceipts);
     previousReceipt = outcome.receipt;
+    progress.previousReceipt = outcome.receipt;
     expectedRevision = outcome.stateRevision;
     if (outcome.kind === "ambiguous") {
       return {
@@ -389,4 +481,23 @@ export async function settleNotifications(
     invocationId,
     !committed.observed,
   );
+}
+
+/** 固定outboxを順に確定し、成功actionを単一のstate settlementへ進める。 */
+export async function settleNotifications(
+  input: NotificationSettlementInput,
+  port: NotificationSettlementPort,
+): Promise<NotificationSettlementOutcome> {
+  const progress: NotificationSettlementProgress = {
+    messageReceipts: [],
+    previousReceipt: undefined,
+  };
+  try {
+    return await settleNotificationsChecked(input, port, progress);
+  } catch (cause: unknown) {
+    if (!(cause instanceof NotificationStructureError)) {
+      throw cause;
+    }
+    return structuralFailure(input, port, progress, cause);
+  }
 }

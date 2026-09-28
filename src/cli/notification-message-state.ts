@@ -48,6 +48,7 @@ import { normalNotificationLedgerValue } from "../publication/publication-order.
 import { createGitHubRepositoryId, type Repository } from "../domain/index.js";
 import type { NotificationDeliveryAttempt } from "../domain/notification-delivery-attempt.js";
 import { notificationLedgerEntry } from "./notification-ledger-normalization.js";
+import { NotificationStructureError } from "./notification-structure-error.js";
 import {
   restoreNotificationSelection,
   type NotificationMessageContext,
@@ -69,7 +70,10 @@ export function assertCurrentState(
     marker.checkpointDigest !== record.checkpointDigest ||
     state.snapshot.run.id !== record.runIdentity.runId
   ) {
-    throw new TypeError("通知messageのstateが保留中の同じrunではありません");
+    throw new NotificationStructureError(
+      "通知messageのstateが保留中の同じrunではありません",
+      "no_effect",
+    );
   }
   if (
     marker.phase === "initial_state_committed"
@@ -78,7 +82,10 @@ export function assertCurrentState(
         serializeCanonicalJson(state.transaction.initialPagesEvidence) !==
           serializeCanonicalJson(evidence)
   ) {
-    throw new TypeError("通知messageの初回revisionまたはPages証拠がstateと一致しません");
+    throw new NotificationStructureError(
+      "通知messageの初回revisionまたはPages証拠がstateと一致しません",
+      "no_effect",
+    );
   }
 }
 
@@ -149,11 +156,11 @@ export function transitionMessageLedger(
     }
     const reservation = reservationByKey.get(entry.notificationKey);
     if (reservation == null) {
-      throw new TypeError("通知messageの元予約がありません");
+      throw new NotificationStructureError("通知messageの元予約がありません", "no_effect");
     }
     if (result === "started") {
       if (entry.status !== "reserved" || attempt.startedAt > entry.expiresAt) {
-        throw new TypeError("通知messageの開始前予約が無効です");
+        throw new NotificationStructureError("通知messageの開始前予約が無効です", "no_effect");
       }
       return {
         notificationKey: entry.notificationKey,
@@ -172,7 +179,10 @@ export function transitionMessageLedger(
       entry.deliveryId !== context.deliveryId ||
       entry.lastDeliveryAttempt?.attemptId !== attempt.attemptId
     ) {
-      throw new TypeError("通知messageの結果が開始済みledgerと一致しません");
+      throw new NotificationStructureError(
+        "通知messageの結果が開始済みledgerと一致しません",
+        "no_effect",
+      );
     }
     const base = {
       notificationKey: entry.notificationKey,

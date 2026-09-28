@@ -2,6 +2,7 @@ import { hashCanonicalJson } from "../canonical-json/index.js";
 import { serializeCanonicalJson } from "../canonical-json/value.js";
 import type { InitialPagesPublicationEvidence } from "../application/tracking-run/initial-pages-evidence.js";
 import type { NotificationMessageReceipt } from "../application/tracking-run/receipt-schema.js";
+import { NotificationStructureError } from "./notification-structure-error.js";
 import { buildDiscordDigestPlan, type PreparedDiscordDigestMessage } from "../discord/payload.js";
 import {
   appendStateHistoryNotificationEvents,
@@ -35,11 +36,14 @@ function historySource(
   );
   const file = state.files.get(path);
   if (file?.status !== "present") {
-    throw new TypeError("通知settlementの履歴fileがありません");
+    throw new NotificationStructureError("通知settlementの履歴fileがありません", "no_effect");
   }
   const source = new TextDecoder("utf-8", { fatal: true }).decode(file.bytes);
   if (serializeStateHistoryRecords(parseStateHistoryRecords(source)) !== source) {
-    throw new TypeError("通知settlementの履歴fileがcanonical形式ではありません");
+    throw new NotificationStructureError(
+      "通知settlementの履歴fileがcanonical形式ではありません",
+      "no_effect",
+    );
   }
   return source;
 }
@@ -56,12 +60,12 @@ export function plannedNotificationMessages(
   }
   if (outbox.selectedContext.action === "skip_digest") {
     if (outbox.delivery !== "no_candidates" || outbox.selectedContext.reason !== "no_candidates") {
-      throw new TypeError("送信0件の固定outboxが一致しません");
+      throw new NotificationStructureError("送信0件の固定outboxが一致しません", "no_effect");
     }
     return Object.freeze([]);
   }
   if (outbox.delivery !== "send" || !outbox.settings.enabled) {
-    throw new TypeError("送信actionの固定outboxが一致しません");
+    throw new NotificationStructureError("送信actionの固定outboxが一致しません", "no_effect");
   }
   const selection = restoreNotificationSelection(record);
   const plan = buildDiscordDigestPlan({
@@ -79,7 +83,10 @@ export function plannedNotificationMessages(
     new Set(plannedKeys).size !== plannedKeys.length ||
     !same([...plannedKeys].sort(), [...reservedKeys].sort())
   ) {
-    throw new TypeError("送信messageと固定outboxのkey集合が一致しません");
+    throw new NotificationStructureError(
+      "送信messageと固定outboxのkey集合が一致しません",
+      "no_effect",
+    );
   }
   return plan.messages;
 }
@@ -97,7 +104,10 @@ export function assertInitialNotificationLedger(
     initial.snapshot.run.id !== record.runIdentity.runId ||
     hashCanonicalJson(normalNotificationLedgerValue(previous)) !== outbox.previousLedgerDigest
   ) {
-    throw new TypeError("通知settlementの初回ledgerまたはrunが一致しません");
+    throw new NotificationStructureError(
+      "通知settlementの初回ledgerまたはrunが一致しません",
+      "no_effect",
+    );
   }
   if (outbox.action === "send") {
     if (
@@ -109,7 +119,10 @@ export function assertInitialNotificationLedger(
         ),
       )
     ) {
-      throw new TypeError("送信actionの未送信候補が固定outboxと一致しません");
+      throw new NotificationStructureError(
+        "送信actionの未送信候補が固定outboxと一致しません",
+        "no_effect",
+      );
     }
     return;
   }
@@ -117,11 +130,17 @@ export function assertInitialNotificationLedger(
     !same(initial.ledger.pendingNotifications, outbox.pendingNotifications) ||
     initial.ledger.entries.some((entry) => entry.status === "delivery_started")
   ) {
-    throw new TypeError("非送信actionの未送信候補またはledger状態が一致しません");
+    throw new NotificationStructureError(
+      "非送信actionの未送信候補またはledger状態が一致しません",
+      "no_effect",
+    );
   }
   if (outbox.action === "hold") {
     if (!same(initial.ledger.entries, previous.entries)) {
-      throw new TypeError("保留actionで通常ledger entryが変化しています");
+      throw new NotificationStructureError(
+        "保留actionで通常ledger entryが変化しています",
+        "no_effect",
+      );
     }
     return;
   }
@@ -138,7 +157,10 @@ export function assertInitialNotificationLedger(
       ((old?.status === "sent" || old?.status === "acknowledged") && !same(entry, old)) ||
       (acknowledged == null && (old == null || !same(entry, old)))
     ) {
-      throw new TypeError("確認済みactionの初回ledger遷移が固定outboxと一致しません");
+      throw new NotificationStructureError(
+        "確認済みactionの初回ledger遷移が固定outboxと一致しません",
+        "no_effect",
+      );
     }
   }
   if (
@@ -146,7 +168,10 @@ export function assertInitialNotificationLedger(
       (key) => !initial.ledger.entries.some((entry) => entry.notificationKey === key),
     )
   ) {
-    throw new TypeError("確認済みactionのacknowledged entryがledgerにありません");
+    throw new NotificationStructureError(
+      "確認済みactionのacknowledged entryがledgerにありません",
+      "no_effect",
+    );
   }
   if (
     previous.entries.some(
@@ -156,7 +181,10 @@ export function assertInitialNotificationLedger(
         ),
     )
   ) {
-    throw new TypeError("確認済みactionで既存のledger entryが消えています");
+    throw new NotificationStructureError(
+      "確認済みactionで既存のledger entryが消えています",
+      "no_effect",
+    );
   }
 }
 
@@ -175,7 +203,10 @@ export function assertSettledNotificationContent(
     !same(current.snapshot, initial.snapshot) ||
     messages.length !== receipts.length
   ) {
-    throw new TypeError("通知settlementのrun、snapshotまたはmessage件数が一致しません");
+    throw new NotificationStructureError(
+      "通知settlementのrun、snapshotまたはmessage件数が一致しません",
+      "no_effect",
+    );
   }
   const initialEntries = new Map(
     initial.ledger.entries.map((entry) => [entry.notificationKey, entry]),
@@ -190,7 +221,10 @@ export function assertSettledNotificationContent(
     initialEntries.size !== initial.ledger.entries.length ||
     currentEntries.size !== current.ledger.entries.length
   ) {
-    throw new TypeError("通知settlementのledger entry集合が変化しています");
+    throw new NotificationStructureError(
+      "通知settlementのledger entry集合が変化しています",
+      "no_effect",
+    );
   }
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index];
@@ -202,7 +236,10 @@ export function assertSettledNotificationContent(
       receipt.logicalTarget !== `message:${(index + 1).toString()}` ||
       !same(message.notificationKeys, receipt.result.notificationKeys)
     ) {
-      throw new TypeError("通知settlementに未確定またはoutbox外のmessageがあります");
+      throw new NotificationStructureError(
+        "通知settlementに未確定またはoutbox外のmessageがあります",
+        "no_effect",
+      );
     }
     let firstAttempt:
       NonNullable<(typeof current.ledger.entries)[number]["lastDeliveryAttempt"]> | undefined;
@@ -210,7 +247,10 @@ export function assertSettledNotificationContent(
       const before = initialEntries.get(key);
       const after = currentEntries.get(key);
       if (before?.status !== "reserved" || after?.lastDeliveryAttempt == null) {
-        throw new TypeError("通知settlementの全keyに送達試行がありません");
+        throw new NotificationStructureError(
+          "通知settlementの全keyに送達試行がありません",
+          "no_effect",
+        );
       }
       const attempt = after.lastDeliveryAttempt;
       if (
@@ -225,7 +265,10 @@ export function assertSettledNotificationContent(
         after.severity !== before.severity ||
         after.reservedAt !== before.reservedAt
       ) {
-        throw new TypeError("通知settlementの全keyに同じ送達試行がありません");
+        throw new NotificationStructureError(
+          "通知settlementの全keyに同じ送達試行がありません",
+          "no_effect",
+        );
       }
       firstAttempt = attempt;
       if (receipt.status === "sent") {
@@ -236,7 +279,10 @@ export function assertSettledNotificationContent(
           attempt.discordMessageId !== receipt.result.discordMessageId ||
           after.sentAt !== attempt.completedAt
         ) {
-          throw new TypeError("送信済みmessageと最終ledgerが一致しません");
+          throw new NotificationStructureError(
+            "送信済みmessageと最終ledgerが一致しません",
+            "no_effect",
+          );
         }
         sentKeys.add(key);
       } else if (
@@ -245,21 +291,30 @@ export function assertSettledNotificationContent(
         after.expiresAt !== before.expiresAt ||
         attempt.completedAt == null
       ) {
-        throw new TypeError("明確拒否messageと最終ledgerが一致しません");
+        throw new NotificationStructureError(
+          "明確拒否messageと最終ledgerが一致しません",
+          "no_effect",
+        );
       }
     }
   }
   for (const [key, before] of initialEntries) {
     const after = currentEntries.get(key);
     if (!selectedKeys.has(key) && (after == null || !same(after, before))) {
-      throw new TypeError("固定outbox外のledger entryが変化しています");
+      throw new NotificationStructureError(
+        "固定outbox外のledger entryが変化しています",
+        "no_effect",
+      );
     }
   }
   const expectedPending = initial.ledger.pendingNotifications.filter(
     (pending) => !sentKeys.has(pending.notificationKey),
   );
   if (!same(current.ledger.pendingNotifications, expectedPending)) {
-    throw new TypeError("通知settlementの未送信候補が送達結果と一致しません");
+    throw new NotificationStructureError(
+      "通知settlementの未送信候補が送達結果と一致しません",
+      "no_effect",
+    );
   }
   let expectedHistory = historySource(initial, configuration);
   if (record.notificationOutbox.action === "send" && messages.length > 0) {
@@ -274,7 +329,10 @@ export function assertSettledNotificationContent(
       const entries = receipt.result.notificationKeys.map((key) => {
         const entry = currentEntries.get(key);
         if (entry == null) {
-          throw new TypeError("送信済み通知のledger entryがありません");
+          throw new NotificationStructureError(
+            "送信済み通知のledger entryがありません",
+            "no_effect",
+          );
         }
         return notificationLedgerEntry(entry);
       });
@@ -288,12 +346,18 @@ export function assertSettledNotificationContent(
   }
   const actualHistory = historySource(current, configuration);
   if (expectedHistory !== actualHistory) {
-    throw new TypeError("通知settlementの送信履歴がmessage結果と一致しません");
+    throw new NotificationStructureError(
+      "通知settlementの送信履歴がmessage結果と一致しません",
+      "no_effect",
+    );
   }
   const records = parseStateHistoryRecords(actualHistory);
   const matching = records.filter((item) => item.runId === record.runIdentity.runId);
   if (matching.length !== 1) {
-    throw new TypeError("通知settlementのrun履歴が一意ではありません");
+    throw new NotificationStructureError(
+      "通知settlementのrun履歴が一意ではありません",
+      "no_effect",
+    );
   }
   return Object.freeze({
     ledgerDigest: hashCanonicalJson(normalNotificationLedgerValue(current.ledger)),

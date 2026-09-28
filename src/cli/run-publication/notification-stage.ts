@@ -1,6 +1,9 @@
 import { createUtcIsoDateTime } from "../../domain/index.js";
 import { readNotificationMessageState } from "../notification-message-state.js";
-import { settleNotifications } from "../notification-settlement.js";
+import {
+  NotificationSettlementFailureError,
+  settleNotifications,
+} from "../notification-settlement.js";
 import { createNotificationSettlementPort } from "../notification-stage-runtime.js";
 import type { DailyPublicationStageHandlers, RunPublicationAdapters } from "./contracts.js";
 
@@ -42,7 +45,7 @@ export async function settleDailyNotifications(
     ),
   );
   if (outcome.kind !== "settled") {
-    throw new TypeError(`通知settlementを確定できません。状態: ${outcome.kind}`);
+    throw new NotificationSettlementFailureError(outcome);
   }
   const sentAt = outcome.messageReceipts
     .filter((entry) => entry.receipt.status === "sent")

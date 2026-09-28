@@ -11,6 +11,8 @@ import type {
   Receipt,
 } from "../application/tracking-run/receipt-schema.js";
 import { nodeContentDigestPort as digest } from "../infrastructure/tracking-run/content-digest.js";
+import type { OrthogonalCommitAdvance } from "../persistence/state-orthogonal-advance.js";
+import { NotificationStructureError } from "./notification-structure-error.js";
 import type { DurablePublicationRecord } from "./durable-record-schema.js";
 import type { NotificationMessageContext } from "./notification-message-context.js";
 import type {
@@ -22,7 +24,10 @@ function requireCheckpointReceipt(
   receipt: Receipt,
 ): Extract<Receipt["binding"], { bindingKind: "checkpoint" }> {
   if (receipt.binding.bindingKind !== "checkpoint") {
-    throw new TypeError("通知messageのreceiptにcheckpoint結合がありません");
+    throw new NotificationStructureError(
+      "通知messageのreceiptにcheckpoint結合がありません",
+      "no_effect",
+    );
   }
   return receipt.binding;
 }
@@ -36,7 +41,7 @@ export function validatePreviousReceipt(
   const initial = parseReceipt(input.initialStateReceipt, digest);
   const binding = requireCheckpointReceipt(previous);
   if (initial.receiptType !== "initial_state_commit") {
-    throw new TypeError("通知messageの初回commit receiptが不正です");
+    throw new NotificationStructureError("通知messageの初回commit receiptが不正です", "no_effect");
   }
   if (
     binding.runId !== record.runIdentity.runId ||
@@ -46,7 +51,10 @@ export function validatePreviousReceipt(
       digest.sha256Utf8(serializeCanonicalJson(record.runtimeIdentity)) ||
     serializeCanonicalJson(binding) !== serializeCanonicalJson(initial.binding)
   ) {
-    throw new TypeError("通知messageのreceiptと永続recordの結合が一致しません");
+    throw new NotificationStructureError(
+      "通知messageのreceiptと永続recordの結合が一致しません",
+      "no_effect",
+    );
   }
   if (previous.receiptType === "pages_deployment") {
     if (
@@ -55,7 +63,10 @@ export function validatePreviousReceipt(
       previous.effectCertainty !== "committed" ||
       input.expectedStateRevision !== initial.result.resultingStateRevision
     ) {
-      throw new TypeError("最初の通知messageに初回Pages成功receiptがありません");
+      throw new NotificationStructureError(
+        "最初の通知messageに初回Pages成功receiptがありません",
+        "no_effect",
+      );
     }
     if (
       (input.initialPages.kind === "published" &&
@@ -65,7 +76,10 @@ export function validatePreviousReceipt(
           previous.operationId !== input.initialPages.evidence.deploymentOperationId ||
           previous.result?.evidenceDigest !== input.initialPages.evidence.evidenceDigest))
     ) {
-      throw new TypeError("最初の通知messageとPages公開証拠のreceiptが一致しません");
+      throw new NotificationStructureError(
+        "最初の通知messageとPages公開証拠のreceiptが一致しません",
+        "no_effect",
+      );
     }
   } else if (
     previous.receiptType !== "notification_message" ||
@@ -75,7 +89,10 @@ export function validatePreviousReceipt(
         previous.logicalTarget !== `message:${(input.messageIndex + 1).toString()}`)) ||
     previous.result.ledgerStateRevision !== input.expectedStateRevision
   ) {
-    throw new TypeError("通知messageの直前receiptとstate revisionが一致しません");
+    throw new NotificationStructureError(
+      "通知messageの直前receiptとstate revisionが一致しません",
+      "no_effect",
+    );
   }
 }
 
@@ -87,14 +104,20 @@ export function validatePagesSource(
 ): InitialPagesPublicationEvidence {
   const evidence = parseInitialPagesPublicationEvidence(source.evidence, digest);
   if (evidence.sourceStateRevision !== initial.result.resultingStateRevision) {
-    throw new TypeError("初回Pages証拠のsource revisionが初回commitと一致しません");
+    throw new NotificationStructureError(
+      "初回Pages証拠のsource revisionが初回commitと一致しません",
+      "no_effect",
+    );
   }
   if (source.kind === "published") {
     if (
       source.buildReceipt.previousReceiptDigest !== initial.receiptDigest ||
       source.buildReceipt.phaseSequence !== initial.phaseSequence + 1
     ) {
-      throw new TypeError("初回Pages build receiptが初回state commitへ連結していません");
+      throw new NotificationStructureError(
+        "初回Pages build receiptが初回state commitへ連結していません",
+        "no_effect",
+      );
     }
     const rebuilt = createInitialPagesPublicationEvidence(
       {
@@ -105,10 +128,16 @@ export function validatePagesSource(
       digest,
     );
     if (serializeCanonicalJson(rebuilt) !== serializeCanonicalJson(evidence)) {
-      throw new TypeError("初回Pages成功receiptと保存候補の証拠が一致しません");
+      throw new NotificationStructureError(
+        "初回Pages成功receiptと保存候補の証拠が一致しません",
+        "no_effect",
+      );
     }
   } else if (firstCommit) {
-    throw new TypeError("最初の通知commitには検証済みPages成功receiptが必要です");
+    throw new NotificationStructureError(
+      "最初の通知commitには検証済みPages成功receiptが必要です",
+      "no_effect",
+    );
   }
   return evidence;
 }
@@ -119,6 +148,8 @@ export function receiptForMessage(
   context: NotificationMessageContext,
   reservationStateRevision: string,
   ledgerStateRevision: string,
+  reservationCommit: OrthogonalCommitAdvance,
+  resultCommit: OrthogonalCommitAdvance | undefined,
   status: "sent" | "no_effect" | "ambiguous",
   observedAt: string,
   discordMessageId: string | undefined,
@@ -149,6 +180,22 @@ export function receiptForMessage(
         notificationKeys: [...context.notificationKeys],
         reservationStateRevision,
         ledgerStateRevision,
+        reservationCommit: {
+          ...reservationCommit,
+          interveningOperationsAlertCommits: [
+            ...reservationCommit.interveningOperationsAlertCommits,
+          ],
+        },
+        ...(resultCommit == null
+          ? {}
+          : {
+              resultCommit: {
+                ...resultCommit,
+                interveningOperationsAlertCommits: [
+                  ...resultCommit.interveningOperationsAlertCommits,
+                ],
+              },
+            }),
         ...(discordMessageId == null ? {} : { discordMessageId }),
       },
     },

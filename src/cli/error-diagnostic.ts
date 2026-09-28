@@ -21,6 +21,7 @@ import {
   CliRelationExpansionLimitError,
 } from "./errors.js";
 import { type RunStage } from "./run-report.js";
+import { NotificationSettlementFailureError } from "./notification-settlement.js";
 
 const ERROR_CAUSE_DEPTH_LIMIT = 5;
 const ERROR_SITE_FRAME_LIMIT = 3;
@@ -272,6 +273,17 @@ function appendCodexOutputValidationDiagnostics(
 }
 
 function appendKnownErrorDiagnostics(fields: DiagnosticField[], error: Error): void {
+  if (error instanceof NotificationSettlementFailureError) {
+    fields.push({ key: "notificationSettlementKind", value: error.outcome.kind });
+    if (error.outcome.kind === "structural_failure") {
+      fields.push({ key: "notificationMarkerPhase", value: error.outcome.markerPhase });
+      fields.push({
+        key: "failedOperationEffectCertainty",
+        value: error.outcome.failedOperationEffectCertainty,
+      });
+      fields.push({ key: "recoveryDisposition", value: error.outcome.recoveryDisposition });
+    }
+  }
   if (error instanceof CodexNonZeroExitError) {
     appendCodexNonZeroExitDiagnostics(fields, error);
   }

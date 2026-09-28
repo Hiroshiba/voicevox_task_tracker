@@ -140,6 +140,12 @@ const stateCommitResultSchema = z.strictObject({
   interveningOperationsAlertCommits: z.array(gitCommitRevisionSchema),
 });
 
+const messageCommitAdvanceSchema = z.strictObject({
+  expectedTrackingStateRevision: gitCommitRevisionSchema,
+  actualParentStateRevision: gitCommitRevisionSchema,
+  interveningOperationsAlertCommits: z.array(gitCommitRevisionSchema),
+});
+
 const pagesBuildResultSchema = z.strictObject({
   deploymentIntentDigest: sha256Schema,
   pagesContentDigest: sha256Schema,
@@ -205,6 +211,8 @@ export const receiptSchema = z.discriminatedUnion("receiptType", [
       discordMessageId: nonEmptyStringSchema.optional(),
       reservationStateRevision: gitCommitRevisionSchema,
       ledgerStateRevision: gitCommitRevisionSchema,
+      reservationCommit: messageCommitAdvanceSchema,
+      resultCommit: messageCommitAdvanceSchema.optional(),
     }),
   }),
   z.strictObject({

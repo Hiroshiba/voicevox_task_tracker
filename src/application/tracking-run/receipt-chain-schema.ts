@@ -13,6 +13,8 @@ const operationIdSchema = z.string().regex(/^operation:v1:[0-9a-f]{64}$/u);
 const messageCommitEvidenceSchema = z.strictObject({
   revision: revisionSchema,
   parentRevision: revisionSchema,
+  expectedTrackingStateRevision: revisionSchema,
+  interveningOperationsAlertCommits: z.array(revisionSchema),
   commitOperationId: operationIdSchema,
   markerPhaseSequence: z.number().int().positive(),
   notificationLedgerDigest: sha256Schema,

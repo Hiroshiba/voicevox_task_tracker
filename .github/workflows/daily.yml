@@ -487,6 +487,12 @@ jobs:
       contents: write
     outputs:
       public_boundary_violation: ${{ steps.settle_notifications.outputs.public_boundary_violation || steps.finalize_run.outputs.public_boundary_violation }}
+      notification_settlement_kind: ${{ steps.settle_notifications.outputs.notification_settlement_kind }}
+      notification_marker_phase: ${{ steps.settle_notifications.outputs.notification_marker_phase }}
+      notification_failed_operation_effect_certainty: ${{ steps.settle_notifications.outputs.notification_failed_operation_effect_certainty }}
+      notification_recovery_disposition: ${{ steps.settle_notifications.outputs.notification_recovery_disposition }}
+      notification_state_revision: ${{ steps.settle_notifications.outputs.notification_state_revision }}
+      notification_last_receipt_digest: ${{ steps.settle_notifications.outputs.notification_last_receipt_digest }}
     steps:
       - name: ソースコードを取得
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

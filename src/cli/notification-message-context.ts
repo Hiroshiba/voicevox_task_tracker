@@ -8,6 +8,7 @@ import type { StateNotificationLedger } from "../persistence/state-documents.js"
 import type { StateSnapshot } from "../persistence/snapshot-v21.js";
 import type { InitialPagesPublicationEvidence } from "../application/tracking-run/initial-pages-evidence.js";
 import type { DurablePublicationRecord } from "./durable-record-schema.js";
+import { NotificationStructureError } from "./notification-structure-error.js";
 
 /** 永続outboxから一つのDiscord messageを確定した文脈。 */
 export type NotificationMessageContext = Readonly<{
@@ -38,7 +39,10 @@ export function describeNotificationMessage(
     pagesEvidence.checkpointDigest !== record.checkpointDigest ||
     pagesEvidence.pageUrl !== record.initialPagesProjection.settings.url
   ) {
-    throw new TypeError("通知messageの保存済みrun、outboxまたはPages証拠が一致しません");
+    throw new NotificationStructureError(
+      "通知messageの保存済みrun、outboxまたはPages証拠が一致しません",
+      "no_effect",
+    );
   }
   const selectedContext = restoreNotificationSelection(record);
   const plan = buildDiscordDigestPlan({
@@ -51,11 +55,14 @@ export function describeNotificationMessage(
   });
   const message = plan.messages[messageIndex];
   if (message == null || message.notificationKeys.length === 0) {
-    throw new TypeError("通知messageの位置が永続outboxの範囲外です");
+    throw new NotificationStructureError("通知messageの位置が永続outboxの範囲外です", "no_effect");
   }
   const notificationKeys = [...message.notificationKeys];
   if (new Set(notificationKeys).size !== notificationKeys.length) {
-    throw new TypeError("一つの通知message内でnotification keyが重複しています");
+    throw new NotificationStructureError(
+      "一つの通知message内でnotification keyが重複しています",
+      "no_effect",
+    );
   }
   return Object.freeze({
     deliveryId: `${plan.digestId}:message:${(messageIndex + 1).toString()}`,
@@ -70,12 +77,12 @@ export function restoreNotificationSelection(
 ): Extract<DiscordNotificationSelection, { action: "create_digest" }> {
   const outbox = record.notificationOutbox;
   if (outbox.action !== "send" || outbox.selectedContext.action !== "create_digest") {
-    throw new TypeError("永続outboxに送信対象の通知候補がありません");
+    throw new NotificationStructureError("永続outboxに送信対象の通知候補がありません", "no_effect");
   }
   const candidates = outbox.selectedContext.candidates.map((candidate) => {
     const [firstReason, ...otherReasons] = candidate.reasons;
     if (firstReason == null) {
-      throw new TypeError("通知候補に送信理由がありません");
+      throw new NotificationStructureError("通知候補に送信理由がありません", "no_effect");
     }
     const reasons: DiscordNotificationCandidate["reasons"] = Object.freeze([
       firstReason,
@@ -86,7 +93,7 @@ export function restoreNotificationSelection(
   const [firstCandidate, ...otherCandidates] = candidates;
   const [firstReservation, ...otherReservations] = outbox.selectedContext.ledgerReservations;
   if (firstCandidate == null || firstReservation == null) {
-    throw new TypeError("永続outboxの通知候補または予約が空です");
+    throw new NotificationStructureError("永続outboxの通知候補または予約が空です", "no_effect");
   }
   const selectedCandidates: Extract<
     DiscordNotificationSelection,
@@ -116,7 +123,7 @@ export function prepareNotificationMessageContext(
   const { notificationKeys } = described;
   const outbox = record.notificationOutbox;
   if (outbox.action !== "send" || outbox.selectedContext.action !== "create_digest") {
-    throw new TypeError("通知messageの予約がありません");
+    throw new NotificationStructureError("通知messageの予約がありません", "no_effect");
   }
   const current = new Map(ledger.entries.map((entry) => [entry.notificationKey, entry]));
   const reservations = new Map(
@@ -136,11 +143,17 @@ export function prepareNotificationMessageContext(
       entry.reservedAt !== reservation.reservedAt ||
       entry.expiresAt !== reservation.expiresAt
     ) {
-      throw new TypeError("通知messageのkeyが現在の予約と一致しません");
+      throw new NotificationStructureError(
+        "通知messageのkeyが現在の予約と一致しません",
+        "no_effect",
+      );
     }
     const attempt = entry.lastDeliveryAttempt;
     if (attempt != null && attempt.result !== "clear_rejection") {
-      throw new TypeError("未確定または送信済みの通知messageを再送できません");
+      throw new NotificationStructureError(
+        "未確定または送信済みの通知messageを再送できません",
+        "no_effect",
+      );
     }
     if (firstKey) {
       lastAttempt = attempt;
@@ -151,7 +164,10 @@ export function prepareNotificationMessageContext(
         attempt != null &&
         serializeCanonicalJson(lastAttempt) !== serializeCanonicalJson(attempt))
     ) {
-      throw new TypeError("同じ通知messageの送達試行記録が一致しません");
+      throw new NotificationStructureError(
+        "同じ通知messageの送達試行記録が一致しません",
+        "no_effect",
+      );
     }
   }
   if (
@@ -159,7 +175,10 @@ export function prepareNotificationMessageContext(
     serializeCanonicalJson(lastAttempt.notificationKeys) !==
       serializeCanonicalJson(notificationKeys)
   ) {
-    throw new TypeError("前回の送達試行と通知messageのkey集合が一致しません");
+    throw new NotificationStructureError(
+      "前回の送達試行と通知messageのkey集合が一致しません",
+      "no_effect",
+    );
   }
   return Object.freeze({
     ...described,
