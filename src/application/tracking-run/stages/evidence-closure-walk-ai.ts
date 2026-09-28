@@ -2,6 +2,7 @@ import {
   AI_ANALYSIS_ELEMENTS,
   createAiAnalysisMigrationElementResultSchema,
   type AiAnalysisElement,
+  type AiAnalysisElementResult,
   type AiAnalysisElementMigrationResult,
 } from "../../../domain/ai-analysis-elements.js";
 import type { GitHubNodeId, TrackedItemAiAnalysis } from "../../../domain/types.js";
@@ -12,7 +13,7 @@ import type { EvidenceUseSink } from "./evidence-closure-walk-common.js";
 function emitResult(
   emit: EvidenceUseSink,
   element: AiAnalysisElement,
-  result: AiAnalysisElementMigrationResult,
+  result: AiAnalysisElementMigrationResult | AiAnalysisElementResult,
   path: readonly (string | number)[],
   destination: EvidenceUse["destination"],
   requiredCurrentness: EvidenceUse["requiredCurrentness"],
@@ -111,6 +112,16 @@ export function walkTrackedItemAiAnalysis(
         [itemNodeId],
         [],
       );
+      emitResult(
+        emit,
+        element,
+        current.generation.result,
+        [...path, "elements", element, "generation", "result"],
+        destination,
+        "historical_allowed",
+        [itemNodeId],
+        [],
+      );
     }
     const adopted = analysis.adoptedElements[element];
     if (adopted != null) {
@@ -119,6 +130,16 @@ export function walkTrackedItemAiAnalysis(
         element,
         adopted.result,
         [...path, "adoptedElements", element, "result"],
+        destination,
+        "historical_allowed",
+        [itemNodeId],
+        [],
+      );
+      emitResult(
+        emit,
+        element,
+        adopted.generation.result,
+        [...path, "adoptedElements", element, "generation", "result"],
         destination,
         "historical_allowed",
         [itemNodeId],
@@ -137,6 +158,18 @@ export function walkTrackedItemAiAnalysis(
         [itemNodeId],
         [],
       );
+      if (retained.origin === "current") {
+        emitResult(
+          emit,
+          element,
+          retained.generation.result,
+          [...path, "retainedElements", element, "generation", "result"],
+          destination,
+          "historical_allowed",
+          [itemNodeId],
+          [],
+        );
+      }
     }
   }
 }

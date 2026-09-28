@@ -348,8 +348,27 @@ export function validateRun<
     (observation) => observation.nodeId,
     ["snapshot", "graphNodeStateObservations"],
   );
+  const evidenceClosureWitness = createEvidenceClosureWitness(
+    input.closure,
+    run.data.historicalEvidence,
+    run.data.sourceRecords.evaluatedAt,
+    run.data.approvedRepositories,
+    {
+      snapshot,
+      historyInputEvents: input.historyInputEvents,
+      aiCacheAdditions: input.aiCacheAdditions,
+      personalReminderAiCacheAdditions: input.personalReminderAiCacheAdditions,
+      previousNotificationLedger: input.previousNotificationLedger,
+      notificationLedger: input.notificationLedger,
+      notificationSelection: input.notificationSelection,
+    },
+    input.actualOutwardAdditions,
+    input.digest,
+  );
   const sourceIds = Object.freeze(
-    [...new Set(input.closure.uses.map((use) => use.sourceId))].sort(),
+    [
+      ...new Set(evidenceClosureWitness.resolvedUses.map((resolved) => resolved.use.sourceId)),
+    ].sort(),
   );
   const publicationValues = {
     core: {
@@ -373,24 +392,11 @@ export function validateRun<
       left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
     ),
     metrics: input.metrics,
-    evidenceClosureSummary: { referenceCount: input.closure.uses.length, sourceIds },
-    evidenceClosureWitness: createEvidenceClosureWitness(
-      input.closure,
-      run.data.historicalEvidence,
-      run.data.sourceRecords.evaluatedAt,
-      run.data.approvedRepositories,
-      {
-        snapshot,
-        historyInputEvents: input.historyInputEvents,
-        aiCacheAdditions: input.aiCacheAdditions,
-        personalReminderAiCacheAdditions: input.personalReminderAiCacheAdditions,
-        previousNotificationLedger: input.previousNotificationLedger,
-        notificationLedger: input.notificationLedger,
-        notificationSelection: input.notificationSelection,
-      },
-      input.actualOutwardAdditions,
-      input.digest,
-    ),
+    evidenceClosureSummary: {
+      referenceCount: evidenceClosureWitness.resolvedUses.length,
+      sourceIds,
+    },
+    evidenceClosureWitness,
     publicDiagnosticsSummary: {
       status: snapshot.run.status,
       pendingNotificationCount: input.notificationLedger.pendingNotifications.length,

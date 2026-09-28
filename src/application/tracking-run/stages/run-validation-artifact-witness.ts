@@ -1,7 +1,11 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
-import type { TrackedItemAiAnalysis } from "../../../domain/types.js";
+import type {
+  PendingPersonalReminderTarget,
+  TrackedItemAiAnalysis,
+} from "../../../domain/types.js";
 import type { UtcIsoDateTime } from "../../../domain/index.js";
-import { buildSourceId, parseSourceId } from "../../../domain/source-id.js";
+import { buildSourceId, parseSourceId, type SourceId } from "../../../domain/source-id.js";
+import { isProductionSourceIdKind } from "../../../github/production-source-id.js";
 import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
 import type { CurrentSourceFact } from "../contracts/evidence-catalog.js";
 import type {
@@ -13,6 +17,7 @@ import type { ContentDigestPort } from "../ports.js";
 import { EvidenceCatalog } from "./evidence-catalog.js";
 import { resolveEvidenceUse } from "./evidence-closure-resolve.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
+import { assertMaterializedReferenceBindings } from "./run-validation-artifact-reference-binding.js";
 import { assertRunValueMatches } from "./run-validation-compare.js";
 import {
   assertCacheOwnerWitness,
@@ -83,54 +88,53 @@ export function createEvidenceClosureWitness(
   digest: ContentDigestPort,
 ): EvidenceClosureWitness {
   const usedIds = new Set(closure.uses.map((use) => use.sourceId));
-  const historicalIds = new Set(
-    closure.resolvedUses
-      .filter((resolved) => resolved.resolution === "historical")
-      .map((resolved) => resolved.use.sourceId),
-  );
   const currentSources = canonicalSort(
     closure.catalog.currentSources.filter((fact) => usedIds.has(fact.sourceId)),
   );
-  const usedHistoricalEvidence = canonicalSort(
-    historicalEvidence.filter((value) => historicalIds.has(value.record.evidence.sourceId)),
-  );
-  const historicalById = new Map<string, OwnedHistoricalEvidence[]>();
-  for (const value of usedHistoricalEvidence) {
-    const sourceId = value.record.evidence.sourceId;
-    const entries = historicalById.get(sourceId) ?? [];
-    entries.push(value);
-    historicalById.set(sourceId, entries);
+  const fullContext = Object.freeze({
+    evaluatedAt,
+    approvedRepositories,
+    historicalEvidence,
+  });
+  const currentById = indexedValues(currentSources);
+  const fullHistoricalById = indexedHistorical(historicalEvidence);
+  const selectedHistorical = new Map<string, OwnedHistoricalEvidence>();
+  for (const resolved of closure.resolvedUses) {
+    if (resolved.resolution !== "historical") continue;
+    const actual = resolveEvidenceUse(resolved.use, currentById, fullHistoricalById, fullContext);
+    assertRunValueMatches(actual.resolved, resolved, resolved.use.path, resolved.use.sourceId);
+    for (const value of actual.historical) {
+      selectedHistorical.set(serializeCanonicalJson(value), value);
+    }
   }
+  const usedHistoricalEvidence = canonicalSort([...selectedHistorical.values()]);
+  const historicalById = indexedHistorical(usedHistoricalEvidence);
   const context = Object.freeze({
     evaluatedAt,
     approvedRepositories,
     historicalEvidence: usedHistoricalEvidence,
   });
-  const currentById = indexedValues(currentSources);
   const cacheOwners = createCacheOwnerWitness(outward, values, digest);
+  const materializedReferences = collectMaterializedReferences(values, cacheOwners);
+  const resolvedUses = canonicalSort([
+    ...closure.resolvedUses.map((resolved) => {
+      const canonical = resolveEvidenceUse(resolved.use, currentById, historicalById, context);
+      assertRunValueMatches(canonical.resolved, resolved, resolved.use.path, resolved.use.sourceId);
+      return canonical.resolved;
+    }),
+    ...historicalLedgerUses(materializedReferences, values, evaluatedAt),
+  ]);
+  assertMaterializedReferenceBindings(materializedReferences, resolvedUses, values);
   return Object.freeze({
     currentSources,
     historicalEvidence: usedHistoricalEvidence,
-    resolvedUses: canonicalSort(
-      closure.resolvedUses.map((resolved) => {
-        const canonical = resolveEvidenceUse(resolved.use, currentById, historicalById, context);
-        if (canonical.resolved.resolution !== resolved.resolution) {
-          throw new RunCompletenessError(
-            "invalid_reference",
-            resolved.use.sourceId,
-            resolved.use.path,
-            undefined,
-          );
-        }
-        return canonical.resolved;
-      }),
-    ),
-    materializedReferences: collectMaterializedReferences(values, cacheOwners),
+    resolvedUses,
+    materializedReferences,
     cacheOwners,
   });
 }
 
-function canonicalSourceId(value: string): string {
+function canonicalSourceId(value: string): SourceId {
   const source = parseSourceId(value);
   return buildSourceId(source.kind, source.originalId);
 }
@@ -288,6 +292,81 @@ function indexedValues<Value extends Readonly<{ sourceId: string }>>(
   return groups;
 }
 
+function indexedHistorical(
+  values: readonly OwnedHistoricalEvidence[],
+): ReadonlyMap<string, readonly OwnedHistoricalEvidence[]> {
+  const groups = new Map<string, OwnedHistoricalEvidence[]>();
+  for (const value of values) {
+    const sourceId = value.record.evidence.sourceId;
+    const entries = groups.get(sourceId) ?? [];
+    entries.push(value);
+    groups.set(sourceId, entries);
+  }
+  return groups;
+}
+
+function historicalLedgerUses(
+  references: readonly MaterializedEvidenceReference[],
+  values: MaterializedReferenceValues,
+  evaluatedAt: UtcIsoDateTime,
+): readonly ResolvedEvidenceUse[] {
+  const uses: ResolvedEvidenceUse[] = [];
+  const evaluatedTime = Date.parse(evaluatedAt);
+  for (const reference of references) {
+    if (reference.path[0] !== "previousNotificationLedger") continue;
+    const pendingIndex = reference.path[2];
+    const pending =
+      typeof pendingIndex === "number"
+        ? values.previousNotificationLedger.pendingNotifications[pendingIndex]
+        : undefined;
+    const basisName = reference.path[4];
+    let basis: PendingPersonalReminderTarget["actionableSince"] | undefined;
+    if (pending?.target.kind === "personal_reminder") {
+      if (basisName === "actionableSince") basis = pending.target.actionableSince;
+      if (basisName === "stallSince") basis = pending.target.stallSince;
+    }
+    const sourceIndex = reference.path[6];
+    if (
+      pending == null ||
+      reference.path[1] !== "pendingNotifications" ||
+      reference.path.length !== 7 ||
+      reference.path[3] !== "target" ||
+      reference.path[5] !== "sourceIds" ||
+      basis?.source !== "event" ||
+      typeof sourceIndex !== "number" ||
+      basis.sourceIds[sourceIndex] !== reference.sourceId ||
+      Date.parse(basis.at) > evaluatedTime ||
+      Date.parse(pending.detectedAt) > evaluatedTime ||
+      reference.owner.kind !== "item" ||
+      reference.owner.id !== pending.itemNodeId ||
+      !isProductionSourceIdKind(parseSourceId(reference.sourceId).kind)
+    ) {
+      throw new RunCompletenessError(
+        "invalid_reference",
+        reference.sourceId,
+        reference.path,
+        undefined,
+      );
+    }
+    uses.push(
+      Object.freeze({
+        use: Object.freeze({
+          sourceId: canonicalSourceId(reference.sourceId),
+          path: reference.path,
+          destination: Object.freeze({ kind: "item", itemNodeId: pending.itemNodeId }),
+          purpose: "previous_notification_pending",
+          requiredCurrentness: "historical_allowed",
+          allowedOwnerNodeIds: Object.freeze([pending.itemNodeId]),
+          allowedRelationIds: Object.freeze([]),
+        }),
+        resolution: "historical",
+        recordIdentity: serializeCanonicalJson(pending),
+      }),
+    );
+  }
+  return canonicalSort(uses);
+}
+
 /** 公開witnessの各参照をsource事実と所有位置から再解決する。 */
 export function assertEvidenceClosureWitness(
   witness: EvidenceClosureWitness,
@@ -339,11 +418,6 @@ export function assertEvidenceClosureWitness(
       .filter((resolved) => resolved.resolution === "current")
       .map((resolved) => resolved.use.sourceId),
   );
-  const historicalIds = new Set(
-    witness.resolvedUses
-      .filter((resolved) => resolved.resolution === "historical")
-      .map((resolved) => resolved.use.sourceId),
-  );
   assertRunValueMatches(
     { referenceCount: witness.resolvedUses.length, sourceIds },
     summary,
@@ -359,19 +433,27 @@ export function assertEvidenceClosureWitness(
     "closure",
   );
   const currentById = indexedValues(witness.currentSources);
-  const historicalById = new Map<string, OwnedHistoricalEvidence[]>();
-  for (const value of witness.historicalEvidence) {
-    const sourceId = value.record.evidence.sourceId;
-    const entries = historicalById.get(sourceId) ?? [];
-    entries.push(value);
-    historicalById.set(sourceId, entries);
-  }
+  const historicalById = indexedHistorical(witness.historicalEvidence);
   const context = Object.freeze({
     evaluatedAt,
     approvedRepositories,
     historicalEvidence: witness.historicalEvidence,
   });
+  const selectedHistorical = new Map<string, OwnedHistoricalEvidence>();
   for (const resolved of witness.resolvedUses) {
+    assertRunValueMatches(
+      [...new Set(resolved.use.allowedOwnerNodeIds)].sort(),
+      resolved.use.allowedOwnerNodeIds,
+      ["evidenceClosureWitness", "resolvedUses", resolved.use.sourceId, "allowedOwnerNodeIds"],
+      resolved.use.sourceId,
+    );
+    assertRunValueMatches(
+      [...new Set(resolved.use.allowedRelationIds)].sort(),
+      resolved.use.allowedRelationIds,
+      ["evidenceClosureWitness", "resolvedUses", resolved.use.sourceId, "allowedRelationIds"],
+      resolved.use.sourceId,
+    );
+    if (resolved.use.path[0] === "previousNotificationLedger") continue;
     const actual = resolveEvidenceUse(resolved.use, currentById, historicalById, context);
     assertRunValueMatches(
       actual.resolved,
@@ -379,6 +461,9 @@ export function assertEvidenceClosureWitness(
       ["evidenceClosureWitness", "resolvedUses", resolved.use.sourceId],
       resolved.use.sourceId,
     );
+    for (const value of actual.historical) {
+      selectedHistorical.set(serializeCanonicalJson(value), value);
+    }
   }
   for (const fact of witness.currentSources) {
     if (!currentIds.has(fact.sourceId)) {
@@ -390,52 +475,19 @@ export function assertEvidenceClosureWitness(
       );
     }
   }
-  for (const historical of witness.historicalEvidence) {
-    if (!historicalIds.has(historical.record.evidence.sourceId)) {
-      throw new RunCompletenessError(
-        "invalid_reference",
-        historical.record.evidence.sourceId,
-        ["evidenceClosureWitness", "historicalEvidence"],
-        undefined,
-      );
-    }
-  }
-  for (const reference of witness.materializedReferences) {
-    if (reference.path[0] === "previousNotificationLedger") continue;
-    const matching = witness.resolvedUses.some((resolved) => {
-      if (resolved.use.sourceId !== reference.sourceId) return false;
-      if (reference.owner.kind === "relation") {
-        return (
-          resolved.use.destination.kind === "relation" &&
-          resolved.use.destination.relationId === reference.owner.id
-        );
-      }
-      return resolved.use.allowedOwnerNodeIds.includes(reference.owner.id);
-    });
-    if (!matching) {
-      throw new RunCompletenessError("wrong_owner", reference.sourceId, reference.path, undefined);
-    }
-  }
-  for (const resolved of witness.resolvedUses) {
-    if (
-      resolved.use.path[0] !== "aiCacheAdditions" &&
-      resolved.use.path[0] !== "personalReminderAiCacheAdditions"
-    )
-      continue;
-    const found = witness.materializedReferences.some(
-      (reference) =>
-        reference.sourceId === resolved.use.sourceId &&
-        serializeCanonicalJson(reference.path) === serializeCanonicalJson(resolved.use.path) &&
-        reference.owner.kind === "item" &&
-        resolved.use.allowedOwnerNodeIds.includes(reference.owner.id),
-    );
-    if (!found) {
-      throw new RunCompletenessError(
-        "missing_value",
-        resolved.use.sourceId,
-        resolved.use.path,
-        undefined,
-      );
-    }
-  }
+  assertRunValueMatches(
+    canonicalSort([...selectedHistorical.values()]),
+    witness.historicalEvidence,
+    ["evidenceClosureWitness", "historicalEvidence"],
+    "closure",
+  );
+  assertRunValueMatches(
+    historicalLedgerUses(witness.materializedReferences, values, evaluatedAt),
+    witness.resolvedUses.filter(
+      (resolved) => resolved.use.path[0] === "previousNotificationLedger",
+    ),
+    ["evidenceClosureWitness", "resolvedUses"],
+    "closure",
+  );
+  assertMaterializedReferenceBindings(witness.materializedReferences, witness.resolvedUses, values);
 }
