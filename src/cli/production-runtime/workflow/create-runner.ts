@@ -6,7 +6,12 @@ import { createNotifyWorkflowOperationsStage } from "./notify-operations.js";
 import { createPersistWorkflowStateStage } from "./persist-state.js";
 import { reportWorkflowRun } from "./report-run.js";
 import { createResolveDiscordDeliveryStage } from "./resolve-delivery.js";
-import { verifyCheckpointCommand, verifyRuntimeRecoveryCommand } from "../../verify-publication.js";
+import {
+  reportFailureCommand,
+  verifyCheckpointCommand,
+  verifyReceiptChainCommand,
+  verifyRuntimeRecoveryCommand,
+} from "../../verify-publication.js";
 
 /** workflowの6段階を既存実行順に接続する。 */
 export function createWorkflowStageRunner(
@@ -21,5 +26,7 @@ export function createWorkflowStageRunner(
     reportWorkflow: (command) => reportWorkflowRun(adapters, command),
     verifyCheckpoint: (command) => verifyCheckpointCommand(adapters, command),
     verifyRuntimeRecovery: (command) => verifyRuntimeRecoveryCommand(adapters, command),
+    verifyReceiptChain: (command) => verifyReceiptChainCommand(adapters, command),
+    reportFailure: (command) => reportFailureCommand(adapters, command),
   });
 }

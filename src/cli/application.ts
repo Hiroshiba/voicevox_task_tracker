@@ -28,7 +28,9 @@ export type CliExecutionResult =
         | "notify-operations"
         | "report-workflow"
         | "verify-checkpoint"
-        | "verify-runtime-recovery";
+        | "verify-runtime-recovery"
+        | "verify-receipt-chain"
+        | "report-failure";
       exitCode: 0;
     }>
   | Readonly<{
@@ -84,6 +86,8 @@ export class CliApplication<Types extends DailyTransactionTypeMap> {
       case "report-workflow":
       case "verify-checkpoint":
       case "verify-runtime-recovery":
+      case "verify-receipt-chain":
+      case "report-failure":
         await this.#dependencies.workflowStageRunner.run(command);
         return Object.freeze({
           command: command.kind,

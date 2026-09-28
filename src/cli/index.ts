@@ -20,6 +20,8 @@ export {
   type ReportWorkflowCliCommand,
   type ResolveDiscordDeliveryCliCommand,
   type VerifyStateCliCommand,
+  type VerifyReceiptChainCliCommand,
+  type ReportFailureCliCommand,
 } from "./command.js";
 export {
   DailyTransactionRunner,

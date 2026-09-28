@@ -12,6 +12,7 @@ import { type CliExecutionResult } from "./application.js";
 import { notificationActionSchema, parseCliArguments, type CliCommand } from "./command.js";
 import { createDefaultCliApplication } from "./composition-root.js";
 import { safeErrorDiagnostic } from "./error-diagnostic.js";
+import { RecordedFailureError } from "./failure-diagnostic.js";
 import { isPublicBoundaryViolation } from "./public-boundary-error.js";
 import {
   CliCodexAuthenticationError,
@@ -118,7 +119,9 @@ export function createTrackerRunCliArguments(args: readonly string[]): readonly 
     args[0] === "report-workflow" ||
     args[0] === "verify-state" ||
     args[0] === "verify-checkpoint" ||
-    args[0] === "verify-runtime-recovery"
+    args[0] === "verify-runtime-recovery" ||
+    args[0] === "verify-receipt-chain" ||
+    args[0] === "report-failure"
   ) {
     const command = parseCliArguments(args);
     if (command.kind !== args[0]) {
@@ -188,6 +191,8 @@ function topLevelDiagnosticStage(command: CliCommand): RunStage | "unknown" {
     case "verify-state":
     case "verify-checkpoint":
     case "verify-runtime-recovery":
+    case "verify-receipt-chain":
+    case "report-failure":
     case "help":
       return "unknown";
     default:
@@ -236,6 +241,9 @@ async function recordTopLevelError(
   invocationId: string,
   error: unknown,
 ): Promise<unknown> {
+  if (error instanceof RecordedFailureError) {
+    return error;
+  }
   if (recorder == null) {
     return error;
   }

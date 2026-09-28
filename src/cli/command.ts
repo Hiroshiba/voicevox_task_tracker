@@ -156,6 +156,19 @@ export type VerifyRuntimeRecoveryCliCommand = Readonly<{
   bundleRoot: string;
 }>;
 
+/** receipt列の保存内容を検証する入力。 */
+export type VerifyReceiptChainCliCommand = Readonly<{
+  kind: "verify-receipt-chain";
+  inputPath: string;
+}>;
+
+/** 記録済み失敗runから公開artifactを作る入力。 */
+export type ReportFailureCliCommand = Readonly<{
+  kind: "report-failure";
+  inputPath: string;
+  outputPath: string;
+}>;
+
 /** CLIの使用方法だけを表示する入力。 */
 export type HelpCliCommand = Readonly<{
   kind: "help";
@@ -176,6 +189,8 @@ export type CliCommand =
   | VerifyStateCliCommand
   | VerifyCheckpointCliCommand
   | VerifyRuntimeRecoveryCliCommand
+  | VerifyReceiptChainCliCommand
+  | ReportFailureCliCommand
   | HelpCliCommand;
 
 type ParsedOptions = ReadonlyMap<string, readonly string[]>;
@@ -677,6 +692,23 @@ function parseVerifyRuntimeRecovery(args: readonly string[]): VerifyRuntimeRecov
   });
 }
 
+function parseVerifyReceiptChain(args: readonly string[]): VerifyReceiptChainCliCommand {
+  const options = parseOptions(args, new Set(["--input"]));
+  return Object.freeze({
+    kind: "verify-receipt-chain",
+    inputPath: requiredSingleOption(options, "--input", "verify-receipt-chain"),
+  });
+}
+
+function parseReportFailure(args: readonly string[]): ReportFailureCliCommand {
+  const options = parseOptions(args, new Set(["--input", "--output"]));
+  return Object.freeze({
+    kind: "report-failure",
+    inputPath: requiredSingleOption(options, "--input", "report-failure"),
+    outputPath: requiredSingleOption(options, "--output", "report-failure"),
+  });
+}
+
 /** process argvからサブコマンドとoptionを検証して取り出す。 */
 export function parseCliArguments(args: readonly string[]): CliCommand {
   const subcommand = args[0];
@@ -719,6 +751,10 @@ export function parseCliArguments(args: readonly string[]): CliCommand {
       return parseVerifyCheckpoint(options);
     case "verify-runtime-recovery":
       return parseVerifyRuntimeRecovery(options);
+    case "verify-receipt-chain":
+      return parseVerifyReceiptChain(options);
+    case "report-failure":
+      return parseReportFailure(options);
     default:
       throw usageError(`未対応のサブコマンドです。対象: ${subcommand}`);
   }
@@ -742,5 +778,7 @@ export function formatCliUsage(): string {
     "  voicevox-task-tracker verify-state --state-directory PATH [--config PATH]",
     "  voicevox-task-tracker verify-checkpoint [--artifact PATH] [--config PATH]",
     "  voicevox-task-tracker verify-runtime-recovery --input PATH --bundle-root PATH",
+    "  voicevox-task-tracker verify-receipt-chain --input PATH",
+    "  voicevox-task-tracker report-failure --input PATH --output PATH",
   ].join("\n");
 }

@@ -1,0 +1,236 @@
+import { serializeCanonicalJson } from "../../canonical-json/value.js";
+import type { ContentDigestPort } from "./ports.js";
+import { parseReceipt } from "./receipt-codec.js";
+import type { Receipt } from "./receipt-schema.js";
+import {
+  parseInitialPagesPublicationEvidence,
+  type InitialPagesEvidenceState,
+} from "./initial-pages-evidence.js";
+
+const receiptChainProofBrand: unique symbol = Symbol("receiptChainProof");
+
+/** receiptの順序と識別を検証した証明。 */
+export type ReceiptChainProof = Readonly<{
+  lastReceiptDigest: Receipt["receiptDigest"];
+  completedPhaseSequence: number;
+  readonly [receiptChainProofBrand]: true;
+}>;
+
+/** 検証済みのreceipt列とその連鎖証明。 */
+export type VerifiedReceiptChain = Readonly<{
+  receipts: readonly Receipt[];
+  proof: ReceiptChainProof;
+}>;
+
+/** observed receiptの根拠となるexact state証拠。 */
+export type ReceiptChainEvidence =
+  | Readonly<{ kind: "none" }>
+  | Readonly<{ kind: "initial_pages_state"; state: InitialPagesEvidenceState }>;
+
+function assertObservedReceiptEvidence(
+  receipt: Receipt,
+  witness: ReceiptChainEvidence,
+  digest: ContentDigestPort,
+): void {
+  if (receipt.receiptKind !== "observed") {
+    return;
+  }
+  if (
+    witness.kind !== "initial_pages_state" ||
+    receipt.receiptType !== "pages_deployment" ||
+    receipt.result == null ||
+    receipt.binding.bindingKind !== "checkpoint"
+  ) {
+    throw new TypeError("observed receiptのstate証拠がありません");
+  }
+  const evidence = parseInitialPagesPublicationEvidence(witness.state.evidence, digest);
+  if (
+    witness.state.marker.initialPagesPublicationEvidenceDigest !== evidence.evidenceDigest ||
+    witness.state.marker.initialStateRevision !== evidence.sourceStateRevision ||
+    witness.state.marker.runId !== evidence.runId ||
+    witness.state.marker.checkpointDigest !== evidence.checkpointDigest ||
+    receipt.expectedStateRevision !== witness.state.exactStateRevision ||
+    receipt.binding.runId !== evidence.runId ||
+    receipt.binding.checkpointDigest !== evidence.checkpointDigest ||
+    receipt.operationId !== evidence.deploymentOperationId ||
+    receipt.receiptDigest === evidence.deploymentReceiptDigest ||
+    receipt.result.observedSourceReceiptDigest !== evidence.deploymentReceiptDigest ||
+    receipt.result.evidenceDigest !== evidence.evidenceDigest ||
+    receipt.result.deploymentIntentDigest !== evidence.deploymentIntentDigest ||
+    receipt.result.pagesContentDigest !== evidence.pagesContentDigest ||
+    receipt.result.sourceStateRevision !== evidence.sourceStateRevision ||
+    receipt.result.pageUrl !== evidence.pageUrl ||
+    serializeCanonicalJson(receipt.result.externalReference) !==
+      serializeCanonicalJson(evidence.externalReference) ||
+    receipt.effectOccurredAt !== evidence.effectOccurredAt
+  ) {
+    throw new TypeError("observed receiptと保存済みPages証拠が一致しません");
+  }
+}
+
+function stateRevision(receipt: Receipt): string | undefined {
+  if (receipt.receiptType === "notification_message") {
+    return receipt.result.ledgerStateRevision;
+  }
+  if (
+    receipt.receiptType === "initial_state_commit" ||
+    receipt.receiptType === "notification_settlement" ||
+    receipt.receiptType === "manual_resolution" ||
+    receipt.receiptType === "run_finalization"
+  ) {
+    return receipt.result.resultingStateRevision;
+  }
+  return undefined;
+}
+
+function assertCompatibleOperation(previous: Receipt, current: Receipt): void {
+  if (
+    previous.receiptType !== current.receiptType ||
+    previous.logicalTarget !== current.logicalTarget ||
+    serializeCanonicalJson(previous.binding) !== serializeCanonicalJson(current.binding)
+  ) {
+    throw new TypeError("同じoperation IDが異なる論理効果を表しています");
+  }
+  if (
+    (previous.effectCertainty === "committed" && current.effectCertainty === "no_effect") ||
+    (previous.effectCertainty === "no_effect" && current.effectCertainty === "committed")
+  ) {
+    throw new TypeError("同じoperation IDに矛盾する副作用確度があります");
+  }
+  const previousRevision = stateRevision(previous);
+  const currentRevision = stateRevision(current);
+  if (previousRevision != null && currentRevision != null && previousRevision !== currentRevision) {
+    throw new TypeError("同じoperation IDに異なる結果revisionがあります");
+  }
+  if (
+    previous.effectCertainty === "committed" &&
+    current.effectCertainty === "committed" &&
+    previous.receiptType !== "pages_deployment" &&
+    serializeCanonicalJson(previous.result) !== serializeCanonicalJson(current.result)
+  ) {
+    throw new TypeError("同じoperation IDに異なる確定結果があります");
+  }
+  if (
+    previous.effectCertainty === "no_effect" &&
+    current.effectCertainty === "no_effect" &&
+    previous.status !== current.status
+  ) {
+    throw new TypeError("同じoperation IDに異なる未実行結果があります");
+  }
+  if (
+    previous.receiptType === "pages_deployment" &&
+    current.receiptType === "pages_deployment" &&
+    previous.result != null &&
+    current.result != null
+  ) {
+    if (
+      previous.result.pagesContentDigest !== current.result.pagesContentDigest ||
+      previous.result.pageUrl !== current.result.pageUrl ||
+      previous.result.deploymentIntentDigest !== current.result.deploymentIntentDigest ||
+      (previous.status !== "replayed_same_content" &&
+        current.status !== "replayed_same_content" &&
+        serializeCanonicalJson(previous.result.externalReference) !==
+          serializeCanonicalJson(current.result.externalReference))
+    ) {
+      throw new TypeError("同じPages operation IDに矛盾する公開結果があります");
+    }
+  }
+  if (
+    previous.receiptType === "notification_message" &&
+    current.receiptType === "notification_message" &&
+    previous.result.discordMessageId != null &&
+    current.result.discordMessageId != null &&
+    previous.result.discordMessageId !== current.result.discordMessageId
+  ) {
+    throw new TypeError("同じ通知operation IDに異なるmessage IDがあります");
+  }
+}
+
+/** receipt列の識別、前段digest、revision、phase順序を照合する。 */
+export function verifyReceiptChain(
+  values: readonly unknown[],
+  digest: ContentDigestPort,
+  evidence: ReceiptChainEvidence,
+): VerifiedReceiptChain {
+  const receipts: Receipt[] = [];
+  const byAttempt = new Map<string, Receipt>();
+  const byOperation = new Map<string, Receipt>();
+  let checkpointBinding: string | undefined;
+  let preCheckpointRunId: string | undefined;
+  let lastTrackingStateRevision: string | undefined;
+  for (const value of values) {
+    const receipt = parseReceipt(value, digest);
+    assertObservedReceiptEvidence(receipt, evidence, digest);
+    if (receipt.binding.bindingKind === "checkpoint") {
+      const binding = serializeCanonicalJson(receipt.binding);
+      if (
+        (checkpointBinding != null && checkpointBinding !== binding) ||
+        (preCheckpointRunId != null && preCheckpointRunId !== receipt.binding.runId)
+      ) {
+        throw new TypeError("receipt chainのrunまたはcheckpoint結合が途中で変わりました");
+      }
+      checkpointBinding = binding;
+    }
+    if (receipt.binding.bindingKind === "run_pre_checkpoint_alert") {
+      if (
+        (preCheckpointRunId != null && preCheckpointRunId !== receipt.binding.runId) ||
+        checkpointBinding != null
+      ) {
+        throw new TypeError("checkpoint成立後にcheckpoint前の運用通知があります");
+      }
+      preCheckpointRunId = receipt.binding.runId;
+    }
+    const priorAttempt = byAttempt.get(receipt.attemptId);
+    if (priorAttempt != null) {
+      if (priorAttempt.receiptDigest !== receipt.receiptDigest) {
+        throw new TypeError("同じattempt IDに異なるreceiptがあります");
+      }
+      continue;
+    }
+    const priorOperation = byOperation.get(receipt.operationId);
+    if (priorOperation != null) {
+      assertCompatibleOperation(priorOperation, receipt);
+    }
+    const previous = receipts.at(-1);
+    if (previous != null) {
+      if (
+        receipt.previousReceiptDigest !== previous.receiptDigest ||
+        receipt.phaseSequence !== previous.phaseSequence + 1 ||
+        (previous.binding.bindingKind === "checkpoint" &&
+          receipt.binding.bindingKind === "checkpoint" &&
+          serializeCanonicalJson(previous.binding) !== serializeCanonicalJson(receipt.binding))
+      ) {
+        throw new TypeError("receiptの結合または順序が直前receiptと一致しません");
+      }
+    }
+    if (
+      lastTrackingStateRevision != null &&
+      receipt.expectedStateRevision != null &&
+      receipt.binding.bindingKind === "checkpoint" &&
+      lastTrackingStateRevision !== receipt.expectedStateRevision
+    ) {
+      throw new TypeError("receiptの期待state revisionが直前のtracking結果と一致しません");
+    }
+    byAttempt.set(receipt.attemptId, receipt);
+    byOperation.set(receipt.operationId, receipt);
+    receipts.push(receipt);
+    const resultingRevision = stateRevision(receipt);
+    if (resultingRevision != null) {
+      lastTrackingStateRevision = resultingRevision;
+    }
+  }
+  const last = receipts.at(-1);
+  if (last == null) {
+    throw new TypeError("receipt chainが空です");
+  }
+  const proof: ReceiptChainProof = {
+    lastReceiptDigest: last.receiptDigest,
+    completedPhaseSequence: last.phaseSequence,
+    [receiptChainProofBrand]: true,
+  };
+  Object.freeze(proof);
+  return Object.freeze({
+    receipts: Object.freeze(receipts),
+    proof,
+  });
+}
