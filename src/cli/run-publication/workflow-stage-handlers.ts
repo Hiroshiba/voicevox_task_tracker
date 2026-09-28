@@ -24,6 +24,11 @@ import type {
 import { buildPublicPages } from "./pages.js";
 import { persistSuccessfulRunCompletion } from "./persistence.js";
 import { discordDeliverySettings, pagesUrl } from "./settings.js";
+import {
+  assertWorkflowDeliveryLedgerMatches,
+  assertWorkflowInitialLedgerMatches,
+  assertWorkflowSnapshotMatches,
+} from "./workflow-state-identity.js";
 
 type WorkflowStateAdapters = Pick<
   RunPublicationAdapters,
@@ -127,12 +132,11 @@ export async function buildWorkflowPages(
     config.staleness.timezone,
   );
   const persistedSnapshot = await session.loadSnapshot();
-  if (
-    persistedSnapshot.status !== "available" ||
-    persistedSnapshot.snapshot.run.id !== artifact.validated.snapshot.run.id
-  ) {
-    throw new TypeError("Pages生成対象のrunがtracker-state branchにありません");
+  if (persistedSnapshot.status !== "available") {
+    throw new TypeError("Pages生成対象のstate snapshotがありません");
   }
+  assertWorkflowSnapshotMatches(artifact.validated, persistedSnapshot.snapshot);
+  assertWorkflowInitialLedgerMatches(artifact.validated, await session.loadNotificationLedger());
   const historyRecords = await session.loadHistoryRecords();
   await buildPublicPages({
     writePublicData: dependencies.adapters.writePublicData,
@@ -182,15 +186,13 @@ export async function notifyWorkflowDiscord(
   if (persistedSnapshot.status !== "available") {
     throw new TypeError("Discord通知対象のstate snapshotがありません");
   }
-  if (persistedSnapshot.snapshot.run.id !== artifact.validated.snapshot.run.id) {
-    throw new TypeError(
-      "Discord通知対象のworkflow artifactとtracker-state branchでrunが一致しません",
-    );
-  }
+  assertWorkflowSnapshotMatches(artifact.validated, persistedSnapshot.snapshot);
+  const notificationLedger = await session.loadNotificationLedger();
+  assertWorkflowDeliveryLedgerMatches(artifact.validated, notificationLedger);
   const state = Object.freeze({
     session,
     snapshot: persistedSnapshot,
-    notificationLedger: await session.loadNotificationLedger(),
+    notificationLedger,
   });
   if (
     artifact.notificationAction === "acknowledge-current" ||
