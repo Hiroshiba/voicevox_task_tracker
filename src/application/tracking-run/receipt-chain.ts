@@ -83,13 +83,57 @@ function stateRevision(receipt: Receipt): string | undefined {
   return undefined;
 }
 
-function assertCompatibleOperation(previous: Receipt, current: Receipt): void {
+function assertCompatibleNotificationAttempt(
+  previous: Extract<Receipt, { receiptType: "notification_message" }>,
+  current: Extract<Receipt, { receiptType: "notification_message" }>,
+  receipts: readonly Receipt[],
+  previousIndex: number,
+): void {
+  const manuallyReleased = receipts
+    .slice(previousIndex + 1)
+    .some(
+      (receipt) =>
+        receipt.receiptType === "manual_resolution" &&
+        receipt.result.deliveryId === previous.result.deliveryId &&
+        receipt.result.decision === "retry",
+    );
+  const reusedAttemptResult = receipts.some(
+    (receipt) =>
+      receipt.receiptType === "notification_message" &&
+      receipt.operationId === current.operationId &&
+      (receipt.result.deliveryId === current.result.deliveryId ||
+        receipt.result.ledgerStateRevision === current.result.ledgerStateRevision),
+  );
+  if (
+    previous.result.notificationKey !== current.result.notificationKey ||
+    reusedAttemptResult ||
+    previous.durableAttemptSequence >= current.durableAttemptSequence ||
+    previous.status === "sent" ||
+    (previous.status === "ambiguous" && !manuallyReleased)
+  ) {
+    throw new TypeError("同じ通知operationの配送試行またはledger連鎖が矛盾しています");
+  }
+}
+
+function assertCompatibleOperation(
+  previous: Receipt,
+  current: Receipt,
+  receipts: readonly Receipt[],
+  previousIndex: number,
+): void {
   if (
     previous.receiptType !== current.receiptType ||
     previous.logicalTarget !== current.logicalTarget ||
     serializeCanonicalJson(previous.binding) !== serializeCanonicalJson(current.binding)
   ) {
     throw new TypeError("同じoperation IDが異なる論理効果を表しています");
+  }
+  if (
+    previous.receiptType === "notification_message" &&
+    current.receiptType === "notification_message"
+  ) {
+    assertCompatibleNotificationAttempt(previous, current, receipts, previousIndex);
+    return;
   }
   if (
     (previous.effectCertainty === "committed" && current.effectCertainty === "no_effect") ||
@@ -154,9 +198,11 @@ export function verifyReceiptChain(
 ): VerifiedReceiptChain {
   const receipts: Receipt[] = [];
   const byAttempt = new Map<string, Receipt>();
-  const byOperation = new Map<string, Receipt>();
+  const byOperation = new Map<string, Readonly<{ receipt: Receipt; index: number }>>();
   let checkpointBinding: string | undefined;
   let preCheckpointRunId: string | undefined;
+  let preCheckpointBaseRevision: string | undefined;
+  let preCheckpointConfigDigest: string | undefined;
   let lastTrackingStateRevision: string | undefined;
   for (const value of values) {
     const receipt = parseReceipt(value, digest);
@@ -172,13 +218,19 @@ export function verifyReceiptChain(
       checkpointBinding = binding;
     }
     if (receipt.binding.bindingKind === "run_pre_checkpoint_alert") {
+      const baseRevision = serializeCanonicalJson(receipt.binding.baseStateRevision);
       if (
         (preCheckpointRunId != null && preCheckpointRunId !== receipt.binding.runId) ||
+        (preCheckpointBaseRevision != null && preCheckpointBaseRevision !== baseRevision) ||
+        (preCheckpointConfigDigest != null &&
+          preCheckpointConfigDigest !== receipt.binding.configDigest) ||
         checkpointBinding != null
       ) {
-        throw new TypeError("checkpoint成立後にcheckpoint前の運用通知があります");
+        throw new TypeError("checkpoint前の運用通知のrunまたはbaseが一致しません");
       }
       preCheckpointRunId = receipt.binding.runId;
+      preCheckpointBaseRevision = baseRevision;
+      preCheckpointConfigDigest = receipt.binding.configDigest;
     }
     const priorAttempt = byAttempt.get(receipt.attemptId);
     if (priorAttempt != null) {
@@ -189,7 +241,7 @@ export function verifyReceiptChain(
     }
     const priorOperation = byOperation.get(receipt.operationId);
     if (priorOperation != null) {
-      assertCompatibleOperation(priorOperation, receipt);
+      assertCompatibleOperation(priorOperation.receipt, receipt, receipts, priorOperation.index);
     }
     const previous = receipts.at(-1);
     if (previous != null) {
@@ -212,7 +264,7 @@ export function verifyReceiptChain(
       throw new TypeError("receiptの期待state revisionが直前のtracking結果と一致しません");
     }
     byAttempt.set(receipt.attemptId, receipt);
-    byOperation.set(receipt.operationId, receipt);
+    byOperation.set(receipt.operationId, { receipt, index: receipts.length });
     receipts.push(receipt);
     const resultingRevision = stateRevision(receipt);
     if (resultingRevision != null) {

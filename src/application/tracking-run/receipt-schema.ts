@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { analysisRunStageNames } from "./contracts/closed-values.js";
+import { baseStateRevisionSchema } from "./contracts/run-core.js";
 import { gitCommitRevisionSchema } from "./contracts/revision.js";
 
 const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
@@ -45,7 +46,7 @@ export const receiptBindingSchema = z.discriminatedUnion("bindingKind", [
   z.strictObject({
     bindingKind: z.literal("run_pre_checkpoint_alert"),
     runId: runIdSchema,
-    baseStateRevision: gitCommitRevisionSchema,
+    baseStateRevision: baseStateRevisionSchema,
     configDigest: sha256Schema,
     failureArtifactDigest: sha256Schema,
     failedStage: preCheckpointFailureStageSchema,
@@ -111,7 +112,9 @@ const receiptFields = {
   attemptId: attemptIdSchema,
   phaseSequence: positiveIntegerSchema,
   previousReceiptDigest: sha256Schema.optional(),
-  expectedStateRevision: gitCommitRevisionSchema.optional(),
+  expectedStateRevision: z
+    .union([gitCommitRevisionSchema, z.strictObject({ status: z.literal("missing") })])
+    .optional(),
   receiptKind: z.enum(["executed", "observed", "not_required", "superseded"]),
   observedAt: observedAtSchema,
   effectOccurredAt: observedAtSchema.optional(),

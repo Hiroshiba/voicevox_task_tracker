@@ -89,7 +89,13 @@ function assertReceiptSemantics(receipt: Receipt): void {
     (receipt.binding.bindingKind === "state_bootstrap_alert" &&
       receipt.expectedStateRevision !== receipt.binding.observedStateRevision) ||
     (receipt.binding.bindingKind === "run_pre_checkpoint_alert" &&
-      receipt.expectedStateRevision !== receipt.binding.baseStateRevision)
+      (receipt.binding.baseStateRevision.status === "present"
+        ? receipt.expectedStateRevision !== receipt.binding.baseStateRevision.revision
+        : typeof receipt.expectedStateRevision !== "object")) ||
+    (typeof receipt.expectedStateRevision === "object" &&
+      receipt.binding.bindingKind === "checkpoint" &&
+      receipt.receiptType !== "initial_state_commit" &&
+      receipt.receiptType !== "operations_alert")
   ) {
     throw new TypeError("checkpoint前の運用通知に存在しないstate revisionがあります");
   }
@@ -145,6 +151,8 @@ function assertReceiptSemantics(receipt: Receipt): void {
   }
   if (receipt.receiptType === "notification_message") {
     if (
+      typeof receipt.expectedStateRevision !== "string" ||
+      receipt.result.ledgerStateRevision === receipt.expectedStateRevision ||
       (receipt.status === "sent") !== (receipt.effectCertainty === "committed") ||
       (receipt.status === "ambiguous") !== (receipt.effectCertainty === "ambiguous") ||
       (receipt.status === "sent") !== (receipt.result.discordMessageId != null)
@@ -169,7 +177,9 @@ function assertReceiptSemantics(receipt: Receipt): void {
       receipt.receiptType === "manual_resolution" ||
       receipt.receiptType === "run_finalization") &&
     (receipt.receiptType === "initial_state_commit"
-      ? (receipt.expectedStateRevision ?? "unborn") !== receipt.result.expectedTrackingStateRevision
+      ? (typeof receipt.expectedStateRevision === "object"
+          ? "unborn"
+          : receipt.expectedStateRevision) !== receipt.result.expectedTrackingStateRevision
       : receipt.expectedStateRevision !== receipt.result.expectedTrackingStateRevision ||
         receipt.result.expectedTrackingStateRevision === "unborn" ||
         receipt.result.actualParentStateRevision === "unborn")
