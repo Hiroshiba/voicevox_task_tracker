@@ -1,11 +1,7 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
-import type {
-  PendingPersonalReminderTarget,
-  TrackedItemAiAnalysis,
-} from "../../../domain/types.js";
+import type { TrackedItemAiAnalysis } from "../../../domain/types.js";
 import type { UtcIsoDateTime } from "../../../domain/index.js";
 import { buildSourceId, parseSourceId, type SourceId } from "../../../domain/source-id.js";
-import { isProductionSourceIdKind } from "../../../github/production-source-id.js";
 import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
 import type { CurrentSourceFact } from "../contracts/evidence-catalog.js";
 import type {
@@ -17,7 +13,12 @@ import type { ContentDigestPort } from "../ports.js";
 import { EvidenceCatalog } from "./evidence-catalog.js";
 import { resolveEvidenceUse } from "./evidence-closure-resolve.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
-import { assertMaterializedReferenceBindings } from "./run-validation-artifact-reference-binding.js";
+import {
+  assertMaterializedReferenceBindings,
+  collectMaterializedSourceUses,
+} from "./run-validation-artifact-reference-binding.js";
+import { assertSourceReferenceCoverage } from "./run-validation-source-audit.js";
+import { assertStageSourceValuesMatch } from "./run-validation-stage-source-binding.js";
 import { assertRunValueMatches } from "./run-validation-compare.js";
 import {
   assertCacheOwnerWitness,
@@ -52,12 +53,18 @@ export type MaterializedEvidenceReference = Readonly<{
 
 export type MaterializedReferenceValues = Readonly<{
   snapshot: Readonly<{
+    generatedAt: UtcIsoDateTime;
     items: readonly Readonly<{
       nodeId: string;
       aiAnalysis: TrackedItemAiAnalysis;
       personalReminderCauses: readonly Readonly<{ causeId: string }>[];
     }>[];
     relations: readonly Readonly<{ id: string }>[];
+    collection: Readonly<{
+      repositories: readonly Readonly<{
+        items: readonly Readonly<{ nodeId: string; aiAnalysis: TrackedItemAiAnalysis }>[];
+      }>[];
+    }>;
   }>;
   historyInputEvents: readonly Readonly<{ itemNodeId: string }>[];
   aiCacheAdditions: readonly RunAiCacheAddition[];
@@ -87,7 +94,11 @@ export function createEvidenceClosureWitness(
   outward: Pick<EvidenceClosureAdditions, "aiCacheAdditions" | "personalReminderAiCacheAdditions">,
   digest: ContentDigestPort,
 ): EvidenceClosureWitness {
-  const usedIds = new Set(closure.uses.map((use) => use.sourceId));
+  assertStageSourceValuesMatch(closure, values);
+  const cacheOwners = createCacheOwnerWitness(outward, values, digest);
+  const materializedReferences = collectMaterializedReferences(values, cacheOwners);
+  const sourceUses = collectMaterializedSourceUses(materializedReferences, values);
+  const usedIds = new Set(sourceUses.map(({ use }) => use.sourceId));
   const currentSources = canonicalSort(
     closure.catalog.currentSources.filter((fact) => usedIds.has(fact.sourceId)),
   );
@@ -99,10 +110,14 @@ export function createEvidenceClosureWitness(
   const currentById = indexedValues(currentSources);
   const fullHistoricalById = indexedHistorical(historicalEvidence);
   const selectedHistorical = new Map<string, OwnedHistoricalEvidence>();
-  for (const resolved of closure.resolvedUses) {
-    if (resolved.resolution !== "historical") continue;
-    const actual = resolveEvidenceUse(resolved.use, currentById, fullHistoricalById, fullContext);
-    assertRunValueMatches(actual.resolved, resolved, resolved.use.path, resolved.use.sourceId);
+  for (const { use, annotation } of sourceUses) {
+    const actual = resolveEvidenceUse(
+      use,
+      currentById,
+      fullHistoricalById,
+      fullContext,
+      annotation,
+    );
     for (const value of actual.historical) {
       selectedHistorical.set(serializeCanonicalJson(value), value);
     }
@@ -114,17 +129,13 @@ export function createEvidenceClosureWitness(
     approvedRepositories,
     historicalEvidence: usedHistoricalEvidence,
   });
-  const cacheOwners = createCacheOwnerWitness(outward, values, digest);
-  const materializedReferences = collectMaterializedReferences(values, cacheOwners);
-  const resolvedUses = canonicalSort([
-    ...closure.resolvedUses.map((resolved) => {
-      const canonical = resolveEvidenceUse(resolved.use, currentById, historicalById, context);
-      assertRunValueMatches(canonical.resolved, resolved, resolved.use.path, resolved.use.sourceId);
-      return canonical.resolved;
-    }),
-    ...historicalLedgerUses(materializedReferences, values, evaluatedAt),
-  ]);
-  assertMaterializedReferenceBindings(materializedReferences, resolvedUses, values);
+  const resolvedUses = Object.freeze(
+    sourceUses.map(
+      ({ use, annotation }) =>
+        resolveEvidenceUse(use, currentById, historicalById, context, annotation).resolved,
+    ),
+  );
+  assertMaterializedReferenceBindings(sourceUses, resolvedUses);
   return Object.freeze({
     currentSources,
     historicalEvidence: usedHistoricalEvidence,
@@ -175,6 +186,10 @@ function walkReferences(
           }),
         );
       }
+    } else if (key === "latestMeaningfulSourceId" && entry == null) {
+      continue;
+    } else if (/sourceids?$/iu.test(key)) {
+      throw new RunCompletenessError("invalid_reference", key, [...path, key], undefined);
     } else {
       walkReferences(entry, [...path, key], owner, references);
     }
@@ -203,6 +218,24 @@ export function collectMaterializedReferences(
       references,
     );
   }
+  for (const [repositoryIndex, repository] of values.snapshot.collection.repositories.entries()) {
+    for (const [itemIndex, item] of repository.items.entries()) {
+      walkReferences(
+        item.aiAnalysis,
+        [
+          "snapshot",
+          "collection",
+          "repositories",
+          repositoryIndex,
+          "items",
+          itemIndex,
+          "aiAnalysis",
+        ],
+        Object.freeze({ kind: "item", id: item.nodeId }),
+        references,
+      );
+    }
+  }
   for (const [index, event] of values.historyInputEvents.entries()) {
     walkReferences(
       event,
@@ -223,7 +256,7 @@ export function collectMaterializedReferences(
     }
     walkReferences(
       entry.generation.result,
-      ["aiCacheAdditions", index, "result"],
+      ["aiCacheAdditions", index, "generation", "result"],
       Object.freeze({ kind: "item", id: owner.itemNodeId }),
       references,
     );
@@ -240,7 +273,7 @@ export function collectMaterializedReferences(
     }
     walkReferences(
       entry.generation.result,
-      ["personalReminderAiCacheAdditions", index, "result"],
+      ["personalReminderAiCacheAdditions", index, "generation", "result"],
       Object.freeze({ kind: "item", id: owner.itemNodeId }),
       references,
     );
@@ -277,7 +310,9 @@ export function collectMaterializedReferences(
       references,
     );
   }
-  return canonicalSort(references);
+  const sorted = canonicalSort(references);
+  assertSourceReferenceCoverage(values, sorted);
+  return sorted;
 }
 
 function indexedValues<Value extends Readonly<{ sourceId: string }>>(
@@ -305,68 +340,6 @@ function indexedHistorical(
   return groups;
 }
 
-function historicalLedgerUses(
-  references: readonly MaterializedEvidenceReference[],
-  values: MaterializedReferenceValues,
-  evaluatedAt: UtcIsoDateTime,
-): readonly ResolvedEvidenceUse[] {
-  const uses: ResolvedEvidenceUse[] = [];
-  const evaluatedTime = Date.parse(evaluatedAt);
-  for (const reference of references) {
-    if (reference.path[0] !== "previousNotificationLedger") continue;
-    const pendingIndex = reference.path[2];
-    const pending =
-      typeof pendingIndex === "number"
-        ? values.previousNotificationLedger.pendingNotifications[pendingIndex]
-        : undefined;
-    const basisName = reference.path[4];
-    let basis: PendingPersonalReminderTarget["actionableSince"] | undefined;
-    if (pending?.target.kind === "personal_reminder") {
-      if (basisName === "actionableSince") basis = pending.target.actionableSince;
-      if (basisName === "stallSince") basis = pending.target.stallSince;
-    }
-    const sourceIndex = reference.path[6];
-    if (
-      pending == null ||
-      reference.path[1] !== "pendingNotifications" ||
-      reference.path.length !== 7 ||
-      reference.path[3] !== "target" ||
-      reference.path[5] !== "sourceIds" ||
-      basis?.source !== "event" ||
-      typeof sourceIndex !== "number" ||
-      basis.sourceIds[sourceIndex] !== reference.sourceId ||
-      Date.parse(basis.at) > evaluatedTime ||
-      Date.parse(pending.detectedAt) > evaluatedTime ||
-      reference.owner.kind !== "item" ||
-      reference.owner.id !== pending.itemNodeId ||
-      !isProductionSourceIdKind(parseSourceId(reference.sourceId).kind)
-    ) {
-      throw new RunCompletenessError(
-        "invalid_reference",
-        reference.sourceId,
-        reference.path,
-        undefined,
-      );
-    }
-    uses.push(
-      Object.freeze({
-        use: Object.freeze({
-          sourceId: canonicalSourceId(reference.sourceId),
-          path: reference.path,
-          destination: Object.freeze({ kind: "item", itemNodeId: pending.itemNodeId }),
-          purpose: "previous_notification_pending",
-          requiredCurrentness: "historical_allowed",
-          allowedOwnerNodeIds: Object.freeze([pending.itemNodeId]),
-          allowedRelationIds: Object.freeze([]),
-        }),
-        resolution: "historical",
-        recordIdentity: serializeCanonicalJson(pending),
-      }),
-    );
-  }
-  return canonicalSort(uses);
-}
-
 /** 公開witnessの各参照をsource事実と所有位置から再解決する。 */
 export function assertEvidenceClosureWitness(
   witness: EvidenceClosureWitness,
@@ -390,17 +363,13 @@ export function assertEvidenceClosureWitness(
     "closure",
   );
   assertRunValueMatches(
-    canonicalSort(witness.resolvedUses),
-    witness.resolvedUses,
-    ["evidenceClosureWitness", "resolvedUses"],
-    "closure",
-  );
-  assertRunValueMatches(
     collectMaterializedReferences(values, witness.cacheOwners),
     witness.materializedReferences,
     ["evidenceClosureWitness", "materializedReferences"],
     "closure",
   );
+  const sourceUses = collectMaterializedSourceUses(witness.materializedReferences, values);
+  assertMaterializedReferenceBindings(sourceUses, witness.resolvedUses);
   const identities = witness.resolvedUses.map((value) => serializeCanonicalJson(value.use));
   if (new Set(identities).size !== identities.length) {
     throw new RunCompletenessError(
@@ -440,7 +409,7 @@ export function assertEvidenceClosureWitness(
     historicalEvidence: witness.historicalEvidence,
   });
   const selectedHistorical = new Map<string, OwnedHistoricalEvidence>();
-  for (const resolved of witness.resolvedUses) {
+  for (const [index, resolved] of witness.resolvedUses.entries()) {
     assertRunValueMatches(
       [...new Set(resolved.use.allowedOwnerNodeIds)].sort(),
       resolved.use.allowedOwnerNodeIds,
@@ -453,8 +422,22 @@ export function assertEvidenceClosureWitness(
       ["evidenceClosureWitness", "resolvedUses", resolved.use.sourceId, "allowedRelationIds"],
       resolved.use.sourceId,
     );
-    if (resolved.use.path[0] === "previousNotificationLedger") continue;
-    const actual = resolveEvidenceUse(resolved.use, currentById, historicalById, context);
+    const sourceUse = sourceUses[index];
+    if (sourceUse == null) {
+      throw new RunCompletenessError(
+        "missing_value",
+        resolved.use.sourceId,
+        resolved.use.path,
+        resolved.use,
+      );
+    }
+    const actual = resolveEvidenceUse(
+      sourceUse.use,
+      currentById,
+      historicalById,
+      context,
+      sourceUse.annotation,
+    );
     assertRunValueMatches(
       actual.resolved,
       resolved,
@@ -481,13 +464,4 @@ export function assertEvidenceClosureWitness(
     ["evidenceClosureWitness", "historicalEvidence"],
     "closure",
   );
-  assertRunValueMatches(
-    historicalLedgerUses(witness.materializedReferences, values, evaluatedAt),
-    witness.resolvedUses.filter(
-      (resolved) => resolved.use.path[0] === "previousNotificationLedger",
-    ),
-    ["evidenceClosureWitness", "resolvedUses"],
-    "closure",
-  );
-  assertMaterializedReferenceBindings(witness.materializedReferences, witness.resolvedUses, values);
 }

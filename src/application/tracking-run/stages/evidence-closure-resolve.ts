@@ -87,6 +87,7 @@ export function resolveEvidenceUse(
   currentById: ReadonlyMap<string, readonly CurrentSourceFact[]>,
   historicalById: ReadonlyMap<string, readonly OwnedHistoricalEvidence[]>,
   context: EvidenceClosureContext,
+  annotation?: Readonly<{ supports: string; summary: string }>,
 ): Readonly<{ resolved: ResolvedEvidenceUse; historical: readonly OwnedHistoricalEvidence[] }> {
   const sourceKind = parseSourceId(use.sourceId).kind;
   if (!isProductionSourceIdKind(sourceKind)) {
@@ -104,7 +105,10 @@ export function resolveEvidenceUse(
       resolved: Object.freeze({
         use,
         resolution: "current",
-        recordIdentity: serializeCanonicalJson(facts),
+        recordIdentity: serializeCanonicalJson({
+          facts,
+          ...(annotation == null ? {} : { annotation }),
+        }),
       }),
       historical: Object.freeze([]),
     });
@@ -113,16 +117,29 @@ export function resolveEvidenceUse(
   if (use.requiredCurrentness === "current" || historical.length === 0) {
     throw new RunCompletenessError("missing_source", use.sourceId, use.path, use);
   }
-  const matched = historical.filter((value) => historicalOwnerMatches(use, value));
-  if (matched.length === 0) {
+  const owned = historical.filter((value) => historicalOwnerMatches(use, value));
+  if (owned.length === 0) {
     throw new RunCompletenessError("wrong_owner", use.sourceId, use.path, use);
+  }
+  const matched = owned.filter(
+    (value) =>
+      annotation == null ||
+      !use.purpose.startsWith("evidence_") ||
+      (value.record.evidence.supports === annotation.supports &&
+        value.record.evidence.summary === annotation.summary),
+  );
+  if (matched.length === 0) {
+    throw new RunCompletenessError("missing_source", use.sourceId, use.path, use);
   }
   for (const value of matched) assertHistoricalRecord(use, value, context);
   return Object.freeze({
     resolved: Object.freeze({
       use,
       resolution: "historical",
-      recordIdentity: serializeCanonicalJson(matched),
+      recordIdentity: serializeCanonicalJson({
+        matched,
+        ...(annotation == null ? {} : { annotation }),
+      }),
     }),
     historical: Object.freeze(matched),
   });

@@ -309,9 +309,12 @@ export function assertEvidenceClosureMatches(
 ): void {
   const actual = walkOutwardEvidenceUses(canonicalOutward(outward));
   if (serializeCanonicalJson(actual) !== serializeCanonicalJson(closure.uses)) {
-    const differing = actual.find(
-      (use, index) => serializeCanonicalJson(use) !== serializeCanonicalJson(closure.uses[index]),
-    );
+    const differing =
+      actual.find(
+        (use, index) =>
+          closure.uses[index] == null ||
+          serializeCanonicalJson(use) !== serializeCanonicalJson(closure.uses[index]),
+      ) ?? closure.uses[actual.length];
     throw new RunCompletenessError(
       "invalid_reference",
       differing?.sourceId ?? "outward_references",

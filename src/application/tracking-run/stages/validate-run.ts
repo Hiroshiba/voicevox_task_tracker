@@ -78,7 +78,7 @@ export type RunSnapshot = Readonly<{
     archived: false;
     disabled: false;
   }>[];
-  collection: Readonly<{ repositories: readonly Readonly<{ repositoryId: string }>[] }>;
+  collection: FinalSnapshotCandidate["collection"];
   externalReferences: readonly Readonly<{ nodeId: string }>[];
   graphNodeStateObservations: readonly Readonly<{ nodeId: string }>[];
   run: Readonly<{ id: string; status: "success" | "fallback"; complete: true }>;

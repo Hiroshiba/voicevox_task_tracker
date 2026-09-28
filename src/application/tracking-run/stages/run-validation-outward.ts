@@ -15,16 +15,8 @@ function matchingEvidence<Actual extends { sourceId: string; supports: string; s
   path: readonly (string | number)[],
   id: string,
 ): readonly Actual[] {
-  const available = new Map(saved.map((record) => [serializeCanonicalJson(record), record]));
-  return Object.freeze(
-    expected.map((record) => {
-      const matching = available.get(serializeCanonicalJson(record));
-      if (matching == null) {
-        throw new RunCompletenessError("missing_value", id, path, undefined);
-      }
-      return matching;
-    }),
-  );
+  assertRunValueMatches(canonicalValues(expected), canonicalValues(saved), path, id);
+  return expected;
 }
 
 function canonicalValues(values: readonly unknown[]): readonly unknown[] {
@@ -76,14 +68,16 @@ export function assertActualOutwardMatches(
     if (finalizedEntry == null || closedEntry == null) {
       throw new RunCompletenessError("missing_value", nodeId, ["items", nodeId], undefined);
     }
-    const itemEvidence = matchingEvidence(
-      closedEntry.item.evidence,
-      savedItem.evidence,
-      ["items", nodeId, "evidence"],
-      nodeId,
+    const itemEvidence = closedEntry.item.evidence;
+    const additionalEvidence = closedEntry.evidence;
+    const completeEvidence = new Map(
+      [...itemEvidence, ...additionalEvidence].map((record) => [
+        serializeCanonicalJson(record),
+        record,
+      ]),
     );
-    const additionalEvidence = matchingEvidence(
-      closedEntry.evidence,
+    matchingEvidence(
+      [...completeEvidence.values()],
       savedItem.evidence,
       ["items", nodeId, "evidence"],
       nodeId,
