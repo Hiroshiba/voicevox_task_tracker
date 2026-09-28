@@ -5,6 +5,10 @@ import { basename, resolve } from "node:path";
 import { encodePublicationCheckpoint } from "../publication-checkpoint-codec.js";
 import { bindPublicationCheckpoint } from "../publication-checkpoint-binding.js";
 import { parseInitialPagesBuildArtifact } from "../initial-pages-build-artifact.js";
+import {
+  preflightInitialPagesDeployment,
+  recordInitialPagesSequentialDeployment,
+} from "../initial-pages-deployment.js";
 import { writePublicationCheckpointFile } from "../publication-checkpoint-file.js";
 import {
   readPublicationRuntimeContext,
@@ -139,6 +143,64 @@ export async function buildDailyPages(
     }),
   );
   return result;
+}
+
+/** 初回Pages intentを確認し、productionまたはsandboxの結果を記録する。 */
+export async function deployDailyPages(
+  dependencies: Readonly<{
+    adapters: Pick<
+      RunPublicationAdapters,
+      | "repositoryPath"
+      | "createStateBranchAdapter"
+      | "deployProductionPages"
+      | "now"
+      | "writeJsonArtifact"
+    >;
+  }>,
+  input: Parameters<DailyPublicationStageHandlers["deployPages"]>[0],
+): ReturnType<DailyPublicationStageHandlers["deployPages"]> {
+  const artifact = parseInitialPagesBuildArtifact({
+    schemaVersion: 1,
+    manifest: input.pagesPrepared.manifest,
+    intent: input.pagesPrepared.intent,
+    receipt: input.pagesPrepared.receipt,
+  });
+  const preflight = await preflightInitialPagesDeployment({
+    adapter: dependencies.adapters.createStateBranchAdapter(),
+    configuration: input.configuration.target.state,
+    repositoryPath: dependencies.adapters.repositoryPath,
+    artifact,
+    replay: false,
+    observedAt: dependencies.adapters.now().toISOString(),
+    effectTarget: input.configuration.target.kind,
+  });
+  const productionResult =
+    preflight.kind === "ready" && input.configuration.target.kind === "production"
+      ? await dependencies.adapters.deployProductionPages(artifact.intent)
+      : undefined;
+  const deployment = recordInitialPagesSequentialDeployment({
+    artifact,
+    preflight,
+    target: input.configuration.target.kind === "production" ? "production" : "recording",
+    ...(productionResult == null ? {} : { productionResult }),
+    recordingId: `${input.invocation.runId}:${artifact.intent.deploymentIntentDigest}`,
+    observedAt: dependencies.adapters.now().toISOString(),
+  });
+  await dependencies.adapters.writeJsonArtifact(
+    resolve(
+      dependencies.adapters.repositoryPath,
+      "artifacts/workflow/initial-pages-deployment.json",
+    ),
+    deployment,
+  );
+  if (deployment.kind !== "success" || deployment.receipt.result == null) {
+    throw new TypeError("初回Pages公開の成功receiptがありません");
+  }
+  return Object.freeze({
+    prepared: input.pagesPrepared,
+    deployment,
+    pagesUrl: deployment.receipt.result.pageUrl,
+  });
 }
 
 /** 日次runのDiscord配送または通知省略を実行する。 */

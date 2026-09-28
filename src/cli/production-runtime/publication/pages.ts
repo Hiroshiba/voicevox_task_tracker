@@ -1,5 +1,5 @@
 import type { DailyTransactionDependencies } from "../../daily-transaction.js";
-import { buildDailyPages } from "../../run-publication/daily-stage-handlers.js";
+import { buildDailyPages, deployDailyPages } from "../../run-publication/daily-stage-handlers.js";
 import type { ProductionRuntimeAdapters } from "../adapters.js";
 import type { ProductionTypes } from "../contracts.js";
 
@@ -20,4 +20,18 @@ export function createBuildPagesStage(
   adapters: PagesRuntimeAdapters,
 ): ProductionDailyDependencies["buildPages"] {
   return (input) => buildDailyPages({ adapters }, input);
+}
+
+/** 初回Pages intentをproduction portまたはsandbox記録へ接続する。 */
+export function createDeployPagesStage(
+  adapters: Pick<
+    ProductionRuntimeAdapters,
+    | "repositoryPath"
+    | "createStateBranchAdapter"
+    | "deployProductionPages"
+    | "now"
+    | "writeJsonArtifact"
+  >,
+): ProductionDailyDependencies["deployPages"] {
+  return (input) => deployDailyPages({ adapters }, input);
 }

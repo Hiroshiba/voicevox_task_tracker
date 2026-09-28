@@ -19,6 +19,7 @@ GitHub Actionsのscheduleには遅延があるため、厳密な投稿時刻は�
 9. `report-workflow`
 
 通常の公開経路は`notify-discord`までの6 jobです。通知候補があるrunでは、その後に`publish-notification-history`が動きます。
+`deploy-pages`は公開前にremote stateとWeb出力全fileを照合し、Pages actionの結果を`initial-pages-deployment-record` artifactへ保存します。`notify-discord`はこのartifactの成功receiptを検証します。
 `notify-operations`は収集、Pages関連、Discord通知のいずれかのjobが失敗したときだけ実行されます。公開境界違反を検出した場合は運用障害通知も送りません。収集jobでは公開境界の分類をrun reportとは別のjob出力にも記録します。CLI開始前などでrun reportが作られなかった通常障害は運用障害通知を続けます。存在するrun reportが破損している場合は通知を停止します。通知のHTTP呼出前に既存stateと送信予定値の公開安全性を検査します。
 `report-workflow`は先行jobの成否にかかわらず実行され、全job結果と収集metricをActions artifactへ保存します。
 
@@ -243,33 +244,30 @@ GitHub App、Codex、Discordのsecretは読みません。
 pnpm tracker:run persist-state
 ```
 
-Pages buildは保存済みstateと同じ収集artifactから公開DTOを生成します。
+Pages buildは初回state commit receiptの確定revisionを読み、保存済みsnapshotと公開allowlistから公開DTOとWeb出力を生成します。
 外部secretは読みません。
 
 ```console
 pnpm tracker:run build-pages --output web/public/data
-pnpm build:web
 ```
+
+Actionsの`deploy-pages` jobはWeb出力とbuild recordを取得し、`preflight-pages-deployment`でremote stateと出力全fileを照合します。
+公式のPages uploadとdeploy actionの後、`record-pages-deployment`が実行結果をreceiptへ保存します。
 
 `notify-discord`が成功して通知候補がある場合は、`publish-notification-history`が通知後の最新stateを取得し、送信済み通知を含むPagesを再生成してdeployします。候補がない場合、`hold`、`acknowledge-current`ではこのjobを実行しません。
 
-GitHub Pagesへのdeployが成功した後だけ、deploy結果のURLを渡してDiscord stageを実行します。
+GitHub Pagesへのdeployが成功した後だけ、build recordとdeployment receiptを検証してDiscord stageを実行します。
 Discordへの送信には、通常通知用の`DISCORD_WEBHOOK_URL`と障害通知用の`DISCORD_OPERATIONS_WEBHOOK_URL`を使います。
 通常digestはHTTP送信の前に、送信開始済みの記録を保存して`origin`の`tracker-state`へpushします。送信結果が不明なまま停止しても、同じ通知を自動再送しないための記録です。
 メッセージを1通送信するたびに、送信済みの通知管理記録と通知履歴を同じcommitへ保存し、`origin`の`tracker-state`へpushします。pushが成功してから次のメッセージを送信します。途中で失敗しても、保存済みの送信結果は残ります。同じrunを再実行するときは、送信済みまたは確認済みの通知理由を除いて送信します。
 
-GitHub Actionsではcheckoutが設定したGit認証を使います。ローカルで`notify-discord`または`daily`を実行する場合も、`origin`の`tracker-state`へpushできる認証が必要です。追跡開始時刻とrun完了の記録は、すべてのメッセージを処理した後に確定します。
+GitHub Actionsではcheckoutが設定したGit認証を使います。ローカルで`notify-discord`を実行する場合も、`origin`の`tracker-state`へpushできる認証と、build record、deployment receiptが必要です。追跡開始時刻とrun完了の記録は、すべてのメッセージを処理した後に確定します。
 
 ```console
-pnpm tracker:run notify-discord --pages-url https://voicevox.github.io/voicevox_task_tracker/
+pnpm tracker:run notify-discord
 ```
 
-ローカルで全stageを1processで確認する場合は従来の`daily`を利用できます。
-この実行はstate、Pages用データ、Discordへ順に副作用を発生させるため、設定と認証情報を確認してから実行します。
-
-```console
-pnpm tracker:run --backfill none
-```
+sequential productionの`daily`はPagesの直接deploy adapterが接続されるまで公開を完了できません。
 
 ## 誤判定の直し方
 

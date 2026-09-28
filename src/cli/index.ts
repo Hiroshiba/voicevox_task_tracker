@@ -8,6 +8,8 @@ export {
   parseCliArguments,
   type BackfillCliCommand,
   type BuildPagesCliCommand,
+  type PreflightPagesDeploymentCliCommand,
+  type RecordPagesDeploymentCliCommand,
   type CliCommand,
   type CliSchedule,
   type CollectAnalyzeCliCommand,

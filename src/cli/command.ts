@@ -92,12 +92,30 @@ export type BuildPagesCliCommand = Readonly<{
   outputDirectory: string;
 }>;
 
+/** Pages actionの直前にstateと出力を検証するCLI入力。 */
+export type PreflightPagesDeploymentCliCommand = Readonly<{
+  kind: "preflight-pages-deployment";
+  configPath: string;
+  buildArtifactPath: string;
+  preflightPath: string;
+  runAttempt: number;
+}>;
+
+/** Pages actionの実結果をreceiptへ記録するCLI入力。 */
+export type RecordPagesDeploymentCliCommand = Readonly<{
+  kind: "record-pages-deployment";
+  buildArtifactPath: string;
+  preflightPath: string;
+  outcomePath: string;
+}>;
+
 /** Pagesのdeploy成功後にDiscord通知を送るCLI入力。 */
 export type NotifyDiscordCliCommand = Readonly<{
   kind: "notify-discord";
   configPath: string;
   artifactPath: string;
-  pagesUrl: string;
+  buildArtifactPath: string;
+  deploymentOutcomePath: string;
 }>;
 
 /** Discord通知の送信保留を解除するCLI入力。 */
@@ -194,6 +212,8 @@ export type CliCommand =
   | CollectAnalyzeCliCommand
   | PersistStateCliCommand
   | BuildPagesCliCommand
+  | PreflightPagesDeploymentCliCommand
+  | RecordPagesDeploymentCliCommand
   | NotifyDiscordCliCommand
   | ResolveDiscordDeliveryCliCommand
   | NotifyOperationsCliCommand
@@ -471,33 +491,75 @@ function parseBuildPages(args: readonly string[]): BuildPagesCliCommand {
   });
 }
 
-function parsePagesUrl(options: ParsedOptions): string {
-  const value = optionalSingleOption(options, "--pages-url");
-  if (value == null) {
-    throw usageError("notify-discordにはPages deploy成功時の--pages-urlが必要です");
+function parsePreflightPagesDeployment(
+  args: readonly string[],
+): PreflightPagesDeploymentCliCommand {
+  const options = parseOptions(
+    args,
+    new Set(["--config", "--build-artifact", "--preflight", "--run-attempt"]),
+  );
+  const runAttempt = Number(singleOption(options, "--run-attempt", "1"));
+  if (!Number.isSafeInteger(runAttempt) || runAttempt < 1) {
+    throw usageError("--run-attemptには1以上の整数を指定してください");
   }
-  if (!URL.canParse(value)) {
-    throw usageError("--pages-urlには有効なHTTPS URLを指定してください");
-  }
-  const url = new URL(value);
-  if (
-    url.protocol !== "https:" ||
-    url.username.length !== 0 ||
-    url.password.length !== 0 ||
-    url.hash.length !== 0
-  ) {
-    throw usageError("--pages-urlには認証情報とfragmentを含まないHTTPS URLを指定してください");
-  }
-  return url.href;
+  return Object.freeze({
+    kind: "preflight-pages-deployment",
+    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
+    buildArtifactPath: singleOption(
+      options,
+      "--build-artifact",
+      "artifacts/workflow/initial-pages-build.json",
+    ),
+    preflightPath: singleOption(
+      options,
+      "--preflight",
+      "artifacts/workflow/initial-pages-preflight.json",
+    ),
+    runAttempt,
+  });
+}
+
+function parseRecordPagesDeployment(args: readonly string[]): RecordPagesDeploymentCliCommand {
+  const options = parseOptions(args, new Set(["--build-artifact", "--preflight", "--outcome"]));
+  return Object.freeze({
+    kind: "record-pages-deployment",
+    buildArtifactPath: singleOption(
+      options,
+      "--build-artifact",
+      "artifacts/workflow/initial-pages-build.json",
+    ),
+    preflightPath: singleOption(
+      options,
+      "--preflight",
+      "artifacts/workflow/initial-pages-preflight.json",
+    ),
+    outcomePath: singleOption(
+      options,
+      "--outcome",
+      "artifacts/workflow/initial-pages-deployment.json",
+    ),
+  });
 }
 
 function parseNotifyDiscord(args: readonly string[]): NotifyDiscordCliCommand {
-  const options = parseOptions(args, new Set(["--artifact", "--config", "--pages-url"]));
+  const options = parseOptions(
+    args,
+    new Set(["--artifact", "--config", "--build-artifact", "--pages-deployment"]),
+  );
   return Object.freeze({
     kind: "notify-discord",
     configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
     artifactPath: singleOption(options, "--artifact", DEFAULT_WORKFLOW_ARTIFACT_PATH),
-    pagesUrl: parsePagesUrl(options),
+    buildArtifactPath: singleOption(
+      options,
+      "--build-artifact",
+      "artifacts/workflow/initial-pages-build.json",
+    ),
+    deploymentOutcomePath: singleOption(
+      options,
+      "--pages-deployment",
+      "artifacts/workflow/initial-pages-deployment.json",
+    ),
   });
 }
 
@@ -790,6 +852,10 @@ export function parseCliArguments(args: readonly string[]): CliCommand {
       return parsePersistState(options);
     case "build-pages":
       return parseBuildPages(options);
+    case "preflight-pages-deployment":
+      return parsePreflightPagesDeployment(options);
+    case "record-pages-deployment":
+      return parseRecordPagesDeployment(options);
     case "notify-discord":
       return parseNotifyDiscord(options);
     case "resolve-discord-delivery":
@@ -825,7 +891,9 @@ export function formatCliUsage(): string {
     "  voicevox-task-tracker collect-analyze [--mode none|linked|all-open] [--notification-action send|hold|acknowledge-current] [--scheduled-for ISO] [--artifact PATH]",
     "  voicevox-task-tracker persist-state [--config PATH] [--artifact PATH] [--receipt PATH]",
     "  voicevox-task-tracker build-pages [--config PATH] [--receipt PATH] [--build-artifact PATH] [--output PATH]",
-    "  voicevox-task-tracker notify-discord --pages-url URL [--artifact PATH]",
+    "  voicevox-task-tracker preflight-pages-deployment [--config PATH] [--build-artifact PATH] [--preflight PATH] [--run-attempt NUMBER]",
+    "  voicevox-task-tracker record-pages-deployment [--build-artifact PATH] [--preflight PATH] [--outcome PATH]",
+    "  voicevox-task-tracker notify-discord [--artifact PATH] [--build-artifact PATH] [--pages-deployment PATH]",
     "  voicevox-task-tracker resolve-discord-delivery --delivery-id ID --resolution retry|acknowledge [--config PATH]",
     "  voicevox-task-tracker notify-operations --kind collection --incident-id ID --occurred-at ISO --collect-analyze-report PATH",
     "  voicevox-task-tracker notify-operations --kind pages|discord --incident-id ID --occurred-at ISO",

@@ -96,6 +96,7 @@ import type { RuntimeCredentials, RuntimeExecutionTarget } from "../production-r
 import type {
   DiscordResult,
   InitialPagesPreparedRun,
+  InitialPagesPublishedRun,
   PersistedRun,
 } from "../run-publication/contracts.js";
 
@@ -271,7 +272,8 @@ export type ProductionTypes = DailyTransactionTypeMap &
     validated: ValidatedRun;
     planned: PublicationPlannedRun;
     persisted: PersistedRun;
-    pages: InitialPagesPreparedRun;
+    pagesPrepared: InitialPagesPreparedRun;
+    pages: InitialPagesPublishedRun;
     discord: DiscordResult;
   }>;
 

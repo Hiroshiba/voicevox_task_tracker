@@ -1,5 +1,7 @@
 import {
   type BuildPagesCliCommand,
+  type PreflightPagesDeploymentCliCommand,
+  type RecordPagesDeploymentCliCommand,
   type NotifyDiscordCliCommand,
   type NotifyOperationsCliCommand,
   type PersistStateCliCommand,
@@ -16,6 +18,8 @@ import {
 export type WorkflowStageCliCommand =
   | PersistStateCliCommand
   | BuildPagesCliCommand
+  | PreflightPagesDeploymentCliCommand
+  | RecordPagesDeploymentCliCommand
   | NotifyDiscordCliCommand
   | ResolveDiscordDeliveryCliCommand
   | NotifyOperationsCliCommand
@@ -30,6 +34,8 @@ export type WorkflowStageCliCommand =
 export type WorkflowStageDependencies = Readonly<{
   persistState: (command: PersistStateCliCommand) => Promise<void>;
   buildPages: (command: BuildPagesCliCommand) => Promise<void>;
+  preflightPagesDeployment: (command: PreflightPagesDeploymentCliCommand) => Promise<void>;
+  recordPagesDeployment: (command: RecordPagesDeploymentCliCommand) => Promise<void>;
   notifyDiscord: (command: NotifyDiscordCliCommand) => Promise<void>;
   resolveDiscordDelivery: (command: ResolveDiscordDeliveryCliCommand) => Promise<void>;
   notifyOperations: (command: NotifyOperationsCliCommand) => Promise<void>;
@@ -57,6 +63,12 @@ export class WorkflowStageRunner {
         return;
       case "build-pages":
         await this.#dependencies.buildPages(command);
+        return;
+      case "preflight-pages-deployment":
+        await this.#dependencies.preflightPagesDeployment(command);
+        return;
+      case "record-pages-deployment":
+        await this.#dependencies.recordPagesDeployment(command);
         return;
       case "notify-discord":
         await this.#dependencies.notifyDiscord(command);

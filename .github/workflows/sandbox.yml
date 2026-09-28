@@ -167,6 +167,7 @@ jobs:
           path: |
             artifacts/run-reports/daily.json
             artifacts/workflow/initial-pages-build.json
+            artifacts/workflow/initial-pages-deployment.json
           if-no-files-found: warn
           retention-days: 30
 

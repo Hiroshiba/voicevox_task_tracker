@@ -32,7 +32,7 @@ import {
   createSendDiscordStage,
   createSendOperationsAlertStage,
 } from "./publication/notification.js";
-import { createBuildPagesStage } from "./publication/pages.js";
+import { createBuildPagesStage, createDeployPagesStage } from "./publication/pages.js";
 import { createPersistStateStage } from "./publication/persistence.js";
 import { createValidateCompletenessStage } from "./validation/stage.js";
 
@@ -63,6 +63,7 @@ export function createDailyDependencies(
     planPublication: (validated) => planPublication(validated, nodeContentDigestPort),
     persistState: createPersistStateStage(adapters),
     buildPages: createBuildPagesStage(adapters),
+    deployPages: createDeployPagesStage(adapters),
     sendDiscord: createSendDiscordStage(adapters),
     completeRun: createCompleteRunStage(adapters),
     sendOperationsAlert: createSendOperationsAlertStage(adapters),

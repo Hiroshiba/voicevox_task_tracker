@@ -113,6 +113,8 @@ export function createTrackerRunCliArguments(args: readonly string[]): readonly 
     args[0] === "collect-analyze" ||
     args[0] === "persist-state" ||
     args[0] === "build-pages" ||
+    args[0] === "preflight-pages-deployment" ||
+    args[0] === "record-pages-deployment" ||
     args[0] === "notify-discord" ||
     args[0] === "resolve-discord-delivery" ||
     args[0] === "notify-operations" ||
@@ -179,6 +181,8 @@ function topLevelDiagnosticStage(command: CliCommand): RunStage | "unknown" {
     case "resolve-discord-delivery":
       return "state_persistence";
     case "build-pages":
+    case "preflight-pages-deployment":
+    case "record-pages-deployment":
       return "pages";
     case "notify-discord":
     case "notify-operations":

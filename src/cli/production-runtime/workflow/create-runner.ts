@@ -1,6 +1,10 @@
 import { WorkflowStageRunner } from "../../workflow-stage.js";
 import type { ProductionRuntimeAdapters } from "../adapters.js";
 import { createBuildWorkflowPagesStage } from "./build-pages.js";
+import {
+  preflightWorkflowPagesDeployment,
+  recordWorkflowPagesDeployment,
+} from "../../run-publication/deployment.js";
 import { createNotifyWorkflowDiscordStage } from "./notify-discord.js";
 import { createNotifyWorkflowOperationsStage } from "./notify-operations.js";
 import { createPersistWorkflowStateStage } from "./persist-state.js";
@@ -21,6 +25,8 @@ export function createWorkflowStageRunner(
   return new WorkflowStageRunner({
     persistState: createPersistWorkflowStateStage(adapters),
     buildPages: createBuildWorkflowPagesStage(adapters),
+    preflightPagesDeployment: (command) => preflightWorkflowPagesDeployment(adapters, command),
+    recordPagesDeployment: (command) => recordWorkflowPagesDeployment(adapters, command),
     notifyDiscord: createNotifyWorkflowDiscordStage(adapters),
     notifyOperations: createNotifyWorkflowOperationsStage(adapters),
     resolveDiscordDelivery: createResolveDiscordDeliveryStage(adapters),

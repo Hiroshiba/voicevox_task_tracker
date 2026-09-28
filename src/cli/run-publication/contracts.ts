@@ -31,6 +31,10 @@ import type {
 } from "../../application/tracking-run/pages-build-contracts.js";
 import type { PagesBuildReceipt } from "../../application/tracking-run/receipt-schema.js";
 import type {
+  InitialPagesDeploymentOutcome,
+  SequentialPagesResult,
+} from "../initial-pages-deployment.js";
+import type {
   DailyTransactionDependencies,
   DailyTransactionTypeMap,
 } from "../daily-transaction.js";
@@ -63,6 +67,13 @@ export type InitialPagesPreparedRun = Readonly<{
   manifest: PagesContentManifest;
   intent: PagesDeploymentIntent;
   receipt: PagesBuildReceipt;
+}>;
+
+/** deploy receiptと保存候補証拠を持つ初回Pages公開結果。 */
+export type InitialPagesPublishedRun = Readonly<{
+  prepared: InitialPagesPreparedRun;
+  deployment: Extract<InitialPagesDeploymentOutcome, { kind: "success" }>;
+  pagesUrl: string;
 }>;
 
 /** Discord配送本体と履歴event。 */
@@ -126,6 +137,7 @@ export type RunPublicationAdapters = Readonly<{
     data: GeneratedPublicData,
   ) => Promise<PublicDataWriteResult>;
   buildWebOutput: (repositoryPath: string) => Promise<void>;
+  deployProductionPages: (intent: PagesDeploymentIntent) => Promise<SequentialPagesResult>;
   sendDiscord: typeof sendDiscordDigest;
 }>;
 
@@ -138,7 +150,8 @@ export type PublicationDailyTypes = DailyTransactionTypeMap &
     validated: ValidatedRun;
     planned: PublicationPlannedRun;
     persisted: PersistedRun;
-    pages: InitialPagesPreparedRun;
+    pagesPrepared: InitialPagesPreparedRun;
+    pages: InitialPagesPublishedRun;
     discord: DiscordResult;
   }>;
 
@@ -147,6 +160,7 @@ export type DailyPublicationStageHandlers = Pick<
   DailyTransactionDependencies<PublicationDailyTypes>,
   | "persistState"
   | "buildPages"
+  | "deployPages"
   | "sendDiscord"
   | "completeRun"
   | "sendOperationsAlert"

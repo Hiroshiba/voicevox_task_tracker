@@ -135,7 +135,13 @@ export async function workflowAdapterIdentity(
     .sort();
   const adapterSourcesDigest = await hashSources(
     repositoryPath,
-    [...scripts, ...workflowAdapters],
+    [
+      ".github/workflows/daily.yml",
+      "src/cli/initial-pages-deployment.ts",
+      "src/cli/run-publication/deployment.ts",
+      ...scripts,
+      ...workflowAdapters,
+    ],
     digest,
   );
   return digest.sha256Utf8(

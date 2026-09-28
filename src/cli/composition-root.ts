@@ -106,6 +106,10 @@ export function createDefaultCliCompositionAdapters(
     writeTextFile: writeCliTextFile,
     writePublicData: writePublicDataFiles,
     buildWebOutput,
+    deployProductionPages: () =>
+      Promise.reject(
+        new TypeError("sequential production Pages deploy adapterが接続されていません"),
+      ),
     sendDiscord: sendDiscordDigest,
   });
 }

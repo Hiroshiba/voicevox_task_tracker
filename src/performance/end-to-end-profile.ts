@@ -778,6 +778,8 @@ function createPerformanceHarness(repositoryPath: string, config: Config): Perfo
     writeJsonArtifact: () => Promise.resolve(),
     writeTextFile: () => Promise.resolve(),
     buildWebOutput: () => Promise.resolve(),
+    deployProductionPages: () =>
+      Promise.reject(new TypeError("性能profileではPages deployを実行しません")),
     writePublicData: (_outputDirectory, data) => {
       generatedPublicData = data;
       const summarySource = serializeCanonicalJson(data.summary);

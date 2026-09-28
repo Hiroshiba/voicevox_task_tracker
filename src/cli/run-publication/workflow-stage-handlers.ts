@@ -33,7 +33,11 @@ import type { RunPublicationAdapters, ValidatedRun } from "./contracts.js";
 import { buildPublicPages } from "./pages.js";
 import { persistSuccessfulRunCompletion } from "./persistence.js";
 import { commitInitialState } from "../initial-state-commit.js";
-import { parseInitialPagesBuildArtifact } from "../initial-pages-build-artifact.js";
+import {
+  decodeInitialPagesBuildArtifact,
+  parseInitialPagesBuildArtifact,
+} from "../initial-pages-build-artifact.js";
+import { readInitialPagesDeploymentOutcome } from "../initial-pages-deployment.js";
 import { discordDeliverySettings, projectPublicationSettings } from "./settings.js";
 import {
   assertWorkflowDeliveryLedgerMatches,
@@ -253,6 +257,19 @@ export async function notifyWorkflowDiscord(
   }>,
   command: NotifyDiscordCliCommand,
 ): Promise<void> {
+  const buildArtifact = decodeInitialPagesBuildArtifact(
+    await readFile(resolve(dependencies.adapters.repositoryPath, command.buildArtifactPath)),
+  );
+  const deployment = await readInitialPagesDeploymentOutcome(
+    resolve(dependencies.adapters.repositoryPath, command.deploymentOutcomePath),
+    buildArtifact,
+  );
+  if (
+    deployment.kind !== "success" ||
+    deployment.receipt.result?.externalReference.kind !== "github_pages_actions"
+  ) {
+    throw new TypeError("Discord開始前のPages成功receiptがありません");
+  }
   const config = await dependencies.adapters.loadConfig(
     resolve(dependencies.adapters.repositoryPath, command.configPath),
   );
@@ -267,8 +284,12 @@ export async function notifyWorkflowDiscord(
     header.baseStateRevision,
   );
   const planned = artifact.planned;
-  if (command.pagesUrl !== artifact.validatedPayload.pagesUrl) {
-    throw new TypeError("deploy済みPages URLがworkflow artifactの公開先と一致しません");
+  if (
+    deployment.receipt.result.pageUrl !== artifact.validatedPayload.pagesUrl ||
+    buildArtifact.intent.runId !== artifact.checkpoint.runIdentity.runId ||
+    buildArtifact.intent.checkpointDigest !== artifact.checkpointDigest
+  ) {
+    throw new TypeError("Pages公開receiptとworkflow checkpointが一致しません");
   }
   const session = await dependencies.adapters.openStateSession(
     adapter,
@@ -322,7 +343,7 @@ export async function notifyWorkflowDiscord(
     artifact.validated.repositoryAllowlist,
     knownSecrets,
     planned,
-    command.pagesUrl,
+    deployment.receipt.result.pageUrl,
   );
   await persistSuccessfulRunCompletion({
     now: dependencies.adapters.now,

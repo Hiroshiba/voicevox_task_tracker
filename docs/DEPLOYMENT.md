@@ -206,8 +206,12 @@ repositoryをpublicにした後、SettingsのPagesでSourceを`GitHub Actions`�
 branchをPages sourceへ指定しません。
 
 現行構成では`config.yml`の`web.basePath`を`/voicevox_task_tracker/`にし、公開URLを`https://voicevox.github.io/voicevox_task_tracker/`とします。
-workflowの初回`deploy-pages` jobはrepositoryをcheckoutせず、初回`build-pages`が保存したPages artifactを`github-pages` environmentへdeployするだけです。通常通知の送信後に候補がある場合は、`publish-notification-history` jobが最新の`tracker-state`からPagesを再生成し、別名のPages artifactを同じenvironmentへdeployします。
-このため初回`deploy-pages` jobだけが`pages: write`と`id-token: write`を使用します。`publish-notification-history` jobはこれらに加えて`contents: read`を使用します。
+初回`build-pages` jobはWeb出力全fileとmanifest、build receipt、deploy intentをartifactへ保存します。
+初回`deploy-pages` jobはrepositoryと`tracker-state`を取得し、remote stateの現在性と出力全fileをdeploy直前に照合します。
+照合後にPages artifactをuploadして`github-pages` environmentへdeployし、actionの結果をdeployment receiptへ記録します。
+`notify-discord` jobは成功したdeployment receiptを検証してから通知を始めます。
+初回`deploy-pages` jobは`contents: read`、`pages: write`、`id-token: write`を使用します。
+通常通知の送信後に候補がある場合は、`publish-notification-history` jobが最新の`tracker-state`からPagesを再生成し、別名のPages artifactを同じenvironmentへdeployします。
 
 ## config.yml
 

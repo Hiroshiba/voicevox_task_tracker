@@ -16,6 +16,8 @@ import type {
   GitHubClient,
 } from "../../github/index.js";
 import type { GeneratedPublicData, PublicDataWriteResult } from "../../pages/index.js";
+import type { PagesDeploymentIntent } from "../../application/tracking-run/pages-build-contracts.js";
+import type { SequentialPagesResult } from "../initial-pages-deployment.js";
 import type {
   StateBranchAdapter,
   StatePersistenceConfiguration,
@@ -73,6 +75,7 @@ export type ProductionRuntimeAdapters = Readonly<{
     data: GeneratedPublicData,
   ) => Promise<PublicDataWriteResult>;
   buildWebOutput: (repositoryPath: string) => Promise<void>;
+  deployProductionPages: (intent: PagesDeploymentIntent) => Promise<SequentialPagesResult>;
   sendDiscord: typeof sendDiscordDigest;
 }>;
 
@@ -145,6 +148,7 @@ export type PublicationRuntimeAdapters = Pick<
   | "writeJsonArtifact"
   | "writePublicData"
   | "buildWebOutput"
+  | "deployProductionPages"
   | "sendDiscord"
 >;
 

@@ -63,6 +63,7 @@ export type DailyTransactionTypeMap = Readonly<{
   validated: unknown;
   planned: unknown;
   persisted: unknown;
+  pagesPrepared: unknown;
   pages: unknown;
   discord: unknown;
 }>;
@@ -226,6 +227,14 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       repositoryInventory: Types["repositoryInventory"];
       planned: Types["planned"];
       persisted: Types["persisted"];
+    }>,
+  ) => Promise<Types["pagesPrepared"]>;
+  deployPages: (
+    input: Readonly<{
+      invocation: DailyRunInvocation;
+      configuration: Types["configuration"];
+      persisted: Types["persisted"];
+      pagesPrepared: Types["pagesPrepared"];
     }>,
   ) => Promise<Types["pages"]>;
   sendDiscord: (
@@ -735,7 +744,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         effects.stateCommitted = true;
 
         stage = "pages";
-        const pages = await this.#dependencies.buildPages({
+        const pagesPrepared = await this.#dependencies.buildPages({
           invocation,
           configuration,
           repositoryInventory,
@@ -743,6 +752,13 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           persisted,
         });
         effects.pagesBuilt = true;
+
+        const pages = await this.#dependencies.deployPages({
+          invocation,
+          configuration,
+          persisted,
+          pagesPrepared,
+        });
 
         stage = "discord";
         effects.discordAttempted = true;
