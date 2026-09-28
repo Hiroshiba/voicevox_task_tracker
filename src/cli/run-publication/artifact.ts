@@ -50,7 +50,7 @@ export function createCollectAnalyzeArtifact(
   const publishedPagesUrl = pagesUrl(input.configuration.config);
   const publishedDiscordSettings = discordDeliverySettings(input.configuration.config);
   const artifact = createWorkflowArtifact({
-    schemaVersion: "17",
+    schemaVersion: "18",
     kind: "validated_public_run",
     notificationAction: input.validated.core.executionPolicy.notificationAction,
     repositoryAllowlist: input.validated.repositoryAllowlist.map((repository) => ({

@@ -150,6 +150,9 @@ export function assertActualOutwardMatches(
     closure,
     Object.freeze({
       items: Object.freeze(items),
+      collectionAiItems: Object.freeze(
+        snapshot.collection.repositories.flatMap((repository) => repository.items),
+      ),
       relations: Object.freeze(relations),
       aiItems: run.data.aiItems,
       ...actual,

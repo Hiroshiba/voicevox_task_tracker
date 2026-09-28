@@ -1,5 +1,6 @@
 import type {
   AiAnalysisElement,
+  AiAnalysisElementResult,
   AiAnalysisElementMigrationResult,
 } from "../../../domain/ai-analysis-elements.js";
 import type { PersonalReminderCauseAssessment } from "../../../domain/personal-reminder-causes.js";
@@ -10,6 +11,7 @@ import type {
   GitHubRepositoryId,
   NormalizedEvent,
   PendingNotification,
+  TrackedItemAiAnalysis,
   UtcIsoDateTime,
 } from "../../../domain/types.js";
 import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
@@ -29,6 +31,34 @@ export type OwnedHistoricalEvidence = Readonly<{
         fromNodeId: string;
         toNodeId: string;
       }>;
+}>;
+
+/** 前回snapshotのAI結果を元の所有者、要素、保存位置付きで保持する。 */
+export type OwnedHistoricalAiResult = Readonly<{
+  owner: Readonly<{
+    itemNodeId: GitHubNodeId;
+    repositoryId: GitHubRepositoryId;
+  }>;
+  element: AiAnalysisElement;
+  path: readonly (string | number)[];
+  result: AiAnalysisElementMigrationResult | AiAnalysisElementResult;
+}>;
+
+/** 前回snapshotからAI履歴だけを取り出す入力。 */
+export type HistoricalAiSnapshotInput = Readonly<{
+  trackedItems: readonly Readonly<{
+    nodeId: GitHubNodeId;
+    repositoryId: GitHubRepositoryId;
+    aiAnalysis: TrackedItemAiAnalysis;
+  }>[];
+  collectionRepositories: readonly Readonly<{
+    repositoryId: GitHubRepositoryId;
+    items: readonly Readonly<{
+      nodeId: GitHubNodeId;
+      repositoryId: GitHubRepositoryId;
+      aiAnalysis: TrackedItemAiAnalysis;
+    }>[];
+  }>[];
 }>;
 
 /** outward値が使う一つのsource参照。 */
@@ -97,6 +127,11 @@ export type EvidenceHistoryInputEvent = Readonly<{
 /** 最終値と追加の公開出力候補を照合する入力。 */
 export type EvidenceClosureOutward = Readonly<{
   items: readonly PersonalReminderFinalizedItem[];
+  collectionAiItems: readonly Readonly<{
+    nodeId: GitHubNodeId;
+    repositoryId: GitHubRepositoryId;
+    aiAnalysis: TrackedItemAiAnalysis;
+  }>[];
   relations: readonly ReconciledGraphEdge[];
   aiItems: readonly GenericAiItemAdoption[];
   historyInputEvents: readonly EvidenceHistoryInputEvent[];
@@ -111,6 +146,7 @@ export type EvidenceClosureContext = Readonly<{
   evaluatedAt: UtcIsoDateTime;
   approvedRepositories: readonly PublicRepository[];
   historicalEvidence: readonly OwnedHistoricalEvidence[];
+  historicalAiResults: readonly OwnedHistoricalAiResult[];
 }>;
 
 /** 最終outward値を再走査して照合できる決定論的な閉包成果。 */

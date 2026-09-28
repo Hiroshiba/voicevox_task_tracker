@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 
 import { assertValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
+import { assertHistoricalAiWitnessMatchesBaseSnapshot } from "../../application/tracking-run/stages/run-validation-artifact-witness.js";
 import type { Config } from "../../config/index.js";
 import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content-digest.js";
 import { CliWorkflowArtifactError } from "../errors.js";
@@ -90,6 +91,16 @@ export async function persistWorkflowState(
     adapter,
     config.state,
     config.staleness.timezone,
+  );
+  const previousSnapshot = await session.loadSnapshot();
+  assertHistoricalAiWitnessMatchesBaseSnapshot(
+    artifact.validated.evidenceClosureWitness,
+    previousSnapshot.status === "available"
+      ? {
+          trackedItems: previousSnapshot.snapshot.items,
+          collectionRepositories: previousSnapshot.snapshot.collection.repositories,
+        }
+      : undefined,
   );
   for (const entry of artifact.validated.aiCacheAdditions) {
     await session.aiCache.write(entry);

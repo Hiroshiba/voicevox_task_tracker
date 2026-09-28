@@ -4,6 +4,7 @@ import type { StageProofFor } from "./proofs.js";
 import type { AnalysisPreviousState } from "./previous-state.js";
 import type { RunExecutionPolicy, RunIdentity } from "../request.js";
 import type { AiBudgetLedgerSnapshot } from "./ai-budget-ledger.js";
+import type { HistoricalAiSnapshotInput } from "./evidence-closure.js";
 
 /** 固定したstate branchの先頭revision。 */
 export type BaseStateRevision =
@@ -55,6 +56,7 @@ export type GraphReconciliationInput = Readonly<{
 /** 個人催促の前回値と実行条件へ渡す必要な投影。 */
 export type PersonalReminderPlanningInput = Readonly<{
   config: Pick<Config, "ai" | "labels" | "staleness">;
+  previousAiSnapshot: HistoricalAiSnapshotInput;
   previousItems: readonly Pick<
     Extract<AnalysisPreviousState["snapshot"], { status: "available" }>["trackedItems"][number],
     | "nodeId"
@@ -171,6 +173,39 @@ export function projectGenericAiRunCore(analyzed: AnalysisRunCore): GenericAiRun
               ),
             )
           : Object.freeze([]),
+      previousAiSnapshot: Object.freeze({
+        trackedItems:
+          analyzed.previousState.snapshot.status === "available"
+            ? Object.freeze(
+                analyzed.previousState.snapshot.trackedItems.map((item) =>
+                  Object.freeze({
+                    nodeId: item.nodeId,
+                    repositoryId: item.repositoryId,
+                    aiAnalysis: item.aiAnalysis,
+                  }),
+                ),
+              )
+            : Object.freeze([]),
+        collectionRepositories:
+          analyzed.previousState.snapshot.status === "available"
+            ? Object.freeze(
+                analyzed.previousState.snapshot.collectionRepositories.map((repository) =>
+                  Object.freeze({
+                    repositoryId: repository.repositoryId,
+                    items: Object.freeze(
+                      repository.items.map((item) =>
+                        Object.freeze({
+                          nodeId: item.nodeId,
+                          repositoryId: item.repositoryId,
+                          aiAnalysis: item.aiAnalysis,
+                        }),
+                      ),
+                    ),
+                  }),
+                ),
+              )
+            : Object.freeze([]),
+      }),
       previousRelations:
         analyzed.previousState.snapshot.status === "available"
           ? analyzed.previousState.snapshot.relations

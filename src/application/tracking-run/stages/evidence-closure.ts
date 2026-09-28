@@ -11,6 +11,8 @@ import type {
   ResolvedEvidenceUse,
 } from "../contracts/evidence-closure.js";
 import { EvidenceCatalog } from "./evidence-catalog.js";
+import { aiResultSlotForUse, collectAiResultSlots } from "./evidence-ai-results.js";
+import { collectAdoptionAiResultSlots, createAiResultOrigins } from "./evidence-ai-provenance.js";
 import { collectCurrentSourceFacts } from "./evidence-catalog-source-facts.js";
 import { resolveEvidenceUse } from "./evidence-closure-resolve.js";
 import { assertEvidenceClosureInput } from "./evidence-closure-validation.js";
@@ -40,6 +42,7 @@ function canonicalSort<Value>(values: readonly Value[]): readonly Value[] {
 function canonicalOutward(value: EvidenceClosureOutward): EvidenceClosureOutward {
   return Object.freeze({
     items: canonicalSort(value.items),
+    collectionAiItems: canonicalSort(value.collectionAiItems),
     relations: canonicalSort(value.relations),
     aiItems: canonicalSort(value.aiItems),
     historyInputEvents: canonicalSort(value.historyInputEvents),
@@ -91,6 +94,20 @@ function evidenceAdditions(
   records: readonly OwnedHistoricalEvidence[],
   outward: EvidenceClosureOutward,
 ): readonly Evidence[] {
+  if (records.length === 0) {
+    const destination = use.destination;
+    if (
+      destination.kind === "item" &&
+      !outward.items.some((entry) => entry.item.nodeId === destination.itemNodeId) &&
+      !(
+        use.path[0] === "collectionAiItems" &&
+        outward.collectionAiItems.some((item) => item.nodeId === destination.itemNodeId)
+      )
+    ) {
+      throw new RunCompletenessError("wrong_owner", use.sourceId, use.path, use);
+    }
+    return Object.freeze([]);
+  }
   if (use.destination.kind === "item") {
     const itemNodeId = use.destination.itemNodeId;
     const item = outward.items.find((entry) => entry.item.nodeId === itemNodeId);
@@ -218,6 +235,45 @@ export function closeEvidenceReferences(
   const currentById = sourceFactsById(catalog.snapshot().currentSources);
   assertEvidenceClosureInput(context, outward, currentById);
   const previousById = historicalById(context.historicalEvidence);
+  const tracked = outward.items.map((entry, index) => ({
+    item: entry.item,
+    path: ["items", index, "item"],
+  }));
+  const collection = outward.collectionAiItems.map((item, index) => ({
+    item,
+    path: ["collectionAiItems", index],
+  }));
+  const aiOrigins = createAiResultOrigins(
+    tracked,
+    collection,
+    outward.aiItems,
+    context.historicalAiResults,
+  );
+  const aiSlots = [
+    ...tracked.flatMap(({ item, path }) =>
+      collectAiResultSlots(item.aiAnalysis, [...path, "aiAnalysis"], {
+        itemNodeId: item.nodeId,
+        repositoryId: item.repositoryId,
+      }),
+    ),
+    ...collection.flatMap(({ item, path }) =>
+      collectAiResultSlots(item.aiAnalysis, [...path, "aiAnalysis"], {
+        itemNodeId: item.nodeId,
+        repositoryId: item.repositoryId,
+      }),
+    ),
+  ];
+  const repositories = new Map(
+    outward.items.map((entry) => [entry.item.nodeId, entry.item.repositoryId]),
+  );
+  const adoptionSlots = collectAdoptionAiResultSlots(outward.aiItems, repositories);
+  aiSlots.push(...adoptionSlots.slots);
+  const originByPath = new Map(
+    [...aiOrigins, ...adoptionSlots.origins].map((value) => [
+      serializeCanonicalJson(value.path),
+      value.origin,
+    ]),
+  );
   const registeredHistorical = new Set<string>();
   const allAdditions = new Map<
     string,
@@ -239,7 +295,16 @@ export function closeEvidenceReferences(
       }>
     >();
     for (const use of uses) {
-      const match = resolveEvidenceUse(use, currentById, previousById, context);
+      const slot = aiResultSlotForUse(use.path, aiSlots);
+      const origin = slot == null ? undefined : originByPath.get(serializeCanonicalJson(slot.path));
+      const match = resolveEvidenceUse(
+        use,
+        currentById,
+        previousById,
+        context,
+        undefined,
+        slot == null || origin == null ? undefined : { slot, origin },
+      );
       resolved.push(match.resolved);
       for (const historical of match.historical) {
         const identity = serializeCanonicalJson(historical);
@@ -292,9 +357,13 @@ export function closeFinalizedRunEvidence(
     evaluatedAt: run.data.sourceRecords.evaluatedAt,
     approvedRepositories: run.data.approvedRepositories,
     historicalEvidence: run.data.historicalEvidence,
+    historicalAiResults: run.data.historicalAiResults,
   });
   const outward: EvidenceClosureOutward = Object.freeze({
     items: run.data.items,
+    collectionAiItems: Object.freeze(
+      run.data.snapshotProjection.collectionRepositories.flatMap((repository) => repository.items),
+    ),
     relations: run.data.graph.edges,
     aiItems: run.data.aiItems,
     ...additions,

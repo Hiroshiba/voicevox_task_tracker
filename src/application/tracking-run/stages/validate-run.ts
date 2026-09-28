@@ -1,7 +1,11 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type { Sha256Hash } from "../../../canonical-json/sha256.js";
 import type { NotificationLedgerEntry, UtcIsoDateTime } from "../../../domain/index.js";
-import type { TrackedItemAiAnalysis } from "../../../domain/types.js";
+import type {
+  GitHubNodeId,
+  GitHubRepositoryId,
+  TrackedItemAiAnalysis,
+} from "../../../domain/types.js";
 import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
 import type {
   EvidenceClosureResult,
@@ -65,7 +69,8 @@ export type RunSnapshot = Readonly<{
   finalGraphProjection: FinalSnapshotCandidate["finalGraphProjection"];
   finalGraphProjectionDigest: FinalSnapshotCandidate["finalGraphProjectionDigest"];
   items: readonly Readonly<{
-    nodeId: string;
+    nodeId: GitHubNodeId;
+    repositoryId: GitHubRepositoryId;
     aiAnalysis: TrackedItemAiAnalysis;
     personalReminderCauses: readonly Readonly<{ causeId: string }>[];
   }>[];
@@ -351,6 +356,8 @@ export function validateRun<
   const evidenceClosureWitness = createEvidenceClosureWitness(
     input.closure,
     run.data.historicalEvidence,
+    run.data.historicalAiResults,
+    run.data.aiItems,
     run.data.sourceRecords.evaluatedAt,
     run.data.approvedRepositories,
     {
@@ -441,7 +448,7 @@ export function assertValidatedRun(value: Readonly<{ proof: RunCompletenessProof
   }
 }
 
-/** v17 artifactの実値を再検証して新しいローカル証明を発行する。 */
+/** v18 artifactの実値を再検証して新しいローカル証明を発行する。 */
 export function revalidateSerializedRun<Run extends SerializedValidatedRun>(
   run: Run,
   digest: ContentDigestPort,

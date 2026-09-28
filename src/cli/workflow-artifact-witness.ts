@@ -7,7 +7,11 @@ import {
   createGitHubRepositoryId,
   createUtcIsoDateTime,
 } from "../domain/index.js";
-import { aiAnalysisElementSchema } from "../domain/ai-analysis-elements.js";
+import {
+  aiAnalysisElementSchema,
+  createAiAnalysisElementResultSchema,
+  createAiAnalysisMigrationElementResultSchema,
+} from "../domain/ai-analysis-elements.js";
 import { personalReminderCauseIdSchema } from "../domain/personal-reminder-causes.js";
 import { parseSha256Hash } from "../canonical-json/sha256.js";
 
@@ -125,6 +129,21 @@ const historicalEvidenceSchema = z.strictObject({
     }),
   ]),
 });
+const historicalAiResultSchema = z
+  .strictObject({
+    owner: z.strictObject({ itemNodeId: nodeIdSchema, repositoryId: repositoryIdSchema }),
+    element: aiAnalysisElementSchema,
+    path: z.array(z.union([z.string(), z.number().int().nonnegative()])),
+    result: z.unknown(),
+  })
+  .transform((value) =>
+    Object.freeze({
+      ...value,
+      result: createAiAnalysisMigrationElementResultSchema(value.element)
+        .or(createAiAnalysisElementResultSchema(value.element))
+        .parse(value.result),
+    }),
+  );
 const evidenceUseSchema = z.strictObject({
   sourceId: sourceIdSchema,
   path: z.array(z.union([z.string(), z.number().int().nonnegative()])),
@@ -140,6 +159,13 @@ const evidenceUseSchema = z.strictObject({
 const witnessSchema = z.strictObject({
   currentSources: z.array(currentSourceSchema),
   historicalEvidence: z.array(historicalEvidenceSchema),
+  historicalAiResults: z.array(historicalAiResultSchema),
+  aiResultOrigins: z.array(
+    z.strictObject({
+      path: z.array(z.union([z.string(), z.number().int().nonnegative()])),
+      origin: z.enum(["current", "historical"]),
+    }),
+  ),
   resolvedUses: z.array(
     z.strictObject({
       use: evidenceUseSchema,
@@ -177,7 +203,7 @@ const witnessSchema = z.strictObject({
   }),
 });
 
-/** v17 artifact内の公開可能なsource witnessを厳密に読む。 */
+/** v18 artifact内の公開可能なsource witnessを厳密に読む。 */
 export function parseWorkflowEvidenceWitness(value: unknown): EvidenceClosureWitness {
   return witnessSchema.parse(value);
 }

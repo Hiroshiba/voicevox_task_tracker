@@ -144,7 +144,7 @@ function assertLedgerTransition(run: SerializedValidatedRun): void {
   }
 }
 
-/** v17の実保存値と公開witnessを照合する。 */
+/** v18の実保存値と公開witnessを照合する。 */
 export function assertSerializedValidatedRun(
   run: SerializedValidatedRun,
   digest: ContentDigestPort,

@@ -392,6 +392,15 @@ export function walkOutwardEvidenceUses(outward: EvidenceClosureOutward): readon
       throw new RunCompletenessError("source_id_conflict", "relation", ["relations"], undefined);
     }
     walkItems(emit, outward, relationsById);
+    for (const [index, item] of outward.collectionAiItems.entries()) {
+      walkTrackedItemAiAnalysis(
+        emit,
+        item.aiAnalysis,
+        ["collectionAiItems", index, "aiAnalysis"],
+        Object.freeze({ kind: "item", itemNodeId: item.nodeId }),
+        item.nodeId,
+      );
+    }
     for (const [index, relation] of outward.relations.entries()) {
       walkRelation(emit, relation, ["relations", index]);
     }

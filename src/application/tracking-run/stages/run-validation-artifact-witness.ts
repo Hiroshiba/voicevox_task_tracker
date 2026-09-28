@@ -1,16 +1,32 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
-import type { TrackedItemAiAnalysis } from "../../../domain/types.js";
+import type {
+  GitHubNodeId,
+  GitHubRepositoryId,
+  TrackedItemAiAnalysis,
+} from "../../../domain/types.js";
 import type { UtcIsoDateTime } from "../../../domain/index.js";
 import { buildSourceId, parseSourceId, type SourceId } from "../../../domain/source-id.js";
 import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
 import type { CurrentSourceFact } from "../contracts/evidence-catalog.js";
 import type {
   EvidenceClosureResult,
+  HistoricalAiSnapshotInput,
+  OwnedHistoricalAiResult,
   OwnedHistoricalEvidence,
   ResolvedEvidenceUse,
 } from "../contracts/evidence-closure.js";
 import type { ContentDigestPort } from "../ports.js";
 import { EvidenceCatalog } from "./evidence-catalog.js";
+import { collectOwnedHistoricalAiResults } from "./evidence-closure-historical-ai.js";
+import {
+  aiResultSlotForUse,
+  collectAiResultSlots,
+  matchingHistoricalAiResults,
+  type AiResultOrigin,
+  type AiResultSlot,
+} from "./evidence-ai-results.js";
+import { assertAiResultOrigins, createAiResultOrigins } from "./evidence-ai-provenance.js";
+import type { GenericAiItemAdoption } from "./generic-ai-adoption-contracts.js";
 import { resolveEvidenceUse } from "./evidence-closure-resolve.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 import {
@@ -18,6 +34,7 @@ import {
   collectMaterializedSourceUses,
 } from "./run-validation-artifact-reference-binding.js";
 import { assertSourceReferenceCoverage } from "./run-validation-source-audit.js";
+import { isRecord, valueAtPath } from "./run-validation-reference-scope.js";
 import { assertStageSourceValuesMatch } from "./run-validation-stage-source-binding.js";
 import { assertRunValueMatches } from "./run-validation-compare.js";
 import {
@@ -37,6 +54,8 @@ import type {
 export type EvidenceClosureWitness = Readonly<{
   currentSources: readonly CurrentSourceFact[];
   historicalEvidence: readonly OwnedHistoricalEvidence[];
+  historicalAiResults: readonly OwnedHistoricalAiResult[];
+  aiResultOrigins: readonly AiResultOrigin[];
   resolvedUses: readonly ResolvedEvidenceUse[];
   materializedReferences: readonly MaterializedEvidenceReference[];
   cacheOwners: CacheOwnerWitness;
@@ -55,14 +74,20 @@ export type MaterializedReferenceValues = Readonly<{
   snapshot: Readonly<{
     generatedAt: UtcIsoDateTime;
     items: readonly Readonly<{
-      nodeId: string;
+      nodeId: GitHubNodeId;
+      repositoryId: GitHubRepositoryId;
       aiAnalysis: TrackedItemAiAnalysis;
       personalReminderCauses: readonly Readonly<{ causeId: string }>[];
     }>[];
     relations: readonly Readonly<{ id: string }>[];
     collection: Readonly<{
       repositories: readonly Readonly<{
-        items: readonly Readonly<{ nodeId: string; aiAnalysis: TrackedItemAiAnalysis }>[];
+        repositoryId: GitHubRepositoryId;
+        items: readonly Readonly<{
+          nodeId: GitHubNodeId;
+          repositoryId: GitHubRepositoryId;
+          aiAnalysis: TrackedItemAiAnalysis;
+        }>[];
       }>[];
     }>;
   }>;
@@ -84,10 +109,140 @@ function canonicalSort<Value>(values: readonly Value[]): readonly Value[] {
   );
 }
 
+function collectSavedAiResultSlots(values: MaterializedReferenceValues): readonly AiResultSlot[] {
+  const slots: AiResultSlot[] = [];
+  for (const [index, item] of values.snapshot.items.entries()) {
+    slots.push(
+      ...collectAiResultSlots(item.aiAnalysis, ["snapshot", "items", index, "aiAnalysis"], {
+        itemNodeId: item.nodeId,
+        repositoryId: item.repositoryId,
+      }),
+    );
+  }
+  for (const [repositoryIndex, repository] of values.snapshot.collection.repositories.entries()) {
+    for (const [itemIndex, item] of repository.items.entries()) {
+      if (item.repositoryId !== repository.repositoryId)
+        throw new RunCompletenessError(
+          "wrong_owner",
+          item.nodeId,
+          ["snapshot", "collection", "repositories", repositoryIndex, "items", itemIndex],
+          undefined,
+        );
+      slots.push(
+        ...collectAiResultSlots(
+          item.aiAnalysis,
+          [
+            "snapshot",
+            "collection",
+            "repositories",
+            repositoryIndex,
+            "items",
+            itemIndex,
+            "aiAnalysis",
+          ],
+          { itemNodeId: item.nodeId, repositoryId: item.repositoryId },
+        ),
+      );
+    }
+  }
+  return Object.freeze(slots);
+}
+
+function selectedHistoricalAiResults(
+  slots: readonly AiResultSlot[],
+  origins: readonly AiResultOrigin[],
+  historical: readonly OwnedHistoricalAiResult[],
+): readonly OwnedHistoricalAiResult[] {
+  assertAiResultOrigins(slots, origins, historical);
+  const byPath = new Map(origins.map((origin) => [serializeCanonicalJson(origin.path), origin]));
+  const selected = new Map<string, OwnedHistoricalAiResult>();
+  for (const slot of slots) {
+    if (byPath.get(serializeCanonicalJson(slot.path))?.origin !== "historical") continue;
+    for (const record of matchingHistoricalAiResults(slot, historical)) {
+      selected.set(serializeCanonicalJson(record), record);
+    }
+  }
+  return canonicalSort([...selected.values()]);
+}
+
+/** 固定base revisionで読み直した前回snapshotとAI履歴witnessを照合する。 */
+export function assertHistoricalAiWitnessMatchesBaseSnapshot(
+  witness: EvidenceClosureWitness,
+  snapshot: HistoricalAiSnapshotInput | undefined,
+): void {
+  const actual = snapshot == null ? Object.freeze([]) : collectOwnedHistoricalAiResults(snapshot);
+  const identities = new Set(actual.map(serializeCanonicalJson));
+  for (const record of witness.historicalAiResults) {
+    if (!identities.has(serializeCanonicalJson(record))) {
+      throw new RunCompletenessError(
+        "missing_source",
+        record.owner.itemNodeId,
+        record.path,
+        undefined,
+      );
+    }
+  }
+}
+
+function resolvedAiSlot(
+  path: readonly (string | number)[],
+  slots: readonly AiResultSlot[],
+  origins: readonly AiResultOrigin[],
+): Readonly<{ slot: AiResultSlot; origin: AiResultOrigin["origin"] }> | undefined {
+  const slot = aiResultSlotForUse(path, slots);
+  if (slot == null) {
+    if (path[0] === "snapshot" && path.includes("aiAnalysis"))
+      throw new RunCompletenessError("invalid_reference", "ai", path, undefined);
+    return undefined;
+  }
+  const origin = origins.find(
+    (value) => serializeCanonicalJson(value.path) === serializeCanonicalJson(slot.path),
+  );
+  if (origin == null)
+    throw new RunCompletenessError("missing_value", slot.owner.itemNodeId, slot.path, undefined);
+  return { slot, origin: origin.origin };
+}
+
+function assertSavedAiOriginShape(
+  values: MaterializedReferenceValues,
+  origins: readonly AiResultOrigin[],
+): void {
+  const byPath = new Map(
+    origins.map((origin) => [serializeCanonicalJson(origin.path), origin.origin]),
+  );
+  for (const entry of origins) {
+    const index = entry.path.indexOf("aiAnalysis");
+    const section = entry.path[index + 1];
+    const element = entry.path[index + 2];
+    if (index < 0 || typeof element !== "string")
+      throw new RunCompletenessError("invalid_reference", "ai", entry.path, undefined);
+    if (section === "retainedElements" && entry.origin === "current")
+      throw new RunCompletenessError("invalid_reference", "ai", entry.path, undefined);
+    if (section === "adoptedElements") {
+      const analysis = valueAtPath(values, entry.path.slice(0, index + 1));
+      const applications = isRecord(analysis) ? analysis["applications"] : undefined;
+      const application = isRecord(applications) ? applications[element] : undefined;
+      const current =
+        isRecord(application) &&
+        application["status"] === "current_ai" &&
+        (application["origin"] === "executed" || application["origin"] === "cache");
+      if (entry.origin !== (current ? "current" : "historical"))
+        throw new RunCompletenessError("invalid_reference", "ai", entry.path, undefined);
+    }
+    if (entry.path[index + 3] === "generation") {
+      const resultPath = [...entry.path.slice(0, index + 3), "result"];
+      if (byPath.get(serializeCanonicalJson(resultPath)) !== entry.origin)
+        throw new RunCompletenessError("invalid_reference", "ai", entry.path, undefined);
+    }
+  }
+}
+
 /** 完全性検証済み閉包から利用されたsourceの事実だけを取り出す。 */
 export function createEvidenceClosureWitness(
   closure: EvidenceClosureResult,
   historicalEvidence: readonly OwnedHistoricalEvidence[],
+  historicalAiResults: readonly OwnedHistoricalAiResult[],
+  aiItems: readonly GenericAiItemAdoption[],
   evaluatedAt: UtcIsoDateTime,
   approvedRepositories: readonly PublicRepository[],
   values: MaterializedReferenceValues,
@@ -98,47 +253,81 @@ export function createEvidenceClosureWitness(
   const cacheOwners = createCacheOwnerWitness(outward, values, digest);
   const materializedReferences = collectMaterializedReferences(values, cacheOwners);
   const sourceUses = collectMaterializedSourceUses(materializedReferences, values);
+  const tracked = values.snapshot.items.map((item, index) => ({
+    item,
+    path: ["snapshot", "items", index],
+  }));
+  const collection = values.snapshot.collection.repositories.flatMap(
+    (repository, repositoryIndex) =>
+      repository.items.map((item, itemIndex) => ({
+        item,
+        path: ["snapshot", "collection", "repositories", repositoryIndex, "items", itemIndex],
+      })),
+  );
+  const aiResultOrigins = createAiResultOrigins(tracked, collection, aiItems, historicalAiResults);
+  assertSavedAiOriginShape(values, aiResultOrigins);
+  const aiSlots = collectSavedAiResultSlots(values);
+  const selectedAi = selectedHistoricalAiResults(aiSlots, aiResultOrigins, historicalAiResults);
   const usedIds = new Set(sourceUses.map(({ use }) => use.sourceId));
-  const currentSources = canonicalSort(
+  const candidateCurrentSources = canonicalSort(
     closure.catalog.currentSources.filter((fact) => usedIds.has(fact.sourceId)),
   );
   const fullContext = Object.freeze({
     evaluatedAt,
     approvedRepositories,
     historicalEvidence,
+    historicalAiResults: selectedAi,
   });
-  const currentById = indexedValues(currentSources);
+  const candidateCurrentById = indexedValues(candidateCurrentSources);
   const fullHistoricalById = indexedHistorical(historicalEvidence);
   const selectedHistorical = new Map<string, OwnedHistoricalEvidence>();
+  const selectedCurrentIds = new Set<string>();
   for (const { use, annotation } of sourceUses) {
+    const aiSlot = resolvedAiSlot(use.path, aiSlots, aiResultOrigins);
     const actual = resolveEvidenceUse(
       use,
-      currentById,
+      candidateCurrentById,
       fullHistoricalById,
       fullContext,
       annotation,
+      aiSlot,
     );
+    if (actual.resolved.resolution === "current") selectedCurrentIds.add(use.sourceId);
     for (const value of actual.historical) {
       selectedHistorical.set(serializeCanonicalJson(value), value);
     }
   }
+  const currentSources = canonicalSort(
+    candidateCurrentSources.filter((fact) => selectedCurrentIds.has(fact.sourceId)),
+  );
+  const currentById = indexedValues(currentSources);
   const usedHistoricalEvidence = canonicalSort([...selectedHistorical.values()]);
   const historicalById = indexedHistorical(usedHistoricalEvidence);
   const context = Object.freeze({
     evaluatedAt,
     approvedRepositories,
     historicalEvidence: usedHistoricalEvidence,
+    historicalAiResults: selectedAi,
   });
   const resolvedUses = Object.freeze(
     sourceUses.map(
       ({ use, annotation }) =>
-        resolveEvidenceUse(use, currentById, historicalById, context, annotation).resolved,
+        resolveEvidenceUse(
+          use,
+          currentById,
+          historicalById,
+          context,
+          annotation,
+          resolvedAiSlot(use.path, aiSlots, aiResultOrigins),
+        ).resolved,
     ),
   );
   assertMaterializedReferenceBindings(sourceUses, resolvedUses);
   return Object.freeze({
     currentSources,
     historicalEvidence: usedHistoricalEvidence,
+    historicalAiResults: selectedAi,
+    aiResultOrigins,
     resolvedUses,
     materializedReferences,
     cacheOwners,
@@ -363,12 +552,26 @@ export function assertEvidenceClosureWitness(
     "closure",
   );
   assertRunValueMatches(
+    canonicalSort(witness.historicalAiResults),
+    witness.historicalAiResults,
+    ["evidenceClosureWitness", "historicalAiResults"],
+    "closure",
+  );
+  assertRunValueMatches(
     collectMaterializedReferences(values, witness.cacheOwners),
     witness.materializedReferences,
     ["evidenceClosureWitness", "materializedReferences"],
     "closure",
   );
   const sourceUses = collectMaterializedSourceUses(witness.materializedReferences, values);
+  const aiSlots = collectSavedAiResultSlots(values);
+  assertSavedAiOriginShape(values, witness.aiResultOrigins);
+  assertRunValueMatches(
+    selectedHistoricalAiResults(aiSlots, witness.aiResultOrigins, witness.historicalAiResults),
+    witness.historicalAiResults,
+    ["evidenceClosureWitness", "historicalAiResults"],
+    "closure",
+  );
   assertMaterializedReferenceBindings(sourceUses, witness.resolvedUses);
   const identities = witness.resolvedUses.map((value) => serializeCanonicalJson(value.use));
   if (new Set(identities).size !== identities.length) {
@@ -407,6 +610,7 @@ export function assertEvidenceClosureWitness(
     evaluatedAt,
     approvedRepositories,
     historicalEvidence: witness.historicalEvidence,
+    historicalAiResults: witness.historicalAiResults,
   });
   const selectedHistorical = new Map<string, OwnedHistoricalEvidence>();
   for (const [index, resolved] of witness.resolvedUses.entries()) {
@@ -437,6 +641,7 @@ export function assertEvidenceClosureWitness(
       historicalById,
       context,
       sourceUse.annotation,
+      resolvedAiSlot(sourceUse.use.path, aiSlots, witness.aiResultOrigins),
     );
     assertRunValueMatches(
       actual.resolved,

@@ -116,12 +116,12 @@ const identityWitnessSchema = validationSchema.shape.core.pick({
 /** artifactとrun本体の片側変更を検出する識別情報。 */
 export type WorkflowIdentityWitness = z.output<typeof identityWitnessSchema>;
 
-/** v17 artifactの公開識別情報をschemaで読む。 */
+/** v18 artifactの公開識別情報をschemaで読む。 */
 export function parseWorkflowIdentityWitness(value: unknown): WorkflowIdentityWitness {
   return identityWitnessSchema.parse(value);
 }
 
-/** v17 artifactが保持するrun完全性検証情報。 */
+/** v18 artifactが保持するrun完全性検証情報。 */
 export type WorkflowValidation = Pick<
   Omit<ValidatedRun, "proof">,
   | "core"
@@ -133,7 +133,7 @@ export type WorkflowValidation = Pick<
   | "artifactValueDigests"
 >;
 
-/** v17 artifactのrun完全性情報をschemaで読む。 */
+/** v18 artifactのrun完全性情報をschemaで読む。 */
 export function parseWorkflowValidation(value: unknown): WorkflowValidation {
   const parsed = validationSchema.parse(value);
   z.object({ schemaVersion: z.literal("8") }).parse(parsed.previousNotificationLedger);

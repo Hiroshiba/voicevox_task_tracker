@@ -322,6 +322,7 @@ finalizationは、期待する項目と入力項目が一致し、planの適用�
 
 `production-runtime/personal-reminder/stage.ts`は各段階の入力と既存の個人催促moduleを接続し、結果を`validation/`へ渡します。`validation/`は通知候補とsnapshotへ結果を反映し、原因、現在性、停滞、根拠、列挙計画の最終値を再導出しません。
 `PersonalReminderFinalizedRun`の項目、関係、AI採用値に、保存予定の履歴、AI cache、通知原因、未送信候補を加えて`EvidenceCatalog`で参照を閉じます。同じsource IDの不変fieldが衝突する場合や、参照元が欠落、非公開、未来時刻、別項目の所有に当たる場合は、保存、Pages生成、Discord通知の前に停止します。今回のsource事実と前回から保持する根拠を区別し、保持値から今回の根拠を作りません。
+保持する汎用AI結果は、前回snapshotの追跡項目または収集項目に保存された同じ所有者・要素・result全体へ照合します。今回も同じsource IDを収集した場合に、この照合を省きません。今回の実行結果とcache採用結果は、確定した生成元と入力fingerprint、現行source事実へ照合します。分割workflowの初期保存前には基準revisionのsnapshotを読み直し、artifactの履歴AI記録と照合します。
 閉包済みの項目と関係をsnapshotへ渡します。`src/persistence`は保存値の形と公開安全性を独立に検証し、根拠を補いません。
 PagesとDiscordは、同じ保存済みの原因と現在性を表示・通知の判断に使います。
 

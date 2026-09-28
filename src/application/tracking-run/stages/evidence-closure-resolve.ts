@@ -8,6 +8,11 @@ import type {
   OwnedHistoricalEvidence,
   ResolvedEvidenceUse,
 } from "../contracts/evidence-closure.js";
+import {
+  aiResultSourceIds,
+  matchingHistoricalAiResults,
+  type AiResultSlot,
+} from "./evidence-ai-results.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 
 function historyEventKinds(kind: string): readonly string[] {
@@ -88,10 +93,41 @@ export function resolveEvidenceUse(
   historicalById: ReadonlyMap<string, readonly OwnedHistoricalEvidence[]>,
   context: EvidenceClosureContext,
   annotation?: Readonly<{ supports: string; summary: string }>,
+  aiSlot?: Readonly<{ slot: AiResultSlot; origin: "current" | "historical" }>,
 ): Readonly<{ resolved: ResolvedEvidenceUse; historical: readonly OwnedHistoricalEvidence[] }> {
   const sourceKind = parseSourceId(use.sourceId).kind;
   if (!isProductionSourceIdKind(sourceKind)) {
     throw new RunCompletenessError("kind_mismatch", use.sourceId, use.path, use);
+  }
+  if (aiSlot != null) {
+    const { slot, origin } = aiSlot;
+    if (
+      !use.allowedOwnerNodeIds.includes(slot.owner.itemNodeId) ||
+      !aiResultSourceIds(slot.element, slot.result).includes(use.sourceId)
+    ) {
+      throw new RunCompletenessError("wrong_owner", use.sourceId, use.path, use);
+    }
+    if (origin === "historical") {
+      if (use.requiredCurrentness === "current")
+        throw new RunCompletenessError("missing_source", use.sourceId, use.path, use);
+      const repositories = new Set<string>(
+        context.approvedRepositories.map((repository) => repository.id),
+      );
+      if (!repositories.has(slot.owner.repositoryId))
+        throw new RunCompletenessError("private_source", use.sourceId, use.path, use);
+      const matched = matchingHistoricalAiResults(slot, context.historicalAiResults);
+      return Object.freeze({
+        resolved: Object.freeze({
+          use,
+          resolution: "historical",
+          recordIdentity: serializeCanonicalJson({
+            matched,
+            ...(annotation == null ? {} : { annotation }),
+          }),
+        }),
+        historical: Object.freeze([]),
+      });
+    }
   }
   const facts = currentById.get(use.sourceId) ?? [];
   if (facts.length > 0) {
@@ -124,7 +160,6 @@ export function resolveEvidenceUse(
   const matched = owned.filter(
     (value) =>
       annotation == null ||
-      !use.purpose.startsWith("evidence_") ||
       (value.record.evidence.supports === annotation.supports &&
         value.record.evidence.summary === annotation.summary),
   );

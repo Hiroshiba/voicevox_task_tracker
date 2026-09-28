@@ -70,7 +70,7 @@ import {
 } from "./workflow-artifact-validation.js";
 
 const actionsSecretNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
-const WORKFLOW_ARTIFACT_SCHEMA_VERSION = "17";
+const WORKFLOW_ARTIFACT_SCHEMA_VERSION = "18";
 const nonNegativeIntegerSchema = z.number().int().nonnegative();
 const dateTimeSchema = z.iso
   .datetime({
@@ -334,7 +334,7 @@ export type WorkflowArtifact = Readonly<{
 
 type WorkflowArtifactPublicValue = Omit<WorkflowArtifact, "validated">;
 
-/** 証明を除いたv17 artifact保存値を返す。 */
+/** 証明を除いたv18 artifact保存値を返す。 */
 export function workflowArtifactPayload(artifact: WorkflowArtifact): WorkflowArtifactPublicValue {
   assertValidatedRun(artifact.validated);
   const { validated, ...payload } = artifact;
