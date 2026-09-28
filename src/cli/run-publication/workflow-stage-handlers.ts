@@ -1,5 +1,7 @@
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import { decodeReceipt } from "../../application/tracking-run/receipt-codec.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import type { Config } from "../../config/index.js";
 import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content-digest.js";
@@ -31,10 +33,10 @@ import type { RunPublicationAdapters, ValidatedRun } from "./contracts.js";
 import { buildPublicPages } from "./pages.js";
 import { persistSuccessfulRunCompletion } from "./persistence.js";
 import { commitInitialState } from "../initial-state-commit.js";
+import { parseInitialPagesBuildArtifact } from "../initial-pages-build-artifact.js";
 import { discordDeliverySettings, projectPublicationSettings } from "./settings.js";
 import {
   assertWorkflowDeliveryLedgerMatches,
-  assertWorkflowInitialLedgerMatches,
   assertWorkflowSnapshotMatches,
 } from "./workflow-state-identity.js";
 
@@ -198,44 +200,50 @@ export async function persistWorkflowState(
 /** workflow artifactの検証済みrunからPagesを生成する。 */
 export async function buildWorkflowPages(
   dependencies: Readonly<{
-    adapters: WorkflowStateAdapters & Pick<RunPublicationAdapters, "writePublicData">;
+    adapters: WorkflowStateAdapters &
+      Pick<RunPublicationAdapters, "writePublicData" | "buildWebOutput">;
   }>,
   command: BuildPagesCliCommand,
 ): Promise<void> {
   const config = await dependencies.adapters.loadConfig(
     resolve(dependencies.adapters.repositoryPath, command.configPath),
   );
-  const artifactPath = resolve(dependencies.adapters.repositoryPath, command.artifactPath);
-  const header = await readPublicationCheckpointHeader(artifactPath);
-  const adapter = dependencies.adapters.createStateBranchAdapter();
-  const artifact = await readWorkflowCheckpoint(
-    dependencies.adapters,
-    artifactPath,
-    config,
-    adapter,
-    header.baseStateRevision,
+  const receipt = decodeReceipt(
+    await readFile(resolve(dependencies.adapters.repositoryPath, command.initialStateReceiptPath)),
+    nodeContentDigestPort,
   );
-  const planned = artifact.planned;
-  const session = await dependencies.adapters.openStateSession(
-    adapter,
-    config.state,
-    config.staleness.timezone,
-  );
-  const persistedSnapshot = await session.loadSnapshot();
-  if (persistedSnapshot.status !== "available") {
-    throw new TypeError("Pages生成対象のstate snapshotがありません");
+  if (receipt.receiptType !== "initial_state_commit") {
+    throw new TypeError("初回Pages buildには初回state commit receiptが必要です");
   }
-  assertWorkflowSnapshotMatches(artifact.validated, persistedSnapshot.snapshot);
-  assertWorkflowInitialLedgerMatches(artifact.validated, await session.loadNotificationLedger());
-  const historyRecords = await session.loadHistoryRecords();
-  await buildPublicPages({
+  const expectedRunId = requireEnvironmentValue(
+    dependencies.adapters.environment,
+    "VOICEVOX_EXPECTED_RUN_ID",
+  );
+  if (receipt.binding.bindingKind !== "checkpoint" || receipt.binding.runId !== expectedRunId) {
+    throw new TypeError("初回Pages buildのreceiptと期待run IDが一致しません");
+  }
+  const adapter = dependencies.adapters.createStateBranchAdapter();
+  const result = await buildPublicPages({
+    adapter,
+    config,
+    stateConfiguration: config.state,
+    initialStateCommitReceipt: receipt,
+    repositoryPath: dependencies.adapters.repositoryPath,
     writePublicData: dependencies.adapters.writePublicData,
-    inventory: validatedRunPayloadRepositoryInventory(artifact.validatedPayload),
-    planned,
-    historyRecords,
+    buildWebOutput: dependencies.adapters.buildWebOutput,
     outputDirectory: resolve(dependencies.adapters.repositoryPath, command.outputDirectory),
     knownSecrets: [],
+    now: dependencies.adapters.now,
   });
+  await dependencies.adapters.writeJsonArtifact(
+    resolve(dependencies.adapters.repositoryPath, command.buildArtifactPath),
+    parseInitialPagesBuildArtifact({
+      schemaVersion: 1,
+      manifest: result.manifest,
+      intent: result.intent,
+      receipt: result.receipt,
+    }),
+  );
 }
 
 /** workflowのDiscord通知と完了保存を実行する。 */

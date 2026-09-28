@@ -1,3 +1,4 @@
+export { buildWebOutput, readPagesContentManifest } from "./build-web-output.js";
 export {
   PagesError,
   PagesPublicSafetyError,

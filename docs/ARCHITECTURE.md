@@ -69,6 +69,7 @@ Issueの明示依頼候補と実質担当候補は`deterministic-responsibility.
 公開順序は、初期保存、Pages生成、Discord送信または省略、完了保存です。
 初回state保存は結合検証済みの`BoundPublicationCheckpoint`だけを入力とし、snapshot、日次履歴、AI cache追加、通常通知ledger、durable record、run markerを一つのCAS commitへまとめます。同じcommitで旧cacheと前runの初回Pages証拠を削除します。
 push前には実際の親と候補の全state file、変更pathのmanifest、公開安全性を照合します。期待した親から進められるのは、変更範囲を検証した運用通知commitだけです。初回保存receiptには期待した親、実際の親、結果revisionを記録します。
+初回Pagesは初回保存receiptの結果revisionにあるsnapshot、履歴、durable record、run markerを照合して生成します。Pagesの公開データは保存済みsnapshotとrecordの公開allowlistから投影し、Web buildの全出力fileを相対path、byte数、SHA-256で固定します。build receiptとdeploy指示には結果revisionと出力manifestのdigestを結び付けます。
 分割workflowの`notify-discord`は分岐前に現在の通知管理記録を読み、`send`では配送処理内でも保存済みの記録を再読込します。再読込でsnapshot、`notificationSelection`、run IDの供給元は差し替えません。
 通知eventはDiscord配送callbackが逐次保存してpublishします。完了保存には空配列を渡し、同じeventを二重保存しません。
 下位層の例外は握りつぶさず、既存のCLIエラー境界へ伝播します。production runtimeの実装から`run-publication`へ一方向に依存し、`run-publication`からproduction runtimeの実装はimportしません。
@@ -151,9 +152,9 @@ GitHubの`closingIssuesReferences`とtimelineの`willCloseTarget`はauthoritativ
 本文のclosing keywordだけから得た`implements`候補は推定のままとし、実質担当の根拠には使いません。
 関係先のPRや子Issueで確認した作業者を、親Issueや横断Issueの実質担当者へ拡張しません。
 
-`.github/workflows/daily.yml`は通常経路の`quality`、`collect-analyze`、`persist-state`、初回の`build-pages`、初回の`deploy-pages`、`notify-discord`、通知候補がある場合だけ動く`publish-notification-history`に、失敗時だけ動く`notify-operations`と全job結果を保存する`report-workflow`を加えた9 jobで構成されています。
+`.github/workflows/daily.yml`は通常経路の`quality`、`collect-analyze`、`persist-state`、初回の`build-pages`、初回の`deploy-pages`、`notify-discord`に、失敗時だけ動く`notify-operations`と全job結果を保存する`report-workflow`を加えています。`publish-notification-history`は通知履歴専用の生成処理が接続されるまで停止しています。
 収集失敗のrun reportには公開境界違反かどうかを型付きで記録します。CLIの例外経路も同じ分類をjob出力へ渡します。CLI開始前の失敗では分類が未設定のまま残ります。運用障害通知は取得できたrun reportを検証し、reportまたはjob出力で公開境界違反が確定した場合は送信しません。reportが作られる前の通常障害では通知を続け、存在するreportが破損している場合は停止します。Pages生成と通知処理で検出した公開境界違反もCLIからjob出力へ渡し、運用障害通知jobを起動しません。
-schema version 16のworkflow artifactは`notificationAction`と収集段階で固定した公開repository inventory、allowlist、digestを保持します。`persist-state`はsnapshotと、未送信候補を含む通知管理記録を同じatomic transactionで保存します。`notify-discord`はartifactと`tracker-state`のsnapshot run IDを照合してから、`send`なら通知を送り、`hold`と`acknowledge-current`なら通常通知を送らずにrunを完了します。不一致の場合は通知もrun完了処理も行いません。`send`で通知候補がある場合だけ`publish-notification-history`が最新stateを取得し、送信済み通知を含むPagesを再生成してdeployします。運用障害通知はこの通知処理と別系統です。
+schema version 16のworkflow artifactは`notificationAction`と収集段階で固定した公開repository inventory、allowlist、digestを保持します。`persist-state`はsnapshotと、未送信候補を含む通知管理記録を同じatomic transactionで保存します。`notify-discord`はartifactと`tracker-state`のsnapshot run IDを照合してから、`send`なら通知を送り、`hold`と`acknowledge-current`なら通常通知を送らずにrunを完了します。不一致の場合は通知もrun完了処理も行いません。運用障害通知はこの通知処理と別系統です。
 repository variableの`VOICEVOX_TASK_TRACKER_SCHEDULE_PAUSED`が`true`の場合は、定期実行の開始jobと障害通知・run報告を省略します。手動実行には影響しません。
 `collect-analyze`とsandbox jobは、`CODEX_AUTH_JSON`が空なら認証ファイルを配置せず、実行候補があるときだけCLI側で認証不足を検出します。
 secretが非空ならrunnerの一時directoryへ配置し、配置直後の`auth.json`のsha256を指紋として保存します。

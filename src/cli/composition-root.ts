@@ -17,7 +17,7 @@ import {
   enumerateGitHubItemsByIdentifiers,
   enumerateOpenGitHubItems,
 } from "../github/index.js";
-import { writePublicDataFiles } from "../pages/index.js";
+import { buildWebOutput, writePublicDataFiles } from "../pages/index.js";
 import { GitStateBranchAdapter, StatePersistenceSession } from "../persistence/index.js";
 import { type CliApplication } from "./application.js";
 import { writeCliJsonArtifact, writeCliTextFile } from "./file-output.js";
@@ -29,7 +29,7 @@ import {
 import { verifyPersistentStateDirectory } from "./state-verification.js";
 import { parseSandboxContext } from "./sandbox-context.js";
 
-const DEFAULT_PAGES_OUTPUT_DIRECTORY = "artifacts/workflow/pages";
+const DEFAULT_PAGES_OUTPUT_DIRECTORY = "web/public/data";
 
 type ConcreteOperationName =
   | "collectGitHubItemDetails"
@@ -105,6 +105,7 @@ export function createDefaultCliCompositionAdapters(
     writeJsonArtifact: writeCliJsonArtifact,
     writeTextFile: writeCliTextFile,
     writePublicData: writePublicDataFiles,
+    buildWebOutput,
     sendDiscord: sendDiscordDigest,
   });
 }

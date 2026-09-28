@@ -332,13 +332,23 @@ jobs:
         with:
           name: validated-public-run
           path: artifacts/workflow
+      - name: 初回state commit receiptを取得
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: initial-state-commit-receipt
+          path: artifacts/workflow
       - name: Pages用データを生成
         id: generate_public_data
         env:
           VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
         run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs build-pages --output web/public/data
-      - name: Pagesをビルド
-        run: pnpm build:web
+      - name: Pages buildのmanifestとreceiptを保存
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: initial-pages-build-record
+          path: artifacts/workflow/initial-pages-build.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Pagesを構成
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
       - name: Pages artifactを保存
@@ -488,7 +498,9 @@ jobs:
     needs:
       - collect-analyze
       - notify-discord
+    # Task 30でfinal state revisionを正本にする通知履歴Pagesの生成へ接続する。
     if: >-
+      false &&
       needs.notify-discord.result == 'success' &&
       needs.notify-discord.outputs.has_notification_candidates == 'true'
     runs-on: ubuntu-24.04

@@ -142,18 +142,6 @@ jobs:
           pnpm build
           pnpm tracker:run --backfill none --sandbox-context "$SANDBOX_CONTEXT_PATH" --notification-action hold
 
-      - name: Pages用データをWebへ配置
-        if: inputs.operation != 'dispose'
-        run: |
-          mkdir -p web/public/data
-          cp -f artifacts/workflow/pages/summary.json web/public/data/summary.json
-          cp -f artifacts/workflow/pages/details.json web/public/data/details.json
-          cp -f artifacts/workflow/pages/notification-history.json web/public/data/notification-history.json
-
-      - name: Pagesをビルド
-        if: inputs.operation != 'dispose'
-        run: pnpm build:web
-
       - name: sandbox stateの完了publishを確認
         id: finalize
         if: success() && inputs.operation != 'dispose'
@@ -178,7 +166,7 @@ jobs:
           name: sandbox-output-${{ steps.prepare.outputs.environment_id }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             artifacts/run-reports/daily.json
-            artifacts/workflow/pages
+            artifacts/workflow/initial-pages-build.json
           if-no-files-found: warn
           retention-days: 30
 

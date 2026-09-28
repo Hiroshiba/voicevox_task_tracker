@@ -6,7 +6,13 @@ import type { ProductionTypes } from "../contracts.js";
 type ProductionDailyDependencies = DailyTransactionDependencies<ProductionTypes>;
 type PagesRuntimeAdapters = Pick<
   ProductionRuntimeAdapters,
-  "pagesOutputDirectory" | "writePublicData"
+  | "pagesOutputDirectory"
+  | "writePublicData"
+  | "buildWebOutput"
+  | "createStateBranchAdapter"
+  | "repositoryPath"
+  | "now"
+  | "writeJsonArtifact"
 >;
 
 /** 初期保存済みrunのPages生成を既存公開処理へ接続する。 */

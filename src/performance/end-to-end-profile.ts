@@ -777,6 +777,7 @@ function createPerformanceHarness(repositoryPath: string, config: Config): Perfo
     writeStandardOutput: () => Promise.resolve(),
     writeJsonArtifact: () => Promise.resolve(),
     writeTextFile: () => Promise.resolve(),
+    buildWebOutput: () => Promise.resolve(),
     writePublicData: (_outputDirectory, data) => {
       generatedPublicData = data;
       const summarySource = serializeCanonicalJson(data.summary);

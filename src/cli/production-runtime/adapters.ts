@@ -72,6 +72,7 @@ export type ProductionRuntimeAdapters = Readonly<{
     outputDirectory: string,
     data: GeneratedPublicData,
   ) => Promise<PublicDataWriteResult>;
+  buildWebOutput: (repositoryPath: string) => Promise<void>;
   sendDiscord: typeof sendDiscordDigest;
 }>;
 
@@ -143,6 +144,7 @@ export type PublicationRuntimeAdapters = Pick<
   | "random"
   | "writeJsonArtifact"
   | "writePublicData"
+  | "buildWebOutput"
   | "sendDiscord"
 >;
 

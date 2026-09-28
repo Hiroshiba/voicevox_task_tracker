@@ -18,7 +18,6 @@ import type {
   StateBranchAdapter,
   StateHistoryInputEvent,
   StateHistoryNotificationEvent,
-  StateHistoryRecord,
   StateNotificationLedger,
   StatePersistenceConfiguration,
   StatePersistenceSession,
@@ -26,6 +25,11 @@ import type {
   StateSnapshotReadResult,
 } from "../../persistence/index.js";
 import type { InitialStateCommitResult } from "../initial-state-commit.js";
+import type {
+  PagesContentManifest,
+  PagesDeploymentIntent,
+} from "../../application/tracking-run/pages-build-contracts.js";
+import type { PagesBuildReceipt } from "../../application/tracking-run/receipt-schema.js";
 import type {
   DailyTransactionDependencies,
   DailyTransactionTypeMap,
@@ -46,17 +50,19 @@ export type ValidatedRun = TrackingValidatedRun<
 /** 初期保存後にPages生成へ渡す値。 */
 export type PersistedRun = Readonly<{
   result: InitialStateCommitResult;
-  historyRecords: readonly StateHistoryRecord[];
   notificationLedger: StateNotificationLedger;
   session: StatePersistenceSession;
   bound: BoundPublicationCheckpoint;
 }>;
 
 /** Pages生成と書込みの結果。 */
-export type PagesResult = Readonly<{
+export type InitialPagesPreparedRun = Readonly<{
   data: GeneratedPublicData;
   output: PublicDataWriteResult;
   pagesUrl: string;
+  manifest: PagesContentManifest;
+  intent: PagesDeploymentIntent;
+  receipt: PagesBuildReceipt;
 }>;
 
 /** Discord配送本体と履歴event。 */
@@ -119,6 +125,7 @@ export type RunPublicationAdapters = Readonly<{
     outputDirectory: string,
     data: GeneratedPublicData,
   ) => Promise<PublicDataWriteResult>;
+  buildWebOutput: (repositoryPath: string) => Promise<void>;
   sendDiscord: typeof sendDiscordDigest;
 }>;
 
@@ -131,7 +138,7 @@ export type PublicationDailyTypes = DailyTransactionTypeMap &
     validated: ValidatedRun;
     planned: PublicationPlannedRun;
     persisted: PersistedRun;
-    pages: PagesResult;
+    pages: InitialPagesPreparedRun;
     discord: DiscordResult;
   }>;
 

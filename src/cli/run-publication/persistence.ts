@@ -32,7 +32,7 @@ export type PersistValidatedRunInput = Readonly<{
   now: () => Date;
 }>;
 
-/** 完全性検証済みrunを初期保存し、Pages用履歴を読む。 */
+/** 完全性検証済みrunを初期保存し、後続段階用state sessionを開く。 */
 export async function persistValidatedRun(input: PersistValidatedRunInput): Promise<PersistedRun> {
   assertBoundPublicationCheckpoint(input.bound);
   const { validated } = input.bound.planned;
@@ -51,10 +51,8 @@ export async function persistValidatedRun(input: PersistValidatedRunInput): Prom
     input.configuration.config.staleness.timezone,
     result.revision,
   );
-  const historyRecords = await session.loadHistoryRecords();
   return Object.freeze({
     result,
-    historyRecords,
     notificationLedger: await session.loadNotificationLedger(),
     session,
     bound: input.bound,

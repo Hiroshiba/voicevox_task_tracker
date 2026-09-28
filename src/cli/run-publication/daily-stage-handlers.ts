@@ -4,6 +4,7 @@ import { basename, resolve } from "node:path";
 
 import { encodePublicationCheckpoint } from "../publication-checkpoint-codec.js";
 import { bindPublicationCheckpoint } from "../publication-checkpoint-binding.js";
+import { parseInitialPagesBuildArtifact } from "../initial-pages-build-artifact.js";
 import { writePublicationCheckpointFile } from "../publication-checkpoint-file.js";
 import {
   readPublicationRuntimeContext,
@@ -100,21 +101,44 @@ export async function persistDailyState(
 }
 
 /** 初期保存済みrunをPages生成へ渡す。 */
-export function buildDailyPages(
+export async function buildDailyPages(
   dependencies: Readonly<{
-    adapters: Pick<RunPublicationAdapters, "writePublicData" | "pagesOutputDirectory">;
+    adapters: Pick<
+      RunPublicationAdapters,
+      | "writePublicData"
+      | "buildWebOutput"
+      | "pagesOutputDirectory"
+      | "createStateBranchAdapter"
+      | "repositoryPath"
+      | "now"
+      | "writeJsonArtifact"
+    >;
   }>,
   input: Parameters<DailyPublicationStageHandlers["buildPages"]>[0],
 ): ReturnType<DailyPublicationStageHandlers["buildPages"]> {
-  const { configuration, repositoryInventory, persisted } = input;
-  return buildPublicPages({
+  const { configuration, persisted } = input;
+  const result = await buildPublicPages({
+    adapter: dependencies.adapters.createStateBranchAdapter(),
+    config: configuration.config,
+    stateConfiguration: configuration.target.state,
+    initialStateCommitReceipt: persisted.result.receipt,
+    repositoryPath: dependencies.adapters.repositoryPath,
     writePublicData: dependencies.adapters.writePublicData,
-    inventory: repositoryInventory.inventory,
-    planned: persisted.bound.planned,
-    historyRecords: persisted.historyRecords,
+    buildWebOutput: dependencies.adapters.buildWebOutput,
     outputDirectory: dependencies.adapters.pagesOutputDirectory,
     knownSecrets: configuration.credentials.knownSecrets,
+    now: dependencies.adapters.now,
   });
+  await dependencies.adapters.writeJsonArtifact(
+    resolve(dependencies.adapters.repositoryPath, "artifacts/workflow/initial-pages-build.json"),
+    parseInitialPagesBuildArtifact({
+      schemaVersion: 1,
+      manifest: result.manifest,
+      intent: result.intent,
+      receipt: result.receipt,
+    }),
+  );
+  return result;
 }
 
 /** 日次runのDiscord配送または通知省略を実行する。 */

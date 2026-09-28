@@ -13,7 +13,6 @@ const DEFAULT_REPORT_DIRECTORY = "artifacts/run-reports";
 const DEFAULT_ARTIFACT_DIRECTORY = "artifacts";
 const DEFAULT_WORKFLOW_ARTIFACT_PATH = "artifacts/workflow/validated-run.json";
 const DEFAULT_INITIAL_STATE_RECEIPT_PATH = "artifacts/workflow/initial-state-commit-receipt.json";
-const DEFAULT_PAGES_OUTPUT_DIRECTORY = "artifacts/workflow/pages";
 const DEFAULT_COLLECT_ANALYZE_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/collect-analyze.json`;
 const DEFAULT_WORKFLOW_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/workflow.json`;
 const REPOSITORY_FILTER_PATTERN = /^VOICEVOX\/[A-Za-z0-9._-]+$/u;
@@ -88,7 +87,8 @@ export type PersistStateCliCommand = Readonly<{
 export type BuildPagesCliCommand = Readonly<{
   kind: "build-pages";
   configPath: string;
-  artifactPath: string;
+  initialStateReceiptPath: string;
+  buildArtifactPath: string;
   outputDirectory: string;
 }>;
 
@@ -454,12 +454,20 @@ function parsePersistState(args: readonly string[]): PersistStateCliCommand {
 }
 
 function parseBuildPages(args: readonly string[]): BuildPagesCliCommand {
-  const options = parseOptions(args, new Set(["--artifact", "--config", "--output"]));
+  const options = parseOptions(
+    args,
+    new Set(["--receipt", "--build-artifact", "--config", "--output"]),
+  );
   return Object.freeze({
     kind: "build-pages",
     configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
-    artifactPath: singleOption(options, "--artifact", DEFAULT_WORKFLOW_ARTIFACT_PATH),
-    outputDirectory: singleOption(options, "--output", DEFAULT_PAGES_OUTPUT_DIRECTORY),
+    initialStateReceiptPath: singleOption(options, "--receipt", DEFAULT_INITIAL_STATE_RECEIPT_PATH),
+    buildArtifactPath: singleOption(
+      options,
+      "--build-artifact",
+      "artifacts/workflow/initial-pages-build.json",
+    ),
+    outputDirectory: singleOption(options, "--output", "web/public/data"),
   });
 }
 
@@ -816,7 +824,7 @@ export function formatCliUsage(): string {
     "  voicevox-task-tracker backfill [--mode none|linked|all-open] [--notification-action send|hold|acknowledge-current] [--repository VOICEVOX/REPO]",
     "  voicevox-task-tracker collect-analyze [--mode none|linked|all-open] [--notification-action send|hold|acknowledge-current] [--scheduled-for ISO] [--artifact PATH]",
     "  voicevox-task-tracker persist-state [--config PATH] [--artifact PATH] [--receipt PATH]",
-    "  voicevox-task-tracker build-pages [--config PATH] [--artifact PATH] [--output PATH]",
+    "  voicevox-task-tracker build-pages [--config PATH] [--receipt PATH] [--build-artifact PATH] [--output PATH]",
     "  voicevox-task-tracker notify-discord --pages-url URL [--artifact PATH]",
     "  voicevox-task-tracker resolve-discord-delivery --delivery-id ID --resolution retry|acknowledge [--config PATH]",
     "  voicevox-task-tracker notify-operations --kind collection --incident-id ID --occurred-at ISO --collect-analyze-report PATH",

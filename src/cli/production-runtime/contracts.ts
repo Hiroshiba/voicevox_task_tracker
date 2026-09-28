@@ -93,7 +93,11 @@ import type { DeterministicItemAnalysis } from "../../application/tracking-run/s
 import type { EffectiveAssigneeCandidateContext } from "../../application/tracking-run/stages/deterministic-responsibility.js";
 import type { PersonalReminderAnalysisResult } from "../personal-reminder/index.js";
 import type { RuntimeCredentials, RuntimeExecutionTarget } from "../production-runtime-setup.js";
-import type { DiscordResult, PagesResult, PersistedRun } from "../run-publication/contracts.js";
+import type {
+  DiscordResult,
+  InitialPagesPreparedRun,
+  PersistedRun,
+} from "../run-publication/contracts.js";
 
 export type MutablePartial<Value> = {
   -readonly [Key in keyof Value]?: Value[Key];
@@ -267,7 +271,7 @@ export type ProductionTypes = DailyTransactionTypeMap &
     validated: ValidatedRun;
     planned: PublicationPlannedRun;
     persisted: PersistedRun;
-    pages: PagesResult;
+    pages: InitialPagesPreparedRun;
     discord: DiscordResult;
   }>;
 
