@@ -73,6 +73,7 @@ export type PersonalReminderFinalizedRun = StageState<
     Readonly<{
       items: readonly PersonalReminderFinalizedItem[];
       historicalEvidence: readonly OwnedHistoricalEvidence[];
+      personalReminderStatus: "success" | "fallback";
     }>
 >;
 
@@ -419,6 +420,23 @@ export function finalizePersonalReminders(
   ) {
     throw new TypeError("個人催促最終項目と計画項目の集合が一致しません");
   }
+  const personalReminderStatus =
+    run.data.snapshotProjection.unavailablePersonalReminderConsumer ||
+    run.data.plan.causePlan.continuityConflicts.length > 0 ||
+    run.data.plan.causePlan.incompleteInputNodeIds.length > 0 ||
+    run.data.plan.causePlan.deferredStructuralEndNodeIds.length > 0 ||
+    items.some((item) => item.planning.status === "pending") ||
+    items.some((item) =>
+      item.causeResults.some(({ cause }) => {
+        const current = currentPersonalReminderAssessment(cause);
+        return (
+          current.status !== "available" &&
+          (cause.latestAttempt.status === "failed" || cause.latestAttempt.status === "deferred")
+        );
+      }),
+    )
+      ? "fallback"
+      : "success";
   return Object.freeze({
     stage: "personal_reminder_finalized",
     core: Object.freeze({
@@ -437,6 +455,8 @@ export function finalizePersonalReminders(
       graph: run.data.graph,
       finalGraphProjection: run.data.finalGraphProjection,
       items: Object.freeze(items),
+      snapshotProjection: run.data.snapshotProjection,
+      personalReminderStatus,
       historicalEvidence: collectOwnedHistoricalEvidence(
         run.core.personalReminderInput.previousItems,
         run.core.personalReminderInput.previousRelations,

@@ -1,8 +1,11 @@
 import type { DailyRunInvocation, DailyTransactionDependencies } from "../../daily-transaction.js";
 import type { GitHubRunSessions } from "../../../infrastructure/tracking-run/github-port.js";
-import type { GenericAiAdoptedRun } from "../../../application/tracking-run/stages/generic-ai-adoption.js";
 import type { GraphReconciledRun } from "../../../application/tracking-run/stages/graph-reconciliation.js";
 import { closeFinalizedRunEvidence } from "../../../application/tracking-run/stages/evidence-closure.js";
+import { buildFinalSnapshot } from "../../../application/tracking-run/stages/final-snapshot.js";
+import type { FinalSnapshotCandidate } from "../../../application/tracking-run/contracts/final-snapshot.js";
+import { nodeContentDigestPort } from "../../../infrastructure/tracking-run/content-digest.js";
+import { createStateSnapshot, type StateSnapshot } from "../../../persistence/index.js";
 import type {
   CodexAnalysis,
   CollectedItems,
@@ -19,7 +22,14 @@ import {
   mergeSelectedNotificationLedger,
   selectValidationNotifications,
 } from "./notification-selection.js";
-import { createValidatedSnapshot } from "./snapshot-state.js";
+
+function provisionalSnapshotForLegacyValidation(candidate: FinalSnapshotCandidate): StateSnapshot {
+  // TODO: Task17-2の完全性proofが生成された後だけcompleteを付与する。
+  return createStateSnapshot({
+    ...candidate,
+    run: Object.freeze({ ...candidate.run, complete: true }),
+  });
+}
 
 function validateRunCompleteness(
   invocation: DailyRunInvocation,
@@ -28,7 +38,6 @@ function validateRunCompleteness(
   inventory: RepositoryInventory,
   collection: CollectedItems,
   codexAnalysis: CodexAnalysis,
-  genericAiAdopted: GenericAiAdoptedRun,
   graphReconciled: GraphReconciledRun,
   personalReminderAnalysis: PersonalReminderAnalysis,
 ): ValidatedRunWithPreview {
@@ -54,16 +63,8 @@ function validateRunCompleteness(
       notification.pendingNotifications,
     ),
   );
-  const snapshot = createValidatedSnapshot(
-    invocation,
-    configuration,
-    state,
-    collection,
-    codexAnalysis,
-    genericAiAdopted,
-    graphReconciled,
-    personalReminderAnalysis,
-    closure,
+  const snapshot = provisionalSnapshotForLegacyValidation(
+    buildFinalSnapshot(personalReminderAnalysis.finalized, closure, nodeContentDigestPort),
   );
   return Object.freeze({
     snapshot,
@@ -86,7 +87,6 @@ export function createValidateCompletenessStage(
     repositoryInventory,
     collection,
     codexAnalysis,
-    genericAiAdopted,
     graphReconciled,
     personalReminderAnalysis,
   }) => {
@@ -98,7 +98,6 @@ export function createValidateCompletenessStage(
         repositoryInventory,
         collection,
         codexAnalysis,
-        genericAiAdopted,
         graphReconciled,
         personalReminderAnalysis,
       );

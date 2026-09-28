@@ -52,7 +52,9 @@ import type {
 import { createGenericAiPlannedStageProof } from "../contracts/proofs.js";
 import { projectGenericAiRunCore, type StageState } from "../contracts/run-core.js";
 import type { ContentDigestPort } from "../ports.js";
+import type { FinalSnapshotPlanProjection } from "../contracts/final-snapshot.js";
 import { createAiAnalysisRunIdentity } from "./collection-analysis-fingerprint.js";
+import { projectFinalSnapshotPlan } from "./final-snapshot-collection.js";
 import type { DeterministicallyAnalyzedRun } from "./deterministic.js";
 import type { DeterministicItemAnalysis } from "./deterministic-item.js";
 import {
@@ -113,6 +115,7 @@ export type GenericAiPlannedRun = StageState<
     sourceCatalog: DeterministicallyAnalyzedRun["data"]["sourceCatalog"];
     facts: DeterministicallyAnalyzedRun["data"]["facts"];
     plan: GenericAiPlan;
+    snapshotPlan: FinalSnapshotPlanProjection;
   }
 >;
 
@@ -498,6 +501,7 @@ export async function planGenericAi(
       sourceCatalog: analyzed.data.sourceCatalog,
       facts: analyzed.data.facts,
       plan,
+      snapshotPlan: projectFinalSnapshotPlan(analyzed, plan, port.digest),
     }),
     proof: createGenericAiPlannedStageProof(),
   });

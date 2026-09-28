@@ -16,6 +16,7 @@ export type GenericAiAdoptedRun = StageState<
     sourceCatalog: GenericAiExecutedRun["data"]["sourceCatalog"];
     facts: GenericAiExecutedRun["data"]["facts"];
     items: readonly GenericAiItemAdoption[];
+    snapshotPlan: GenericAiExecutedRun["data"]["snapshotPlan"];
   }>
 >;
 
@@ -68,6 +69,7 @@ export function adoptGenericAi(
       sourceCatalog: executed.data.sourceCatalog,
       facts: executed.data.facts,
       items: Object.freeze(items),
+      snapshotPlan: executed.data.snapshotPlan,
     }),
     proof: createGenericAiAdoptedStageProof(),
   });

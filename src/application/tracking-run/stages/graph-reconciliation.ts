@@ -16,6 +16,7 @@ import type {
 import { blockerValueAiDependencies } from "./graph-reconciliation-blocker-values.js";
 import { createGraphFinalContext, type GraphFinalContext } from "./graph-reconciliation-context.js";
 import { finalizeGraphItems } from "./graph-reconciliation-final-items.js";
+import { projectFinalSnapshotGraph } from "./final-snapshot-collection.js";
 import { reconcileGraphPass } from "./graph-reconciliation-graph.js";
 import {
   blockerNodeAiDependenciesByBlockedNodeId,
@@ -41,6 +42,7 @@ export type GraphReconciledRun = StageState<
     finalItems: readonly GraphFinalItem[];
     finalGraphProjection: FinalGraphProjection;
     context: GraphFinalContext;
+    snapshotProjection: ReturnType<typeof projectFinalSnapshotGraph>;
   }>
 >;
 
@@ -156,6 +158,12 @@ export function reconcileAdoptedGraph(adopted: GenericAiAdoptedRun): GraphReconc
       reduction: canonicalReduction(secondReduction, finalGraph, finalItems),
       graph: canonicalGraph(finalGraph),
       finalItems,
+      snapshotProjection: projectFinalSnapshotGraph(
+        adopted,
+        collection,
+        finalItems,
+        secondReduction.runStatus,
+      ),
       finalGraphProjection: createFinalGraphProjection({
         evaluatedAt: collection.evaluatedAt,
         timezone: adopted.core.graphInput.config.staleness.timezone,
