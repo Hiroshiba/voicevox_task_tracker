@@ -8,6 +8,7 @@ import {
   migrateLegacyNotificationReasonCode,
 } from "./legacy-enum.js";
 import { pendingNotificationSchema } from "../domain/types.js";
+import { notificationDeliveryAttemptSchema } from "../domain/notification-delivery-attempt.js";
 import { compareStateKeys } from "./state-key-order.js";
 export {
   createStateRunReport,
@@ -32,6 +33,7 @@ export const NOTIFICATION_LEDGER_SCHEMA_VERSION_6 = "6";
 export const NOTIFICATION_LEDGER_SCHEMA_VERSION_7 = "7";
 export const NOTIFICATION_LEDGER_SCHEMA_VERSION_8 = "8";
 export const NOTIFICATION_LEDGER_SCHEMA_VERSION_9 = "9";
+export const NOTIFICATION_LEDGER_SCHEMA_VERSION_10 = "10";
 
 const nonEmptyStringSchema = z.string().min(1).max(1000);
 const deliveryIdSchema = z.string().regex(/^discord-digest:v1:[0-9a-f]{24}:message:[1-9][0-9]*$/u);
@@ -149,6 +151,29 @@ const ledgerEntryVersion7Schema = z.discriminatedUnion("status", [
   sentLedgerEntryVersion4Schema,
   acknowledgedLedgerEntryVersion5Schema,
   deliveryStartedLedgerEntryVersion7Schema,
+]);
+const ledgerEntryVersion10BaseSchema = ledgerEntryVersion4BaseSchema.extend({
+  lastDeliveryAttempt: notificationDeliveryAttemptSchema.optional(),
+});
+const ledgerEntryVersion10Schema = z.discriminatedUnion("status", [
+  ledgerEntryVersion10BaseSchema.extend({
+    status: z.literal("reserved"),
+    expiresAt: dateTimeSchema,
+  }),
+  ledgerEntryVersion10BaseSchema.extend({
+    status: z.literal("delivery_started"),
+    deliveryId: deliveryIdSchema,
+    startedAt: dateTimeSchema,
+  }),
+  ledgerEntryVersion10BaseSchema.extend({
+    status: z.literal("sent"),
+    sentAt: dateTimeSchema,
+    discordMessageId: nonEmptyStringSchema,
+  }),
+  ledgerEntryVersion10BaseSchema.extend({
+    status: z.literal("acknowledged"),
+    acknowledgedAt: dateTimeSchema,
+  }),
 ]);
 const legacyPendingNotificationSchema = pendingNotificationSchema.superRefine(
   (notification, context) => {
@@ -509,7 +534,7 @@ const notificationLedgerVersion6Schema = z
     }
   });
 export type NotificationLedgerWithPending = Readonly<{
-  entries: readonly z.output<typeof ledgerEntryVersion7Schema>[];
+  entries: readonly z.output<typeof ledgerEntryVersion10Schema>[];
   operationsAlerts: readonly z.output<typeof operationsAlertEntrySchema>[];
   pendingNotifications: readonly z.output<typeof pendingNotificationSchema>[];
 }>;
@@ -547,6 +572,23 @@ const combinedNotificationLedgerVersion9Schema = z
     pendingNotifications: z.array(pendingNotificationSchema),
   })
   .superRefine(validateNotificationLedger);
+const notificationLedgerVersion10Schema = z
+  .strictObject({
+    schemaVersion: z.literal(NOTIFICATION_LEDGER_SCHEMA_VERSION_10),
+    entries: z.array(ledgerEntryVersion10Schema),
+    pendingNotifications: z.array(pendingNotificationSchema),
+  })
+  .superRefine((ledger, context) => {
+    validateNotificationLedger({ ...ledger, operationsAlerts: [] }, context);
+  });
+const combinedNotificationLedgerVersion10Schema = z
+  .strictObject({
+    schemaVersion: z.literal(NOTIFICATION_LEDGER_SCHEMA_VERSION_10),
+    entries: z.array(ledgerEntryVersion10Schema),
+    operationsAlerts: z.array(operationsAlertEntrySchema),
+    pendingNotifications: z.array(pendingNotificationSchema),
+  })
+  .superRefine(validateNotificationLedger);
 type StateNotificationLedgerVersion1 = z.output<typeof notificationLedgerVersion1MigrationSchema>;
 type StateNotificationLedgerVersion2 = z.output<typeof notificationLedgerVersion2Schema>;
 type StateNotificationLedgerVersion3 = z.output<typeof notificationLedgerVersion3Schema>;
@@ -555,11 +597,11 @@ type StateNotificationLedgerVersion5 = z.output<typeof notificationLedgerVersion
 type StateNotificationLedgerVersion6 = z.output<typeof notificationLedgerVersion6Schema>;
 type StateNotificationLedgerVersion7 = z.output<typeof notificationLedgerVersion7Schema>;
 type StateNotificationLedgerVersion8 = z.output<typeof notificationLedgerVersion8Schema>;
-type StateNotificationLedgerVersion9 = z.output<typeof combinedNotificationLedgerVersion9Schema>;
+type StateNotificationLedgerVersion10 = z.output<typeof combinedNotificationLedgerVersion10Schema>;
 type StateNotificationLedgerVersionParser = (value: unknown) => StateNotificationLedger;
 
 /** 通常通知の予約、送信開始、送信結果、確認済みledger entry、送信待ち通知、送信済み運用障害を保持するledger。 */
-export type StateNotificationLedger = StateNotificationLedgerVersion9;
+export type StateNotificationLedger = StateNotificationLedgerVersion10;
 function createFormatError(kind: string, error: z.ZodError): StateFormatError {
   return StateFormatError.fromZodError(kind, error);
 }
@@ -736,12 +778,12 @@ function migrateStateNotificationLedgerVersion7(
 
 function normalizeStateNotificationLedger(
   ledger: Pick<
-    StateNotificationLedgerVersion8,
+    StateNotificationLedgerVersion10,
     "entries" | "operationsAlerts" | "pendingNotifications"
   >,
 ): StateNotificationLedger {
   return {
-    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_9,
+    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_10,
     entries: [...ledger.entries].sort((left, right) =>
       compareStateKeys(left.notificationKey, right.notificationKey),
     ),
@@ -828,6 +870,13 @@ const stateNotificationLedgerVersionParsers: ReadonlyMap<
       normalizeStateNotificationLedger,
     ),
   ],
+  [
+    NOTIFICATION_LEDGER_SCHEMA_VERSION_10,
+    createStateNotificationLedgerVersionParser(
+      (value) => combinedNotificationLedgerVersion10Schema.parse(value),
+      normalizeStateNotificationLedger,
+    ),
+  ],
 ]);
 
 function parseVersionedStateNotificationLedger(value: unknown): StateNotificationLedger {
@@ -852,7 +901,7 @@ export function createStateNotificationLedger(value: unknown): StateNotification
 /** 初回bootstrap用の空notification ledgerを生成する。 */
 export function createEmptyStateNotificationLedger(): StateNotificationLedger {
   return {
-    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_9,
+    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_10,
     entries: [],
     operationsAlerts: [],
     pendingNotifications: [],
@@ -863,8 +912,8 @@ export function createEmptyStateNotificationLedger(): StateNotificationLedger {
 export function serializeStateNotificationLedger(ledger: StateNotificationLedger): string {
   const validated = createStateNotificationLedger(ledger);
   return serializeCanonicalJsonLine(
-    notificationLedgerVersion9Schema.parse({
-      schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_9,
+    notificationLedgerVersion10Schema.parse({
+      schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_10,
       entries: validated.entries,
       pendingNotifications: validated.pendingNotifications,
     }),
@@ -885,6 +934,12 @@ export function parseStateNotificationLedger(source: string): StateNotificationL
     });
   }
   const version = notificationLedgerSchemaVersionSchema.parse(value);
+  if (version.schemaVersion === NOTIFICATION_LEDGER_SCHEMA_VERSION_10) {
+    return createStateNotificationLedger({
+      ...notificationLedgerVersion10Schema.parse(value),
+      operationsAlerts: [],
+    });
+  }
   if (version.schemaVersion === NOTIFICATION_LEDGER_SCHEMA_VERSION_9) {
     return createStateNotificationLedger({
       ...notificationLedgerVersion9Schema.parse(value),
@@ -892,4 +947,23 @@ export function parseStateNotificationLedger(source: string): StateNotificationL
     });
   }
   return parseVersionedStateNotificationLedger(value);
+}
+
+/** marker付き旧ledgerのcanonical sourceとdigest対象を入口で検証する。 */
+export function parseRunTransactionNotificationLedger(source: string): Readonly<{
+  ledger: StateNotificationLedger;
+  legacyDigestValue?: z.output<typeof notificationLedgerVersion9Schema>;
+}> {
+  const ledger = parseStateNotificationLedger(source);
+  if (source === serializeStateNotificationLedger(ledger)) {
+    return Object.freeze({ ledger });
+  }
+  const parseJson: (text: string) => unknown = JSON.parse;
+  const legacy = notificationLedgerVersion9Schema.parse(parseJson(source));
+  if (source !== serializeCanonicalJsonLine(legacy)) {
+    throw new StateFormatError("notification ledger", {
+      cause: new TypeError("marker付きstateの通常ledgerがcanonical JSONではありません"),
+    });
+  }
+  return Object.freeze({ ledger, legacyDigestValue: legacy });
 }

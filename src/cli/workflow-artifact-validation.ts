@@ -139,7 +139,7 @@ export type WorkflowValidation = Pick<
 /** checkpoint内のrun完全性情報をschemaで読む。 */
 export function parseWorkflowValidation(value: unknown): WorkflowValidation {
   const parsed = validationSchema.parse(value);
-  z.object({ schemaVersion: z.literal("9") }).parse(parsed.previousNotificationLedger);
+  z.object({ schemaVersion: z.literal("10") }).parse(parsed.previousNotificationLedger);
   return Object.freeze({
     ...parsed,
     previousNotificationLedger: createStateNotificationLedger(parsed.previousNotificationLedger),

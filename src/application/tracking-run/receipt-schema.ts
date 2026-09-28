@@ -201,8 +201,9 @@ export const receiptSchema = z.discriminatedUnion("receiptType", [
     durableAttemptSequence: positiveIntegerSchema,
     result: z.strictObject({
       deliveryId: nonEmptyStringSchema,
-      notificationKey: nonEmptyStringSchema,
+      notificationKeys: z.array(nonEmptyStringSchema).min(1),
       discordMessageId: nonEmptyStringSchema.optional(),
+      reservationStateRevision: gitCommitRevisionSchema,
       ledgerStateRevision: gitCommitRevisionSchema,
     }),
   }),

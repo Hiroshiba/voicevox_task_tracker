@@ -1,0 +1,384 @@
+import { z } from "zod";
+import type { InitialPagesPublicationEvidence } from "../application/tracking-run/initial-pages-evidence.js";
+import { receiptIdentifiers } from "../application/tracking-run/receipt-codec.js";
+import type { ReceiptChainEvidence } from "../application/tracking-run/receipt-chain-schema.js";
+import type {
+  InitialStateCommitReceipt,
+  NotificationMessageReceipt,
+  PagesBuildReceipt,
+  PagesDeploymentReceipt,
+  Receipt,
+} from "../application/tracking-run/receipt-schema.js";
+import { nodeContentDigestPort as digest } from "../infrastructure/tracking-run/content-digest.js";
+import { assertStatePublicSafety } from "../persistence/public-safety.js";
+import {
+  readExactStateTree,
+  type StateBranchAdapter,
+  type StatePersistenceConfiguration,
+} from "../persistence/index.js";
+import { authorizeAdvanceAfterOrthogonalCommits } from "../persistence/state-orthogonal-advance.js";
+import {
+  parseDurablePublicationRecord,
+  type DurablePublicationRecord,
+} from "./durable-record-schema.js";
+import { verifyInitialStateCommitReceiptAtRevision } from "./initial-pages-source.js";
+import { prepareNotificationMessageContext } from "./notification-message-context.js";
+import { commitMessageTransition } from "./notification-message-commit.js";
+import {
+  receiptForMessage,
+  validatePagesSource,
+  validatePreviousReceipt,
+} from "./notification-message-receipt.js";
+import {
+  observeNotificationMessageDelivery,
+  type ObservedNotificationMessage,
+} from "./notification-message-observation.js";
+import {
+  notificationMessageSendOutcomeSchema,
+  type NotificationMessageSendPort,
+  type NotificationMessageSendOutcome,
+} from "./notification-message-http.js";
+import {
+  assertCurrentState,
+  readNotificationMessageState,
+  type MessageAttempt,
+} from "./notification-message-state.js";
+import { createGitHubRepositoryId, type Repository } from "../domain/index.js";
+
+/** 初回Pages成功のreceipt列またはstateへ保存済みの証拠。 */
+export type NotificationInitialPagesSource =
+  | Readonly<{
+      kind: "published";
+      buildReceipt: PagesBuildReceipt;
+      deploymentReceipt: PagesDeploymentReceipt;
+      evidence: InitialPagesPublicationEvidence;
+    }>
+  | Readonly<{ kind: "state"; evidence: InitialPagesPublicationEvidence }>;
+
+/** 固定outboxの一messageへ結合した送達要求。 */
+export type NotificationMessageDeliveryInput = Readonly<{
+  record: DurablePublicationRecord;
+  initialStateReceipt: InitialStateCommitReceipt;
+  initialPages: NotificationInitialPagesSource;
+  previousReceipt: Receipt;
+  expectedStateRevision: string;
+  messageIndex: number;
+  invocationId: string;
+  localAttemptIndex: number;
+}>;
+
+/** state、送信、診断の副作用を持つ通知message境界。 */
+export type NotificationMessageDeliveryPort = Readonly<{
+  adapter: StateBranchAdapter;
+  configuration: StatePersistenceConfiguration;
+  repositoryInventory: readonly Repository[];
+  knownSecrets: readonly string[];
+  sender: NotificationMessageSendPort;
+  recordDiagnostic: (cause: unknown) => Promise<void>;
+  now: () => Date;
+}>;
+
+/** 後続のsettlementが判断できる送達結果。 */
+export type NotificationMessageDeliveryOutcome =
+  | Readonly<{
+      kind: "sent";
+      receipt: NotificationMessageReceipt;
+      receiptEvidence: ReceiptChainEvidence;
+      stateRevision: string;
+      discordMessageId: string;
+    }>
+  | Readonly<{
+      kind: "clear_rejection";
+      receipt: NotificationMessageReceipt;
+      receiptEvidence: ReceiptChainEvidence;
+      stateRevision: string;
+    }>
+  | Readonly<{
+      kind: "ambiguous";
+      receipt: NotificationMessageReceipt;
+      receiptEvidence: ReceiptChainEvidence;
+      stateRevision: string;
+    }>
+  | Readonly<{
+      kind: "state_unconfirmed";
+      stateRevision: string;
+      effectCertainty: "committed" | "no_effect" | "ambiguous";
+      discordMessageId?: string;
+    }>
+  | Readonly<{ kind: "conflict"; observedHeadRevision: string }>;
+
+function currentTime(port: NotificationMessageDeliveryPort): string {
+  return port.now().toISOString();
+}
+
+function observedOutcome(
+  observed: ObservedNotificationMessage,
+): NotificationMessageDeliveryOutcome {
+  const receipt = observed.receipt;
+  if (receipt.status === "sent") {
+    if (receipt.result.discordMessageId == null) {
+      throw new TypeError("再観測した送信成功receiptにDiscord IDがありません");
+    }
+    return {
+      kind: "sent",
+      receipt,
+      receiptEvidence: { kind: "notification_message_state", state: observed.evidence },
+      stateRevision: observed.stateRevision,
+      discordMessageId: receipt.result.discordMessageId,
+    };
+  }
+  return {
+    kind: receipt.status === "ambiguous" ? "ambiguous" : "clear_rejection",
+    receipt,
+    receiptEvidence: { kind: "notification_message_state", state: observed.evidence },
+    stateRevision: observed.stateRevision,
+  };
+}
+
+/** 一つのDiscord messageを予約、実行、結果CASの順で送達する。 */
+export async function deliverNotificationMessage(
+  input: NotificationMessageDeliveryInput,
+  port: NotificationMessageDeliveryPort,
+): Promise<NotificationMessageDeliveryOutcome> {
+  const record = parseDurablePublicationRecord(input.record, digest);
+  z.uuid().parse(input.invocationId);
+  if (!Number.isSafeInteger(input.localAttemptIndex) || input.localAttemptIndex < 0) {
+    throw new TypeError("通知messageの起動内試行番号が不正です");
+  }
+  validatePreviousReceipt(input, record);
+  await verifyInitialStateCommitReceiptAtRevision(
+    port.adapter,
+    port.configuration,
+    input.initialStateReceipt,
+    currentTime(port),
+  );
+  const head = await readExactStateTree(port.adapter, port.configuration.branch);
+  if (head.observedHead.status !== "present") {
+    throw new TypeError("通知messageのstate branchがありません");
+  }
+  if (head.observedHead.revision !== input.expectedStateRevision) {
+    const observed = await observeNotificationMessageDelivery(
+      input,
+      port.adapter,
+      port.configuration,
+      head.observedHead.revision,
+      currentTime(port),
+    );
+    if (observed != null) {
+      return observedOutcome(observed);
+    }
+  }
+  try {
+    await authorizeAdvanceAfterOrthogonalCommits(
+      port.adapter,
+      port.configuration,
+      input.expectedStateRevision,
+      head.observedHead.revision,
+    );
+  } catch (cause: unknown) {
+    await port.recordDiagnostic(cause);
+    return { kind: "conflict", observedHeadRevision: head.observedHead.revision };
+  }
+  const state = await readNotificationMessageState(
+    port.adapter,
+    port.configuration,
+    head.observedHead.revision,
+  );
+  const evidence = validatePagesSource(
+    input.initialPages,
+    input.initialStateReceipt,
+    state.transaction.marker.phase === "initial_state_committed",
+  );
+  assertCurrentState(
+    state,
+    record,
+    input.initialStateReceipt.result.resultingStateRevision,
+    evidence,
+  );
+  const context = prepareNotificationMessageContext(
+    record,
+    state.snapshot,
+    state.ledger,
+    evidence,
+    input.messageIndex,
+  );
+  const identity = receiptIdentifiers(
+    {
+      binding: input.initialStateReceipt.binding,
+      stage: "notifications_settled",
+      phase: "notification",
+      logicalTarget: `message:${(input.messageIndex + 1).toString()}`,
+      invocationId: input.invocationId,
+      localAttemptIndex: input.localAttemptIndex,
+    },
+    digest,
+  );
+  const startedAt = currentTime(port);
+  const attempt: MessageAttempt = Object.freeze({
+    ...identity,
+    durableAttemptSequence: context.durableAttemptSequence,
+    notificationKeys: context.notificationKeys,
+    startedAt,
+    result: "started",
+  });
+  assertStatePublicSafety({
+    snapshot: state.snapshot,
+    repositoryInventory: port.repositoryInventory,
+    repositoryAllowlist: record.initialPagesProjection.repositoryAllowlist.map((repository) => ({
+      ...repository,
+      id: createGitHubRepositoryId(repository.id),
+    })),
+    additionalValues: [record, state.ledger, evidence],
+    knownSecrets: port.knownSecrets,
+  });
+  const reserved = await commitMessageTransition(
+    input,
+    port,
+    context,
+    evidence,
+    attempt,
+    input.expectedStateRevision,
+    "started",
+  );
+  if (reserved.kind === "conflict") {
+    await port.recordDiagnostic(
+      new TypeError("通知messageの予約commitとremote stateが競合しました"),
+    );
+    return { kind: "conflict", observedHeadRevision: reserved.revision };
+  }
+  if (reserved.kind === "state_unconfirmed" || reserved.observed) {
+    if (reserved.kind === "committed") {
+      const observed = await observeNotificationMessageDelivery(
+        input,
+        port.adapter,
+        port.configuration,
+        reserved.revision,
+        currentTime(port),
+      );
+      if (observed != null) {
+        return observedOutcome(observed);
+      }
+    }
+    await port.recordDiagnostic(new TypeError("通知messageの予約commitをremoteで確定できません"));
+    return {
+      kind: "state_unconfirmed",
+      stateRevision: reserved.kind === "committed" ? reserved.revision : head.observedHead.revision,
+      effectCertainty: reserved.kind === "committed" ? "ambiguous" : "no_effect",
+    };
+  }
+  let outcome: NotificationMessageSendOutcome;
+  try {
+    const outbox = record.notificationOutbox;
+    if (outbox.action !== "send") {
+      throw new TypeError("通知messageの送信設定がありません");
+    }
+    outcome = notificationMessageSendOutcomeSchema.parse(
+      await port.sender.send(context.message.payload, outbox.settings.webhookSecretName),
+    );
+  } catch (cause: unknown) {
+    outcome = {
+      status: "ambiguous",
+      source: record.executionPolicy.effectTarget === "production" ? "production" : "recording",
+      observedAt: currentTime(port),
+      cause,
+    };
+  }
+  if (
+    (record.executionPolicy.effectTarget === "production") !== (outcome.source === "production") ||
+    Number.isNaN(Date.parse(outcome.observedAt)) ||
+    Date.parse(outcome.observedAt) < Date.parse(startedAt) ||
+    (outcome.status === "sent" && outcome.discordMessageId.length === 0)
+  ) {
+    throw new TypeError("通知messageの送信adapter結果が永続runと一致しません");
+  }
+  if (outcome.status !== "sent") {
+    await port.recordDiagnostic(outcome.cause);
+  }
+  if (outcome.status === "ambiguous") {
+    const receipt = receiptForMessage(
+      input,
+      context,
+      reserved.revision,
+      reserved.revision,
+      "ambiguous",
+      outcome.observedAt,
+      undefined,
+    );
+    return {
+      kind: "ambiguous",
+      receipt,
+      receiptEvidence: { kind: "none" },
+      stateRevision: reserved.revision,
+    };
+  }
+  const resultAttempt: MessageAttempt = Object.freeze({
+    ...attempt,
+    result: outcome.status === "sent" ? "sent" : "clear_rejection",
+    completedAt: outcome.observedAt,
+    ...(outcome.status === "sent" ? { discordMessageId: outcome.discordMessageId } : {}),
+  });
+  const result = await commitMessageTransition(
+    input,
+    port,
+    context,
+    evidence,
+    resultAttempt,
+    reserved.revision,
+    outcome.status === "sent" ? "sent" : "clear_rejection",
+  );
+  if (result.kind !== "committed") {
+    const observedHead = await port.adapter.resolveHead(port.configuration.branch);
+    if (observedHead.status === "present") {
+      try {
+        const observed = await observeNotificationMessageDelivery(
+          input,
+          port.adapter,
+          port.configuration,
+          observedHead.revision,
+          currentTime(port),
+        );
+        if (
+          observed != null &&
+          ((outcome.status === "sent" &&
+            observed.receipt.status === "sent" &&
+            observed.receipt.result.discordMessageId === outcome.discordMessageId) ||
+            (outcome.status === "clear_rejection" && observed.receipt.status === "no_effect"))
+        ) {
+          return observedOutcome(observed);
+        }
+      } catch (cause: unknown) {
+        await port.recordDiagnostic(cause);
+      }
+    }
+    await port.recordDiagnostic(new TypeError("通知messageの結果commitをremoteで確定できません"));
+    return {
+      kind: "state_unconfirmed",
+      stateRevision: reserved.revision,
+      effectCertainty: outcome.status === "sent" ? "committed" : "no_effect",
+      ...(outcome.status === "sent" ? { discordMessageId: outcome.discordMessageId } : {}),
+    };
+  }
+  const receipt = receiptForMessage(
+    input,
+    context,
+    reserved.revision,
+    result.revision,
+    outcome.status === "sent" ? "sent" : "no_effect",
+    outcome.observedAt,
+    outcome.status === "sent" ? outcome.discordMessageId : undefined,
+  );
+  return outcome.status === "sent"
+    ? {
+        kind: "sent",
+        receipt,
+        receiptEvidence: { kind: "none" },
+        stateRevision: result.revision,
+        discordMessageId: outcome.discordMessageId,
+      }
+    : {
+        kind: "clear_rejection",
+        receipt,
+        receiptEvidence: { kind: "none" },
+        stateRevision: result.revision,
+      };
+}

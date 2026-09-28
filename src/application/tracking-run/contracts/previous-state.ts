@@ -9,6 +9,7 @@ import type {
 import type { Attention } from "../../../domain/attention.js";
 import type { NaturalLanguageDeadlineAssessmentState } from "../../../domain/deadline.js";
 import type { NaturalLanguageImportanceAssessmentState } from "../../../domain/importance.js";
+import type { NotificationDeliveryAttempt } from "../../../domain/notification-delivery-attempt.js";
 import type { StalenessSeverityContext } from "../../../domain/staleness.js";
 import type { TrackingStartAtState } from "../../../domain/tracking-lifecycle.js";
 import type { ExternalGhostNode } from "../../../domain/tracking-selection.js";
@@ -101,6 +102,7 @@ export type PreviousNotificationLedger = Readonly<{
     reasonCode: NotificationLedgerReasonCode;
     severity: Severity;
     reservedAt: string;
+    lastDeliveryAttempt?: NotificationDeliveryAttempt | undefined;
   }> &
     (
       | Readonly<{ status: "reserved"; expiresAt: string }>

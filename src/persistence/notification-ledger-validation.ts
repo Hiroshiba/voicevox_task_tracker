@@ -7,6 +7,7 @@ export function validateNotificationLedger(
   context: RefinementCtx,
 ): void {
   const keys = ledger.entries.map((entry) => entry.notificationKey);
+  const entriesByKey = new Map(ledger.entries.map((entry) => [entry.notificationKey, entry]));
   if (new Set(keys).size !== keys.length) {
     context.addIssue({
       code: "custom",
@@ -32,6 +33,42 @@ export function validateNotificationLedger(
     }
   }
   for (const [index, entry] of ledger.entries.entries()) {
+    const attempt = entry.lastDeliveryAttempt;
+    if (attempt != null) {
+      if (
+        new Set(attempt.notificationKeys).size !== attempt.notificationKeys.length ||
+        !attempt.notificationKeys.includes(entry.notificationKey) ||
+        (attempt.result === "started") !== (entry.status === "delivery_started") ||
+        (entry.status === "sent" && attempt.result !== "sent") ||
+        (attempt.result === "started" &&
+          (attempt.completedAt != null || attempt.discordMessageId != null)) ||
+        (attempt.result !== "started" && attempt.completedAt == null) ||
+        (attempt.result === "sent") !== (attempt.discordMessageId != null) ||
+        attempt.startedAt < entry.reservedAt ||
+        (attempt.completedAt != null && attempt.completedAt < attempt.startedAt) ||
+        (entry.status === "delivery_started" && entry.startedAt !== attempt.startedAt) ||
+        (entry.status === "sent" &&
+          (entry.discordMessageId !== attempt.discordMessageId ||
+            entry.sentAt !== attempt.completedAt)) ||
+        (attempt.result === "started" &&
+          (entry.status !== "delivery_started" ||
+            attempt.notificationKeys.some((key) => {
+              const peer = entriesByKey.get(key);
+              return (
+                peer?.status !== "delivery_started" ||
+                peer.lastDeliveryAttempt?.attemptId !== attempt.attemptId ||
+                peer.lastDeliveryAttempt.operationId !== attempt.operationId ||
+                peer.deliveryId !== entry.deliveryId
+              );
+            })))
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["entries", index, "lastDeliveryAttempt"],
+          message: "通知送達試行の記録がledger entryと一致しません",
+        });
+      }
+    }
     if (entry.status === "reserved" && entry.expiresAt < entry.reservedAt) {
       context.addIssue({
         code: "custom",

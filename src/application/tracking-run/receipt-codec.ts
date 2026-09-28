@@ -38,7 +38,12 @@ function digestId(
   return `${prefix}:v1:${digest.sha256Utf8(serializeCanonicalJson(value)).slice("sha256:".length)}`;
 }
 
-function operationIdentity(receipt: ReceiptDraft | Receipt): object {
+type ReceiptIdentitySource = Pick<
+  ReceiptDraft,
+  "binding" | "stage" | "phase" | "logicalTarget" | "invocationId" | "localAttemptIndex"
+>;
+
+function operationIdentity(receipt: ReceiptIdentitySource): object {
   const common = {
     bindingKind: receipt.binding.bindingKind,
     stage: receipt.stage,
@@ -70,6 +75,22 @@ function operationIdentity(receipt: ReceiptDraft | Receipt): object {
         failureArtifactDigest: receipt.binding.failureArtifactDigest,
       };
   }
+}
+
+/** receiptと同じ規則で効果と起動内試行の識別子を事前に作る。 */
+export function receiptIdentifiers(
+  value: ReceiptIdentitySource,
+  digest: ContentDigestPort,
+): Readonly<{ operationId: string; attemptId: string }> {
+  const operationId = digestId("operation", operationIdentity(value), digest);
+  return Object.freeze({
+    operationId,
+    attemptId: digestId(
+      "attempt",
+      { operationId, invocationId: value.invocationId, localAttemptIndex: value.localAttemptIndex },
+      digest,
+    ),
+  });
 }
 
 function assertReceiptSemantics(receipt: Receipt): void {
@@ -111,6 +132,7 @@ function assertReceiptSemantics(receipt: Receipt): void {
       }
     } else if (
       receipt.receiptType !== "initial_state_commit" &&
+      receipt.receiptType !== "notification_message" &&
       receipt.receiptType !== "notification_settlement" &&
       receipt.receiptType !== "run_finalization"
     ) {
@@ -160,6 +182,9 @@ function assertReceiptSemantics(receipt: Receipt): void {
     if (
       typeof receipt.expectedStateRevision !== "string" ||
       receipt.result.ledgerStateRevision === receipt.expectedStateRevision ||
+      new Set(receipt.result.notificationKeys).size !== receipt.result.notificationKeys.length ||
+      (receipt.status === "ambiguous") !==
+        (receipt.result.ledgerStateRevision === receipt.result.reservationStateRevision) ||
       (receipt.status === "sent") !== (receipt.effectCertainty === "committed") ||
       (receipt.status === "ambiguous") !== (receipt.effectCertainty === "ambiguous") ||
       (receipt.status === "sent") !== (receipt.result.discordMessageId != null)
@@ -265,12 +290,7 @@ export function sealObservedReceipt(value: ReceiptDraft, digest: ContentDigestPo
 
 function sealReceipt(value: ReceiptDraft, digest: ContentDigestPort): Receipt {
   const draft = draftSchema.parse(value);
-  const operationId = digestId("operation", operationIdentity(draft), digest);
-  const attemptId = digestId(
-    "attempt",
-    { operationId, invocationId: draft.invocationId, localAttemptIndex: draft.localAttemptIndex },
-    digest,
-  );
+  const { operationId, attemptId } = receiptIdentifiers(draft, digest);
   const payload = { ...draft, operationId, attemptId };
   const receiptDigest = digest.sha256Utf8(serializeCanonicalJson(payload));
   const receipt = receiptSchema.parse({

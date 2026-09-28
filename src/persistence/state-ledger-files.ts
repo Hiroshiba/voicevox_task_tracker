@@ -13,7 +13,7 @@ import {
   createEmptyStateNotificationLedger,
   createStateNotificationLedger,
   createStateOperationsAlertLedger,
-  NOTIFICATION_LEDGER_SCHEMA_VERSION_9,
+  NOTIFICATION_LEDGER_SCHEMA_VERSION_10,
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
   parseStateNotificationLedger,
   parseStateOperationsAlertLedger,
@@ -86,7 +86,7 @@ export async function createStateLedgerUpdates(
   const legacy =
     normalSource != null &&
     z.object({ schemaVersion: z.string() }).parse(JSON.parse(normalSource)).schemaVersion !==
-      NOTIFICATION_LEDGER_SCHEMA_VERSION_9;
+      NOTIFICATION_LEDGER_SCHEMA_VERSION_10;
   const current = await loadStateNotificationLedgers(adapter, configuration, head);
   const normal = Object.freeze({
     path: configuration.notificationLedgerPath,

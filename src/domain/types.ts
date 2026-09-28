@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { type Importance } from "./importance.js";
 import { notificationReasonSchema, type NotificationReason } from "./notification-reason.js";
+import type { NotificationDeliveryAttempt } from "./notification-delivery-attempt.js";
 import type {
   PersonalReminderCause,
   PersonalReminderCauseId,
@@ -875,6 +876,7 @@ type NotificationLedgerEntryBase = Readonly<{
   reasonCode: NotificationLedgerReasonCode;
   severity: Severity;
   reservedAt: UtcIsoDateTime;
+  lastDeliveryAttempt?: NotificationDeliveryAttempt | undefined;
 }>;
 
 /** Discord通知の予約、送信開始、送信結果、確認済みledger entryを記録する型。 */

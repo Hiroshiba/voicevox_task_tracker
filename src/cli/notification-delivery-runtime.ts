@@ -26,7 +26,7 @@ import {
   assertStatePublicSafety,
   assertExistingStatePublicSafety,
   createStateNotificationLedger,
-  NOTIFICATION_LEDGER_SCHEMA_VERSION_9,
+  NOTIFICATION_LEDGER_SCHEMA_VERSION_10,
   type StateBranchAdapter,
   type StateHistoryNotificationEvent,
   type StateNotificationLedger,
@@ -292,7 +292,7 @@ function createNotificationLedgerFromMaps(
   pendingNotifications: readonly PendingNotification[],
 ): StateNotificationLedger {
   return createStateNotificationLedger({
-    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_9,
+    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_10,
     entries: [...entriesByKey.values()],
     operationsAlerts: [...operationsAlertsByKey.values()],
     pendingNotifications,
@@ -656,7 +656,7 @@ export async function deliverOperationsAlert(
     });
   }
   const notificationLedger = createStateNotificationLedger({
-    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_9,
+    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_10,
     entries: [...notificationEntriesByKey.values()],
     operationsAlerts: [...operationsAlertsByKey.values()],
     pendingNotifications: currentNotificationLedger.pendingNotifications,
@@ -754,7 +754,7 @@ export async function resolveDiscordDelivery(
     );
   }
   const notificationLedger = createStateNotificationLedger({
-    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_9,
+    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_10,
     entries: nextEntries,
     operationsAlerts: currentLedger.operationsAlerts,
     pendingNotifications,

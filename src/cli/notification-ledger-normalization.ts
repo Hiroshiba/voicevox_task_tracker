@@ -27,6 +27,9 @@ export function notificationLedgerEntry(
     reasonCode: entry.reasonCode,
     severity: entry.severity,
     reservedAt: createUtcIsoDateTime(entry.reservedAt),
+    ...(entry.lastDeliveryAttempt == null
+      ? {}
+      : { lastDeliveryAttempt: entry.lastDeliveryAttempt }),
   };
   if (entry.status === "reserved") {
     return Object.freeze({

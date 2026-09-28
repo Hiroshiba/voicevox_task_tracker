@@ -707,7 +707,7 @@ export function parseValidatedRunPayload(
     });
   }
   z.object({ schemaVersion: z.literal("21") }).parse(result.data.snapshot);
-  z.object({ schemaVersion: z.literal("9") }).parse(result.data.notificationLedger);
+  z.object({ schemaVersion: z.literal("10") }).parse(result.data.notificationLedger);
   const snapshot = createStateSnapshot(result.data.snapshot);
   assertPersonalReminderEvidenceClosure(snapshot);
   const historyInputEvents = createStateHistoryInputEvents(result.data.historyInputEvents);

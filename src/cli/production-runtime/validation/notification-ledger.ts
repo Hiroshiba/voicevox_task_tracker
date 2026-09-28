@@ -5,7 +5,7 @@ import {
 } from "../../../domain/index.js";
 import {
   createStateNotificationLedger,
-  NOTIFICATION_LEDGER_SCHEMA_VERSION_9,
+  NOTIFICATION_LEDGER_SCHEMA_VERSION_10,
   type StateNotificationLedger,
 } from "../../../persistence/index.js";
 import type { PendingTrackedItem, RuntimeState } from "../contracts.js";
@@ -30,6 +30,9 @@ export function notificationLedgerEntries(
       reasonCode: entry.reasonCode,
       severity: entry.severity,
       reservedAt: createUtcIsoDateTime(entry.reservedAt),
+      ...(entry.lastDeliveryAttempt == null
+        ? {}
+        : { lastDeliveryAttempt: entry.lastDeliveryAttempt }),
     };
     if (entry.status === "reserved") {
       entries.push(
@@ -76,9 +79,10 @@ export function mergeNotificationLedger(
   entriesToMerge: readonly NotificationLedgerEntry[],
   pendingNotifications: readonly PendingNotification[],
 ): StateNotificationLedger {
-  const entries = new Map(
-    state.notificationLedger.entries.map((entry) => [entry.notificationKey, entry]),
-  );
+  const entries = new Map<
+    string,
+    StateNotificationLedger["entries"][number] | NotificationLedgerEntry
+  >(state.notificationLedger.entries.map((entry) => [entry.notificationKey, entry]));
   for (const entry of entriesToMerge) {
     const existing = entries.get(entry.notificationKey);
     if (
@@ -90,7 +94,7 @@ export function mergeNotificationLedger(
     entries.set(entry.notificationKey, entry);
   }
   return createStateNotificationLedger({
-    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_9,
+    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_10,
     entries: [...entries.values()],
     operationsAlerts: state.notificationLedger.operationsAlerts,
     pendingNotifications,

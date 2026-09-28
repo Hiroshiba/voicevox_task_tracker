@@ -1,7 +1,11 @@
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import type { ContentDigestPort } from "./ports.js";
 import { parseReceipt } from "./receipt-codec.js";
-import { receiptChainEntrySchema, type ReceiptChainEvidence } from "./receipt-chain-schema.js";
+import {
+  notificationMessageStateEvidenceSchema,
+  receiptChainEntrySchema,
+  type ReceiptChainEvidence,
+} from "./receipt-chain-schema.js";
 import {
   assertObservedStateCommitReceipt,
   type ObservedStateCommitPosition,
@@ -63,6 +67,49 @@ function assertObservedReceiptEvidence(
     assertObservedStateCommitReceipt(receipt, witness.state, position, digest);
     return;
   }
+  if (receipt.receiptType === "notification_message") {
+    if (witness.kind !== "notification_message_state") {
+      throw new TypeError("再観測した通知messageにstate証拠がありません");
+    }
+    const state = notificationMessageStateEvidenceSchema.parse(witness.state);
+    const attempt = state.attempt;
+    const commitOperationId = (transition: "reservation" | "result"): string =>
+      `operation:v1:${digest
+        .sha256Utf8(
+          serializeCanonicalJson({
+            kind: "notification_message",
+            deliveryOperationId: attempt.operationId,
+            deliveryAttemptId: attempt.attemptId,
+            transition,
+          }),
+        )
+        .slice("sha256:".length)}`;
+    if (
+      receipt.binding.bindingKind !== "checkpoint" ||
+      receipt.binding.runId !== state.runId ||
+      receipt.binding.checkpointDigest !== state.checkpointDigest ||
+      receipt.operationId !== attempt.operationId ||
+      receipt.durableAttemptSequence !== attempt.durableAttemptSequence ||
+      receipt.result.deliveryId !== state.deliveryId ||
+      serializeCanonicalJson(receipt.result.notificationKeys) !==
+        serializeCanonicalJson(attempt.notificationKeys) ||
+      receipt.result.reservationStateRevision !== state.reservation.revision ||
+      receipt.result.ledgerStateRevision !==
+        (state.result?.revision ?? state.reservation.revision) ||
+      receipt.result.discordMessageId !== attempt.discordMessageId ||
+      receipt.effectOccurredAt !== attempt.completedAt ||
+      state.reservation.commitOperationId !== commitOperationId("reservation") ||
+      (state.result != null &&
+        (state.result.commitOperationId !== commitOperationId("result") ||
+          state.result.markerPhaseSequence !== state.reservation.markerPhaseSequence + 1)) ||
+      (receipt.status === "ambiguous") !== (attempt.result === "started") ||
+      (receipt.status === "sent") !== (attempt.result === "sent") ||
+      (state.result == null) !== (attempt.result === "started")
+    ) {
+      throw new TypeError("再観測した通知message receiptとstate証拠が一致しません");
+    }
+    return;
+  }
   if (
     witness.kind !== "initial_pages_state" ||
     receipt.receiptType !== "pages_deployment" ||
@@ -117,6 +164,14 @@ function assertCompatibleNotificationAttempt(
   receipts: readonly Receipt[],
   previousIndex: number,
 ): void {
+  if (
+    previous.durableAttemptSequence === current.durableAttemptSequence &&
+    previous.status === current.status &&
+    serializeCanonicalJson(previous.result) === serializeCanonicalJson(current.result) &&
+    (previous.receiptKind === "observed" || current.receiptKind === "observed")
+  ) {
+    return;
+  }
   const manuallyReleased = receipts
     .slice(previousIndex + 1)
     .some(
@@ -129,11 +184,12 @@ function assertCompatibleNotificationAttempt(
     (receipt) =>
       receipt.receiptType === "notification_message" &&
       receipt.operationId === current.operationId &&
-      (receipt.result.deliveryId === current.result.deliveryId ||
+      (receipt.result.reservationStateRevision === current.result.reservationStateRevision ||
         receipt.result.ledgerStateRevision === current.result.ledgerStateRevision),
   );
   if (
-    previous.result.notificationKey !== current.result.notificationKey ||
+    serializeCanonicalJson(previous.result.notificationKeys) !==
+      serializeCanonicalJson(current.result.notificationKeys) ||
     reusedAttemptResult ||
     previous.durableAttemptSequence >= current.durableAttemptSequence ||
     previous.status === "sent" ||

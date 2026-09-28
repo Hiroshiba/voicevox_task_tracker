@@ -21,9 +21,8 @@ import { normalNotificationLedgerValue } from "../publication/publication-order.
 import { type StateFileReadResult, type StatePersistenceConfiguration } from "./branch-adapter.js";
 import { StateFormatError } from "./errors.js";
 import {
-  parseStateNotificationLedger,
+  parseRunTransactionNotificationLedger,
   parseStateOperationsAlertLedger,
-  serializeStateNotificationLedger,
   serializeStateOperationsAlertLedger,
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
 } from "./state-documents.js";
@@ -91,13 +90,10 @@ export function verifyRunTransactionFiles(
   }
   const snapshotDigest = hashCanonicalJson(snapshot);
   const ledgerSource = source(requiredFile(files, configuration.notificationLedgerPath));
-  const ledger = parseStateNotificationLedger(ledgerSource);
-  if (ledgerSource !== serializeStateNotificationLedger(ledger)) {
-    throw new StateFormatError("notification ledger", {
-      cause: new TypeError("marker付きstateの通常ledgerが現行形式ではありません"),
-    });
-  }
-  const notificationLedgerDigest = hashCanonicalJson(normalNotificationLedgerValue(ledger));
+  const { ledger, legacyDigestValue } = parseRunTransactionNotificationLedger(ledgerSource);
+  const notificationLedgerDigest = hashCanonicalJson(
+    legacyDigestValue ?? normalNotificationLedgerValue(ledger),
+  );
   const operationsBytes = optionalFile(files, OPERATIONS_ALERT_LEDGER_STATE_PATH_V1);
   let operationsAlertLedgerDigest: string | undefined;
   if (operationsBytes != null) {
