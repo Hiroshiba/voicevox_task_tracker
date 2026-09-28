@@ -153,7 +153,17 @@ export type VerifyCheckpointCliCommand = Readonly<{
 export type VerifyRuntimeRecoveryCliCommand = Readonly<{
   kind: "verify-runtime-recovery";
   inputPath: string;
-  bundleRoot: string;
+  bundleRoot: string | undefined;
+}>;
+
+/** 永続stateの起動またはrun指定再開を判定する入力。 */
+export type InspectRunStateCliCommand = Readonly<{
+  kind: "inspect-run-state";
+  configPath: string;
+  stateRef: string | undefined;
+  recoveryIntent:
+    | Readonly<{ kind: "start_new" }>
+    | Readonly<{ kind: "retry_run"; runId: string; exactStateRevision: string }>;
 }>;
 
 /** receipt列の保存内容を検証する入力。 */
@@ -189,6 +199,7 @@ export type CliCommand =
   | VerifyStateCliCommand
   | VerifyCheckpointCliCommand
   | VerifyRuntimeRecoveryCliCommand
+  | InspectRunStateCliCommand
   | VerifyReceiptChainCliCommand
   | ReportFailureCliCommand
   | HelpCliCommand;
@@ -688,7 +699,35 @@ function parseVerifyRuntimeRecovery(args: readonly string[]): VerifyRuntimeRecov
   return Object.freeze({
     kind: "verify-runtime-recovery",
     inputPath: requiredSingleOption(options, "--input", "verify-runtime-recovery"),
-    bundleRoot: requiredSingleOption(options, "--bundle-root", "verify-runtime-recovery"),
+    bundleRoot: optionalSingleOption(options, "--bundle-root"),
+  });
+}
+
+function parseInspectRunState(args: readonly string[]): InspectRunStateCliCommand {
+  const options = parseOptions(
+    args,
+    new Set(["--config", "--state-ref", "--run-id", "--state-revision"]),
+  );
+  const runId = optionalSingleOption(options, "--run-id");
+  const revision = optionalSingleOption(options, "--state-revision");
+  if ((runId == null) !== (revision == null)) {
+    throw usageError("--run-idと--state-revisionは両方指定してください");
+  }
+  if (runId != null && !/^tracker-run:[0-9a-f]{64}$/u.test(runId)) {
+    throw usageError("--run-idが不正です");
+  }
+  if (revision != null && !/^[0-9a-f]{40}$/u.test(revision)) {
+    throw usageError("--state-revisionが不正です");
+  }
+  const recoveryIntent: InspectRunStateCliCommand["recoveryIntent"] =
+    runId == null || revision == null
+      ? { kind: "start_new" }
+      : { kind: "retry_run", runId, exactStateRevision: revision };
+  return Object.freeze({
+    kind: "inspect-run-state",
+    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
+    stateRef: optionalSingleOption(options, "--state-ref"),
+    recoveryIntent,
   });
 }
 
@@ -751,6 +790,8 @@ export function parseCliArguments(args: readonly string[]): CliCommand {
       return parseVerifyCheckpoint(options);
     case "verify-runtime-recovery":
       return parseVerifyRuntimeRecovery(options);
+    case "inspect-run-state":
+      return parseInspectRunState(options);
     case "verify-receipt-chain":
       return parseVerifyReceiptChain(options);
     case "report-failure":
@@ -777,7 +818,8 @@ export function formatCliUsage(): string {
     "  voicevox-task-tracker report-workflow --run-id ID --run-attempt NUMBER --quality-result RESULT --collect-analyze-result RESULT --persist-state-result RESULT --build-pages-result RESULT --deploy-pages-result RESULT --notify-discord-result RESULT --publish-notification-history-result RESULT --notify-operations-result RESULT",
     "  voicevox-task-tracker verify-state --state-directory PATH [--config PATH]",
     "  voicevox-task-tracker verify-checkpoint [--artifact PATH] [--config PATH]",
-    "  voicevox-task-tracker verify-runtime-recovery --input PATH --bundle-root PATH",
+    "  voicevox-task-tracker verify-runtime-recovery --input PATH [--bundle-root PATH]",
+    "  voicevox-task-tracker inspect-run-state [--config PATH] [--state-ref REF] [--run-id ID --state-revision SHA]",
     "  voicevox-task-tracker verify-receipt-chain --input PATH",
     "  voicevox-task-tracker report-failure --input PATH --output PATH",
   ].join("\n");

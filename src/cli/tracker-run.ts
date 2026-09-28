@@ -120,6 +120,7 @@ export function createTrackerRunCliArguments(args: readonly string[]): readonly 
     args[0] === "verify-state" ||
     args[0] === "verify-checkpoint" ||
     args[0] === "verify-runtime-recovery" ||
+    args[0] === "inspect-run-state" ||
     args[0] === "verify-receipt-chain" ||
     args[0] === "report-failure"
   ) {
@@ -191,6 +192,7 @@ function topLevelDiagnosticStage(command: CliCommand): RunStage | "unknown" {
     case "verify-state":
     case "verify-checkpoint":
     case "verify-runtime-recovery":
+    case "inspect-run-state":
     case "verify-receipt-chain":
     case "report-failure":
     case "help":

@@ -1,8 +1,15 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { readFile, realpath } from "node:fs/promises";
 import { relative, resolve, sep } from "node:path";
+import { promisify } from "node:util";
 
 import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../canonical-json/value.js";
+import { loadConfig } from "../config/index.js";
+import {
+  inspectRunState,
+  type RunStateDecision,
+} from "../infrastructure/tracking-run/inspect-run-state.js";
+import { GitStateBranchAdapter } from "../persistence/index.js";
 import {
   runtimeRecoveryInputV1Schema,
   runtimeRecoveryOutputV1Schema,
@@ -14,9 +21,38 @@ import {
   verifyRebuiltRuntime,
   verifyRecoveryBundle,
   workflowAdapterIdentity,
+  assertRecoveryToolchain,
 } from "./publication-runtime.js";
 
 const MAX_PROTOCOL_BYTES = 1024 * 1024;
+const execFileAsync = promisify(execFile);
+
+function recoveryDecisionOutput(decision: RunStateDecision): RuntimeRecoveryOutputV1 {
+  if (decision.kind === "resume_pending") {
+    if (decision.stageInput.stage === "completed") {
+      return runtimeRecoveryOutputV1Schema.parse({
+        protocolVersion: 1,
+        outputContract: "tracking-run-recovery-output-v1",
+        status: "completed",
+        stateRevision: decision.stageInput.exactStateRevision,
+      });
+    }
+    return runtimeRecoveryOutputV1Schema.parse({
+      protocolVersion: 1,
+      outputContract: "tracking-run-recovery-output-v1",
+      status: "ready",
+      stateRevision: decision.stageInput.exactStateRevision,
+      nextStage: decision.stageInput.stage,
+    });
+  }
+  return runtimeRecoveryOutputV1Schema.parse({
+    protocolVersion: 1,
+    outputContract: "tracking-run-recovery-output-v1",
+    status: "manual_resolution_required",
+    reason:
+      decision.kind === "operator_conflict_resolution" ? "state_conflict" : "effect_uncertain",
+  });
+}
 
 function runtimeIdentity(input: RuntimeRecoveryInputV1): object {
   const plan = input.runtimeRecoveryPlan;
@@ -54,11 +90,24 @@ async function assertRecoveryRuntime(
     input.expectedRuntimeIdentityDigest !==
       nodeContentDigestPort.sha256Utf8(serializeCanonicalJson(runtimeIdentity(input))) ||
     input.expectedWorkflowEffectAdapterIdentityDigest !==
-      plan.recoveryProtocol.workflowEffectAdapterIdentityDigest ||
+      plan.recoveryProtocol.workflowEffectAdapterIdentityDigest
+  ) {
+    throw new TypeError("V1回復入力のruntimeまたはworkflow adapter identityが一致しません");
+  }
+  await assertRecoveryToolchain(repositoryPath, plan);
+  const [checkoutRevision, checkoutStatus] = await Promise.all([
+    execFileAsync("git", ["rev-parse", "HEAD"], { cwd: repositoryPath }),
+    execFileAsync("git", ["status", "--porcelain", "--untracked-files=normal"], {
+      cwd: repositoryPath,
+    }),
+  ]);
+  if (
+    checkoutRevision.stdout.trim() !== plan.codeRevision ||
+    checkoutStatus.stdout.length !== 0 ||
     input.expectedWorkflowEffectAdapterIdentityDigest !==
       (await workflowAdapterIdentity(repositoryPath, nodeContentDigestPort))
   ) {
-    throw new TypeError("V1回復入力のruntimeまたはworkflow adapter identityが一致しません");
+    throw new TypeError("exact checkoutのrevisionまたはworkflow adapter identityが一致しません");
   }
   if (plan.kind === "workflow_bundle") {
     await verifyRecoveryBundle(bundleRoot, plan);
@@ -148,11 +197,30 @@ export async function runRuntimeRecoveryEntrypointV1(
   }
   const input = runtimeRecoveryInputV1Schema.parse(value);
   await assertRecoveryRuntime(repositoryPath, bundleRoot, input);
-  const output = runtimeRecoveryOutputV1Schema.parse({
-    protocolVersion: 1,
-    outputContract: "tracking-run-recovery-output-v1",
-    status: "manual_resolution_required",
-    reason: "recovery_stage_unavailable",
+  const config = await loadConfig(resolve(repositoryPath, "config.yml"));
+  const adapter = new GitStateBranchAdapter({
+    repositoryPath,
+    gitExecutable: "git",
+    authorName: "VOICEVOX Task Tracker",
+    authorEmail: "voicevox-task-tracker@users.noreply.github.com",
   });
+  const decision = await inspectRunState(
+    adapter,
+    { ...config.state, branch: input.stateRef },
+    {
+      kind: "resume_run",
+      runtime: "exact",
+      runId: input.runId,
+      exactStateRevision: input.exactStateRevision,
+      expectedRecordDigest: input.expectedRecordDigest,
+      expectedRuntimeIdentityDigest: input.expectedRuntimeIdentityDigest,
+      expectedWorkflowEffectAdapterIdentityDigest:
+        input.expectedWorkflowEffectAdapterIdentityDigest,
+      runtimeRecoveryPlan: input.runtimeRecoveryPlan,
+      observation: { invocationId: input.invocationId, observedAt: new Date().toISOString() },
+      receipts: [],
+    },
+  );
+  const output = recoveryDecisionOutput(decision);
   process.stdout.write(serializeCanonicalJsonLine(output));
 }

@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 
 import { z } from "zod";
 
@@ -11,15 +12,21 @@ import {
   failedRunSchema,
 } from "../application/tracking-run/failure-artifact.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
+import {
+  createRuntimeRecoveryInputV1,
+  inspectRunBootstrapState,
+} from "../infrastructure/tracking-run/bootstrap-state.js";
+import { assertValidStateBranch } from "../persistence/branch-adapter.js";
 import type {
   ReportFailureCliCommand,
   VerifyCheckpointCliCommand,
   VerifyReceiptChainCliCommand,
   VerifyRuntimeRecoveryCliCommand,
+  InspectRunStateCliCommand,
 } from "./command.js";
 import { writeCliJsonArtifact } from "./file-output.js";
 import { verifyWorkflowCheckpoint } from "./run-publication/workflow-stage-handlers.js";
-import { launchRuntimeRecoveryV1 } from "./runtime-recovery-launcher-v1.js";
+import { recoverRuntimeV1 } from "./runtime-recovery-acquisition.js";
 import type { ProductionRuntimeAdapters } from "./production-runtime/adapters.js";
 
 /** v19 checkpointの実fileとexact baseへの結合を検証する。 */
@@ -41,12 +48,41 @@ export async function verifyRuntimeRecoveryCommand(
   if (source !== serializeCanonicalJsonLine(value)) {
     throw new TypeError("V1回復入力がcanonical JSONではありません");
   }
-  const output = await launchRuntimeRecoveryV1(
+  const output = await recoverRuntimeV1(
     adapters.repositoryPath,
-    resolve(adapters.repositoryPath, command.bundleRoot),
+    command.bundleRoot == null ? undefined : resolve(adapters.repositoryPath, command.bundleRoot),
     value,
   );
   await adapters.writeStandardOutput(serializeCanonicalJsonLine(output));
+}
+
+/** state refのV1 bootstrapから起動runtimeと固定回復入力を判定する。 */
+export async function inspectRunStateCommand(
+  adapters: ProductionRuntimeAdapters,
+  command: InspectRunStateCliCommand,
+): Promise<void> {
+  const config = await adapters.loadConfig(resolve(adapters.repositoryPath, command.configPath));
+  const stateRef = command.stateRef ?? config.state.branch;
+  assertValidStateBranch(stateRef);
+  const decision = await inspectRunBootstrapState(
+    adapters.createStateBranchAdapter(),
+    stateRef,
+    command.recoveryIntent,
+  );
+  if (decision.kind === "resume_with_exact_runtime") {
+    await adapters.writeStandardOutput(
+      serializeCanonicalJsonLine({
+        kind: decision.kind,
+        recoveryInput: createRuntimeRecoveryInputV1(decision, stateRef, randomUUID()),
+      }),
+    );
+    return;
+  }
+  if (decision.kind === "manual_resolution_required") {
+    await adapters.writeStandardOutput(serializeCanonicalJsonLine({ kind: decision.kind }));
+    return;
+  }
+  await adapters.writeStandardOutput(serializeCanonicalJsonLine(decision));
 }
 
 /** 保存したreceipt列を実codecと同じ規則で検証する。 */

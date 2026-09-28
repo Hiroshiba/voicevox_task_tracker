@@ -221,6 +221,24 @@ async function measuredPnpmVersion(repositoryPath: string): Promise<string> {
   }
 }
 
+/** 回復効果の前に記録済みNode、pnpm、実行環境を照合する。 */
+export async function assertRecoveryToolchain(
+  repositoryPath: string,
+  plan: Exclude<z.output<typeof runtimeRecoveryPlanSchema>, { kind: "not_reproducible" }>,
+): Promise<void> {
+  const expectedBuildCommandId =
+    plan.kind === "workflow_bundle" ? "pnpm-build-workflow-cli-v1" : "pnpm-build-v1";
+  if (
+    plan.toolchain.nodeVersion !== process.version ||
+    plan.toolchain.packageManagerVersion !== (await measuredPnpmVersion(repositoryPath)) ||
+    plan.toolchain.platform !== process.platform ||
+    plan.toolchain.architecture !== process.arch ||
+    plan.toolchain.buildCommandId !== expectedBuildCommandId
+  ) {
+    throw new TypeError("V1回復runtimeのtoolchainが記録済みの値と一致しません");
+  }
+}
+
 async function createManifest(
   repositoryPath: string,
   shape: "sequential" | "split_workflow",

@@ -9,6 +9,7 @@ import {
   type VerifyRuntimeRecoveryCliCommand,
   type VerifyReceiptChainCliCommand,
   type ReportFailureCliCommand,
+  type InspectRunStateCliCommand,
 } from "./command.js";
 
 /** 日次workflowの後続stageで受け付けるCLI入力。 */
@@ -21,6 +22,7 @@ export type WorkflowStageCliCommand =
   | ReportWorkflowCliCommand
   | VerifyCheckpointCliCommand
   | VerifyRuntimeRecoveryCliCommand
+  | InspectRunStateCliCommand
   | VerifyReceiptChainCliCommand
   | ReportFailureCliCommand;
 
@@ -34,6 +36,7 @@ export type WorkflowStageDependencies = Readonly<{
   reportWorkflow: (command: ReportWorkflowCliCommand) => Promise<void>;
   verifyCheckpoint: (command: VerifyCheckpointCliCommand) => Promise<void>;
   verifyRuntimeRecovery: (command: VerifyRuntimeRecoveryCliCommand) => Promise<void>;
+  inspectRunState: (command: InspectRunStateCliCommand) => Promise<void>;
   verifyReceiptChain: (command: VerifyReceiptChainCliCommand) => Promise<void>;
   reportFailure: (command: ReportFailureCliCommand) => Promise<void>;
 }>;
@@ -72,6 +75,9 @@ export class WorkflowStageRunner {
         return;
       case "verify-runtime-recovery":
         await this.#dependencies.verifyRuntimeRecovery(command);
+        return;
+      case "inspect-run-state":
+        await this.#dependencies.inspectRunState(command);
         return;
       case "verify-receipt-chain":
         await this.#dependencies.verifyReceiptChain(command);

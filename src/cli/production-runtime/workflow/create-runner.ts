@@ -11,6 +11,7 @@ import {
   verifyCheckpointCommand,
   verifyReceiptChainCommand,
   verifyRuntimeRecoveryCommand,
+  inspectRunStateCommand,
 } from "../../verify-publication.js";
 
 /** workflowの6段階を既存実行順に接続する。 */
@@ -26,6 +27,7 @@ export function createWorkflowStageRunner(
     reportWorkflow: (command) => reportWorkflowRun(adapters, command),
     verifyCheckpoint: (command) => verifyCheckpointCommand(adapters, command),
     verifyRuntimeRecovery: (command) => verifyRuntimeRecoveryCommand(adapters, command),
+    inspectRunState: (command) => inspectRunStateCommand(adapters, command),
     verifyReceiptChain: (command) => verifyReceiptChainCommand(adapters, command),
     reportFailure: (command) => reportFailureCommand(adapters, command),
   });
