@@ -91,6 +91,7 @@ function validateRunCompleteness(
       executionPolicy: invocation.executionPolicy,
       baseRevision: configuration.baseStateHead,
       configDigest: configuration.configDigest,
+      allowlistDigest: inventory.allowlistDigest,
       evaluatedAt: collection.evaluatedAt,
     }),
     genericAiAdopted,

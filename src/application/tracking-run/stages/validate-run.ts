@@ -110,6 +110,7 @@ export type ValidateRunInput<
     executionPolicy: RunExecutionPolicy;
     baseRevision: BaseStateRevision;
     configDigest: Sha256Hash;
+    allowlistDigest: Sha256Hash;
     evaluatedAt: UtcIsoDateTime;
   }>;
   genericAiAdopted: GenericAiAdoptedRun;
@@ -170,6 +171,12 @@ export function validateRun<
     "run",
   );
   assertRunValueMatches(
+    input.expectedCore.allowlistDigest,
+    run.data.allowlistDigest,
+    ["allowlistDigest"],
+    "run",
+  );
+  assertRunValueMatches(
     input.expectedCore.evaluatedAt,
     run.data.sourceRecords.evaluatedAt,
     ["generatedAt"],
@@ -190,6 +197,36 @@ export function validateRun<
     (repository) => repository.id,
     (repository) => repository.id,
     ["repositoryAllowlist"],
+  );
+  assertRunValuesMatch(
+    input.repositoryAllowlist.map((repository) => ({
+      id: repository.id,
+      owner: repository.owner,
+      name: repository.name,
+      visibility: repository.visibility,
+      archived: repository.archived,
+      disabled: repository.disabled,
+    })),
+    input.candidate.repositories.map((repository) => ({
+      id: repository.id,
+      owner: repository.owner,
+      name: repository.name,
+      visibility: repository.visibility,
+      archived: repository.archived,
+      disabled: repository.disabled,
+    })),
+    (repository) => repository.id,
+    (repository) => repository.id,
+    ["repositories"],
+  );
+  assertRunValuesMatch(
+    input.repositoryAllowlist.map((repository) => ({ repositoryId: repository.id })),
+    input.candidate.collection.repositories.map((repository) => ({
+      repositoryId: repository.repositoryId,
+    })),
+    (repository) => repository.repositoryId,
+    (repository) => repository.repositoryId,
+    ["collection", "repositories"],
   );
   assertNotificationLedger(input);
   const budgetSummary = assertAiBudgetLedgerMatches(run.core.aiBudget);
