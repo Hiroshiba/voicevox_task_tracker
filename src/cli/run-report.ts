@@ -12,7 +12,7 @@ const dateTimeSchema = z.iso
   .transform((value) => new Date(value).toISOString());
 const nonNegativeIntegerSchema = z.number().int().nonnegative();
 
-const runMetricsSchema = z.strictObject({
+export const runMetricsSchema = z.strictObject({
   repositoryCount: nonNegativeIntegerSchema,
   itemCount: nonNegativeIntegerSchema,
   changedItemCount: nonNegativeIntegerSchema,

@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 
+import { assertValidatedRun } from "../application/tracking-run/stages/validate-run.js";
 import { serializeCanonicalJson } from "../canonical-json/index.js";
 import { type Config, type loadConfig } from "../config/index.js";
 import {
@@ -54,6 +55,7 @@ import {
   type SentNotificationLedgerEntry,
 } from "./notification-history-runtime.js";
 import { requireEnvironmentValue } from "./production-runtime-setup.js";
+import type { ValidatedRun } from "./run-publication/contracts.js";
 
 const DISCORD_DELIVERY_ID_PATTERN = /^discord-digest:v1:[0-9a-f]{24}:message:[1-9][0-9]*$/u;
 
@@ -77,11 +79,6 @@ type NotificationDeliveryRuntimeAdapters = Readonly<{
 type NotificationDeliveryRuntimeState = Readonly<{
   session: StatePersistenceSession;
   snapshot: StateSnapshotReadResult;
-}>;
-
-type NotificationDeliveryValidatedRun = Readonly<{
-  snapshot: StateSnapshot;
-  notificationSelection: DiscordNotificationSelection;
 }>;
 
 type DiscordDeliveryResult = Readonly<{
@@ -540,7 +537,7 @@ export async function deliverDiscord(
   repositoryInventory: readonly Repository[],
   repositoryAllowlist: readonly Pick<Repository, "id" | "owner" | "name">[],
   knownSecrets: readonly string[],
-  validated: NotificationDeliveryValidatedRun,
+  validated: ValidatedRun,
   deployedPagesUrl: string,
 ): Promise<
   Readonly<{
@@ -551,6 +548,7 @@ export async function deliverDiscord(
     discordSentAt: UtcIsoDateTime | null;
   }>
 > {
+  assertValidatedRun(validated);
   const persistedSnapshot = await state.session.loadSnapshot();
   if (persistedSnapshot.status !== "available") {
     throw new TypeError("Discord通知対象のstate snapshotがありません");

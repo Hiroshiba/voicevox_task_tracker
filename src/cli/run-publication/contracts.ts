@@ -1,4 +1,6 @@
 import type { Config, loadConfig } from "../../config/index.js";
+import type { AiCacheEntry, PersonalReminderAiCacheEntry } from "../../codex/index.js";
+import type { ValidatedRun as TrackingValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
 import type { Sha256Hash } from "../../canonical-json/sha256.js";
 import type {
   LabelRule,
@@ -14,6 +16,7 @@ import type {
 } from "../../discord/index.js";
 import type { PublicRepositoryAllowlist } from "../../github/index.js";
 import type { GeneratedPublicData, PublicDataWriteResult } from "../../pages/index.js";
+import type { RunMetrics } from "../run-report.js";
 import type {
   PersistStateTransactionResult,
   StateBranchAdapter,
@@ -34,12 +37,15 @@ import type { RuntimeCredentials, RuntimeExecutionTarget } from "../production-r
 import type { readWorkflowArtifactFile } from "../workflow-artifact.js";
 
 /** 完全性検証を通過し、公開処理へ渡してよいrun。 */
-export type ValidatedRun = Readonly<{
-  snapshot: StateSnapshot;
-  historyInputEvents: readonly StateHistoryInputEvent[];
-  notificationLedger: StateNotificationLedger;
-  notificationSelection: DiscordNotificationSelection;
-}>;
+export type ValidatedRun = TrackingValidatedRun<
+  StateSnapshot,
+  readonly StateHistoryInputEvent[],
+  readonly AiCacheEntry[],
+  readonly PersonalReminderAiCacheEntry[],
+  StateNotificationLedger,
+  DiscordNotificationSelection,
+  RunMetrics
+>;
 
 /** 初期保存後にPages生成へ渡す値。 */
 export type PersistedRun = Readonly<{

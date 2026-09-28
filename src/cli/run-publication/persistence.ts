@@ -1,4 +1,5 @@
 import type { Config } from "../../config/index.js";
+import { assertValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
 import { createUtcIsoDateTime } from "../../domain/index.js";
 import type { Repository } from "../../domain/index.js";
 import { createStateSnapshot } from "../../persistence/index.js";
@@ -25,6 +26,7 @@ export type PersistValidatedRunInput = Readonly<{
 
 /** 完全性検証済みrunを初期保存し、Pages用履歴を読む。 */
 export async function persistValidatedRun(input: PersistValidatedRunInput): Promise<PersistedRun> {
+  assertValidatedRun(input.validated);
   const result = await input.state.session.persist({
     snapshot: input.validated.snapshot,
     historyInputEvents: input.validated.historyInputEvents,
@@ -62,6 +64,7 @@ export type PersistSuccessfulRunCompletionInput = Readonly<{
 export async function persistSuccessfulRunCompletion(
   input: PersistSuccessfulRunCompletionInput,
 ): Promise<void> {
+  assertValidatedRun(input.validated);
   const completedAt = createUtcIsoDateTime(input.now().toISOString());
   const persistedSnapshot = await input.state.session.loadSnapshot();
   if (persistedSnapshot.status !== "available") {

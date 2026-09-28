@@ -1,6 +1,7 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type { Sha256Hash } from "../../../canonical-json/sha256.js";
 import type { NotificationLedgerEntry, UtcIsoDateTime } from "../../../domain/index.js";
+import type { TrackedItemAiAnalysis } from "../../../domain/types.js";
 import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
 import type {
   EvidenceClosureResult,
@@ -12,6 +13,10 @@ import type { BaseStateRevision } from "../contracts/run-core.js";
 import type { ContentDigestPort } from "../ports.js";
 import type { RunExecutionPolicy, RunIdentity } from "../request.js";
 import type { EvidenceClosureAdditions } from "./evidence-closure.js";
+import {
+  createEvidenceClosureWitness,
+  type EvidenceClosureWitness,
+} from "./run-validation-artifact-witness.js";
 import type { PersonalReminderFinalizedRun } from "./personal-reminder-finalization.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 import {
@@ -24,6 +29,18 @@ import { assertFinalSnapshotCandidateMatches } from "./run-validation-snapshot.j
 import { assertRunStageLineage } from "./run-validation-lineage.js";
 import { assertAiBudgetLedgerMatches } from "./run-validation-budget.js";
 import {
+  createRunArtifactValueDigests,
+  type RunArtifactValueDigests,
+} from "./run-validation-value-digests.js";
+import type {
+  RunAiCacheAddition,
+  RunPersonalCacheAddition,
+} from "./run-validation-cache-witness.js";
+import {
+  assertSerializedValidatedRun,
+  type SerializedValidatedRun,
+} from "./run-validation-artifact.js";
+import {
   assertNotificationLedger,
   assertPublicUrls,
   assertRunMetrics,
@@ -35,20 +52,32 @@ import type { GenericAiAdoptedRun } from "./generic-ai-adoption.js";
 import type { GraphReconciledRun } from "./graph-reconciliation.js";
 
 const runCompletenessProofBrand: unique symbol = Symbol("runCompletenessProof");
+const issuedValidatedRuns = new WeakSet<object>();
 
 /** validatorだけが発行する公開前の完全性証明。 */
 export type RunCompletenessProof = Readonly<{ [runCompletenessProofBrand]: true }>;
 
-type RunSnapshot = Readonly<{
+export type RunSnapshot = Readonly<{
   schemaVersion: "21";
   generatedAt: FinalSnapshotCandidate["generatedAt"];
   trackingStartAt: FinalSnapshotCandidate["trackingStartAt"];
   ai: FinalSnapshotCandidate["ai"];
   finalGraphProjection: FinalSnapshotCandidate["finalGraphProjection"];
   finalGraphProjectionDigest: FinalSnapshotCandidate["finalGraphProjectionDigest"];
-  items: readonly Readonly<{ nodeId: string }>[];
-  relations: readonly Readonly<{ id: string }>[];
-  repositories: readonly Readonly<{ id: string }>[];
+  items: readonly Readonly<{
+    nodeId: string;
+    aiAnalysis: TrackedItemAiAnalysis;
+    personalReminderCauses: readonly Readonly<{ causeId: string }>[];
+  }>[];
+  relations: readonly Readonly<{ id: string; active: boolean }>[];
+  repositories: readonly Readonly<{
+    id: string;
+    owner: string;
+    name: string;
+    visibility: "public";
+    archived: false;
+    disabled: false;
+  }>[];
   collection: Readonly<{ repositories: readonly Readonly<{ repositoryId: string }>[] }>;
   externalReferences: readonly Readonly<{ nodeId: string }>[];
   graphNodeStateObservations: readonly Readonly<{ nodeId: string }>[];
@@ -59,8 +88,8 @@ type RunSnapshot = Readonly<{
 export type ValidatedRun<
   Snapshot extends RunSnapshot,
   History extends readonly EvidenceHistoryInputEvent[],
-  AiCache extends readonly unknown[],
-  PersonalCache extends readonly unknown[],
+  AiCache extends readonly RunAiCacheAddition[],
+  PersonalCache extends readonly RunPersonalCacheAddition[],
   Ledger extends RunValidationLedger,
   Selection extends RunNotificationSelection,
   Metrics extends RunValidationMetrics,
@@ -88,10 +117,12 @@ export type ValidatedRun<
     referenceCount: number;
     sourceIds: readonly string[];
   }>;
+  evidenceClosureWitness: EvidenceClosureWitness;
   publicDiagnosticsSummary: Readonly<{
     status: "success" | "fallback";
     pendingNotificationCount: number;
   }>;
+  artifactValueDigests: RunArtifactValueDigests;
   proof: RunCompletenessProof;
 }>;
 
@@ -99,8 +130,8 @@ export type ValidatedRun<
 export type ValidateRunInput<
   Snapshot extends RunSnapshot,
   History extends readonly EvidenceHistoryInputEvent[],
-  AiCache extends readonly unknown[],
-  PersonalCache extends readonly unknown[],
+  AiCache extends readonly RunAiCacheAddition[],
+  PersonalCache extends readonly RunPersonalCacheAddition[],
   Ledger extends RunValidationLedger,
   Selection extends RunNotificationSelection,
   Metrics extends RunValidationMetrics,
@@ -137,8 +168,8 @@ export type ValidateRunInput<
 export function validateRun<
   Snapshot extends RunSnapshot,
   History extends readonly EvidenceHistoryInputEvent[],
-  AiCache extends readonly unknown[],
-  PersonalCache extends readonly unknown[],
+  AiCache extends readonly RunAiCacheAddition[],
+  PersonalCache extends readonly RunPersonalCacheAddition[],
   Ledger extends RunValidationLedger,
   Selection extends RunNotificationSelection,
   Metrics extends RunValidationMetrics,
@@ -320,7 +351,7 @@ export function validateRun<
   const sourceIds = Object.freeze(
     [...new Set(input.closure.uses.map((use) => use.sourceId))].sort(),
   );
-  const payload = {
+  const publicationValues = {
     core: {
       identity: run.core.identity,
       executionPolicy: run.core.executionPolicy,
@@ -343,10 +374,31 @@ export function validateRun<
     ),
     metrics: input.metrics,
     evidenceClosureSummary: { referenceCount: input.closure.uses.length, sourceIds },
+    evidenceClosureWitness: createEvidenceClosureWitness(
+      input.closure,
+      run.data.historicalEvidence,
+      run.data.sourceRecords.evaluatedAt,
+      run.data.approvedRepositories,
+      {
+        snapshot,
+        historyInputEvents: input.historyInputEvents,
+        aiCacheAdditions: input.aiCacheAdditions,
+        personalReminderAiCacheAdditions: input.personalReminderAiCacheAdditions,
+        previousNotificationLedger: input.previousNotificationLedger,
+        notificationLedger: input.notificationLedger,
+        notificationSelection: input.notificationSelection,
+      },
+      input.actualOutwardAdditions,
+      input.digest,
+    ),
     publicDiagnosticsSummary: {
       status: snapshot.run.status,
       pendingNotificationCount: input.notificationLedger.pendingNotifications.length,
     },
+  };
+  const payload = {
+    ...publicationValues,
+    artifactValueDigests: createRunArtifactValueDigests(publicationValues, input.digest),
   };
   try {
     serializeCanonicalJson(payload);
@@ -368,8 +420,32 @@ export function validateRun<
   }
   const canonicalPayload = frozenRunCopy(payload);
   const proof: RunCompletenessProof = Object.freeze({ [runCompletenessProofBrand]: true });
-  return Object.freeze({
+  const validated = Object.freeze({
     ...canonicalPayload,
     proof,
   });
+  issuedValidatedRuns.add(validated);
+  return validated;
+}
+
+/** validatorが発行したrunだけを公開入口へ通す。 */
+export function assertValidatedRun(value: Readonly<{ proof: RunCompletenessProof }>): void {
+  if (!issuedValidatedRuns.has(value)) {
+    throw new RunCompletenessError("field_mismatch", "proof", ["proof"], undefined);
+  }
+}
+
+/** v17 artifactの実値を再検証して新しいローカル証明を発行する。 */
+export function revalidateSerializedRun<Run extends SerializedValidatedRun>(
+  run: Run,
+  digest: ContentDigestPort,
+  assertPublicSafety: (value: Run) => void,
+): Run & Readonly<{ proof: RunCompletenessProof }> {
+  assertSerializedValidatedRun(run, digest);
+  assertPublicSafety(run);
+  const payload = frozenRunCopy(run);
+  const proof: RunCompletenessProof = Object.freeze({ [runCompletenessProofBrand]: true });
+  const validated = Object.freeze({ ...payload, proof });
+  issuedValidatedRuns.add(validated);
+  return validated;
 }

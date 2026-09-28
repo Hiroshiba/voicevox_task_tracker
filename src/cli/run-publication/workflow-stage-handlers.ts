@@ -1,5 +1,9 @@
 import { resolve } from "node:path";
 
+import { assertValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
+import { serializeCanonicalJson } from "../../canonical-json/value.js";
+import type { Config } from "../../config/index.js";
+import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content-digest.js";
 import { CliWorkflowArtifactError } from "../errors.js";
 import { readOptionalRunReportFile } from "../workflow-run-report.js";
 import type {
@@ -11,11 +15,11 @@ import type {
 import { deliverDiscord, deliverOperationsAlert } from "../notification-delivery-runtime.js";
 import { requireEnvironmentValue } from "../production-runtime-setup.js";
 import { workflowArtifactRepositoryInventory } from "../workflow-artifact.js";
-import { validatedRunFromArtifact } from "./artifact.js";
 import type {
   NormalizeLabelRules,
   ResolveCompletedTrackingStartAt,
   RunPublicationAdapters,
+  ValidatedRun,
 } from "./contracts.js";
 import { buildPublicPages } from "./pages.js";
 import { persistSuccessfulRunCompletion } from "./persistence.js";
@@ -44,6 +48,18 @@ type WorkflowDeliveryAdapters = Pick<
   | "sendDiscord"
 >;
 
+function assertWorkflowConfig(
+  artifact: Readonly<{ validated: ValidatedRun }>,
+  config: Config,
+): void {
+  if (
+    nodeContentDigestPort.sha256Utf8(serializeCanonicalJson(config)) !==
+    artifact.validated.core.configDigest
+  ) {
+    throw new TypeError("workflow artifactと現在の設定でconfig digestが一致しません");
+  }
+}
+
 /** workflow artifactの検証済みstateを初期保存する。 */
 export async function persistWorkflowState(
   dependencies: Readonly<{ adapters: WorkflowStateAdapters }>,
@@ -52,26 +68,36 @@ export async function persistWorkflowState(
   const artifact = await dependencies.adapters.readWorkflowArtifact(
     resolve(dependencies.adapters.repositoryPath, command.artifactPath),
   );
+  assertValidatedRun(artifact.validated);
   const config = await dependencies.adapters.loadConfig(
     resolve(dependencies.adapters.repositoryPath, command.configPath),
   );
+  assertWorkflowConfig(artifact, config);
+  const adapter = dependencies.adapters.createStateBranchAdapter();
+  const baseRevision = await adapter.resolveHead(config.state.branch);
+  if (
+    serializeCanonicalJson(baseRevision) !==
+    serializeCanonicalJson(artifact.validated.core.baseRevision)
+  ) {
+    throw new TypeError("workflow artifactとstate branchの基準revisionが一致しません");
+  }
   const session = await dependencies.adapters.openStateSession(
-    dependencies.adapters.createStateBranchAdapter(),
+    adapter,
     config.state,
     config.staleness.timezone,
   );
-  for (const entry of artifact.aiCacheEntries) {
+  for (const entry of artifact.validated.aiCacheAdditions) {
     await session.aiCache.write(entry);
   }
-  for (const entry of artifact.personalReminderAiCacheEntries) {
+  for (const entry of artifact.validated.personalReminderAiCacheAdditions) {
     await session.personalReminderAiCache.write(entry);
   }
   await session.persist({
-    snapshot: artifact.snapshot,
-    historyInputEvents: artifact.historyInputEvents,
-    notificationLedger: artifact.notificationLedger,
+    snapshot: artifact.validated.snapshot,
+    historyInputEvents: artifact.validated.historyInputEvents,
+    notificationLedger: artifact.validated.notificationLedger,
     repositoryInventory: workflowArtifactRepositoryInventory(artifact),
-    repositoryAllowlist: artifact.repositoryAllowlist,
+    repositoryAllowlist: artifact.validated.repositoryAllowlist,
     knownSecrets: [],
   });
 }
@@ -87,9 +113,11 @@ export async function buildWorkflowPages(
   const artifact = await dependencies.adapters.readWorkflowArtifact(
     resolve(dependencies.adapters.repositoryPath, command.artifactPath),
   );
+  assertValidatedRun(artifact.validated);
   const config = await dependencies.adapters.loadConfig(
     resolve(dependencies.adapters.repositoryPath, command.configPath),
   );
+  assertWorkflowConfig(artifact, config);
   if (pagesUrl(config) !== artifact.pagesUrl) {
     throw new TypeError("workflow artifactと現在の設定でPages URLが一致しません");
   }
@@ -101,7 +129,7 @@ export async function buildWorkflowPages(
   const persistedSnapshot = await session.loadSnapshot();
   if (
     persistedSnapshot.status !== "available" ||
-    persistedSnapshot.snapshot.run.id !== artifact.snapshot.run.id
+    persistedSnapshot.snapshot.run.id !== artifact.validated.snapshot.run.id
   ) {
     throw new TypeError("Pages生成対象のrunがtracker-state branchにありません");
   }
@@ -110,8 +138,8 @@ export async function buildWorkflowPages(
     writePublicData: dependencies.adapters.writePublicData,
     config,
     inventory: workflowArtifactRepositoryInventory(artifact),
-    repositoryAllowlist: artifact.repositoryAllowlist,
-    validated: validatedRunFromArtifact(artifact),
+    repositoryAllowlist: artifact.validated.repositoryAllowlist,
+    validated: artifact.validated,
     historyRecords,
     outputDirectory: resolve(dependencies.adapters.repositoryPath, command.outputDirectory),
     knownSecrets: [],
@@ -131,11 +159,19 @@ export async function notifyWorkflowDiscord(
   const artifact = await dependencies.adapters.readWorkflowArtifact(
     resolve(dependencies.adapters.repositoryPath, command.artifactPath),
   );
+  assertValidatedRun(artifact.validated);
   const config = await dependencies.adapters.loadConfig(
     resolve(dependencies.adapters.repositoryPath, command.configPath),
   );
+  assertWorkflowConfig(artifact, config);
   if (command.pagesUrl !== artifact.pagesUrl) {
     throw new TypeError("deploy済みPages URLがworkflow artifactの公開先と一致しません");
+  }
+  if (
+    serializeCanonicalJson(discordDeliverySettings(config)) !==
+    serializeCanonicalJson(artifact.discordSettings)
+  ) {
+    throw new TypeError("workflow artifactと現在の設定でDiscord配送条件が一致しません");
   }
   const session = await dependencies.adapters.openStateSession(
     dependencies.adapters.createStateBranchAdapter(),
@@ -146,7 +182,7 @@ export async function notifyWorkflowDiscord(
   if (persistedSnapshot.status !== "available") {
     throw new TypeError("Discord通知対象のstate snapshotがありません");
   }
-  if (persistedSnapshot.snapshot.run.id !== artifact.snapshot.run.id) {
+  if (persistedSnapshot.snapshot.run.id !== artifact.validated.snapshot.run.id) {
     throw new TypeError(
       "Discord通知対象のworkflow artifactとtracker-state branchでrunが一致しません",
     );
@@ -165,8 +201,8 @@ export async function notifyWorkflowDiscord(
       config,
       state,
       repositoryInventory: workflowArtifactRepositoryInventory(artifact),
-      repositoryAllowlist: artifact.repositoryAllowlist,
-      validated: validatedRunFromArtifact(artifact),
+      repositoryAllowlist: artifact.validated.repositoryAllowlist,
+      validated: artifact.validated,
       runMetadata: artifact.runMetadata,
       delivery: {
         notificationLedger: state.notificationLedger,
@@ -196,14 +232,9 @@ export async function notifyWorkflowDiscord(
     artifact.discordSettings,
     state,
     workflowArtifactRepositoryInventory(artifact),
-    artifact.repositoryAllowlist,
+    artifact.validated.repositoryAllowlist,
     knownSecrets,
-    Object.freeze({
-      snapshot: artifact.snapshot,
-      historyInputEvents: artifact.historyInputEvents,
-      notificationLedger: state.notificationLedger,
-      notificationSelection: artifact.notificationSelection,
-    }),
+    artifact.validated,
     command.pagesUrl,
   );
   await persistSuccessfulRunCompletion({
@@ -211,8 +242,8 @@ export async function notifyWorkflowDiscord(
     config,
     state,
     repositoryInventory: workflowArtifactRepositoryInventory(artifact),
-    repositoryAllowlist: artifact.repositoryAllowlist,
-    validated: validatedRunFromArtifact(artifact),
+    repositoryAllowlist: artifact.validated.repositoryAllowlist,
+    validated: artifact.validated,
     runMetadata: artifact.runMetadata,
     delivery: {
       notificationLedger: result.notificationLedger,

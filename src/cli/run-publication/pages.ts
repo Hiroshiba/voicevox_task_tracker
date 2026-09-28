@@ -1,4 +1,5 @@
 import type { Config } from "../../config/index.js";
+import { assertValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
 import type { Repository } from "../../domain/index.js";
 import { generatePublicData, PUBLIC_SUMMARY_GZIP_LIMIT_BYTES } from "../../pages/index.js";
 import type { PagesPublicSafetyInput } from "../../pages/index.js";
@@ -26,6 +27,7 @@ export type BuildPublicPagesInput = Readonly<{
 
 /** 検証済みsnapshotと保存後履歴からPages成果物を生成して書き込む。 */
 export async function buildPublicPages(input: BuildPublicPagesInput): Promise<PagesResult> {
+  assertValidatedRun(input.validated);
   const data = generatePublicData({
     snapshot: input.validated.snapshot,
     historyRecords: input.historyRecords,

@@ -6,6 +6,11 @@ import {
   notificationActionSchema,
   type NotificationAction,
 } from "../application/tracking-run/contracts/closed-values.js";
+import {
+  assertValidatedRun,
+  revalidateSerializedRun,
+} from "../application/tracking-run/stages/validate-run.js";
+import type { ValidatedRun } from "./run-publication/contracts.js";
 
 import {
   hashCanonicalJson,
@@ -39,7 +44,11 @@ import {
   type DiscordDeliverySettings,
   type DiscordNotificationSelection,
 } from "../discord/index.js";
-import { isEligiblePublicRepository } from "../github/public-repository-allowlist.js";
+import {
+  createPublicRepositoryAllowlist,
+  isEligiblePublicRepository,
+} from "../github/public-repository-allowlist.js";
+import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
 import {
   assertStatePublicSafety,
   assertPersonalReminderEvidenceClosure,
@@ -53,9 +62,15 @@ import {
 } from "../persistence/index.js";
 import { assertNonNullable } from "../util/index.js";
 import { CliWorkflowArtifactError } from "./errors.js";
+import {
+  parseWorkflowIdentityWitness,
+  parseWorkflowValidation,
+  type WorkflowIdentityWitness,
+  type WorkflowValidation,
+} from "./workflow-artifact-validation.js";
 
 const actionsSecretNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
-const WORKFLOW_ARTIFACT_SCHEMA_VERSION = "16";
+const WORKFLOW_ARTIFACT_SCHEMA_VERSION = "17";
 const nonNegativeIntegerSchema = z.number().int().nonnegative();
 const dateTimeSchema = z.iso
   .datetime({
@@ -267,6 +282,13 @@ const workflowArtifactSchema = z.strictObject({
   personalReminderAiCacheEntries: z.array(z.unknown()),
   pagesUrl: z.url(),
   discordSettings: discordSettingsSchema,
+  validation: z.unknown(),
+  identityWitness: z.unknown(),
+  presentationDigests: z.strictObject({
+    runMetadata: allowlistDigestSchema,
+    pagesUrl: allowlistDigestSchema,
+    discordSettings: allowlistDigestSchema,
+  }),
 });
 
 export type WorkflowArtifactRepositoryAllowlistEntry = Readonly<{
@@ -300,7 +322,25 @@ export type WorkflowArtifact = Readonly<{
   personalReminderAiCacheEntries: readonly PersonalReminderAiCacheEntry[];
   pagesUrl: string;
   discordSettings: DiscordDeliverySettings;
+  validation: WorkflowValidation;
+  identityWitness: WorkflowIdentityWitness;
+  presentationDigests: Readonly<{
+    runMetadata: Sha256Hash;
+    pagesUrl: Sha256Hash;
+    discordSettings: Sha256Hash;
+  }>;
+  validated: ValidatedRun;
 }>;
+
+type WorkflowArtifactPublicValue = Omit<WorkflowArtifact, "validated">;
+
+/** 証明を除いたv17 artifact保存値を返す。 */
+export function workflowArtifactPayload(artifact: WorkflowArtifact): WorkflowArtifactPublicValue {
+  assertValidatedRun(artifact.validated);
+  const { validated, ...payload } = artifact;
+  void validated;
+  return Object.freeze(payload);
+}
 
 function nonEmptyValues<Value>(
   values: readonly Value[],
@@ -434,6 +474,67 @@ function assertRunConsistency(snapshot: StateSnapshot, metadata: WorkflowRunMeta
       metadata.metrics.staleRepositoryCount
   ) {
     throw new TypeError("workflow artifactのsnapshotとrun metadataの件数が一致しません");
+  }
+}
+
+function assertWorkflowValidationConsistency(
+  artifact: WorkflowArtifactPublicValue,
+  validated: WorkflowArtifact["validated"],
+): void {
+  const { core, metrics, repositoryAllowlist } = validated;
+  if (
+    serializeCanonicalJson(artifact.identityWitness) !==
+    serializeCanonicalJson({
+      identity: core.identity,
+      executionPolicy: core.executionPolicy,
+      baseRevision: core.baseRevision,
+      configDigest: core.configDigest,
+    })
+  ) {
+    throw new TypeError("workflow artifactのrun識別witnessが検証済みrunと一致しません");
+  }
+  if (
+    artifact.notificationAction !== core.executionPolicy.notificationAction ||
+    artifact.allowlistDigest !== core.allowlistDigest ||
+    artifact.runMetadata.scheduledFor !== core.identity.scheduledFor ||
+    artifact.runMetadata.startedAt !== core.identity.startedAt
+  ) {
+    throw new TypeError("workflow artifactのrun識別と実行条件が一致しません");
+  }
+  if (
+    serializeCanonicalJson(artifact.repositoryInventory) !==
+    serializeCanonicalJson(repositoryAllowlist)
+  ) {
+    throw new TypeError("workflow artifactの公開repository一覧が検証済みrunと一致しません");
+  }
+  const expectedMetrics: WorkflowRunMetadata["metrics"] = Object.freeze({
+    repositoryCount: validated.snapshot.repositories.length,
+    itemCount: validated.snapshot.items.length,
+    changedItemCount: metrics.changedItemCount,
+    activeEdgeCount: validated.snapshot.relations.filter((relation) => relation.active).length,
+    aiCallCount: metrics.aiCallCount,
+    aiProcessAttemptCount: metrics.aiProcessAttemptCount,
+    aiCacheHitCount: metrics.aiCacheHitCount,
+    aiRetainedResultCount: metrics.aiRetainedResultCount,
+    estimatedInputTokens: metrics.estimatedInputTokens,
+    personalReminderCauseCount: metrics.personalReminderCauseCount,
+    personalReminderAiCallCount: metrics.personalReminderAiCallCount,
+    personalReminderAiCacheHitCount: metrics.personalReminderAiCacheHitCount,
+    personalReminderAssessmentReuseCount: metrics.personalReminderAssessmentReuseCount,
+    personalReminderUnknownCount: metrics.personalReminderUnknownCount,
+    personalReminderFailedCount: metrics.personalReminderFailedCount,
+    personalReminderDeferredCount: metrics.personalReminderDeferredCount,
+    personalReminderNotEvaluatedCount: metrics.personalReminderNotEvaluatedCount,
+    githubApiRemaining: metrics.githubApiRemaining,
+    staleRepositoryCount: validated.snapshot.repositories.filter(
+      (repository) => repository.freshness === "stale",
+    ).length,
+    scheduleDelayMilliseconds: metrics.scheduleDelayMilliseconds,
+  });
+  if (
+    serializeCanonicalJson(expectedMetrics) !== serializeCanonicalJson(artifact.runMetadata.metrics)
+  ) {
+    throw new TypeError("workflow artifactのrun指標が検証済みrunと一致しません");
   }
 }
 
@@ -606,6 +707,8 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
       cause: result.error,
     });
   }
+  z.object({ schemaVersion: z.literal("21") }).parse(result.data.snapshot);
+  z.object({ schemaVersion: z.literal("8") }).parse(result.data.notificationLedger);
   const snapshot = createStateSnapshot(result.data.snapshot);
   assertPersonalReminderEvidenceClosure(snapshot);
   const historyInputEvents = createStateHistoryInputEvents(result.data.historyInputEvents);
@@ -616,6 +719,8 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
   const personalReminderAiCacheEntries = createPersonalReminderAiCacheEntries(
     result.data.personalReminderAiCacheEntries,
   );
+  const validation = parseWorkflowValidation(result.data.validation);
+  const identityWitness = parseWorkflowIdentityWitness(result.data.identityWitness);
   const artifact = Object.freeze({
     schemaVersion: WORKFLOW_ARTIFACT_SCHEMA_VERSION,
     kind: "validated_public_run",
@@ -645,16 +750,69 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
         ...result.data.discordSettings.retry,
       }),
     }),
-  } satisfies WorkflowArtifact);
+    validation,
+    identityWitness,
+    presentationDigests: result.data.presentationDigests,
+  });
+  if (serializeCanonicalJson(value) !== serializeCanonicalJson(artifact)) {
+    throw new TypeError("workflow artifactの保存値が検証済みの正規形と一致しません");
+  }
+  if (
+    artifact.presentationDigests.runMetadata !== hashCanonicalJson(artifact.runMetadata) ||
+    artifact.presentationDigests.pagesUrl !== hashCanonicalJson(artifact.pagesUrl) ||
+    artifact.presentationDigests.discordSettings !== hashCanonicalJson(artifact.discordSettings)
+  ) {
+    throw new TypeError("workflow artifactの公開設定とrun metadataがwitnessに一致しません");
+  }
   assertRunConsistency(snapshot, runMetadata);
   assertNotificationActionConsistency(artifact.notificationAction, notificationSelection);
   assertNotificationSelectionConsistency(snapshot, notificationLedger, notificationSelection);
   assertWorkflowArtifactPublicSafety(artifact, artifact.repositoryInventory, []);
-  return artifact;
+  const run: Omit<ValidatedRun, "proof"> = Object.freeze({
+    ...validation,
+    snapshot,
+    historyInputEvents,
+    aiCacheAdditions: aiCacheEntries,
+    personalReminderAiCacheAdditions: personalReminderAiCacheEntries,
+    notificationLedger,
+    notificationSelection,
+    repositoryAllowlist: createPublicRepositoryAllowlist(artifact.repositoryInventory).repositories,
+  });
+  const validated = revalidateSerializedRun(run, nodeContentDigestPort, () => {
+    assertWorkflowArtifactPublicSafety(artifact, artifact.repositoryInventory, []);
+  });
+  assertWorkflowValidationConsistency(artifact, validated);
+  const validatedArtifact = Object.freeze({
+    ...artifact,
+    repositoryInventory: validated.repositoryAllowlist,
+    snapshot: validated.snapshot,
+    historyInputEvents: validated.historyInputEvents,
+    notificationLedger: validated.notificationLedger,
+    notificationSelection: validated.notificationSelection,
+    aiCacheEntries: validated.aiCacheAdditions,
+    personalReminderAiCacheEntries: validated.personalReminderAiCacheAdditions,
+    validation: Object.freeze({
+      core: validated.core,
+      previousNotificationLedger: validated.previousNotificationLedger,
+      metrics: validated.metrics,
+      evidenceClosureSummary: validated.evidenceClosureSummary,
+      evidenceClosureWitness: validated.evidenceClosureWitness,
+      publicDiagnosticsSummary: validated.publicDiagnosticsSummary,
+      artifactValueDigests: validated.artifactValueDigests,
+    }),
+    identityWitness: Object.freeze({
+      identity: validated.core.identity,
+      executionPolicy: validated.core.executionPolicy,
+      baseRevision: validated.core.baseRevision,
+      configDigest: validated.core.configDigest,
+    }),
+    validated,
+  });
+  return validatedArtifact;
 }
 
 function assertRepositoryAllowlistConsistency(
-  artifact: WorkflowArtifact,
+  artifact: WorkflowArtifactPublicValue,
   inventory: readonly Repository[],
 ): void {
   const collectedAllowlist = inventory.filter(isEligiblePublicRepository);
@@ -694,7 +852,7 @@ function assertRepositoryAllowlistConsistency(
 
 /** artifact全体へraw inventoryと既知secretを使った公開安全性検査を適用する。 */
 export function assertWorkflowArtifactPublicSafety(
-  artifact: WorkflowArtifact,
+  artifact: WorkflowArtifactPublicValue,
   inventory: readonly Repository[],
   knownSecrets: readonly string[],
 ): void {
@@ -713,6 +871,9 @@ export function assertWorkflowArtifactPublicSafety(
       ...artifact.personalReminderAiCacheEntries,
       artifact.pagesUrl,
       artifact.discordSettings,
+      artifact.validation,
+      artifact.identityWitness,
+      artifact.presentationDigests,
     ],
     knownSecrets,
   });

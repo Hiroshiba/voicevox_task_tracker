@@ -2,13 +2,13 @@ import {
   assertWorkflowArtifactPublicSafety,
   createWorkflowArtifact,
 } from "../workflow-artifact.js";
+import { hashCanonicalJson } from "../../canonical-json/index.js";
+import { assertValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
 import type { WorkflowArtifact } from "../workflow-artifact.js";
 import type { DailyRunInvocation } from "../daily-transaction.js";
-import type { RunMetrics } from "../run-report.js";
 import type {
   PublicationConfiguration,
   PublicationRepositoryInventory,
-  PublicationState,
   ValidatedRun,
 } from "./contracts.js";
 import { createRunMetadata } from "./metadata.js";
@@ -18,10 +18,8 @@ import { discordDeliverySettings, pagesUrl } from "./settings.js";
 export type CreateCollectAnalyzeArtifactInput = Readonly<{
   invocation: DailyRunInvocation;
   configuration: PublicationConfiguration;
-  state: PublicationState;
   inventory: PublicationRepositoryInventory;
   validated: ValidatedRun;
-  metrics: RunMetrics;
   diagnostics: readonly string[];
 }>;
 
@@ -32,31 +30,65 @@ export function createCollectAnalyzeArtifact(
   if (input.invocation.command.kind !== "collect-analyze") {
     throw new TypeError("collect-analyze以外のrunからworkflow artifactを生成できません");
   }
+  assertValidatedRun(input.validated);
+  if (
+    input.invocation.runId !== input.validated.core.identity.runId ||
+    input.invocation.invocationId !== input.validated.core.identity.invocationId ||
+    input.invocation.scheduledFor !== input.validated.core.identity.scheduledFor ||
+    input.invocation.startedAt !== input.validated.core.identity.startedAt ||
+    input.invocation.executionPolicy.notificationAction !==
+      input.validated.core.executionPolicy.notificationAction
+  ) {
+    throw new TypeError("collect-analyzeのrun識別が検証済みrunと一致しません");
+  }
+  const runMetadata = createRunMetadata({
+    invocation: input.invocation,
+    validated: input.validated,
+    metrics: input.validated.metrics,
+    diagnostics: input.diagnostics,
+  });
+  const publishedPagesUrl = pagesUrl(input.configuration.config);
+  const publishedDiscordSettings = discordDeliverySettings(input.configuration.config);
   const artifact = createWorkflowArtifact({
-    schemaVersion: "16",
+    schemaVersion: "17",
     kind: "validated_public_run",
-    notificationAction: input.invocation.executionPolicy.notificationAction,
-    repositoryAllowlist: input.inventory.allowlist.repositories.map((repository) => ({
+    notificationAction: input.validated.core.executionPolicy.notificationAction,
+    repositoryAllowlist: input.validated.repositoryAllowlist.map((repository) => ({
       id: repository.id,
       owner: repository.owner,
       name: repository.name,
     })),
-    repositoryInventory: input.inventory.allowlist.repositories,
-    allowlistDigest: input.inventory.allowlistDigest,
+    repositoryInventory: input.validated.repositoryAllowlist,
+    allowlistDigest: input.validated.core.allowlistDigest,
     snapshot: input.validated.snapshot,
     historyInputEvents: input.validated.historyInputEvents,
     notificationLedger: input.validated.notificationLedger,
     notificationSelection: input.validated.notificationSelection,
-    runMetadata: createRunMetadata({
-      invocation: input.invocation,
-      validated: input.validated,
-      metrics: input.metrics,
-      diagnostics: input.diagnostics,
-    }),
-    aiCacheEntries: input.state.session.pendingAiCacheEntries(),
-    personalReminderAiCacheEntries: input.state.session.pendingPersonalReminderAiCacheEntries(),
-    pagesUrl: pagesUrl(input.configuration.config),
-    discordSettings: discordDeliverySettings(input.configuration.config),
+    runMetadata,
+    aiCacheEntries: input.validated.aiCacheAdditions,
+    personalReminderAiCacheEntries: input.validated.personalReminderAiCacheAdditions,
+    pagesUrl: publishedPagesUrl,
+    discordSettings: publishedDiscordSettings,
+    validation: {
+      core: input.validated.core,
+      previousNotificationLedger: input.validated.previousNotificationLedger,
+      metrics: input.validated.metrics,
+      evidenceClosureSummary: input.validated.evidenceClosureSummary,
+      evidenceClosureWitness: input.validated.evidenceClosureWitness,
+      publicDiagnosticsSummary: input.validated.publicDiagnosticsSummary,
+      artifactValueDigests: input.validated.artifactValueDigests,
+    },
+    identityWitness: {
+      identity: input.validated.core.identity,
+      executionPolicy: input.validated.core.executionPolicy,
+      baseRevision: input.validated.core.baseRevision,
+      configDigest: input.validated.core.configDigest,
+    },
+    presentationDigests: {
+      runMetadata: hashCanonicalJson(runMetadata),
+      pagesUrl: hashCanonicalJson(publishedPagesUrl),
+      discordSettings: hashCanonicalJson(publishedDiscordSettings),
+    },
   });
   assertWorkflowArtifactPublicSafety(
     artifact,
@@ -64,14 +96,4 @@ export function createCollectAnalyzeArtifact(
     input.configuration.credentials.knownSecrets,
   );
   return artifact;
-}
-
-/** workflow artifactの公開処理入力を再計算せず復元する。 */
-export function validatedRunFromArtifact(artifact: WorkflowArtifact): ValidatedRun {
-  return Object.freeze({
-    snapshot: artifact.snapshot,
-    historyInputEvents: artifact.historyInputEvents,
-    notificationLedger: artifact.notificationLedger,
-    notificationSelection: artifact.notificationSelection,
-  });
 }

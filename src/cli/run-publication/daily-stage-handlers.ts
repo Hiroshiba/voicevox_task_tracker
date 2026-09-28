@@ -1,4 +1,6 @@
 import { deliverDiscord, deliverOperationsAlert } from "../notification-delivery-runtime.js";
+import { assertValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
+import { workflowArtifactPayload } from "../workflow-artifact.js";
 import { createCollectAnalyzeArtifact } from "./artifact.js";
 import type {
   DailyPublicationStageHandlers,
@@ -69,6 +71,7 @@ export async function sendDailyDiscord(
   input: Parameters<DailyPublicationStageHandlers["sendDiscord"]>[0],
 ): ReturnType<DailyPublicationStageHandlers["sendDiscord"]> {
   const { invocation, configuration, state, repositoryInventory, validated, pages } = input;
+  assertValidatedRun(validated);
   if (
     invocation.executionPolicy.notificationAction === "acknowledge-current" ||
     invocation.executionPolicy.notificationAction === "hold"
@@ -197,14 +200,14 @@ export function writeDailyCollectAnalyzeArtifact(
 ): ReturnType<DailyPublicationStageHandlers["writeCollectAnalyzeArtifact"]> {
   return dependencies.adapters.writeJsonArtifact(
     path,
-    createCollectAnalyzeArtifact({
-      invocation: stageInput.invocation,
-      configuration: stageInput.configuration,
-      state: stageInput.state,
-      inventory: stageInput.repositoryInventory,
-      validated: stageInput.validated,
-      metrics: stageInput.metrics,
-      diagnostics: stageInput.diagnostics,
-    }),
+    workflowArtifactPayload(
+      createCollectAnalyzeArtifact({
+        invocation: stageInput.invocation,
+        configuration: stageInput.configuration,
+        inventory: stageInput.repositoryInventory,
+        validated: stageInput.validated,
+        diagnostics: stageInput.diagnostics,
+      }),
+    ),
   );
 }
