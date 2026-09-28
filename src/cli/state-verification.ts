@@ -5,6 +5,17 @@ import { resolve } from "node:path";
 
 import { z } from "zod";
 import type { loadConfig } from "../config/index.js";
+import {
+  validateStatePersistenceConfiguration,
+  type StatePersistenceConfiguration,
+  type StateFileReadResult,
+} from "../persistence/branch-adapter.js";
+import {
+  DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
+  INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1,
+  RUN_TRANSACTION_MARKER_STATE_PATH_V1,
+} from "../application/tracking-run/contracts/recovery-paths.js";
+import { verifyRunTransactionFiles } from "../persistence/state-transaction-files.js";
 
 import { createAiCacheEntry, type AiCacheKey } from "../codex/cache.js";
 import { serializeCanonicalJsonLine } from "../canonical-json/index.js";
@@ -17,6 +28,10 @@ import {
   migrateStateSnapshot,
   parseStateHistoryRecords,
   parseStateNotificationLedger,
+  parseStateOperationsAlertLedger,
+  createStateOperationsAlertLedger,
+  OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
+  serializeStateOperationsAlertLedger,
   type AiCacheMigrationFile,
   type AiCacheMigrationPlan,
   type LegacyAiCacheEntry,
@@ -26,7 +41,6 @@ import { CliStateVerificationError } from "./errors.js";
 
 const HISTORY_FILE_PATTERN = /^(\d{4}-\d{2}-\d{2})\.jsonl$/u;
 const AI_CACHE_FILE_PATTERN = /^[0-9a-f]{64}\.json$/u;
-const AI_CACHE_STATE_DIRECTORY = "state/ai-cache";
 const schemaVersionSchema = z.object({
   schemaVersion: z.string().min(1),
 });
@@ -48,6 +62,8 @@ export type AiCacheVerification = StateDocumentVerification &
 export type StateVerificationResult = Readonly<{
   snapshot: StateDocumentVerification;
   notificationLedger: StateDocumentVerification;
+  operationsAlertLedger: StateDocumentVerification;
+  runTransaction: StateDocumentVerification;
   history: StateDocumentVerification;
   aiCache: AiCacheVerification;
 }>;
@@ -59,6 +75,7 @@ export type StateVerificationDependencies = Readonly<{
   verifyStateDirectory: (
     stateDirectory: string,
     timezone: string,
+    configuration: StatePersistenceConfiguration,
   ) => Promise<StateVerificationResult>;
   writeStandardOutput: (source: string) => Promise<void>;
 }>;
@@ -159,12 +176,28 @@ async function readUtf8(path: string): Promise<string> {
   }
 }
 
+async function readOptionalBytes(path: string): Promise<Uint8Array | undefined> {
+  try {
+    return await readFile(path);
+  } catch (error: unknown) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return undefined;
+    }
+    throw verificationError(path, error);
+  }
+}
+
+function localStatePath(stateDirectory: string, statePath: string): string {
+  return join(stateDirectory, statePath.slice("state/".length));
+}
+
 async function verifySnapshot(
   stateDirectory: string,
   legacyEntriesByCacheKey: ReadonlyMap<AiCacheKey, LegacyAiCacheEntry>,
   timezone: string,
+  snapshotPath: string,
 ): Promise<StateDocumentVerification> {
-  const path = join(stateDirectory, "snapshot.json");
+  const path = localStatePath(stateDirectory, snapshotPath);
   const source = await readUtf8(path);
   try {
     const snapshot = migrateStateSnapshot(source, legacyEntriesByCacheKey, timezone);
@@ -189,8 +222,9 @@ async function verifySnapshot(
 
 async function verifyNotificationLedger(
   stateDirectory: string,
+  notificationLedgerPath: string,
 ): Promise<StateDocumentVerification> {
-  const path = join(stateDirectory, "notification-ledger.json");
+  const path = localStatePath(stateDirectory, notificationLedgerPath);
   const source = await readUtf8(path);
   try {
     const ledger = parseStateNotificationLedger(source);
@@ -209,6 +243,75 @@ async function verifyNotificationLedger(
   }
 }
 
+async function verifyOperationsAlertLedger(
+  stateDirectory: string,
+  notificationLedgerPath: string,
+): Promise<StateDocumentVerification> {
+  const normalPath = localStatePath(stateDirectory, notificationLedgerPath);
+  const operationsPath = localStatePath(stateDirectory, OPERATIONS_ALERT_LEDGER_STATE_PATH_V1);
+  const normalSource = await readUtf8(normalPath);
+  const legacy = parseStateNotificationLedger(normalSource);
+  const operationsBytes = await readOptionalBytes(operationsPath);
+  if (operationsBytes == null) {
+    const migrated = createStateOperationsAlertLedger({
+      schemaVersion: "1",
+      operationsAlerts: legacy.operationsAlerts,
+    });
+    const encoded = serializeStateOperationsAlertLedger(migrated);
+    if (serializeStateOperationsAlertLedger(parseStateOperationsAlertLedger(encoded)) !== encoded) {
+      throw verificationError(
+        operationsPath,
+        new TypeError("運用障害通知ledgerの移行で値を失いました"),
+      );
+    }
+    return createVerification(
+      migrated.operationsAlerts.length,
+      [jsonDocumentSchemaVersion(normalSource, "notification ledger")],
+      ["1"],
+    );
+  }
+  if (legacy.operationsAlerts.length !== 0) {
+    throw verificationError(
+      operationsPath,
+      new TypeError("通常ledgerと専用fileに運用障害通知が重複しています"),
+    );
+  }
+  const operationsSource = new TextDecoder("utf-8", { fatal: true }).decode(operationsBytes);
+  const ledger = parseStateOperationsAlertLedger(operationsSource);
+  if (operationsSource !== serializeStateOperationsAlertLedger(ledger)) {
+    throw verificationError(
+      operationsPath,
+      new TypeError("運用障害通知ledgerがcanonical JSONではありません"),
+    );
+  }
+  return createVerification(ledger.operationsAlerts.length, ["1"], ["1"]);
+}
+
+async function verifyRunTransaction(
+  stateDirectory: string,
+  configuration: StatePersistenceConfiguration,
+): Promise<StateDocumentVerification> {
+  const paths = [
+    configuration.snapshotPath,
+    configuration.notificationLedgerPath,
+    OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
+    DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
+    RUN_TRANSACTION_MARKER_STATE_PATH_V1,
+    INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1,
+  ];
+  const files = new Map<string, StateFileReadResult>();
+  for (const path of paths) {
+    const bytes = await readOptionalBytes(localStatePath(stateDirectory, path));
+    files.set(path, bytes == null ? { status: "missing" } : { status: "present", bytes });
+  }
+  try {
+    const verified = verifyRunTransactionFiles(files, configuration);
+    return verified == null ? createVerification(0, [], []) : createVerification(1, ["1"], ["1"]);
+  } catch (error: unknown) {
+    throw verificationError(stateDirectory, error);
+  }
+}
+
 async function readHistoryEntries(historyDirectory: string): Promise<Dirent[]> {
   try {
     return await readdir(historyDirectory, {
@@ -219,8 +322,11 @@ async function readHistoryEntries(historyDirectory: string): Promise<Dirent[]> {
   }
 }
 
-async function verifyHistory(stateDirectory: string): Promise<StateDocumentVerification> {
-  const historyDirectory = join(stateDirectory, "history");
+async function verifyHistory(
+  stateDirectory: string,
+  historyStateDirectory: string,
+): Promise<StateDocumentVerification> {
+  const historyDirectory = localStatePath(stateDirectory, historyStateDirectory);
   const entries = await readHistoryEntries(historyDirectory);
   const sourceSchemaVersions: string[] = [];
   const migratedSchemaVersions: string[] = [];
@@ -269,8 +375,11 @@ async function readAiCacheEntries(cacheDirectory: string): Promise<Dirent[]> {
   }
 }
 
-async function verifyAiCache(stateDirectory: string): Promise<VerifiedAiCache> {
-  const cacheDirectory = join(stateDirectory, "ai-cache");
+async function verifyAiCache(
+  stateDirectory: string,
+  aiCacheStateDirectory: string,
+): Promise<VerifiedAiCache> {
+  const cacheDirectory = localStatePath(stateDirectory, aiCacheStateDirectory);
   const entries = await readAiCacheEntries(cacheDirectory);
   const files: AiCacheMigrationFile[] = [];
   for (const entry of entries.sort((left, right) => compareStrings(left.name, right.name))) {
@@ -281,19 +390,19 @@ async function verifyAiCache(stateDirectory: string): Promise<VerifiedAiCache> {
     }
     const source = await readUtf8(path);
     files.push({
-      path: `${AI_CACHE_STATE_DIRECTORY}/${entry.name}`,
+      path: `${aiCacheStateDirectory}/${entry.name}`,
       source,
     });
   }
   let migrationPlan: AiCacheMigrationPlan;
   try {
-    migrationPlan = createAiCacheMigrationPlan(AI_CACHE_STATE_DIRECTORY, files);
+    migrationPlan = createAiCacheMigrationPlan(aiCacheStateDirectory, files);
   } catch (error: unknown) {
     throw verificationError(cacheDirectory, error);
   }
   const sourceByPath = new Map(files.map((file) => [file.path, file.source]));
   for (const entry of migrationPlan.currentEntriesByCacheKey.values()) {
-    const statePath = `${AI_CACHE_STATE_DIRECTORY}/${entry.cacheKey.slice("sha256:".length)}.json`;
+    const statePath = `${aiCacheStateDirectory}/${entry.cacheKey.slice("sha256:".length)}.json`;
     const source = sourceByPath.get(statePath);
     if (source == null) {
       throw verificationError(cacheDirectory, new TypeError("AI cacheのpathを再取得できません"));
@@ -301,7 +410,7 @@ async function verifyAiCache(stateDirectory: string): Promise<VerifiedAiCache> {
     const canonicalSource = serializeCanonicalJsonLine(entry);
     if (source !== canonicalSource) {
       throw verificationError(
-        join(cacheDirectory, statePath.slice(`${AI_CACHE_STATE_DIRECTORY}/`.length)),
+        join(cacheDirectory, statePath.slice(`${aiCacheStateDirectory}/`.length)),
         new TypeError("AI cacheがcanonical JSONではありません"),
       );
     }
@@ -312,7 +421,7 @@ async function verifyAiCache(stateDirectory: string): Promise<VerifiedAiCache> {
       }
     } catch (error: unknown) {
       throw verificationError(
-        join(cacheDirectory, statePath.slice(`${AI_CACHE_STATE_DIRECTORY}/`.length)),
+        join(cacheDirectory, statePath.slice(`${aiCacheStateDirectory}/`.length)),
         error,
       );
     }
@@ -321,7 +430,7 @@ async function verifyAiCache(stateDirectory: string): Promise<VerifiedAiCache> {
   const remainingFiles = files.filter((file) => !legacyPathSet.has(file.path));
   let remainingPlan: AiCacheMigrationPlan;
   try {
-    remainingPlan = createAiCacheMigrationPlan(AI_CACHE_STATE_DIRECTORY, remainingFiles);
+    remainingPlan = createAiCacheMigrationPlan(aiCacheStateDirectory, remainingFiles);
   } catch (error: unknown) {
     throw verificationError(cacheDirectory, error);
   }
@@ -348,16 +457,28 @@ async function verifyAiCache(stateDirectory: string): Promise<VerifiedAiCache> {
 export async function verifyPersistentStateDirectory(
   stateDirectory: string,
   timezone: string,
+  configuration: StatePersistenceConfiguration,
 ): Promise<StateVerificationResult> {
-  const verifiedAiCache = await verifyAiCache(stateDirectory);
-  const [snapshot, notificationLedger, history] = await Promise.all([
-    verifySnapshot(stateDirectory, verifiedAiCache.migrationPlan.legacyEntriesByCacheKey, timezone),
-    verifyNotificationLedger(stateDirectory),
-    verifyHistory(stateDirectory),
-  ]);
+  validateStatePersistenceConfiguration(configuration);
+  const verifiedAiCache = await verifyAiCache(stateDirectory, configuration.aiCacheDirectory);
+  const [snapshot, notificationLedger, operationsAlertLedger, runTransaction, history] =
+    await Promise.all([
+      verifySnapshot(
+        stateDirectory,
+        verifiedAiCache.migrationPlan.legacyEntriesByCacheKey,
+        timezone,
+        configuration.snapshotPath,
+      ),
+      verifyNotificationLedger(stateDirectory, configuration.notificationLedgerPath),
+      verifyOperationsAlertLedger(stateDirectory, configuration.notificationLedgerPath),
+      verifyRunTransaction(stateDirectory, configuration),
+      verifyHistory(stateDirectory, configuration.historyDirectory),
+    ]);
   return Object.freeze({
     snapshot,
     notificationLedger,
+    operationsAlertLedger,
+    runTransaction,
     history,
     aiCache: verifiedAiCache.verification,
   });
@@ -376,6 +497,8 @@ export function formatStateVerificationResult(result: StateVerificationResult): 
   return [
     formatDocumentResult("snapshot", result.snapshot),
     formatDocumentResult("notification ledger", result.notificationLedger),
+    formatDocumentResult("operations alert ledger", result.operationsAlertLedger),
+    formatDocumentResult("run transaction", result.runTransaction),
     formatDocumentResult("history", result.history),
     formatDocumentResult("AI cache", result.aiCache),
     `AI cache旧形式削除予定: ${result.aiCache.deletedCount.toString()}件`,
@@ -398,6 +521,7 @@ export class StateVerificationRunner {
     const result = await this.#dependencies.verifyStateDirectory(
       command.stateDirectory,
       config.staleness.timezone,
+      config.state,
     );
     await this.#dependencies.writeStandardOutput(`${formatStateVerificationResult(result)}\n`);
   }

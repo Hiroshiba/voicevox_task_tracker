@@ -156,7 +156,9 @@ function assertReceiptSemantics(receipt: Receipt): void {
     if (
       (receipt.status === "sent") !== (receipt.effectCertainty === "committed") ||
       (receipt.status === "ambiguous") !== (receipt.effectCertainty === "ambiguous") ||
-      (receipt.status === "sent") !== (receipt.result.discordMessageId != null)
+      (receipt.status === "sent") !== (receipt.result.discordMessageId != null) ||
+      (receipt.result.operationsLedgerRevision != null) !==
+        (receipt.result.operationsLedgerCommitMetadata != null)
     ) {
       throw new TypeError("運用通知receiptの送達結果が一致しません");
     }
@@ -166,9 +168,40 @@ function assertReceiptSemantics(receipt: Receipt): void {
       receipt.receiptType === "notification_settlement" ||
       receipt.receiptType === "manual_resolution" ||
       receipt.receiptType === "run_finalization") &&
-    receipt.expectedStateRevision !== receipt.result.expectedTrackingStateRevision
+    (receipt.receiptType === "initial_state_commit"
+      ? (receipt.expectedStateRevision ?? "unborn") !== receipt.result.expectedTrackingStateRevision
+      : receipt.expectedStateRevision !== receipt.result.expectedTrackingStateRevision ||
+        receipt.result.expectedTrackingStateRevision === "unborn" ||
+        receipt.result.actualParentStateRevision === "unborn")
   ) {
     throw new TypeError("state commit receiptの期待revisionが一致しません");
+  }
+  if (
+    (receipt.receiptType === "initial_state_commit" ||
+      receipt.receiptType === "notification_settlement" ||
+      receipt.receiptType === "manual_resolution" ||
+      receipt.receiptType === "run_finalization") &&
+    ((receipt.result.actualParentStateRevision === "unborn" &&
+      receipt.result.expectedTrackingStateRevision !== "unborn") ||
+      (receipt.result.interveningOperationsAlertCommits.length === 0 &&
+        receipt.result.actualParentStateRevision !==
+          receipt.result.expectedTrackingStateRevision) ||
+      (receipt.result.interveningOperationsAlertCommits.length > 0 &&
+        receipt.result.interveningOperationsAlertCommits.at(-1) !==
+          receipt.result.actualParentStateRevision))
+  ) {
+    throw new TypeError("state commit receiptのCAS親と介在commitが一致しません");
+  }
+  if (
+    (receipt.receiptType === "initial_state_commit" ||
+      receipt.receiptType === "notification_settlement" ||
+      receipt.receiptType === "manual_resolution" ||
+      receipt.receiptType === "run_finalization") &&
+    (receipt.binding.bindingKind !== "checkpoint" ||
+      receipt.result.commitRunId !== receipt.binding.runId ||
+      receipt.result.commitOperationId !== receipt.operationId)
+  ) {
+    throw new TypeError("state commit receiptとcommit metadataの識別子が一致しません");
   }
   if (
     receipt.receiptType === "initial_state_commit" ||

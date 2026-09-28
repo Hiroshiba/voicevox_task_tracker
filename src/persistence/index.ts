@@ -104,6 +104,15 @@ export {
 } from "./state-persistence-session.js";
 export { readExactStateSnapshot } from "./exact-state-snapshot.js";
 export {
+  authorizeAdvanceAfterOrthogonalCommits,
+  readExactStateTree,
+  writeStateCas,
+  type ExactStateTree,
+  type OrthogonalCommitAdvance,
+  type StateCasCommitRequestFactory,
+  type StateCasWriteResult,
+} from "./state-cas.js";
+export {
   createStateCommitIdentity,
   createStateCommitOperationId,
   readStateCommitMetadataBootstrap,
@@ -115,6 +124,10 @@ export {
   type StateCommitMetadataV1,
   type StateCommitScope,
 } from "./state-commit-metadata.js";
+export {
+  verifyRunTransactionFiles,
+  type VerifiedRunTransactionFiles,
+} from "./state-transaction-files.js";
 export {
   createEmptyStateNotificationLedger,
   createStateNotificationLedger,

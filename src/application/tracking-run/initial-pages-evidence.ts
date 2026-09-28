@@ -137,3 +137,11 @@ export function decodeInitialPagesPublicationEvidence(
   }
   return parseInitialPagesPublicationEvidence(raw, digest);
 }
+
+/** 初回Pages証拠をcanonical JSONで保存する。 */
+export function serializeInitialPagesPublicationEvidence(
+  evidence: InitialPagesPublicationEvidence,
+  digest: ContentDigestPort,
+): string {
+  return serializeCanonicalJsonLine(parseInitialPagesPublicationEvidence(evidence, digest));
+}

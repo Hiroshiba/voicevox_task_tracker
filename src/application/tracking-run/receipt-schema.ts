@@ -122,12 +122,18 @@ const receiptFields = {
   receiptId: receiptIdSchema,
 };
 
+const stateParentRevisionSchema = z.union([gitCommitRevisionSchema, z.literal("unborn")]);
 const stateCommitResultSchema = z.strictObject({
-  expectedTrackingStateRevision: gitCommitRevisionSchema,
-  actualParentStateRevision: gitCommitRevisionSchema,
+  expectedTrackingStateRevision: stateParentRevisionSchema,
+  actualParentStateRevision: stateParentRevisionSchema,
   resultingStateRevision: gitCommitRevisionSchema,
   stateContentDigest: sha256Schema,
   commitScope: z.enum(["tracking_run", "operations_alert", "manual_resolution"]),
+  commitMetadataVersion: z.literal(1),
+  commitOperationId: operationIdSchema,
+  commitRunId: runIdSchema,
+  changedPathManifestVersion: z.literal(1),
+  changedPathManifestDigest: sha256Schema,
   interveningOperationsAlertCommits: z.array(gitCommitRevisionSchema),
 });
 
@@ -233,6 +239,16 @@ export const receiptSchema = z.discriminatedUnion("receiptType", [
       incidentId: nonEmptyStringSchema,
       discordMessageId: nonEmptyStringSchema.optional(),
       operationsLedgerRevision: gitCommitRevisionSchema.optional(),
+      operationsLedgerCommitMetadata: z
+        .strictObject({
+          commitMetadataVersion: z.literal(1),
+          commitScope: z.literal("operations_alert"),
+          commitOperationId: operationIdSchema,
+          commitRunId: runIdSchema.optional(),
+          changedPathManifestVersion: z.literal(1),
+          changedPathManifestDigest: sha256Schema,
+        })
+        .optional(),
     }),
   }),
   z.strictObject({
