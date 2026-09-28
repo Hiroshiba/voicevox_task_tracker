@@ -19,6 +19,7 @@ import type { Evidence, GitHubNodeId } from "../../../domain/types.js";
 import { assertNonNullable } from "../../../util/index.js";
 import { createPersonalReminderFinalizedStageProof } from "../contracts/proofs.js";
 import type { StageState } from "../contracts/run-core.js";
+import type { OwnedHistoricalEvidence } from "../contracts/evidence-closure.js";
 import type { ContentDigestPort } from "../ports.js";
 import {
   adoptPersonalReminderAssessment,
@@ -38,6 +39,7 @@ import type {
 } from "./personal-reminder-plan-contracts.js";
 import { reconcileRetainedPersonalReminderCause } from "./personal-reminder-retained-cause.js";
 import { normalizeLabelRules } from "./collection-label-rules.js";
+import { collectOwnedHistoricalEvidence } from "./evidence-closure-historical.js";
 
 /** 確定済み原因と通知適格性の唯一の結果。 */
 export type PersonalReminderFinalizedCause = Readonly<{
@@ -70,6 +72,7 @@ export type PersonalReminderFinalizedRun = StageState<
   > &
     Readonly<{
       items: readonly PersonalReminderFinalizedItem[];
+      historicalEvidence: readonly OwnedHistoricalEvidence[];
     }>
 >;
 
@@ -434,6 +437,10 @@ export function finalizePersonalReminders(
       graph: run.data.graph,
       finalGraphProjection: run.data.finalGraphProjection,
       items: Object.freeze(items),
+      historicalEvidence: collectOwnedHistoricalEvidence(
+        run.core.personalReminderInput.previousItems,
+        run.core.personalReminderInput.previousRelations,
+      ),
     }),
     proof: createPersonalReminderFinalizedStageProof(),
   });
