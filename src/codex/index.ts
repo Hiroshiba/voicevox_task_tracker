@@ -71,13 +71,11 @@ export {
   type PersonalReminderAiCacheStore,
 } from "./personal-reminder-cache.js";
 export {
-  runPersonalReminderAiAnalyses,
+  executePlannedPersonalReminderBatch,
   type PersonalReminderAiCauseRunOutcome,
-  type PersonalReminderAiEvaluationCandidate,
-  type PersonalReminderAiRunConfiguration,
-  type PersonalReminderAiRunDependencies,
   type PersonalReminderAiRunResult,
-  type PreparedPersonalReminderAiBudgetCandidate,
+  type PersonalReminderBatchExecutionConfiguration,
+  type PersonalReminderBatchExecutionDependencies,
 } from "./personal-reminder-runner.js";
 export {
   executeCodexAnalysisWithTransportAliases,

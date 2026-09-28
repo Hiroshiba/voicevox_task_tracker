@@ -57,6 +57,24 @@ export class CodexAttemptBudget {
     return this.#snapshot == null ? 0 : summarizeAiBudgetLedger(this.#snapshot).processAttemptCount;
   }
 
+  /** 確定済み個人催促計画の予約を共有ledgerへ取り込む。 */
+  public adoptPlannedSnapshot(planned: AiBudgetLedgerSnapshot): void {
+    const current = this.snapshot;
+    if (
+      current.ledgerId !== planned.ledgerId ||
+      current.maxProcessAttempts !== planned.maxProcessAttempts ||
+      current.maxInputCharacters !== planned.maxInputCharacters ||
+      current.maxEstimatedCostUsd !== planned.maxEstimatedCostUsd ||
+      current.reservations.length !== 0 ||
+      planned.events.length < current.events.length ||
+      current.events.some((event, index) => planned.events[index] !== event) ||
+      planned.sequence < current.sequence
+    ) {
+      throw new TypeError("個人催促計画のAI予算ledgerが現在の履歴と一致しません");
+    }
+    this.#snapshot = planned;
+  }
+
   /** 初回process実試行を予約する。 */
   public reserveInitialAttempt(
     kind: "authentication_preflight" | "generic_initial" | "personal_initial",

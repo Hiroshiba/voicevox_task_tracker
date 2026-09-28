@@ -1,15 +1,10 @@
-import {
-  CODEX_AUTHENTICATION_PREFLIGHT_INPUT_CHARACTERS,
-  CODEX_AUTHENTICATION_PREFLIGHT_PROMPT,
-  estimateAiInputCost,
-  recordCodexDiagnostic,
-  runPersonalReminderAiAnalyses,
-  type CodexDiagnosticsContext,
-  type CodexInitialAttemptTicket,
-  type PersonalReminderAiRunConfiguration,
-  type PersonalReminderAiRunResult,
-} from "../../../codex/index.js";
+import { recordCodexDiagnostic, type CodexDiagnosticsContext } from "../../../codex/index.js";
+import { executePlannedPersonalReminderBatch } from "../../../codex/personal-reminder-runner.js";
 import { summarizeAiBudgetLedger } from "../../../application/tracking-run/contracts/ai-budget-ledger.js";
+import {
+  executePersonalReminders,
+  type PersonalReminderExecutionPort,
+} from "../../../application/tracking-run/stages/personal-reminder-execution.js";
 import type { GraphReconciledRun } from "../../../application/tracking-run/stages/graph-reconciliation.js";
 import { planPersonalReminders } from "../../../application/tracking-run/stages/personal-reminder-plan.js";
 import { nodeContentDigestPort } from "../../../infrastructure/tracking-run/content-digest.js";
@@ -32,10 +27,8 @@ import type {
 } from "../../daily-transaction.js";
 import { projectLegacyGraphReconciliation } from "../../tracking-run/migration-bridge/graph-reconciliation.js";
 import { projectFinalAiDependencyContext } from "../../tracking-run/migration-bridge/personal-reminder-graph.js";
-import {
-  projectLegacyPersonalReminderCausePlan,
-  projectLegacyPersonalReminderExecutionCandidates,
-} from "../../tracking-run/migration-bridge/personal-reminder-plan.js";
+import { projectLegacyPersonalReminderCausePlan } from "../../tracking-run/migration-bridge/personal-reminder-plan.js";
+import { projectLegacyPersonalReminderExecution } from "../../tracking-run/migration-bridge/personal-reminder-execution.js";
 import {
   applyPersonalReminderCauseOutcomes,
   finalizePersonalReminderAnalysis,
@@ -92,7 +85,6 @@ async function analyzePersonalReminders(
     ...plan.incompleteInputNodeIds,
     ...plan.deferredStructuralEndNodeIds,
   ]);
-  const candidates = projectLegacyPersonalReminderExecutionCandidates(planned);
   const initialSummary = summarizeAiBudgetLedger(configuration.codexAttemptBudget.snapshot);
   const initialUsage = Object.freeze({
     calls:
@@ -116,109 +108,68 @@ async function analyzePersonalReminders(
       previousCauseIds: conflict.previousCauseIds,
     });
   }
-  let run: PersonalReminderAiRunResult | undefined;
-  if (configuration.config.ai.enabled && forcedTarget == null && candidates.length !== 0) {
-    const codexCredentials = configuration.credentials.codex;
-    if (!codexCredentials.enabled) {
-      throw new TypeError("AIが有効ですがCodex認証情報がありません");
-    }
-    const codexConfiguration = createCodexAdapterConfiguration(configuration.config);
-    const codexDependencies = createCodexAdapterDependencies(
-      adapters,
-      codexCredentials,
-      configuration.codexAttemptBudget,
-      diagnostics,
-      undefined,
-    );
-    const preflightInputCost =
-      codexCredentials.authentication === "auth-json"
-        ? estimateAiInputCost(
-            CODEX_AUTHENTICATION_PREFLIGHT_PROMPT,
-            configuration.config.ai.budget.estimatedInputCostUsdPerMillionTokens,
-          )
-        : undefined;
-    const preflightDiagnostics = createCodexPreflightDiagnostics(diagnostics, invocation);
-    const preflight =
-      initialSummary.authenticationPreflightAttemptCount > 0 || preflightInputCost == null
-        ? undefined
-        : Object.freeze({
-            inputCharacters: CODEX_AUTHENTICATION_PREFLIGHT_INPUT_CHARACTERS,
-            estimatedCostUsd: preflightInputCost.estimatedCostUsd,
-            execute: (ticket: CodexInitialAttemptTicket) =>
-              adapters.executeCodexAuthenticationPreflight(
-                codexConfiguration,
-                Object.freeze({
-                  ...codexDependencies,
-                  initialAttemptTicket: ticket,
-                  ...(preflightDiagnostics == null
-                    ? {}
-                    : {
-                        diagnostics: preflightDiagnostics,
-                      }),
-                }),
-              ),
-          });
-    run = await runPersonalReminderAiAnalyses(
-      candidates,
-      {
-        model: configuration.config.ai.model,
-        reasoningEffort: configuration.config.ai.execution.reasoningEffort,
-        backendVersion: CODEX_BACKEND_VERSION,
-        budget: configuration.config.ai.budget,
-        initialUsage,
-        maxConcurrentCalls: configuration.config.ai.execution.maxConcurrentCalls,
-        minimumConfidence: configuration.config.ai.confidence.high,
-        inputCostUsdPerMillionTokens:
-          configuration.config.ai.budget.estimatedInputCostUsdPerMillionTokens,
-      } satisfies PersonalReminderAiRunConfiguration,
-      {
-        cache: state.session.personalReminderAiCache,
-        attemptBudget: configuration.codexAttemptBudget,
-        ensureReady: configuration.ensureCodexReady,
-        ...(preflight == null ? {} : { preflight }),
-        ...(diagnostics == null ? {} : { diagnostics }),
-        execute: (input, ticket) =>
-          adapters.executeCodexPersonalReminderAnalysis(
-            input,
-            codexConfiguration,
-            Object.freeze({ ...codexDependencies, initialAttemptTicket: ticket }),
-          ),
-        executedAt: () => collection.evaluatedAt,
-      },
-    );
+  if (planned.data.plan.batches.length !== 0 && !configuration.credentials.codex.enabled) {
+    throw new TypeError("AIが有効ですがCodex認証情報がありません");
   }
-  const plannedOutcomes = new Map(run?.outcomesByCauseId);
-  for (const cause of planned.data.plan.causes) {
-    if (cause.choice === "cache_hit") {
-      plannedOutcomes.set(
-        cause.causeId,
+  const codexConfiguration = createCodexAdapterConfiguration(configuration.config);
+  const codexDependencies = configuration.credentials.codex.enabled
+    ? createCodexAdapterDependencies(
+        adapters,
+        configuration.credentials.codex,
+        configuration.codexAttemptBudget,
+        diagnostics,
+        undefined,
+      )
+    : undefined;
+  const preflightDiagnostics = createCodexPreflightDiagnostics(diagnostics, invocation);
+  configuration.codexAttemptBudget.adoptPlannedSnapshot(planned.core.aiBudget);
+  const port: PersonalReminderExecutionPort = Object.freeze({
+    snapshot: () => configuration.codexAttemptBudget.snapshot,
+    ensureReady: configuration.ensureCodexReady,
+    executePreflight: (reservation) => {
+      assertNonNullable(codexDependencies, "個人催促AIの認証実行依存がありません");
+      return adapters.executeCodexAuthenticationPreflight(
+        codexConfiguration,
         Object.freeze({
-          status: "accepted",
-          origin: "cache",
-          generation: cause.entry.generation,
+          ...codexDependencies,
+          initialAttemptTicket: Object.freeze({ id: reservation.id }),
+          ...(preflightDiagnostics == null ? {} : { diagnostics: preflightDiagnostics }),
         }),
       );
-    } else if (
-      cause.choice === "deferred" &&
-      cause.reason !== "ai_disabled" &&
-      cause.reason !== "forced_generic_target"
-    ) {
-      plannedOutcomes.set(
-        cause.causeId,
-        Object.freeze({ status: "deferred", reason: cause.reason }),
+    },
+    executeBatch: (batch) => {
+      assertNonNullable(codexDependencies, "個人催促AIのbatch実行依存がありません");
+      return executePlannedPersonalReminderBatch(
+        batch,
+        planned.data.plan.causes,
+        Object.freeze({
+          model: configuration.config.ai.model,
+          reasoningEffort: configuration.config.ai.execution.reasoningEffort,
+          backendVersion: CODEX_BACKEND_VERSION,
+          minimumConfidence: configuration.config.ai.confidence.high,
+          generatedAt: collection.evaluatedAt,
+        }),
+        Object.freeze({
+          cache: state.session.personalReminderAiCache,
+          ...(diagnostics == null ? {} : { diagnostics }),
+          execute: () =>
+            adapters.executeCodexPersonalReminderAnalysis(
+              batch,
+              codexConfiguration,
+              Object.freeze({
+                ...codexDependencies,
+                initialAttemptTicket: Object.freeze({ id: batch.reservation.id }),
+              }),
+            ),
+        }),
       );
-    }
-  }
-  if (plannedOutcomes.size !== 0) {
-    run = Object.freeze({
-      outcomesByCauseId: plannedOutcomes,
-      usage: run?.usage ?? initialUsage,
-      executedBatchCount: run?.executedBatchCount ?? 0,
-      cacheHitCauseCount: planned.data.plan.causes.filter((cause) => cause.choice === "cache_hit")
-        .length,
-      authenticationPreflightExecuted: run?.authenticationPreflightExecuted ?? false,
-    });
-  }
+    },
+    release: (reservation) => {
+      configuration.codexAttemptBudget.releaseInitialAttempt(Object.freeze({ id: reservation.id }));
+    },
+  });
+  const executed = await executePersonalReminders(planned, port, nodeContentDigestPort);
+  const run = projectLegacyPersonalReminderExecution(planned, executed);
   const application = applyPersonalReminderCauseOutcomes({
     plan,
     outcomes: run,
@@ -310,9 +261,10 @@ async function analyzePersonalReminders(
       : "success";
   await recordCodexDiagnostic(diagnostics, "codex.personal_reminder.summary", {
     phase: "summary",
-    candidateCauseCount: candidates.length,
+    candidateCauseCount: planned.data.plan.causes.filter((cause) => cause.choice === "execute")
+      .length,
     aiCallCount: usageDelta.calls,
-    cacheHitCauseCount: run?.cacheHitCauseCount ?? 0,
+    cacheHitCauseCount: run.cacheHitCauseCount,
   });
   return Object.freeze({
     status,
@@ -333,7 +285,7 @@ async function analyzePersonalReminders(
     ),
     personalReminderAiCallCount:
       finalSummary.logicalCandidateCount - initialSummary.logicalCandidateCount,
-    personalReminderAiCacheHitCount: run?.cacheHitCauseCount ?? 0,
+    personalReminderAiCacheHitCount: run.cacheHitCauseCount,
     personalReminderAssessmentReuseCount: planned.data.plan.causes.filter(
       (cause) => cause.choice === "snapshot_reuse",
     ).length,

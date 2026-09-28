@@ -48,7 +48,7 @@ export type ProductionRuntimeAdapters = Readonly<{
     dependencies: CodexAdapterDependencies,
   ) => Promise<unknown>;
   executeCodexPersonalReminderAnalysis: (
-    input: import("../../codex/personal-reminder-input.js").PersonalReminderAiInput,
+    batch: import("../../application/tracking-run/stages/personal-reminder-plan-contracts.js").PersonalReminderPlannedBatch,
     configuration: CodexAdapterConfiguration,
     dependencies: CodexAdapterDependencies,
   ) => Promise<

@@ -2,6 +2,7 @@ import { rm } from "node:fs/promises";
 
 import { z } from "zod";
 
+import type { PersonalReminderPlannedBatch } from "../application/tracking-run/stages/personal-reminder-plan-contracts.js";
 import type { DiagnosticsJsonValue } from "../diagnostics/error-serializer.js";
 import {
   CodexAttemptBudgetExceededError,
@@ -22,10 +23,7 @@ import {
   createCodexAnalysisInput,
   serializeCodexAnalysisInput,
 } from "./input.js";
-import {
-  createPersonalReminderAiInput,
-  type PersonalReminderAiInput,
-} from "./personal-reminder-input.js";
+import { createPersonalReminderAiInput } from "./personal-reminder-input.js";
 import { createCodexElementOutputSchema } from "./element-output-schema.js";
 import {
   createPersonalReminderAiOutputSchema,
@@ -867,12 +865,11 @@ async function executeRawCodexAnalysis(
 }
 
 async function executeRawPersonalReminderAnalysis(
-  input: PersonalReminderAiInput,
+  inputJson: string,
   configurationValue: CodexAdapterConfiguration,
   dependencies: CodexAdapterDependencies,
 ): Promise<unknown> {
   const configuration = parseCodexAdapterConfiguration(configurationValue);
-  const inputJson = `${serializeCanonicalJson(input)}\n`;
   const systemPrompt = await readFixedPersonalReminderPrompt();
   const outputSchema: PersonalReminderAiOutputJsonSchema = createPersonalReminderAiOutputSchema();
   return executeWithRetries({
@@ -936,20 +933,27 @@ export async function executeCodexAnalysis(
 
 /** 個人催促AIを隔離実行し、専用schemaで検証した出力を返す。 */
 export async function executeCodexPersonalReminderAnalysis(
-  input: PersonalReminderAiInput,
+  batch: PersonalReminderPlannedBatch,
   configurationValue: CodexAdapterConfiguration,
   dependencies: CodexAdapterDependencies,
 ): Promise<SchemaValidPersonalReminderAiOutput> {
-  const validatedInput = createPersonalReminderAiInput(input);
+  const validatedInput = createPersonalReminderAiInput(batch.input);
+  const inputJson = `${serializeCanonicalJson(validatedInput)}\n`;
+  if (
+    inputJson !== batch.normalizedInput ||
+    batch.id !== `personal-reminder-batch:${hashCanonicalJson(validatedInput)}`
+  ) {
+    throw new TypeError(`個人催促AIの計画済み輸送入力が一致しません。対象: ${batch.id}`);
+  }
   const ownedDependencies = Object.freeze({
     ...dependencies,
     attemptOwner: Object.freeze({
       kind: "personal" as const,
-      id: `personal-reminder-batch:${hashCanonicalJson(validatedInput)}`,
+      id: batch.id,
     }),
   });
   const output = await executeRawPersonalReminderAnalysis(
-    validatedInput,
+    batch.normalizedInput,
     configurationValue,
     ownedDependencies,
   );

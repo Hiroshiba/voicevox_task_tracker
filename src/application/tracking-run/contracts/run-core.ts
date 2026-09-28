@@ -98,6 +98,7 @@ export type CoreByStage = Readonly<{
   generic_ai_adopted: GenericAiRunCore;
   graph_reconciled: GraphReconciledRunCore;
   personal_reminder_planned: GraphReconciledRunCore;
+  personal_reminder_executed: GraphReconciledRunCore;
 }>;
 
 /** 段階名に対応したcoreとproofを持つ成果物。 */

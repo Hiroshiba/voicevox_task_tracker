@@ -13,7 +13,6 @@ import { type CliExecutionResult } from "../cli/index.js";
 import {
   CODEX_ELEMENT_OUTPUT_SCHEMA_VERSION,
   type CodexAnalysisInput,
-  type PersonalReminderAiInput,
   type SchemaValidPersonalReminderAiOutput,
 } from "../codex/index.js";
 import { loadConfig, type Config } from "../config/index.js";
@@ -705,7 +704,14 @@ function createPerformanceHarness(repositoryPath: string, config: Config): Perfo
       }
       return Promise.resolve(createCodexOutput(input));
     },
-    executeCodexPersonalReminderAnalysis: (input: PersonalReminderAiInput) => {
+    executeCodexPersonalReminderAnalysis: (batch, _configuration, dependencies) => {
+      const input = batch.input;
+      dependencies.attemptBudget.beginAttempt(
+        dependencies.initialAttemptTicket,
+        "personal_initial",
+        batch.id,
+        batch.reservation.charge,
+      );
       if (currentRunAt === PROFILE_RUN_AT) {
         personalReminderAiNodeIds.push(input.item.nodeId);
       }

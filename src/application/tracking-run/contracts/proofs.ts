@@ -48,6 +48,10 @@ class StageProofToken<StageName extends AnalysisRunStageName> {
   public static personalReminderPlanned(): StageProofToken<"personal_reminder_planned"> {
     return new StageProofToken("personal_reminder_planned");
   }
+
+  public static personalReminderExecuted(): StageProofToken<"personal_reminder_executed"> {
+    return new StageProofToken("personal_reminder_executed");
+  }
 }
 
 class RunCompletenessProofToken {
@@ -132,6 +136,11 @@ export function createGraphReconciledStageProof(): StageProofFor<"graph_reconcil
 /** 個人催促の原因と厳密入力の計画を証明する。 */
 export function createPersonalReminderPlannedStageProof(): StageProofFor<"personal_reminder_planned"> {
   return StageProofToken.personalReminderPlanned();
+}
+
+/** 個人催促の計画と原因別実行結果の照合を証明する。 */
+export function createPersonalReminderExecutedStageProof(): StageProofFor<"personal_reminder_executed"> {
+  return StageProofToken.personalReminderExecuted();
 }
 
 /** 公開前の完全性検証を通過した証明。 */
