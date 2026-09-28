@@ -98,7 +98,6 @@ export {
   type PersistNotificationDeliveryInput,
   type PersistNotificationLedgerInput,
   type PersistRunCompletionInput,
-  type PersistStateTransactionInput,
   type PersistStateTransactionResult,
   type StateSnapshotReadResult,
 } from "./state-persistence-session.js";

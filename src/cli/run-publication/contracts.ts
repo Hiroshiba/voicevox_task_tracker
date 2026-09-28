@@ -15,7 +15,6 @@ import type { PublicRepositoryAllowlist } from "../../github/index.js";
 import type { GeneratedPublicData, PublicDataWriteResult } from "../../pages/index.js";
 import type { RunMetrics } from "../run-report.js";
 import type {
-  PersistStateTransactionResult,
   StateBranchAdapter,
   StateHistoryInputEvent,
   StateHistoryNotificationEvent,
@@ -26,6 +25,7 @@ import type {
   StateSnapshot,
   StateSnapshotReadResult,
 } from "../../persistence/index.js";
+import type { InitialStateCommitResult } from "../initial-state-commit.js";
 import type {
   DailyTransactionDependencies,
   DailyTransactionTypeMap,
@@ -45,9 +45,10 @@ export type ValidatedRun = TrackingValidatedRun<
 
 /** 初期保存後にPages生成へ渡す値。 */
 export type PersistedRun = Readonly<{
-  result: PersistStateTransactionResult;
+  result: InitialStateCommitResult;
   historyRecords: readonly StateHistoryRecord[];
   notificationLedger: StateNotificationLedger;
+  session: StatePersistenceSession;
   bound: BoundPublicationCheckpoint;
 }>;
 

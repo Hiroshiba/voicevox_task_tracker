@@ -29,7 +29,8 @@ import {
 } from "../publication-checkpoint-binding.js";
 import type { RunPublicationAdapters, ValidatedRun } from "./contracts.js";
 import { buildPublicPages } from "./pages.js";
-import { assertPlannedAiCacheAdditions, persistSuccessfulRunCompletion } from "./persistence.js";
+import { persistSuccessfulRunCompletion } from "./persistence.js";
+import { commitInitialState } from "../initial-state-commit.js";
 import { discordDeliverySettings, projectPublicationSettings } from "./settings.js";
 import {
   assertWorkflowDeliveryLedgerMatches,
@@ -39,7 +40,13 @@ import {
 
 type WorkflowStateAdapters = Pick<
   RunPublicationAdapters,
-  "repositoryPath" | "environment" | "loadConfig" | "openStateSession" | "createStateBranchAdapter"
+  | "repositoryPath"
+  | "environment"
+  | "loadConfig"
+  | "openStateSession"
+  | "createStateBranchAdapter"
+  | "now"
+  | "writeJsonArtifact"
 >;
 
 type WorkflowDeliveryAdapters = Pick<
@@ -166,42 +173,26 @@ export async function persistWorkflowState(
     resolve(dependencies.adapters.repositoryPath, command.configPath),
   );
   const adapter = dependencies.adapters.createStateBranchAdapter();
-  const baseRevision = await adapter.resolveHead(config.state.branch);
+  const artifactPath = resolve(dependencies.adapters.repositoryPath, command.artifactPath);
+  const header = await readPublicationCheckpointHeader(artifactPath);
   const artifact = await readWorkflowCheckpoint(
     dependencies.adapters,
-    resolve(dependencies.adapters.repositoryPath, command.artifactPath),
+    artifactPath,
     config,
     adapter,
-    baseRevision,
+    header.baseStateRevision,
   );
-  const planned = artifact.planned;
-  const session = await dependencies.adapters.openStateSession(
+  const result = await commitInitialState(artifact, {
     adapter,
-    config.state,
-    config.staleness.timezone,
-  );
-  if (serializeCanonicalJson(session.baseRevision) !== serializeCanonicalJson(baseRevision)) {
-    throw new TypeError("workflow checkpointの固定base revisionがstate sessionと一致しません");
-  }
-  for (const entry of artifact.validated.aiCacheAdditions) {
-    await session.aiCache.write(entry);
-  }
-  for (const entry of artifact.validated.personalReminderAiCacheAdditions) {
-    await session.personalReminderAiCache.write(entry);
-  }
-  assertPlannedAiCacheAdditions({ session }, planned);
-  await session.persist({
-    snapshot: planned.publicationPlan.initialStateWriteSet.snapshot,
-    historyInputEvents: planned.publicationPlan.initialStateWriteSet.historyInputEvents,
-    notificationLedger: planned.publicationPlan.initialStateWriteSet.notificationLedger,
-    repositoryInventory: validatedRunPayloadRepositoryInventory(artifact.validatedPayload),
-    repositoryAllowlist: artifact.validated.repositoryAllowlist,
+    configuration: config.state,
+    migrationTimezone: config.staleness.timezone,
     knownSecrets: [],
-    expectedHistoryBase: planned.publicationPlan.initialStateWriteSet.paths.historyBase,
-    expectedPreviousInitialPagesEvidence:
-      planned.publicationPlan.initialStateWriteSet.previousInitialPagesEvidence.expectedBase,
-    deletions: planned.publicationPlan.initialStateWriteSet.deletions,
+    now: dependencies.adapters.now,
   });
+  await dependencies.adapters.writeJsonArtifact(
+    resolve(dependencies.adapters.repositoryPath, command.receiptPath),
+    result.receipt,
+  );
 }
 
 /** workflow artifactの検証済みrunからPagesを生成する。 */

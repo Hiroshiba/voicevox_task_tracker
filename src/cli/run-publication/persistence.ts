@@ -9,6 +9,7 @@ import { countSentOutboxNotifications } from "../../publication/notification-out
 import { createUtcIsoDateTime, resolveTrackingStartAt } from "../../domain/index.js";
 import type { Repository } from "../../domain/index.js";
 import { createStateSnapshot } from "../../persistence/index.js";
+import { StatePersistenceSession, type StateBranchAdapter } from "../../persistence/index.js";
 import type { WorkflowRunMetadata } from "../validated-run-payload.js";
 import { createPersistedRunReport, persistedMetrics } from "./metadata.js";
 import type {
@@ -19,6 +20,7 @@ import type {
   RunCompletionDelivery,
   RunPublicationAdapters,
 } from "./contracts.js";
+import { commitInitialState } from "../initial-state-commit.js";
 
 /** 完全性検証済みrunの初期保存に必要な値。 */
 export type PersistValidatedRunInput = Readonly<{
@@ -26,34 +28,35 @@ export type PersistValidatedRunInput = Readonly<{
   state: PublicationState;
   inventory: PublicationRepositoryInventory;
   bound: BoundPublicationCheckpoint;
+  adapter: StateBranchAdapter;
+  now: () => Date;
 }>;
 
 /** 完全性検証済みrunを初期保存し、Pages用履歴を読む。 */
 export async function persistValidatedRun(input: PersistValidatedRunInput): Promise<PersistedRun> {
   assertBoundPublicationCheckpoint(input.bound);
-  const { validated, publicationPlan } = input.bound.planned;
+  const { validated } = input.bound.planned;
   assertValidatedRun(validated);
-  const writeSet = publicationPlan.initialStateWriteSet;
   assertPlannedAiCacheAdditions(input.state, input.bound.planned);
-  const result = await input.state.session.persist({
-    snapshot: writeSet.snapshot,
-    historyInputEvents: writeSet.historyInputEvents,
-    notificationLedger: writeSet.notificationLedger,
-    repositoryInventory: input.inventory.inventory,
-    repositoryAllowlist: input.inventory.allowlist.repositories,
+  const result = await commitInitialState(input.bound, {
+    adapter: input.adapter,
+    configuration: input.configuration.target.state,
+    migrationTimezone: input.configuration.config.staleness.timezone,
     knownSecrets: input.configuration.credentials.knownSecrets,
-    expectedHistoryBase: writeSet.paths.historyBase,
-    expectedPreviousInitialPagesEvidence: writeSet.previousInitialPagesEvidence.expectedBase,
-    deletions: writeSet.deletions,
+    now: input.now,
   });
-  if (input.configuration.target.kind === "sandbox") {
-    await input.state.session.publish();
-  }
-  const historyRecords = await input.state.session.loadHistoryRecords();
+  const session = await StatePersistenceSession.openAtRevision(
+    input.adapter,
+    input.configuration.target.state,
+    input.configuration.config.staleness.timezone,
+    result.revision,
+  );
+  const historyRecords = await session.loadHistoryRecords();
   return Object.freeze({
     result,
     historyRecords,
-    notificationLedger: writeSet.notificationLedger,
+    notificationLedger: await session.loadNotificationLedger(),
+    session,
     bound: input.bound,
   });
 }

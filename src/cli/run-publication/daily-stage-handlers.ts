@@ -37,7 +37,7 @@ export async function persistDailyState(
   dependencies: Readonly<{
     adapters: Pick<
       RunPublicationAdapters,
-      "repositoryPath" | "environment" | "createStateBranchAdapter"
+      "repositoryPath" | "environment" | "createStateBranchAdapter" | "now"
     >;
   }>,
   input: Parameters<DailyPublicationStageHandlers["persistState"]>[0],
@@ -78,9 +78,7 @@ export async function persistDailyState(
       runtimeRecoveryPlan: runtime.runtimeRecoveryPlan,
     },
     {
-      revision: await dependencies.adapters
-        .createStateBranchAdapter()
-        .resolveHead(configuration.config.state.branch),
+      revision: planned.validated.core.baseRevision,
       previousAiSnapshot:
         snapshot.status === "available"
           ? {
@@ -96,6 +94,8 @@ export async function persistDailyState(
     state,
     inventory: repositoryInventory,
     bound,
+    adapter: dependencies.adapters.createStateBranchAdapter(),
+    now: dependencies.adapters.now,
   });
 }
 
@@ -145,7 +145,11 @@ export async function sendDailyDiscord(
   }
   const result = await deliverDiscord(
     dependencies.adapters,
-    state,
+    Object.freeze({
+      ...state,
+      session: persisted.session,
+      notificationLedger: persisted.notificationLedger,
+    }),
     repositoryInventory.inventory,
     repositoryInventory.allowlist.repositories,
     configuration.credentials.knownSecrets,
@@ -175,7 +179,7 @@ export function completeDailyRun(
   const validated = planned.validated;
   return persistSuccessfulRunCompletion({
     now: dependencies.adapters.now,
-    state,
+    state: Object.freeze({ ...state, session: input.persisted.session }),
     repositoryInventory: repositoryInventory.inventory,
     repositoryAllowlist: repositoryInventory.allowlist.repositories,
     planned,
@@ -214,6 +218,7 @@ export async function sendDailyOperationsAlert(
   if (persisted != null) {
     persistedState = Object.freeze({
       ...state,
+      session: persisted.session,
       notificationLedger: persisted.notificationLedger,
     });
   }

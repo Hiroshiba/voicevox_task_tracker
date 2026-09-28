@@ -9,7 +9,7 @@ type ProductionDailyDependencies = DailyTransactionDependencies<ProductionTypes>
 export function createPersistStateStage(
   adapters: Pick<
     ProductionRuntimeAdapters,
-    "repositoryPath" | "environment" | "createStateBranchAdapter"
+    "repositoryPath" | "environment" | "createStateBranchAdapter" | "now"
   >,
 ): ProductionDailyDependencies["persistState"] {
   return (input) => persistDailyState({ adapters }, input);

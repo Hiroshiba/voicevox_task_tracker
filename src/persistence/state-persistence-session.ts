@@ -16,7 +16,6 @@ import {
 } from "../codex/personal-reminder-cache.js";
 import type { AiCacheMigrationPlan } from "./ai-cache-migration.js";
 import { createStateCommitIdentity } from "./state-commit-metadata.js";
-import { serializeCanonicalJsonLine } from "../canonical-json/index.js";
 import { migrateStateSnapshot } from "./snapshot-v21-migration.js";
 import {
   joinStatePath,
@@ -36,12 +35,9 @@ import {
 } from "./errors.js";
 import {
   appendStateHistoryNotificationEvents,
-  appendStateHistoryRecord,
-  createStateHistoryRecord,
   diffStateHistory,
   parseStateHistoryRecords,
   type StateHistoryDiff,
-  type StateHistoryInputEvent,
   type StateHistoryNotificationEvent,
   type StateHistoryRecord,
 } from "./history.js";
@@ -56,10 +52,8 @@ import {
 } from "./public-safety.js";
 import {
   assertPersonalReminderEvidenceClosure,
-  assertPersonalReminderEvidenceRecordsClosure,
   createStateSnapshot,
   serializeStateSnapshot,
-  version19SnapshotFields,
   type StateSnapshot,
 } from "./snapshot-v21.js";
 import { readAiCacheMigrationPlan } from "./state-ai-cache-migration-plan.js";
@@ -68,7 +62,6 @@ import { compareStateKeys as compareStrings } from "./state-key-order.js";
 import { createStateLedgerUpdates, loadStateNotificationLedgers } from "./state-ledger-files.js";
 import { decodeStateFile, encodeStateFile } from "./state-file-codec.js";
 import { OPERATIONS_ALERT_LEDGER_STATE_PATH_V1 } from "./operations-alert-ledger.js";
-import { createPersonalReminderEvidenceSourceIndex } from "./snapshot.js";
 import {
   createStateNotificationLedger,
   createStateRunReport,
@@ -98,19 +91,6 @@ export type StateSnapshotReadResult =
       status: "available";
       snapshot: StateSnapshot;
     }>;
-
-/** 一つのatomic state commitへ渡す検証済みrun成果物。 */
-export type PersistStateTransactionInput = Readonly<{
-  snapshot: StateSnapshot;
-  historyInputEvents: readonly StateHistoryInputEvent[];
-  notificationLedger: StateNotificationLedger;
-  repositoryInventory: readonly Repository[];
-  repositoryAllowlist: readonly Pick<Repository, "id" | "owner" | "name">[];
-  knownSecrets: readonly string[];
-  expectedHistoryBase: InitialPublicationBaseState["historyBase"];
-  expectedPreviousInitialPagesEvidence: InitialPublicationBaseState["previousInitialPagesEvidence"];
-  deletions: readonly string[];
-}>;
 
 /** state永続化sessionがcommitしたrevisionとファイル一覧。 */
 export type PersistStateTransactionResult = StateBranchCommitResult &
@@ -872,123 +852,6 @@ export class StatePersistenceSession {
       revision: result.revision,
     });
     this.#consumeAiCacheMigration();
-    return Object.freeze({
-      ...result,
-      updatedPaths: Object.freeze(updates.map((update) => update.path)),
-    });
-  }
-
-  /** 全検証後にsnapshot・履歴・cache・ledgerをatomic commitする。 */
-  public async persist(
-    input: PersistStateTransactionInput,
-  ): Promise<PersistStateTransactionResult> {
-    const snapshot = createStateSnapshot(input.snapshot);
-    assertPersonalReminderEvidenceClosure(snapshot);
-    const notificationLedger = createStateNotificationLedger(input.notificationLedger);
-    const runDate = snapshot.generatedAt.slice(0, 10);
-
-    const previousResult = await this.loadSnapshot();
-    const previousSnapshot =
-      previousResult.status === "available" ? previousResult.snapshot : undefined;
-    const expectedEvidenceBySourceId = createPersonalReminderEvidenceSourceIndex([
-      ...snapshot.items.map((item) => item.evidence),
-      ...snapshot.relations.map((relation) => relation.evidence),
-      ...(previousSnapshot?.items.map((item) => item.evidence) ?? []),
-      ...(previousSnapshot?.relations.map((relation) => relation.evidence) ?? []),
-    ]);
-    assertPersonalReminderEvidenceRecordsClosure(snapshot, expectedEvidenceBySourceId);
-    const historyRecord = createStateHistoryRecord(
-      previousSnapshot == null ? undefined : version19SnapshotFields(previousSnapshot),
-      version19SnapshotFields(snapshot),
-      runDate,
-      input.repositoryInventory,
-      input.historyInputEvents,
-    );
-    const historyPath = joinStatePath(this.#configuration.historyDirectory, `${runDate}.jsonl`);
-    const base = await this.initialPublicationBaseState(runDate);
-    if (
-      serializeCanonicalJsonLine(base.historyBase) !==
-        serializeCanonicalJsonLine(input.expectedHistoryBase) ||
-      serializeCanonicalJsonLine(base.previousInitialPagesEvidence) !==
-        serializeCanonicalJsonLine(input.expectedPreviousInitialPagesEvidence) ||
-      serializeCanonicalJsonLine(
-        [
-          ...base.oldCacheDeletionPaths,
-          ...(base.previousInitialPagesEvidence.status === "present"
-            ? [INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1]
-            : []),
-        ].sort(compareStrings),
-      ) !== serializeCanonicalJsonLine(input.deletions)
-    ) {
-      throw new StateHistoryError("公開計画の履歴または削除pathが固定revisionと不一致です");
-    }
-    const existingHistorySource = await this.#readHistorySource(historyPath);
-    const existingHistoryRecords =
-      existingHistorySource == null ? [] : parseStateHistoryRecords(existingHistorySource);
-    const pendingAiCacheEntries = [...this.#pendingAiCacheEntries.values()];
-    const pendingPersonalReminderAiCacheEntries = [
-      ...this.#pendingPersonalReminderAiCacheEntries.values(),
-    ];
-
-    assertStatePublicSafety({
-      snapshot,
-      repositoryInventory: input.repositoryInventory,
-      repositoryAllowlist: input.repositoryAllowlist,
-      additionalValues: [
-        ...existingHistoryRecords,
-        historyRecord,
-        ...pendingAiCacheEntries,
-        ...pendingPersonalReminderAiCacheEntries,
-        notificationLedger,
-      ],
-      knownSecrets: input.knownSecrets,
-    });
-
-    const historySource = appendStateHistoryRecord(existingHistorySource, historyRecord);
-    const updates: StateFileUpdate[] = [
-      {
-        path: this.#configuration.snapshotPath,
-        bytes: encodeStateFile(serializeStateSnapshot(snapshot)),
-      },
-      {
-        path: historyPath,
-        bytes: encodeStateFile(historySource),
-      },
-      ...(await this.#ledgerUpdates(notificationLedger, "tracking_run")),
-      ...pendingAiCacheEntries.map((entry) => ({
-        path: cachePath(this.#configuration, entry.cacheKey),
-        bytes: encodeStateFile(serializeCanonicalJsonLine(entry)),
-      })),
-      ...pendingPersonalReminderAiCacheEntries.map((entry) => ({
-        path: personalReminderAiCachePath(this.#configuration, entry.cacheKey),
-        bytes: encodeStateFile(serializeCanonicalJsonLine(entry)),
-      })),
-    ];
-    updates.sort((left, right) => compareStrings(left.path, right.path));
-
-    const result = await this.#adapter.commit({
-      branch: this.#configuration.branch,
-      expectedHead: this.#head,
-      updates,
-      deletions: input.deletions,
-      message: `tracker state ${runDate} ${snapshot.run.id}`,
-      committedAt: snapshot.generatedAt,
-      commitIdentity: createStateCommitIdentity(
-        "tracking_run",
-        snapshot.run.id,
-        this.#head,
-        `tracker state ${runDate} ${snapshot.run.id}`,
-        updates,
-        input.deletions,
-      ),
-    });
-    this.#head = Object.freeze({
-      status: "present",
-      revision: result.revision,
-    });
-    this.#consumeAiCacheMigration();
-    this.#pendingAiCacheEntries.clear();
-    this.#pendingPersonalReminderAiCacheEntries.clear();
     return Object.freeze({
       ...result,
       updatedPaths: Object.freeze(updates.map((update) => update.path)),

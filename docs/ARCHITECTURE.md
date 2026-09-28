@@ -67,6 +67,8 @@ Issueの明示依頼候補と実質担当候補は`deterministic-responsibility.
 `production-runtime/publication/`は公開処理への接続を担い、公開可否、成果物、公開順序の判断は`src/cli/run-publication/`が担当します。
 完全性検証で`ValidatedRun`を得た後だけ、保存、Pages生成、Discord通知へ進めます。dailyは一つの`ValidatedRun`を公開処理へ渡し、分割workflowはartifactの値を再解析・再計算せず`ValidatedRun`として復元します。
 公開順序は、初期保存、Pages生成、Discord送信または省略、完了保存です。
+初回state保存は結合検証済みの`BoundPublicationCheckpoint`だけを入力とし、snapshot、日次履歴、AI cache追加、通常通知ledger、durable record、run markerを一つのCAS commitへまとめます。同じcommitで旧cacheと前runの初回Pages証拠を削除します。
+push前には実際の親と候補の全state file、変更pathのmanifest、公開安全性を照合します。期待した親から進められるのは、変更範囲を検証した運用通知commitだけです。初回保存receiptには期待した親、実際の親、結果revisionを記録します。
 分割workflowの`notify-discord`は分岐前に現在の通知管理記録を読み、`send`では配送処理内でも保存済みの記録を再読込します。再読込でsnapshot、`notificationSelection`、run IDの供給元は差し替えません。
 通知eventはDiscord配送callbackが逐次保存してpublishします。完了保存には空配列を渡し、同じeventを二重保存しません。
 下位層の例外は握りつぶさず、既存のCLIエラー境界へ伝播します。production runtimeの実装から`run-publication`へ一方向に依存し、`run-publication`からproduction runtimeの実装はimportしません。

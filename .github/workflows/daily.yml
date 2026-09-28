@@ -265,8 +265,13 @@ jobs:
         env:
           VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
         run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs persist-state
-      - name: tracker-stateを更新
-        run: git push origin refs/heads/tracker-state:refs/heads/tracker-state
+      - name: 初回state commit receiptを保存
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: initial-state-commit-receipt
+          path: artifacts/workflow/initial-state-commit-receipt.json
+          if-no-files-found: error
+          retention-days: 7
       - name: 診断JSONLを暗号化
         if: >-
           always() &&
