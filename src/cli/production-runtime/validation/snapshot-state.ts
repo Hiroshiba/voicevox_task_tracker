@@ -1,4 +1,5 @@
 import type { AiAnalysisRunIdentity } from "../../../codex/index.js";
+import { hashCanonicalJson } from "../../../canonical-json/index.js";
 import type { GenericAiAdoptedRun } from "../../../application/tracking-run/stages/generic-ai-adoption.js";
 import type { GraphReconciledRun } from "../../../application/tracking-run/stages/graph-reconciliation.js";
 import { AI_ANALYSIS_ELEMENTS } from "../../../domain/ai-analysis-elements.js";
@@ -248,8 +249,9 @@ export function createValidatedSnapshot(
   const { reduction, graph } = reconciled.data;
   const items = snapshotItems(reconciled, personalReminderAnalysis);
   const itemsByNodeId = new Map(items.map((item) => [item.nodeId, item]));
+  const finalGraphProjection = reconciled.data.finalGraphProjection;
   const snapshot = createStateSnapshot({
-    schemaVersion: "19",
+    schemaVersion: "20",
     generatedAt: collection.evaluatedAt,
     trackingStartAt: pendingSnapshotTrackingStartAt(configuration, state, collection.evaluatedAt),
     ai: snapshotAiState(configuration.config, codexAnalysis, adopted),
@@ -270,6 +272,8 @@ export function createValidatedSnapshot(
     graphNodeStateObservations: graph.graphNodeStateObservations,
     externalReferences: graph.externalReferences,
     relations: graph.edges.map(toStateRelation),
+    finalGraphProjection,
+    finalGraphProjectionDigest: hashCanonicalJson(finalGraphProjection),
     run: {
       id: invocation.runId,
       status:

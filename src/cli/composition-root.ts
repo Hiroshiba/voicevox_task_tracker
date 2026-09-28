@@ -53,8 +53,8 @@ function createProductionAdapters(adapters: CliCompositionAdapters): ProductionR
   return Object.freeze({
     ...adapters,
     loadConfig,
-    openStateSession: (adapter, configuration) =>
-      StatePersistenceSession.open(adapter, configuration),
+    openStateSession: (adapter, configuration, migrationTimezone) =>
+      StatePersistenceSession.open(adapter, configuration, migrationTimezone),
     discoverRepositoryInventory,
     enumerateGitHubItemsByIdentifiers,
     enumerateOpenGitHubItems,

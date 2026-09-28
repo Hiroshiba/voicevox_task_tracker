@@ -1,4 +1,8 @@
 import { createGraphReconciledStageProof } from "../contracts/proofs.js";
+import {
+  createFinalGraphProjection,
+  type FinalGraphProjection,
+} from "../../../graph/final-graph-projection.js";
 import { projectGraphReconciledRunCore, type StageState } from "../contracts/run-core.js";
 import type { GenericAiAdoptedRun } from "./generic-ai-adoption.js";
 import type { GenericAiItemAdoption } from "./generic-ai-adoption-contracts.js";
@@ -35,6 +39,7 @@ export type GraphReconciledRun = StageState<
     reduction: GraphReduction;
     graph: GraphReconciliationResult;
     finalItems: readonly GraphFinalItem[];
+    finalGraphProjection: FinalGraphProjection;
     context: GraphFinalContext;
   }>
 >;
@@ -151,6 +156,19 @@ export function reconcileAdoptedGraph(adopted: GenericAiAdoptedRun): GraphReconc
       reduction: canonicalReduction(secondReduction, finalGraph, finalItems),
       graph: canonicalGraph(finalGraph),
       finalItems,
+      finalGraphProjection: createFinalGraphProjection({
+        evaluatedAt: collection.evaluatedAt,
+        timezone: adopted.core.graphInput.config.staleness.timezone,
+        items: finalItems,
+        staleRepositoryIds: new Set(
+          collection.repositoryResults
+            .filter((result) => result.freshness === "stale")
+            .map((result) => result.repository.id),
+        ),
+        relations: finalGraph.edges,
+        effectiveStateByNodeId: [...finalGraph.effectiveStateByNodeId],
+        analysis: finalGraph.analysis,
+      }),
       context: createGraphFinalContext(state, collection, finalItems, finalGraph),
     }),
     proof: createGraphReconciledStageProof(),

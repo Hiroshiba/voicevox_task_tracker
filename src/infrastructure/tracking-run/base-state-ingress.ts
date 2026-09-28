@@ -22,7 +22,7 @@ import type { AiCacheEntry } from "../../codex/cache.js";
 import type { StateHistoryRecord } from "../../persistence/history.js";
 import type { StateSnapshotReadResult } from "../../persistence/state-persistence-session.js";
 import type { StateNotificationLedger } from "../../persistence/state-documents.js";
-import { snapshotEffectiveGraphStateByNodeId } from "../../persistence/snapshot.js";
+import { snapshotEffectiveGraphStateByNodeId } from "../../persistence/snapshot-v20.js";
 
 /** 旧下流が必要とするsessionと現行形式へ変換したbase state。 */
 export type BaseStateIngress = Readonly<{
@@ -135,12 +135,18 @@ async function readPersonalReminderAiCacheEntries(
 export async function readBaseStateIngress(
   adapter: StateBranchAdapter,
   configuration: StatePersistenceConfiguration,
+  migrationTimezone: string,
   expectedHead: StateBranchHead,
 ): Promise<BaseStateIngress> {
   const session =
     expectedHead.status === "present"
-      ? await StatePersistenceSession.openAtRevision(adapter, configuration, expectedHead.revision)
-      : await StatePersistenceSession.open(adapter, configuration);
+      ? await StatePersistenceSession.openAtRevision(
+          adapter,
+          configuration,
+          migrationTimezone,
+          expectedHead.revision,
+        )
+      : await StatePersistenceSession.open(adapter, configuration, migrationTimezone);
   const head = await adapter.resolveHead(configuration.branch);
   if (
     head.status !== expectedHead.status ||

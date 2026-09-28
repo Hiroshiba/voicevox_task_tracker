@@ -3,7 +3,8 @@ import {
   resolveStateHistoryNotificationItemDisplayReference,
   type StateHistoryNotificationEvent,
 } from "./history.js";
-import type { StateSnapshot } from "./snapshot.js";
+import type { StateSnapshot } from "./snapshot-v20.js";
+import { version19SnapshotFields } from "./snapshot-v20.js";
 import type { StateRunReport } from "./state-documents.js";
 
 /** snapshotとrun reportの整合性を検証する。 */
@@ -63,7 +64,10 @@ export function assertNotificationWaitingOnMatchesSnapshot(
     }
     if (
       actual.displayReference !==
-      resolveStateHistoryNotificationItemDisplayReference(snapshot, expected.candidateId)
+      resolveStateHistoryNotificationItemDisplayReference(
+        version19SnapshotFields(snapshot),
+        expected.candidateId,
+      )
     ) {
       throw new StateHistoryError("通知送信eventのitem waitingOn表示参照とsnapshotが一致しません");
     }

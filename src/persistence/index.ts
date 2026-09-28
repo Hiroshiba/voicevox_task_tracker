@@ -71,13 +71,7 @@ export {
   type StatePublicSafetyInput,
 } from "./public-safety.js";
 export {
-  assertPersonalReminderEvidenceClosure,
-  assertPersonalReminderEvidenceRecordsClosure,
   createPersonalReminderEvidenceSourceIndex,
-  createStateSnapshot,
-  parseStateSnapshot,
-  serializeStateSnapshot,
-  snapshotEffectiveGraphStateByNodeId,
   type SnapshotAiState,
   type SnapshotAnalysisPlanFingerprint,
   type SnapshotCollectionItem,
@@ -87,9 +81,17 @@ export {
   type SnapshotRun,
   type SnapshotRepository,
   type SnapshotTrackedItem,
-  type StateSnapshot,
 } from "./snapshot.js";
-export { migrateStateSnapshot } from "./snapshot-migration.js";
+export {
+  assertPersonalReminderEvidenceClosure,
+  assertPersonalReminderEvidenceRecordsClosure,
+  createStateSnapshot,
+  parseStateSnapshot,
+  serializeStateSnapshot,
+  snapshotEffectiveGraphStateByNodeId,
+  type StateSnapshot,
+} from "./snapshot-v20.js";
+export { migrateStateSnapshot } from "./snapshot-v20-migration.js";
 export {
   StatePersistenceSession,
   type PersistNotificationDeliveryInput,

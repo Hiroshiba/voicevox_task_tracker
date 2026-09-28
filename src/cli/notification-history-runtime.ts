@@ -12,6 +12,7 @@ import {
   type DiscordNotificationSelection,
 } from "../discord/index.js";
 import { resolveStateHistoryNotificationItemDisplayReference } from "../persistence/history.js";
+import { version19SnapshotFields } from "../persistence/snapshot-v20.js";
 import type { StateHistoryNotificationEvent, StateSnapshot } from "../persistence/index.js";
 import { assertNonNullable, UnreachableError } from "../util/index.js";
 
@@ -52,7 +53,7 @@ function createNotificationWaitingOn(
           candidateId: waitingOn.candidateId,
           role: waitingOn.role,
           displayReference: resolveStateHistoryNotificationItemDisplayReference(
-            snapshot,
+            version19SnapshotFields(snapshot),
             waitingOn.candidateId,
           ),
         };

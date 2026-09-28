@@ -58,6 +58,7 @@ export async function persistWorkflowState(
   const session = await dependencies.adapters.openStateSession(
     dependencies.adapters.createStateBranchAdapter(),
     config.state,
+    config.staleness.timezone,
   );
   for (const entry of artifact.aiCacheEntries) {
     await session.aiCache.write(entry);
@@ -95,6 +96,7 @@ export async function buildWorkflowPages(
   const session = await dependencies.adapters.openStateSession(
     dependencies.adapters.createStateBranchAdapter(),
     config.state,
+    config.staleness.timezone,
   );
   const persistedSnapshot = await session.loadSnapshot();
   if (
@@ -138,6 +140,7 @@ export async function notifyWorkflowDiscord(
   const session = await dependencies.adapters.openStateSession(
     dependencies.adapters.createStateBranchAdapter(),
     config.state,
+    config.staleness.timezone,
   );
   const persistedSnapshot = await session.loadSnapshot();
   if (persistedSnapshot.status !== "available") {
@@ -249,6 +252,7 @@ export async function notifyWorkflowOperations(
   const session = await dependencies.adapters.openStateSession(
     dependencies.adapters.createStateBranchAdapter(),
     config.state,
+    config.staleness.timezone,
   );
   const snapshot = await session.loadSnapshot();
   const state = Object.freeze({

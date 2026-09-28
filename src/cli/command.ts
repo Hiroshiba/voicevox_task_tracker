@@ -139,6 +139,7 @@ export type ReportWorkflowCliCommand = Readonly<{
 export type VerifyStateCliCommand = Readonly<{
   kind: "verify-state";
   stateDirectory: string;
+  configPath: string;
 }>;
 
 /** CLIの使用方法だけを表示する入力。 */
@@ -634,10 +635,11 @@ function parseReportWorkflow(args: readonly string[]): ReportWorkflowCliCommand 
 }
 
 function parseVerifyState(args: readonly string[]): VerifyStateCliCommand {
-  const options = parseOptions(args, new Set(["--state-directory"]));
+  const options = parseOptions(args, new Set(["--state-directory", "--config"]));
   return Object.freeze({
     kind: "verify-state",
     stateDirectory: requiredSingleOption(options, "--state-directory", "verify-state"),
+    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
   });
 }
 
@@ -699,6 +701,6 @@ export function formatCliUsage(): string {
     "  voicevox-task-tracker notify-operations --kind collection --incident-id ID --occurred-at ISO --collect-analyze-report PATH",
     "  voicevox-task-tracker notify-operations --kind pages|discord --incident-id ID --occurred-at ISO",
     "  voicevox-task-tracker report-workflow --run-id ID --run-attempt NUMBER --quality-result RESULT --collect-analyze-result RESULT --persist-state-result RESULT --build-pages-result RESULT --deploy-pages-result RESULT --notify-discord-result RESULT --publish-notification-history-result RESULT --notify-operations-result RESULT",
-    "  voicevox-task-tracker verify-state --state-directory PATH",
+    "  voicevox-task-tracker verify-state --state-directory PATH [--config PATH]",
   ].join("\n");
 }

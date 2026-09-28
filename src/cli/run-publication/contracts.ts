@@ -103,6 +103,7 @@ export type RunPublicationAdapters = Readonly<{
   openStateSession: (
     adapter: StateBranchAdapter,
     configuration: StatePersistenceConfiguration,
+    migrationTimezone: string,
   ) => Promise<StatePersistenceSession>;
   readWorkflowArtifact: typeof readWorkflowArtifactFile;
   createStateBranchAdapter: () => StateBranchAdapter;

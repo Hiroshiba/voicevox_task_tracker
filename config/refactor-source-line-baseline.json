@@ -57,11 +57,6 @@
       "sha256": "e533ba1e70a5e56abc5e0a469bc2dc0c313319dfade5069d9fd294f1061493e9"
     },
     {
-      "path": "src/pages/generate-public-data.ts",
-      "lineCount": 1963,
-      "sha256": "a9f3ca29665fd1b8cacf244d0719349de05df0edb22ac755a7824089a3cf479c"
-    },
-    {
       "path": "src/pages/public-dto.ts",
       "lineCount": 1727,
       "sha256": "54b949ec6e78ced99db7525cc139927ee71d68d2a7029f8cc98dce4d935fb965"

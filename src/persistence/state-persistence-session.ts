@@ -14,13 +14,9 @@ import {
   type PersonalReminderAiCacheReadResult,
   type PersonalReminderAiCacheStore,
 } from "../codex/personal-reminder-cache.js";
-import {
-  createAiCacheMigrationPlan,
-  type AiCacheMigrationFile,
-  type AiCacheMigrationPlan,
-} from "./ai-cache-migration.js";
+import type { AiCacheMigrationPlan } from "./ai-cache-migration.js";
 import { parseSha256Hash, serializeCanonicalJsonLine } from "../canonical-json/index.js";
-import { migrateStateSnapshot } from "./snapshot-migration.js";
+import { migrateStateSnapshot } from "./snapshot-v20-migration.js";
 import {
   joinStatePath,
   validateStatePersistenceConfiguration,
@@ -60,11 +56,14 @@ import {
 import {
   assertPersonalReminderEvidenceClosure,
   assertPersonalReminderEvidenceRecordsClosure,
-  createPersonalReminderEvidenceSourceIndex,
   createStateSnapshot,
   serializeStateSnapshot,
+  version19SnapshotFields,
   type StateSnapshot,
-} from "./snapshot.js";
+} from "./snapshot-v20.js";
+import { readAiCacheMigrationPlan } from "./state-ai-cache-migration-plan.js";
+import { decodeStateFile, encodeStateFile } from "./state-file-codec.js";
+import { createPersonalReminderEvidenceSourceIndex } from "./snapshot.js";
 import {
   createEmptyStateNotificationLedger,
   createStateNotificationLedger,
@@ -145,43 +144,6 @@ type PreparedNotificationHistory = Readonly<{
   historyRecords: readonly StateHistoryRecord[];
 }>;
 
-async function readAiCacheMigrationPlan(
-  adapter: StateBranchAdapter,
-  configuration: StatePersistenceConfiguration,
-  head: StateBranchHead,
-): Promise<AiCacheMigrationPlan> {
-  if (head.status === "missing") {
-    return createAiCacheMigrationPlan(configuration.aiCacheDirectory, []);
-  }
-  const paths = await adapter.listFiles(head.revision, configuration.aiCacheDirectory);
-  if (paths.length === 0) {
-    return createAiCacheMigrationPlan(configuration.aiCacheDirectory, []);
-  }
-  const results = await adapter.readFiles(head.revision, paths);
-  const files: AiCacheMigrationFile[] = [];
-  for (const path of paths) {
-    const result = results.get(path);
-    if (result == null) {
-      throw new StateFormatError("AI cache", {
-        cause: new TypeError("一覧にあるAI cacheを一括で読み取れません"),
-      });
-    }
-    const source = decodeStateFile(result, "AI cache");
-    if (source == null) {
-      throw new StateFormatError("AI cache", {
-        cause: new TypeError("一覧にあるAI cacheを読み取れません"),
-      });
-    }
-    files.push(
-      Object.freeze({
-        path,
-        source,
-      }),
-    );
-  }
-  return createAiCacheMigrationPlan(configuration.aiCacheDirectory, files);
-}
-
 function compareStrings(left: string, right: string): number {
   if (left < right) {
     return -1;
@@ -190,27 +152,6 @@ function compareStrings(left: string, right: string): number {
     return 1;
   }
   return 0;
-}
-
-function decodeStateFile(result: StateFileReadResult, kind: string): string | undefined {
-  if (result.status === "missing") {
-    return undefined;
-  }
-  try {
-    return new TextDecoder("utf-8", {
-      fatal: true,
-    }).decode(result.bytes);
-  } catch (error: unknown) {
-    throw new StateFormatError(kind, {
-      cause: new TypeError("stateファイルがUTF-8ではありません", {
-        cause: error,
-      }),
-    });
-  }
-}
-
-function encodeStateFile(source: string): Uint8Array {
-  return new TextEncoder().encode(source);
 }
 
 function createAiCacheStateFormatError(error: unknown): StateFormatError {
@@ -258,6 +199,7 @@ function personalReminderAiCachePath(
 export class StatePersistenceSession {
   readonly #adapter: StateBranchAdapter;
   readonly #configuration: StatePersistenceConfiguration;
+  readonly #migrationTimezone: string;
   readonly #aiCacheMigrationPlan: AiCacheMigrationPlan;
   readonly #pendingAiCacheEntries = new Map<AiCacheKey, AiCacheEntry>();
   readonly #pendingPersonalReminderAiCacheEntries = new Map<
@@ -273,6 +215,7 @@ export class StatePersistenceSession {
   private constructor(
     adapter: StateBranchAdapter,
     configuration: StatePersistenceConfiguration,
+    migrationTimezone: string,
     head: StateBranchHead,
     aiCacheMigrationPlan: AiCacheMigrationPlan,
   ) {
@@ -280,6 +223,7 @@ export class StatePersistenceSession {
     this.#configuration = Object.freeze({
       ...configuration,
     });
+    this.#migrationTimezone = migrationTimezone;
     this.#head = head;
     this.#aiCacheMigrationPlan = aiCacheMigrationPlan;
     this.#pendingAiCacheDeletionPaths = aiCacheMigrationPlan.legacyCachePaths;
@@ -297,17 +241,25 @@ export class StatePersistenceSession {
   public static async open(
     adapter: StateBranchAdapter,
     configuration: StatePersistenceConfiguration,
+    migrationTimezone: string,
   ): Promise<StatePersistenceSession> {
     validateStatePersistenceConfiguration(configuration);
     const head = await adapter.resolveHead(configuration.branch);
     const aiCacheMigrationPlan = await readAiCacheMigrationPlan(adapter, configuration, head);
-    return new StatePersistenceSession(adapter, configuration, head, aiCacheMigrationPlan);
+    return new StatePersistenceSession(
+      adapter,
+      configuration,
+      migrationTimezone,
+      head,
+      aiCacheMigrationPlan,
+    );
   }
 
   /** 指定したbranch headと一致するstate sessionを開始する。 */
   public static async openAtRevision(
     adapter: StateBranchAdapter,
     configuration: StatePersistenceConfiguration,
+    migrationTimezone: string,
     expectedRevision: string,
   ): Promise<StatePersistenceSession> {
     validateStatePersistenceConfiguration(configuration);
@@ -316,7 +268,13 @@ export class StatePersistenceSession {
       throw new StateBranchConflictError();
     }
     const aiCacheMigrationPlan = await readAiCacheMigrationPlan(adapter, configuration, head);
-    return new StatePersistenceSession(adapter, configuration, head, aiCacheMigrationPlan);
+    return new StatePersistenceSession(
+      adapter,
+      configuration,
+      migrationTimezone,
+      head,
+      aiCacheMigrationPlan,
+    );
   }
 
   #consumeAiCacheMigration(): void {
@@ -487,7 +445,11 @@ export class StatePersistenceSession {
     }
     return Object.freeze({
       status: "available",
-      snapshot: migrateStateSnapshot(source, this.#aiCacheMigrationPlan.legacyEntriesByCacheKey),
+      snapshot: migrateStateSnapshot(
+        source,
+        this.#aiCacheMigrationPlan.legacyEntriesByCacheKey,
+        this.#migrationTimezone,
+      ),
     });
   }
 
@@ -918,8 +880,8 @@ export class StatePersistenceSession {
     ]);
     assertPersonalReminderEvidenceRecordsClosure(snapshot, expectedEvidenceBySourceId);
     const historyRecord = createStateHistoryRecord(
-      previousSnapshot,
-      snapshot,
+      previousSnapshot == null ? undefined : version19SnapshotFields(previousSnapshot),
+      version19SnapshotFields(snapshot),
       runDate,
       input.repositoryInventory,
       input.historyInputEvents,

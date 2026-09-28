@@ -13,7 +13,7 @@ export {
   type GeneratedPublicData,
   type GeneratePublicDataInput,
   type PublicDtoGenerationOptions,
-} from "./generate-public-data.js";
+} from "./generate-public-data-v20.js";
 export {
   PUBLIC_DTO_SCHEMA_VERSION,
   createPublicDetailsDto,

@@ -12,6 +12,7 @@ export function createLoadStateStage(
     return readBaseStateIngress(
       stateAdapter,
       configuration.target.state,
+      configuration.config.staleness.timezone,
       configuration.baseStateHead,
     );
   };

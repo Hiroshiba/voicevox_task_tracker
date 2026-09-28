@@ -1,8 +1,10 @@
 import { type Dirent } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { resolve } from "node:path";
 
 import { z } from "zod";
+import type { loadConfig } from "../config/index.js";
 
 import { createAiCacheEntry, type AiCacheKey } from "../codex/cache.js";
 import { serializeCanonicalJsonLine } from "../canonical-json/index.js";
@@ -52,7 +54,12 @@ export type StateVerificationResult = Readonly<{
 
 /** 永続state検証が利用する読み込みと標準出力境界。 */
 export type StateVerificationDependencies = Readonly<{
-  verifyStateDirectory: (stateDirectory: string) => Promise<StateVerificationResult>;
+  repositoryPath: string;
+  loadConfig: typeof loadConfig;
+  verifyStateDirectory: (
+    stateDirectory: string,
+    timezone: string,
+  ) => Promise<StateVerificationResult>;
   writeStandardOutput: (source: string) => Promise<void>;
 }>;
 
@@ -155,13 +162,18 @@ async function readUtf8(path: string): Promise<string> {
 async function verifySnapshot(
   stateDirectory: string,
   legacyEntriesByCacheKey: ReadonlyMap<AiCacheKey, LegacyAiCacheEntry>,
+  timezone: string,
 ): Promise<StateDocumentVerification> {
   const path = join(stateDirectory, "snapshot.json");
   const source = await readUtf8(path);
   try {
-    const snapshot = migrateStateSnapshot(source, legacyEntriesByCacheKey);
+    const snapshot = migrateStateSnapshot(source, legacyEntriesByCacheKey, timezone);
     const canonicalSource = serializeStateSnapshot(snapshot);
-    const reloadedSnapshot = migrateStateSnapshot(canonicalSource, legacyEntriesByCacheKey);
+    const reloadedSnapshot = migrateStateSnapshot(
+      canonicalSource,
+      legacyEntriesByCacheKey,
+      timezone,
+    );
     if (serializeStateSnapshot(reloadedSnapshot) !== canonicalSource) {
       throw new TypeError("snapshotをcanonical JSONへ再読み込みできません");
     }
@@ -335,10 +347,11 @@ async function verifyAiCache(stateDirectory: string): Promise<VerifiedAiCache> {
 /** 指定したディレクトリのsnapshot、通知ledger、履歴を検証する。 */
 export async function verifyPersistentStateDirectory(
   stateDirectory: string,
+  timezone: string,
 ): Promise<StateVerificationResult> {
   const verifiedAiCache = await verifyAiCache(stateDirectory);
   const [snapshot, notificationLedger, history] = await Promise.all([
-    verifySnapshot(stateDirectory, verifiedAiCache.migrationPlan.legacyEntriesByCacheKey),
+    verifySnapshot(stateDirectory, verifiedAiCache.migrationPlan.legacyEntriesByCacheKey, timezone),
     verifyNotificationLedger(stateDirectory),
     verifyHistory(stateDirectory),
   ]);
@@ -379,7 +392,13 @@ export class StateVerificationRunner {
 
   /** 指定した永続stateを検証し、件数とschema versionを出力する。 */
   public async run(command: VerifyStateCliCommand): Promise<void> {
-    const result = await this.#dependencies.verifyStateDirectory(command.stateDirectory);
+    const config = await this.#dependencies.loadConfig(
+      resolve(this.#dependencies.repositoryPath, command.configPath),
+    );
+    const result = await this.#dependencies.verifyStateDirectory(
+      command.stateDirectory,
+      config.staleness.timezone,
+    );
     await this.#dependencies.writeStandardOutput(`${formatStateVerificationResult(result)}\n`);
   }
 }

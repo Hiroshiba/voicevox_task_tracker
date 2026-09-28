@@ -16,6 +16,8 @@ export function createProductionCliApplication(
     }),
     workflowStageRunner: createWorkflowStageRunner(adapters),
     stateVerificationRunner: new StateVerificationRunner({
+      repositoryPath: adapters.repositoryPath,
+      loadConfig: adapters.loadConfig,
       verifyStateDirectory: adapters.verifyStateDirectory,
       writeStandardOutput: adapters.writeStandardOutput,
     }),

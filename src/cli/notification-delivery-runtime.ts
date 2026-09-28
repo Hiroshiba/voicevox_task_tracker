@@ -64,6 +64,7 @@ type NotificationDeliveryRuntimeAdapters = Readonly<{
   openStateSession: (
     adapter: StateBranchAdapter,
     configuration: StatePersistenceConfiguration,
+    migrationTimezone: string,
   ) => Promise<StatePersistenceSession>;
   createStateBranchAdapter: () => StateBranchAdapter;
   discordHttpClient: DiscordWebhookHttpClient;
@@ -894,6 +895,7 @@ export async function resolveDiscordDelivery(
   const session = await adapters.openStateSession(
     adapters.createStateBranchAdapter(),
     config.state,
+    config.staleness.timezone,
   );
   const persistedSnapshot = await session.loadSnapshot();
   if (persistedSnapshot.status !== "available") {

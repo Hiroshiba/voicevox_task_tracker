@@ -35,6 +35,7 @@ export type ProductionRuntimeAdapters = Readonly<{
   openStateSession: (
     adapter: StateBranchAdapter,
     configuration: StatePersistenceConfiguration,
+    migrationTimezone: string,
   ) => Promise<StatePersistenceSession>;
   readSandboxContext?: (path: string) => Promise<SandboxRunContext>;
   discoverRepositoryInventory: typeof discoverRepositoryInventory;

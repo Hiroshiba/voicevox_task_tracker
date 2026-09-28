@@ -670,8 +670,8 @@ function createPerformanceHarness(repositoryPath: string, config: Config): Perfo
     repositoryPath,
     pagesOutputDirectory: "unused-performance-pages",
     loadConfig: () => Promise.resolve(config),
-    openStateSession: (adapter, stateConfiguration) =>
-      StatePersistenceSession.open(adapter, stateConfiguration),
+    openStateSession: (adapter, stateConfiguration, migrationTimezone) =>
+      StatePersistenceSession.open(adapter, stateConfiguration, migrationTimezone),
     discoverRepositoryInventory: () => {
       apiBudget.consume(1);
       return Promise.resolve(Object.freeze([createRepository(currentRunAt)]));
