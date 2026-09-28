@@ -254,6 +254,7 @@ terminal項目も同じ扱いにし、次回runで必ずAI分析を再試行し�
 
 汎用AIの判定は状態、待ち相手、次の行動、関係、進捗、重要度、期限、通知推奨、selfCommitmentの9要素で選別します。
 入力schemaは5、出力schemaは7、snapshotは21とします。
+旧snapshotは保存時のschemaと意味revisionで検証してから移行します。現行の入力投影versionで検証できない採用値は理由を付けて履歴に保持し、現在値へ採用しません。その値に基づくAI依存を未検証として再分類した後、最終graph投影を確定します。
 各要素のrevision、必要条件、入力投影、利用先、出力schemaは`src/codex/generic-ai-definition.ts`で対応付けます。`GenericAiPlannedRun`が選択要素と理由を項目ごとに固定し、`GenericAiAdoptedRun`が新規結果、cache、前回snapshotを同じ規則で採用します。表の意味入力は要素別fingerprintの対象であり、汎用AIへ渡す入力全体ではありません。
 
 | 要素             | revision | 必要条件                                                                                       | 意味入力fingerprintの対象                                                  | 主な利用先                     |

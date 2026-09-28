@@ -12,7 +12,7 @@
 
 要求文の `MUST` / `SHOULD` は RFC 2119・RFC 8174の規範語として用いる。本書は、要求の識別可能性・検証可能性・追跡可能性を重視するISO/IEC/IEEE 29148系の考え方、NASA Software Engineering Handbookの要求・受入基準・双方向トレーサビリティの実務例を参考に、VOICEVOX向けへ具体化した。全文標準を転載するものではない。
 
-Snapshotデータモデルの正本は[snapshot schema](../schemas/snapshot.schema.json)、構成と処理境界の詳細は[アーキテクチャ](ARCHITECTURE.md)、実運用の設定値は[config.yml](../config.yml)とする。本書ではこれらの定義を重複して掲載しない。
+Snapshotデータモデルの正本は[snapshot schema](../schemas/snapshot-v21.schema.json)、構成と処理境界の詳細は[アーキテクチャ](ARCHITECTURE.md)、実運用の設定値は[config.yml](../config.yml)とする。本書ではこれらの定義を重複して掲載しない。
 
 ## 2. 背景と問題
 

@@ -4,6 +4,10 @@ import { z } from "zod";
 import snapshotSchema from "../../schemas/snapshot-v21.schema.json" with { type: "json" };
 import { serializeCanonicalJsonLine, type Sha256Hash } from "../canonical-json/index.js";
 import { AI_ANALYSIS_ELEMENTS } from "../domain/ai-analysis-elements.js";
+import {
+  AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS,
+  AI_ANALYSIS_ELEMENT_REVISIONS,
+} from "../codex/analysis-elements.js";
 import type {
   GraphNodeId,
   SourceId,
@@ -13,10 +17,13 @@ import type {
 } from "../domain/index.js";
 import type { FinalGraphProjection } from "../graph/final-graph-projection.js";
 import { createStateSnapshot as createVersion20Snapshot } from "./snapshot-v20.js";
+import type { StateSnapshot as StateSnapshotVersion20 } from "./snapshot-v20.js";
 import {
   assertPersonalReminderEvidenceClosure as assertVersion19PersonalReminderEvidenceClosure,
   assertPersonalReminderEvidenceRecordsClosure as assertVersion19PersonalReminderEvidenceRecordsClosure,
   createStateSnapshot as createVersion19Snapshot,
+  type SnapshotCollectionItem,
+  type SnapshotTrackedItem,
   type StateSnapshot as StateSnapshotVersion19,
 } from "./snapshot.js";
 import { StateFormatError, StateSnapshotSchemaError } from "./errors.js";
@@ -98,8 +105,90 @@ function assertCurrentAiElements(snapshot: StateSnapshot): void {
       if (application.status === "current_ai" ? current == null : current != null) {
         throw new StateSnapshotSchemaError(1);
       }
+      if (
+        application.status === "current_ai" &&
+        (current?.reuseProof.status !== "verified" ||
+          current.reuseProof.revision !== AI_ANALYSIS_ELEMENT_REVISIONS[element] ||
+          current.reuseProof.inputProjectionVersion !==
+            AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS[element])
+      ) {
+        throw new StateSnapshotSchemaError(1);
+      }
     }
   }
+}
+
+function splitAiAnalysis(
+  analysis: StateSnapshotVersion20["items"][number]["aiAnalysis"],
+): TrackedItemAiAnalysis {
+  let adoptedElements: TrackedItemAiAnalysis["adoptedElements"] = {};
+  let retainedElements: TrackedItemAiAnalysis["retainedElements"] = {};
+  for (const element of AI_ANALYSIS_ELEMENTS) {
+    const adopted = analysis.adoptedElements[element];
+    if (adopted == null) {
+      continue;
+    }
+    if (analysis.applications[element].status === "current_ai") {
+      if (adopted.origin !== "current") {
+        throw new StateSnapshotSchemaError(1);
+      }
+      adoptedElements = { ...adoptedElements, [element]: adopted };
+    } else {
+      retainedElements = { ...retainedElements, [element]: adopted };
+    }
+  }
+  return Object.freeze({
+    ...analysis,
+    adoptedElements: Object.freeze(adoptedElements),
+    retainedElements: Object.freeze(retainedElements),
+  });
+}
+
+function splitTrackedItem(item: StateSnapshotVersion20["items"][number]): SnapshotTrackedItem {
+  if (
+    item.status === "terminal_merged" ||
+    item.status === "terminal_completed" ||
+    item.status === "terminal_not_planned"
+  ) {
+    if (item.waitingOn.length !== 0) {
+      throw new StateSnapshotSchemaError(1);
+    }
+    const waitingOn: readonly [] = [];
+    return Object.freeze({
+      ...item,
+      status: item.status,
+      waitingOn: Object.freeze(waitingOn),
+      aiAnalysis: splitAiAnalysis(item.aiAnalysis),
+    });
+  }
+  return Object.freeze({
+    ...item,
+    status: item.status,
+    waitingOn: item.waitingOn,
+    aiAnalysis: splitAiAnalysis(item.aiAnalysis),
+  });
+}
+
+function splitCollectionItem(
+  item: StateSnapshotVersion20["collection"]["repositories"][number]["items"][number],
+): SnapshotCollectionItem {
+  if (item.state === "closed") {
+    if (item.terminalAt == null) {
+      throw new StateSnapshotSchemaError(1);
+    }
+    return Object.freeze({
+      ...item,
+      state: "closed",
+      terminalAt: item.terminalAt,
+      aiAnalysis: splitAiAnalysis(item.aiAnalysis),
+    });
+  }
+  return Object.freeze({
+    ...item,
+    state: "open",
+    terminalAt: null,
+    aiAnalysis: splitAiAnalysis(item.aiAnalysis),
+  });
 }
 
 /** 未検証の値をschema検証済みの現行snapshotへ変換する。 */
@@ -108,41 +197,27 @@ export function createStateSnapshot(value: unknown): StateSnapshot {
   if (!validateSnapshotSchema(value)) {
     throw new StateSnapshotSchemaError(validateSnapshotSchema.errors?.length ?? 1);
   }
+  assertCurrentAiElements(value);
   const base = createVersion20Snapshot({
     ...version19SnapshotFields(value),
     schemaVersion: "20",
     finalGraphProjection: value.finalGraphProjection,
     finalGraphProjectionDigest: value.finalGraphProjectionDigest,
   });
-  assertCurrentAiElements(value);
-  const itemsByNodeId = new Map(value.items.map((item) => [item.nodeId, item]));
-  const collectionItemsByNodeId = new Map(
-    value.collection.repositories.flatMap((repository) =>
-      repository.items.map((item) => [item.nodeId, item] as const),
-    ),
-  );
   const snapshot = Object.freeze({
     ...base,
     schemaVersion: "21",
-    items: base.items.map((item) => {
-      const current = itemsByNodeId.get(item.nodeId);
-      if (current == null) {
-        throw new StateSnapshotSchemaError(1);
-      }
-      return current;
+    items: Object.freeze(base.items.map(splitTrackedItem)),
+    collection: Object.freeze({
+      repositories: Object.freeze(
+        base.collection.repositories.map((repository) =>
+          Object.freeze({
+            ...repository,
+            items: Object.freeze(repository.items.map(splitCollectionItem)),
+          }),
+        ),
+      ),
     }),
-    collection: {
-      repositories: base.collection.repositories.map((repository) => ({
-        ...repository,
-        items: repository.items.map((item) => {
-          const current = collectionItemsByNodeId.get(item.nodeId);
-          if (current == null) {
-            throw new StateSnapshotSchemaError(1);
-          }
-          return current;
-        }),
-      })),
-    },
   } satisfies StateSnapshot);
   assertFinalGraphProjectionSemantics(snapshot);
   return snapshot;
