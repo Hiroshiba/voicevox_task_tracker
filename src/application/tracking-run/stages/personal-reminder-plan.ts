@@ -41,6 +41,7 @@ export type PersonalReminderPlannedRun = StageState<
     finalItems: GraphReconciledRun["data"]["finalItems"];
     graph: GraphReconciledRun["data"]["graph"];
     finalGraphProjection: GraphReconciledRun["data"]["finalGraphProjection"];
+    candidateDependencyContexts: GraphReconciledRun["data"]["context"]["candidateRelations"];
     plan: PersonalReminderPlan;
   }>
 >;
@@ -218,6 +219,7 @@ export function planPersonalReminders(
       finalItems: run.data.finalItems,
       graph: run.data.graph,
       finalGraphProjection: run.data.finalGraphProjection,
+      candidateDependencyContexts: run.data.context.candidateRelations,
       plan,
     }),
     proof: createPersonalReminderPlannedStageProof(),

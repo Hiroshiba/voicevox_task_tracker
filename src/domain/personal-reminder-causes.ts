@@ -713,7 +713,8 @@ export type CurrentPersonalReminderAssessment =
     }>;
 
 type PersonalReminderAssessmentInput = Readonly<{
-  currentInput: Pick<PersonalReminderCause["currentInput"], "fingerprint" | "rulesVersion">;
+  currentInput: Pick<PersonalReminderCause["currentInput"], "fingerprint" | "rulesVersion"> &
+    Partial<Pick<PersonalReminderCause["currentInput"], "aiDependency">>;
   adoptedAssessment: PersonalReminderCause["adoptedAssessment"];
 }>;
 
@@ -727,7 +728,9 @@ export function currentPersonalReminderAssessment(
   if (
     cause.adoptedAssessment.inputFingerprint !== cause.currentInput.fingerprint ||
     cause.adoptedAssessment.rulesVersion !== cause.currentInput.rulesVersion ||
-    cause.currentInput.rulesVersion !== PERSONAL_REMINDER_ASSESSMENT_RULES_VERSION
+    cause.currentInput.rulesVersion !== PERSONAL_REMINDER_ASSESSMENT_RULES_VERSION ||
+    cause.currentInput.aiDependency?.status === "unverified" ||
+    cause.currentInput.aiDependency?.status === "unknown"
   ) {
     return Object.freeze({ status: "not_available" });
   }

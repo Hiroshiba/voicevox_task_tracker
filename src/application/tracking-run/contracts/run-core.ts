@@ -87,6 +87,12 @@ export type GenericAiRunCore = Readonly<{
 /** グラフ統合後に必要なrun識別と予算だけを持つcore。 */
 export type GraphReconciledRunCore = Omit<GenericAiRunCore, "graphInput">;
 
+/** 個人催促確定後に前回観測とcacheを破棄したcore。 */
+export type PersonalReminderFinalizedRunCore = Omit<
+  GraphReconciledRunCore,
+  "personalReminderInput"
+>;
+
 /** 実装済み段階と段階ごとのcore型の唯一の対応表。 */
 export type CoreByStage = Readonly<{
   prepared: PreparedRunCore;
@@ -99,6 +105,7 @@ export type CoreByStage = Readonly<{
   graph_reconciled: GraphReconciledRunCore;
   personal_reminder_planned: GraphReconciledRunCore;
   personal_reminder_executed: GraphReconciledRunCore;
+  personal_reminder_finalized: PersonalReminderFinalizedRunCore;
 }>;
 
 /** 段階名に対応したcoreとproofを持つ成果物。 */

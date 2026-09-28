@@ -4,7 +4,6 @@ import type {
   AnalysisElementPlanning,
   CodexAnalysisInput,
   CodexAttemptBudget,
-  PersonalReminderAiRunResult,
   ReducedCodexDecision,
 } from "../../codex/index.js";
 import type { Config } from "../../config/index.js";
@@ -26,6 +25,7 @@ import type { GenericAiPlannedRun } from "../../application/tracking-run/stages/
 import type { GenericAiExecutedRun } from "../../application/tracking-run/stages/generic-ai-execution.js";
 import type { GenericAiAdoptedRun } from "../../application/tracking-run/stages/generic-ai-adoption.js";
 import type { GraphReconciledRun } from "../../application/tracking-run/stages/graph-reconciliation.js";
+import type { PersonalReminderFinalizedRun } from "../../application/tracking-run/stages/personal-reminder-finalization.js";
 import type { AiCacheEntry } from "../../codex/cache.js";
 import type { PersonalReminderAiCacheEntry } from "../../codex/personal-reminder-cache.js";
 import type { AiAnalysisDependency } from "../../domain/ai-analysis-dependencies.js";
@@ -236,7 +236,7 @@ export type GraphResult = Readonly<{
 export type PersonalReminderAnalysis = Readonly<{
   status: "success" | "fallback";
   result: PersonalReminderAnalysisResult;
-  run: PersonalReminderAiRunResult | undefined;
+  finalized: PersonalReminderFinalizedRun;
   budgetUsage: AiBudgetUsage;
   authenticationPreflightExecuted: boolean;
 }>;

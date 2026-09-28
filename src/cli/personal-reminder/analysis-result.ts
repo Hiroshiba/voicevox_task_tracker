@@ -23,44 +23,6 @@ export type PersonalReminderAnalysisResult = Readonly<{
   itemsByNodeId: ReadonlyMap<GitHubNodeId, PersonalReminderAnalyzedItem>;
 }>;
 
-export type PersonalReminderAppliedItem = Readonly<{
-  itemNodeId: GitHubNodeId;
-  causes: readonly PersonalReminderCause[];
-  evidence: readonly Evidence[];
-}>;
-
-export type PersonalReminderOutcomeApplication = Readonly<{
-  itemsByNodeId: ReadonlyMap<GitHubNodeId, PersonalReminderAppliedItem>;
-}>;
-
-export type PersonalReminderEvaluatedFinalizationItem = Readonly<{
-  kind: "evaluated";
-  itemNodeId: GitHubNodeId;
-  itemState: "open" | "closed" | "merged";
-  collectionCompleteness: "complete" | "incomplete";
-  repositoryFullName: string;
-  currentLabels: readonly string[];
-}>;
-
-export type PersonalReminderRetainedFinalizationItem = Readonly<{
-  kind: "retained";
-  itemNodeId: GitHubNodeId;
-  itemState: "open" | "closed" | "merged";
-  planningHandling:
-    | Readonly<{ kind: "reconcile" }>
-    | Readonly<{ kind: "force_pending"; reason: "continuity_conflict" }>;
-  previous: Readonly<{
-    causes: readonly PersonalReminderCause[];
-    evidence: readonly Evidence[];
-    planning: PersonalReminderCausePlanning;
-  }>;
-  repositoryFullName: string;
-  currentLabels: readonly string[];
-}>;
-
-export type PersonalReminderFinalizationItem =
-  PersonalReminderEvaluatedFinalizationItem | PersonalReminderRetainedFinalizationItem;
-
 /** 項目IDに対応する個人催促解析結果を取得する。 */
 export function requirePersonalReminderAnalyzedItem(
   result: PersonalReminderAnalysisResult,
