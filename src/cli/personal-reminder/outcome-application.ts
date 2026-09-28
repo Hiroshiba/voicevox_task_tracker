@@ -28,7 +28,7 @@ import type { Evidence, GitHubNodeId, UtcIsoDateTime } from "../../domain/types.
 import type {
   PersonalReminderCauseRuntimePlan,
   PersonalReminderCauseRuntimePlanEntry,
-} from "../personal-reminder-runtime.js";
+} from "../../application/tracking-run/stages/personal-reminder-runtime-contracts.js";
 import type {
   PersonalReminderAppliedItem,
   PersonalReminderOutcomeApplication,

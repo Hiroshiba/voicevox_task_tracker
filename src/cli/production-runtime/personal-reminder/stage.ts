@@ -11,6 +11,8 @@ import {
 } from "../../../codex/index.js";
 import { summarizeAiBudgetLedger } from "../../../application/tracking-run/contracts/ai-budget-ledger.js";
 import type { GraphReconciledRun } from "../../../application/tracking-run/stages/graph-reconciliation.js";
+import { planPersonalReminders } from "../../../application/tracking-run/stages/personal-reminder-plan.js";
+import { nodeContentDigestPort } from "../../../infrastructure/tracking-run/content-digest.js";
 import {
   createLabelEffectsResolver,
   type Evidence,
@@ -28,34 +30,23 @@ import type {
   DailyTransactionDependencies,
   PersonalReminderAnalysisStageResult,
 } from "../../daily-transaction.js";
-import {
-  projectLegacyAnalyzedCollection,
-  projectLegacyDeterministicAnalysis,
-} from "../../tracking-run/migration-bridge/deterministic.js";
 import { projectLegacyGraphReconciliation } from "../../tracking-run/migration-bridge/graph-reconciliation.js";
+import { projectFinalAiDependencyContext } from "../../tracking-run/migration-bridge/personal-reminder-graph.js";
 import {
-  projectFinalAiDependencyContext,
-  projectPersonalReminderGraphContext,
-} from "../../tracking-run/migration-bridge/personal-reminder-graph.js";
+  projectLegacyPersonalReminderCausePlan,
+  projectLegacyPersonalReminderExecutionCandidates,
+} from "../../tracking-run/migration-bridge/personal-reminder-plan.js";
 import {
   applyPersonalReminderCauseOutcomes,
   finalizePersonalReminderAnalysis,
-  personalReminderAiCandidate,
-  personalReminderAssessmentReuseCount,
   personalReminderCauseAttemptCounts,
   personalReminderUsageDelta,
   type PersonalReminderFinalizationItem,
 } from "../../personal-reminder/index.js";
-import {
-  createPersonalReminderRuntimeContext,
-  planPersonalReminderCauses,
-} from "../../personal-reminder-runtime.js";
 import type { PersonalReminderRuntimeAdapters } from "../adapters.js";
 import { forcedAiAnalysisTarget } from "../ai-analysis-target.js";
 import { CODEX_BACKEND_VERSION } from "../../../codex/backend-version.js";
 import type {
-  CollectedItems,
-  DeterministicAnalysis,
   PersonalReminderAnalysis,
   ProductionTypes,
   RepositoryInventory,
@@ -65,7 +56,7 @@ import type {
 import { normalizeLabelRules } from "../label-rules.js";
 import { previousSnapshot } from "../previous-state/snapshot.js";
 import { findRepository, repositoryFullName } from "../repository-lookup.js";
-import { personalReminderPreviousState, personalReminderRuntimeCollection } from "./context.js";
+import { personalReminderPreviousState } from "./context.js";
 
 async function analyzePersonalReminders(
   adapters: PersonalReminderRuntimeAdapters,
@@ -73,21 +64,18 @@ async function analyzePersonalReminders(
   configuration: RuntimeConfiguration,
   state: RuntimeState,
   inventory: RepositoryInventory,
-  collection: CollectedItems,
-  deterministicAnalysis: DeterministicAnalysis,
   graphReconciled: GraphReconciledRun,
 ): Promise<PersonalReminderAnalysisStageResult<PersonalReminderAnalysis>> {
   const { reduction, graph } = projectLegacyGraphReconciliation(graphReconciled);
-  const unavailableConsumerNodeIds = collection.unavailableConsumerNodeIds;
-  const runtimeCollection = personalReminderRuntimeCollection(
-    collection,
-    deterministicAnalysis,
-    inventory,
-    reduction,
-    graph,
-    unavailableConsumerNodeIds,
+  const collection = graphReconciled.data.collection;
+  const unavailableConsumerNodeIds = new Set(graphReconciled.data.facts.unavailableConsumerNodeIds);
+  const forcedTarget = forcedAiAnalysisTarget(configuration);
+  const planned = planPersonalReminders(
+    graphReconciled,
+    forcedTarget != null,
+    nodeContentDigestPort,
   );
-  const runtimeGraph = projectPersonalReminderGraphContext(graphReconciled);
+  const plan = projectLegacyPersonalReminderCausePlan(planned.data.plan.causePlan);
   const currentEvidenceGroups: readonly (readonly Evidence[])[] = [
     ...reduction.items.map((item) => item.evidence),
     ...graph.edges.map((edge) => edge.evidence),
@@ -95,15 +83,6 @@ async function analyzePersonalReminders(
   const currentEvidenceBySourceId =
     createPersonalReminderEvidenceSourceIndex(currentEvidenceGroups);
   const previousState = personalReminderPreviousState(state);
-  const context = createPersonalReminderRuntimeContext({
-    evaluatedAt: collection.evaluatedAt,
-    state: previousState,
-    collection: runtimeCollection.collection,
-    graph: runtimeGraph,
-    aiDependencyContext: projectFinalAiDependencyContext(graphReconciled),
-    currentEvidenceBySourceId,
-  });
-  const plan = planPersonalReminderCauses(context);
   const continuityConflictNodeIds = new Set(
     plan.continuityConflicts.map((conflict) => conflict.itemNodeId),
   );
@@ -113,15 +92,7 @@ async function analyzePersonalReminders(
     ...plan.incompleteInputNodeIds,
     ...plan.deferredStructuralEndNodeIds,
   ]);
-  const candidates = Object.freeze(
-    plan.entries.flatMap((entry) => {
-      const candidate = personalReminderAiCandidate(
-        entry,
-        graph.analysis.downstreamImpacts.find((impact) => impact.nodeId === entry.seed.itemNodeId),
-      );
-      return candidate == null ? [] : [candidate];
-    }),
-  );
+  const candidates = projectLegacyPersonalReminderExecutionCandidates(planned);
   const initialSummary = summarizeAiBudgetLedger(configuration.codexAttemptBudget.snapshot);
   const initialUsage = Object.freeze({
     calls:
@@ -145,9 +116,8 @@ async function analyzePersonalReminders(
       previousCauseIds: conflict.previousCauseIds,
     });
   }
-  const forcedTarget = forcedAiAnalysisTarget(configuration);
   let run: PersonalReminderAiRunResult | undefined;
-  if (configuration.config.ai.enabled && forcedTarget == null) {
+  if (configuration.config.ai.enabled && forcedTarget == null && candidates.length !== 0) {
     const codexCredentials = configuration.credentials.codex;
     if (!codexCredentials.enabled) {
       throw new TypeError("AIが有効ですがCodex認証情報がありません");
@@ -217,14 +187,44 @@ async function analyzePersonalReminders(
       },
     );
   }
+  const plannedOutcomes = new Map(run?.outcomesByCauseId);
+  for (const cause of planned.data.plan.causes) {
+    if (cause.choice === "cache_hit") {
+      plannedOutcomes.set(
+        cause.causeId,
+        Object.freeze({
+          status: "accepted",
+          origin: "cache",
+          generation: cause.entry.generation,
+        }),
+      );
+    } else if (
+      cause.choice === "deferred" &&
+      cause.reason !== "ai_disabled" &&
+      cause.reason !== "forced_generic_target"
+    ) {
+      plannedOutcomes.set(
+        cause.causeId,
+        Object.freeze({ status: "deferred", reason: cause.reason }),
+      );
+    }
+  }
+  if (plannedOutcomes.size !== 0) {
+    run = Object.freeze({
+      outcomesByCauseId: plannedOutcomes,
+      usage: run?.usage ?? initialUsage,
+      executedBatchCount: run?.executedBatchCount ?? 0,
+      cacheHitCauseCount: planned.data.plan.causes.filter((cause) => cause.choice === "cache_hit")
+        .length,
+      authenticationPreflightExecuted: run?.authenticationPreflightExecuted ?? false,
+    });
+  }
   const application = applyPersonalReminderCauseOutcomes({
     plan,
     outcomes: run,
     evaluatedAt: collection.evaluatedAt,
   });
-  const runtimeItemsByNodeId = new Map(
-    runtimeCollection.collection.items.map((item) => [item.item.nodeId, item]),
-  );
+  const applicableItemNodeIds = new Set(plan.applicableItemNodeIds);
   const previousItemsByNodeId = new Map(
     (previousSnapshot(state)?.items ?? []).map((item) => [item.nodeId, item]),
   );
@@ -245,14 +245,13 @@ async function analyzePersonalReminders(
     const repository = findRepository(inventory, repositoryId);
     const repositoryName = repositoryFullName(repository);
     const currentLabels = observedItem?.labels ?? previousItem?.labels ?? item.labels;
-    const runtimeItem = runtimeItemsByNodeId.get(item.nodeId);
-    if (runtimeItem != null && !continuityConflictNodeIds.has(item.nodeId)) {
+    if (applicableItemNodeIds.has(item.nodeId) && !continuityConflictNodeIds.has(item.nodeId)) {
       finalizationItems.push(
         Object.freeze({
           kind: "evaluated",
           itemNodeId: item.nodeId,
           itemState: item.state,
-          collectionCompleteness: runtimeItem.completeness.status,
+          collectionCompleteness: "complete",
           repositoryFullName: repositoryName,
           currentLabels,
         }),
@@ -287,7 +286,7 @@ async function analyzePersonalReminders(
     expectedItemNodeIds,
     items: finalizationItems,
     evaluatedAt: collection.evaluatedAt,
-    aiDependencyContext: context.aiDependencyContext,
+    aiDependencyContext: projectFinalAiDependencyContext(graphReconciled),
     currentEvidenceBySourceId,
     previousEvidenceBySourceId: previousState.previousEvidenceBySourceId,
     minimumAiConfidence: configuration.config.ai.confidence.medium,
@@ -335,7 +334,9 @@ async function analyzePersonalReminders(
     personalReminderAiCallCount:
       finalSummary.logicalCandidateCount - initialSummary.logicalCandidateCount,
     personalReminderAiCacheHitCount: run?.cacheHitCauseCount ?? 0,
-    personalReminderAssessmentReuseCount: personalReminderAssessmentReuseCount(plan),
+    personalReminderAssessmentReuseCount: planned.data.plan.causes.filter(
+      (cause) => cause.choice === "snapshot_reuse",
+    ).length,
     personalReminderUnknownCount: counts.unknown,
     personalReminderFailedCount: counts.failed,
     personalReminderDeferredCount: counts.deferred,
@@ -353,7 +354,6 @@ export function createAnalyzePersonalRemindersStage(
     configuration,
     state,
     repositoryInventory,
-    deterministicallyAnalyzed,
     genericAiExecuted,
     graphReconciled,
   }) => {
@@ -370,8 +370,6 @@ export function createAnalyzePersonalRemindersStage(
       configuration,
       state,
       repositoryInventory,
-      projectLegacyAnalyzedCollection(deterministicallyAnalyzed),
-      projectLegacyDeterministicAnalysis(deterministicallyAnalyzed),
       graphReconciled,
     );
   };

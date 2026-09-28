@@ -44,6 +44,10 @@ class StageProofToken<StageName extends AnalysisRunStageName> {
   public static graphReconciled(): StageProofToken<"graph_reconciled"> {
     return new StageProofToken("graph_reconciled");
   }
+
+  public static personalReminderPlanned(): StageProofToken<"personal_reminder_planned"> {
+    return new StageProofToken("personal_reminder_planned");
+  }
 }
 
 class RunCompletenessProofToken {
@@ -123,6 +127,11 @@ export function createGenericAiAdoptedStageProof(): StageProofFor<"generic_ai_ad
 /** 最終graphと項目値の確定を証明する。 */
 export function createGraphReconciledStageProof(): StageProofFor<"graph_reconciled"> {
   return StageProofToken.graphReconciled();
+}
+
+/** 個人催促の原因と厳密入力の計画を証明する。 */
+export function createPersonalReminderPlannedStageProof(): StageProofFor<"personal_reminder_planned"> {
+  return StageProofToken.personalReminderPlanned();
 }
 
 /** 公開前の完全性検証を通過した証明。 */

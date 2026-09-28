@@ -52,6 +52,27 @@ export type GraphReconciliationInput = Readonly<{
   previousSnapshot: AnalysisPreviousState["snapshot"];
 }>;
 
+/** 個人催促の前回値と実行条件へ渡す必要な投影。 */
+export type PersonalReminderPlanningInput = Readonly<{
+  config: Pick<Config, "ai" | "labels" | "staleness">;
+  previousItems: readonly Pick<
+    Extract<AnalysisPreviousState["snapshot"], { status: "available" }>["trackedItems"][number],
+    | "nodeId"
+    | "observedAt"
+    | "repositoryId"
+    | "labels"
+    | "state"
+    | "personalReminderCauses"
+    | "personalReminderCausePlanning"
+    | "evidence"
+  >[];
+  previousRelations: Extract<
+    AnalysisPreviousState["snapshot"],
+    { status: "available" }
+  >["relations"];
+  aiCache: AnalysisPreviousState["personalReminderAiCache"];
+}>;
+
 /** 汎用AI計画以後へ渡すrun識別と予算の投影。 */
 export type GenericAiRunCore = Readonly<{
   identity: RunIdentity;
@@ -60,6 +81,7 @@ export type GenericAiRunCore = Readonly<{
   baseRevision: BaseStateRevision;
   aiBudget: AiBudgetLedgerSnapshot;
   graphInput: GraphReconciliationInput;
+  personalReminderInput: PersonalReminderPlanningInput;
 }>;
 
 /** グラフ統合後に必要なrun識別と予算だけを持つcore。 */
@@ -75,6 +97,7 @@ export type CoreByStage = Readonly<{
   generic_ai_executed: GenericAiRunCore;
   generic_ai_adopted: GenericAiRunCore;
   graph_reconciled: GraphReconciledRunCore;
+  personal_reminder_planned: GraphReconciledRunCore;
 }>;
 
 /** 段階名に対応したcoreとproofを持つ成果物。 */
@@ -117,6 +140,35 @@ export function projectGenericAiRunCore(analyzed: AnalysisRunCore): GenericAiRun
       }),
       previousSnapshot: analyzed.previousState.snapshot,
     }),
+    personalReminderInput: Object.freeze({
+      config: Object.freeze({
+        ai: analyzed.config.ai,
+        labels: analyzed.config.labels,
+        staleness: analyzed.config.staleness,
+      }),
+      previousItems:
+        analyzed.previousState.snapshot.status === "available"
+          ? Object.freeze(
+              analyzed.previousState.snapshot.trackedItems.map((item) =>
+                Object.freeze({
+                  nodeId: item.nodeId,
+                  observedAt: item.observedAt,
+                  repositoryId: item.repositoryId,
+                  labels: item.labels,
+                  state: item.state,
+                  personalReminderCauses: item.personalReminderCauses,
+                  personalReminderCausePlanning: item.personalReminderCausePlanning,
+                  evidence: item.evidence,
+                }),
+              ),
+            )
+          : Object.freeze([]),
+      previousRelations:
+        analyzed.previousState.snapshot.status === "available"
+          ? analyzed.previousState.snapshot.relations
+          : Object.freeze([]),
+      aiCache: analyzed.previousState.personalReminderAiCache,
+    }),
   });
 }
 
@@ -128,5 +180,6 @@ export function projectGraphReconciledRunCore(adopted: GenericAiRunCore): GraphR
     configDigest: adopted.configDigest,
     baseRevision: adopted.baseRevision,
     aiBudget: adopted.aiBudget,
+    personalReminderInput: adopted.personalReminderInput,
   });
 }

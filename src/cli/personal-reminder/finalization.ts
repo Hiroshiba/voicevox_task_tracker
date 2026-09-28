@@ -1,11 +1,7 @@
 import { serializeCanonicalJson } from "../../canonical-json/index.js";
-import {
-  reconcileRetainedAiAnalysisDependency,
-  type AiAnalysisDependencyReconciliationContext,
-} from "../../domain/ai-analysis-dependencies.js";
+import { type AiAnalysisDependencyReconciliationContext } from "../../domain/ai-analysis-dependencies.js";
 import {
   PERSONAL_REMINDER_CAUSE_PLANNING_VERSION,
-  personalReminderCauseSchema,
   type PersonalReminderCause,
   type PersonalReminderCauseId,
   type PersonalReminderCausePlanning,
@@ -16,7 +12,8 @@ import { type SourceId } from "../../domain/source-id.js";
 import { calculatePersonalReminderStaleness } from "../../domain/personal-reminder-staleness.js";
 import type { Evidence, GitHubNodeId, UtcIsoDateTime } from "../../domain/types.js";
 import { assertNonNullable } from "../../util/index.js";
-import type { PersonalReminderCauseRuntimePlan } from "../personal-reminder-runtime.js";
+import type { PersonalReminderCauseRuntimePlan } from "../../application/tracking-run/stages/personal-reminder-runtime-contracts.js";
+import { reconcileRetainedPersonalReminderCause } from "../../application/tracking-run/stages/personal-reminder-retained-cause.js";
 import type {
   PersonalReminderAnalysisResult,
   PersonalReminderAnalyzedItem,
@@ -26,30 +23,6 @@ import type {
 
 function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
-}
-
-/** 保持原因の値を変えずにAI依存を最終適用元へ照合する。 */
-export function reconcileRetainedPersonalReminderCause(
-  cause: PersonalReminderCause,
-  context: AiAnalysisDependencyReconciliationContext,
-): PersonalReminderCause {
-  return personalReminderCauseSchema.parse({
-    ...cause,
-    aiDependencies: {
-      presence: reconcileRetainedAiAnalysisDependency(cause.aiDependencies.presence, context),
-      responseMembership: reconcileRetainedAiAnalysisDependency(
-        cause.aiDependencies.responseMembership,
-        context,
-      ),
-      responsible: reconcileRetainedAiAnalysisDependency(cause.aiDependencies.responsible, context),
-      action: reconcileRetainedAiAnalysisDependency(cause.aiDependencies.action, context),
-      evidence: reconcileRetainedAiAnalysisDependency(cause.aiDependencies.evidence, context),
-    },
-    currentInput: {
-      ...cause.currentInput,
-      aiDependency: reconcileRetainedAiAnalysisDependency(cause.currentInput.aiDependency, context),
-    },
-  });
 }
 
 /** 保持経路の個人催促cause計画をpendingへ戻し、terminalでcauseなしだけexcludedにする。 */
