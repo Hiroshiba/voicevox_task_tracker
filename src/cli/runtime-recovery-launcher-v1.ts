@@ -99,7 +99,7 @@ export async function launchRuntimeRecoveryV1(
       VOICEVOX_RUNTIME_RECOVERY_PROTOCOL_V1: "1",
       VOICEVOX_RUNTIME_BUNDLE_ROOT: bundleRoot,
     },
-    stdio: ["pipe", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "inherit"],
   });
   const output: Buffer[] = [];
   let outputLength = 0;
@@ -111,7 +111,6 @@ export async function launchRuntimeRecoveryV1(
     }
     output.push(chunk);
   });
-  child.stderr.resume();
   child.stdin.end(serializeCanonicalJsonLine(input));
   const exitCode = await new Promise<number>((resolveExit, rejectExit) => {
     child.once("error", rejectExit);
