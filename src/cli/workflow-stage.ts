@@ -5,6 +5,8 @@ import {
   type PersistStateCliCommand,
   type ReportWorkflowCliCommand,
   type ResolveDiscordDeliveryCliCommand,
+  type VerifyCheckpointCliCommand,
+  type VerifyRuntimeRecoveryCliCommand,
 } from "./command.js";
 
 /** 日次workflowの後続stageで受け付けるCLI入力。 */
@@ -14,7 +16,9 @@ export type WorkflowStageCliCommand =
   | NotifyDiscordCliCommand
   | ResolveDiscordDeliveryCliCommand
   | NotifyOperationsCliCommand
-  | ReportWorkflowCliCommand;
+  | ReportWorkflowCliCommand
+  | VerifyCheckpointCliCommand
+  | VerifyRuntimeRecoveryCliCommand;
 
 /** workflow stageの外部副作用を注入する境界。 */
 export type WorkflowStageDependencies = Readonly<{
@@ -24,6 +28,8 @@ export type WorkflowStageDependencies = Readonly<{
   resolveDiscordDelivery: (command: ResolveDiscordDeliveryCliCommand) => Promise<void>;
   notifyOperations: (command: NotifyOperationsCliCommand) => Promise<void>;
   reportWorkflow: (command: ReportWorkflowCliCommand) => Promise<void>;
+  verifyCheckpoint: (command: VerifyCheckpointCliCommand) => Promise<void>;
+  verifyRuntimeRecovery: (command: VerifyRuntimeRecoveryCliCommand) => Promise<void>;
 }>;
 
 /** 日次workflowの後続stageを振り分ける。 */
@@ -54,6 +60,12 @@ export class WorkflowStageRunner {
         return;
       case "report-workflow":
         await this.#dependencies.reportWorkflow(command);
+        return;
+      case "verify-checkpoint":
+        await this.#dependencies.verifyCheckpoint(command);
+        return;
+      case "verify-runtime-recovery":
+        await this.#dependencies.verifyRuntimeRecovery(command);
         return;
     }
   }

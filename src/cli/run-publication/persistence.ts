@@ -1,11 +1,15 @@
 import { assertValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
 import { serializeCanonicalJson } from "../../canonical-json/index.js";
 import type { PublicationPlannedRun } from "../../publication/publication-plan-contracts.js";
+import {
+  assertBoundPublicationCheckpoint,
+  type BoundPublicationCheckpoint,
+} from "../publication-checkpoint-binding.js";
 import { countSentOutboxNotifications } from "../../publication/notification-outbox.js";
 import { createUtcIsoDateTime, resolveTrackingStartAt } from "../../domain/index.js";
 import type { Repository } from "../../domain/index.js";
 import { createStateSnapshot } from "../../persistence/index.js";
-import type { WorkflowRunMetadata } from "../workflow-artifact.js";
+import type { WorkflowRunMetadata } from "../validated-run-payload.js";
 import { createPersistedRunReport, persistedMetrics } from "./metadata.js";
 import type {
   PersistedRun,
@@ -21,15 +25,16 @@ export type PersistValidatedRunInput = Readonly<{
   configuration: PublicationConfiguration;
   state: PublicationState;
   inventory: PublicationRepositoryInventory;
-  planned: PublicationPlannedRun;
+  bound: BoundPublicationCheckpoint;
 }>;
 
 /** 完全性検証済みrunを初期保存し、Pages用履歴を読む。 */
 export async function persistValidatedRun(input: PersistValidatedRunInput): Promise<PersistedRun> {
-  const { validated, publicationPlan } = input.planned;
+  assertBoundPublicationCheckpoint(input.bound);
+  const { validated, publicationPlan } = input.bound.planned;
   assertValidatedRun(validated);
   const writeSet = publicationPlan.initialStateWriteSet;
-  assertPlannedAiCacheAdditions(input.state, input.planned);
+  assertPlannedAiCacheAdditions(input.state, input.bound.planned);
   const result = await input.state.session.persist({
     snapshot: writeSet.snapshot,
     historyInputEvents: writeSet.historyInputEvents,
@@ -49,6 +54,7 @@ export async function persistValidatedRun(input: PersistValidatedRunInput): Prom
     result,
     historyRecords,
     notificationLedger: writeSet.notificationLedger,
+    bound: input.bound,
   });
 }
 

@@ -7,6 +7,7 @@ import {
 import type { ValidatedRun } from "./run-publication/contracts.js";
 import { parseSha256Hash } from "../canonical-json/sha256.js";
 import { publicationInputsSchema } from "../application/tracking-run/contracts/publication-inputs.js";
+import { baseStateRevisionSchema } from "../application/tracking-run/contracts/run-core.js";
 import { createUtcIsoDateTime } from "../domain/index.js";
 import { createStateNotificationLedger } from "../persistence/index.js";
 import { runMetricsSchema } from "./run-report.js";
@@ -70,10 +71,7 @@ const validationSchema = z.strictObject({
   core: z.strictObject({
     identity: runIdentitySchema,
     executionPolicy: runExecutionPolicySchema,
-    baseRevision: z.discriminatedUnion("status", [
-      z.strictObject({ status: z.literal("missing") }),
-      z.strictObject({ status: z.literal("present"), revision: z.string().min(1) }),
-    ]),
+    baseRevision: baseStateRevisionSchema,
     configDigest: sha256Schema,
     allowlistDigest: sha256Schema,
     generatedAt: z.iso.datetime({ offset: true }).transform(createUtcIsoDateTime),
@@ -120,12 +118,12 @@ const identityWitnessSchema = validationSchema.shape.core.pick({
 /** artifactとrun本体の片側変更を検出する識別情報。 */
 export type WorkflowIdentityWitness = z.output<typeof identityWitnessSchema>;
 
-/** v18 artifactの公開識別情報をschemaで読む。 */
+/** checkpoint内の公開識別情報をschemaで読む。 */
 export function parseWorkflowIdentityWitness(value: unknown): WorkflowIdentityWitness {
   return identityWitnessSchema.parse(value);
 }
 
-/** v18 artifactが保持するrun完全性検証情報。 */
+/** checkpoint内のrun完全性検証情報。 */
 export type WorkflowValidation = Pick<
   Omit<ValidatedRun, "proof">,
   | "core"
@@ -138,7 +136,7 @@ export type WorkflowValidation = Pick<
   | "artifactValueDigests"
 >;
 
-/** v18 artifactのrun完全性情報をschemaで読む。 */
+/** checkpoint内のrun完全性情報をschemaで読む。 */
 export function parseWorkflowValidation(value: unknown): WorkflowValidation {
   const parsed = validationSchema.parse(value);
   z.object({ schemaVersion: z.literal("8") }).parse(parsed.previousNotificationLedger);

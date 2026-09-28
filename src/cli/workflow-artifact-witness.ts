@@ -203,7 +203,7 @@ const witnessSchema = z.strictObject({
   }),
 });
 
-/** v18 artifact内の公開可能なsource witnessを厳密に読む。 */
+/** checkpoint内の公開可能なsource witnessを厳密に読む。 */
 export function parseWorkflowEvidenceWitness(value: unknown): EvidenceClosureWitness {
   return witnessSchema.parse(value);
 }

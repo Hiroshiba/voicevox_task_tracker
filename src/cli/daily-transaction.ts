@@ -246,6 +246,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       state: Types["state"];
       repositoryInventory: Types["repositoryInventory"];
       planned: Types["planned"];
+      persisted: Types["persisted"];
       discord: Types["discord"];
       metrics: RunMetrics;
       status: "success" | "fallback";
@@ -262,10 +263,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       retryAttempts: number;
     }>,
   ) => Promise<DiscordStageResult<Types["discord"]>>;
-  writeDryRunArtifact: (
-    path: string,
-    artifact: DryRunArtifact<Types["planned"]>,
-  ) => Promise<void>;
+  writeDryRunArtifact: (path: string, artifact: DryRunArtifact<Types["planned"]>) => Promise<void>;
   writeCollectAnalyzeArtifact: (
     path: string,
     input: Readonly<{
@@ -769,6 +767,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           state,
           repositoryInventory,
           planned,
+          persisted,
           discord: discord.value,
           metrics,
           status: runStatus,

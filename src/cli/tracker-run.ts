@@ -21,6 +21,7 @@ import {
   CliWorkflowArtifactError,
 } from "./errors.js";
 import { type RunStage } from "./run-report.js";
+import { runRuntimeRecoveryEntrypointV1 } from "./runtime-recovery-launcher-v1.js";
 
 const DIAGNOSTICS_PATH_ENVIRONMENT_VARIABLE = "VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH";
 
@@ -115,7 +116,9 @@ export function createTrackerRunCliArguments(args: readonly string[]): readonly 
     args[0] === "resolve-discord-delivery" ||
     args[0] === "notify-operations" ||
     args[0] === "report-workflow" ||
-    args[0] === "verify-state"
+    args[0] === "verify-state" ||
+    args[0] === "verify-checkpoint" ||
+    args[0] === "verify-runtime-recovery"
   ) {
     const command = parseCliArguments(args);
     if (command.kind !== args[0]) {
@@ -183,6 +186,8 @@ function topLevelDiagnosticStage(command: CliCommand): RunStage | "unknown" {
     case "backfill":
     case "collect-analyze":
     case "verify-state":
+    case "verify-checkpoint":
+    case "verify-runtime-recovery":
     case "help":
       return "unknown";
     default:
@@ -258,6 +263,17 @@ async function recordTopLevelError(
 
 /** tracker-run共通entryからCLIを実行する。 */
 export async function runTrackerCliMain(args: readonly string[]): Promise<number> {
+  if (process.env["VOICEVOX_RUNTIME_RECOVERY_PROTOCOL_V1"] === "1") {
+    if (args.length !== 0) {
+      throw new TypeError("V1回復entrypointにCLI引数は指定できません");
+    }
+    const bundleRoot = process.env["VOICEVOX_RUNTIME_BUNDLE_ROOT"];
+    if (bundleRoot == null || bundleRoot.length === 0) {
+      throw new TypeError("V1回復entrypointのruntime rootがありません");
+    }
+    await runRuntimeRecoveryEntrypointV1(process.cwd(), bundleRoot);
+    return 0;
+  }
   if (args[0] === "diagnostics") {
     const { runDiagnosticsCli } = await import("../diagnostics/cli.js");
     return runDiagnosticsCli(args.slice(1), process.env);

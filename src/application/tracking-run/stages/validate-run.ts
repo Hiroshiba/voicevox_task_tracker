@@ -455,7 +455,7 @@ export function assertValidatedRun(value: Readonly<{ proof: RunCompletenessProof
   }
 }
 
-/** v18 artifactの実値を再検証して新しいローカル証明を発行する。 */
+/** checkpoint内の実値を再検証して新しいローカル証明を発行する。 */
 export function revalidateSerializedRun<Run extends SerializedValidatedRun>(
   run: Run,
   digest: ContentDigestPort,

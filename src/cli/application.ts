@@ -26,7 +26,9 @@ export type CliExecutionResult =
         | "notify-discord"
         | "resolve-discord-delivery"
         | "notify-operations"
-        | "report-workflow";
+        | "report-workflow"
+        | "verify-checkpoint"
+        | "verify-runtime-recovery";
       exitCode: 0;
     }>
   | Readonly<{
@@ -80,6 +82,8 @@ export class CliApplication<Types extends DailyTransactionTypeMap> {
       case "resolve-discord-delivery":
       case "notify-operations":
       case "report-workflow":
+      case "verify-checkpoint":
+      case "verify-runtime-recovery":
         await this.#dependencies.workflowStageRunner.run(command);
         return Object.freeze({
           command: command.kind,

@@ -11,7 +11,9 @@ const statePathSchema = z
   .refine(
     (value) =>
       !value.endsWith("/") &&
-      !value.split("/").some((segment) => segment.length === 0 || segment === "." || segment === ".."),
+      !value
+        .split("/")
+        .some((segment) => segment.length === 0 || segment === "." || segment === ".."),
   );
 const nonNegativeNumberSchema = z.number().nonnegative();
 const positiveIntegerSchema = z.number().int().positive();

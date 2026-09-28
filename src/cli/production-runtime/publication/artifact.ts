@@ -6,6 +6,7 @@ import type { ProductionTypes } from "../contracts.js";
 
 type ProductionDailyDependencies = DailyTransactionDependencies<ProductionTypes>;
 type JsonArtifactRuntimeAdapters = Pick<ProductionRuntimeAdapters, "writeJsonArtifact">;
+type CheckpointRuntimeAdapters = Pick<ProductionRuntimeAdapters, "repositoryPath" | "environment">;
 type ReportRuntimeAdapters = Pick<ProductionRuntimeAdapters, "writeTextFile">;
 
 /** dry-runのartifact書込みを既存adapterへ接続する。 */
@@ -17,7 +18,7 @@ export function createWriteDryRunArtifactStage(
 
 /** collect-analyzeのartifact書込みを既存公開処理へ接続する。 */
 export function createWriteCollectAnalyzeArtifactStage(
-  adapters: JsonArtifactRuntimeAdapters,
+  adapters: CheckpointRuntimeAdapters,
 ): ProductionDailyDependencies["writeCollectAnalyzeArtifact"] {
   return (path, input) => writeDailyCollectAnalyzeArtifact({ adapters }, path, input);
 }

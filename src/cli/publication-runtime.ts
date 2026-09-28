@@ -1,0 +1,444 @@
+import { execFile, spawnSync } from "node:child_process";
+import { lstat, mkdtemp, open, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, relative, resolve, sep } from "node:path";
+import { promisify } from "node:util";
+
+import { z } from "zod";
+
+import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../canonical-json/value.js";
+import { parseSha256Hash } from "../canonical-json/sha256.js";
+import type { RuntimeIdentity } from "../application/tracking-run/contracts/runtime-identity.js";
+import { runtimeToolchainIdentitySchema } from "../application/tracking-run/contracts/runtime-identity.js";
+import {
+  normalizedBundlePathSchema,
+  runtimeRecoveryPlanSchema,
+  runtimeRecoveryProtocolV1Schema,
+} from "../application/tracking-run/recovery-bootstrap.js";
+import type { ContentDigestPort } from "../application/tracking-run/ports.js";
+import type { RunExecutionPolicy } from "../application/tracking-run/request.js";
+import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
+
+const execFileAsync = promisify(execFile);
+const MANIFEST_FILE_NAME = "runtime-manifest.json";
+const sha256Schema = z.string().transform(parseSha256Hash);
+const runtimeFileSchema = z.strictObject({
+  path: normalizedBundlePathSchema,
+  byteLength: z.number().int().nonnegative(),
+  digest: sha256Schema,
+});
+export const runtimeManifestSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  codeRevision: z.string().min(1),
+  lockfileSha256: sha256Schema,
+  toolchain: runtimeToolchainIdentitySchema,
+  files: z.array(runtimeFileSchema).min(1),
+  recoveryProtocol: runtimeRecoveryProtocolV1Schema,
+});
+
+/** 実行byte列と回復計画の実測値。 */
+export type PublicationRuntimeContext = Readonly<{
+  runtimeIdentity: RuntimeIdentity;
+  runtimeRecoveryPlan: z.output<typeof runtimeRecoveryPlanSchema>;
+}>;
+
+async function checkedFiles(
+  root: string,
+  directory: string,
+): Promise<readonly z.output<typeof runtimeFileSchema>[]> {
+  if (directory === root && (await lstat(root)).isSymbolicLink()) {
+    throw new TypeError("runtime bundleのrootにsymlinkは使用できません");
+  }
+  const files: z.output<typeof runtimeFileSchema>[] = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (entry.name === MANIFEST_FILE_NAME && directory === root) continue;
+    const path = join(directory, entry.name);
+    if (entry.isSymbolicLink()) {
+      throw new TypeError("runtime bundle内のsymlinkは使用できません");
+    }
+    if (entry.isDirectory()) {
+      files.push(...(await checkedFiles(root, path)));
+      continue;
+    }
+    if (!entry.isFile()) {
+      throw new TypeError("runtime bundleに通常file以外が含まれています");
+    }
+    const relativePath = relative(root, path).split(sep).join("/");
+    const bytes = await readFile(path);
+    files.push(
+      runtimeFileSchema.parse({
+        path: relativePath,
+        byteLength: bytes.length,
+        digest: nodeContentDigestPort.sha256Bytes(bytes),
+      }),
+    );
+  }
+  return files.sort((left, right) =>
+    left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+  );
+}
+
+async function hashSources(
+  repositoryPath: string,
+  paths: readonly string[],
+  digest: ContentDigestPort,
+): Promise<ReturnType<ContentDigestPort["sha256Utf8"]>> {
+  const entries = await Promise.all(
+    paths.map(async (path) => ({
+      path,
+      digest: digest.sha256Bytes(await readFile(resolve(repositoryPath, path))),
+    })),
+  );
+  return digest.sha256Utf8(serializeCanonicalJson(entries));
+}
+
+export async function workflowAdapterIdentity(
+  repositoryPath: string,
+  digest: ContentDigestPort,
+): Promise<ReturnType<ContentDigestPort["sha256Utf8"]>> {
+  const workflow = await readFile(resolve(repositoryPath, ".github/workflows/daily.yml"), "utf8");
+  const effectActionNames = [
+    "actions/configure-pages",
+    "actions/deploy-pages",
+    "actions/upload-artifact",
+    "actions/upload-pages-artifact",
+  ];
+  const effectActions = new Map<string, string>();
+  for (const match of workflow.matchAll(/^\s*uses:\s*([^\s#]+)/gmu)) {
+    const reference = match[1];
+    if (reference == null) {
+      throw new TypeError("workflow actionの参照を取得できません");
+    }
+    const [action, revision] = reference.split("@");
+    if (revision == null || !/^[0-9a-f]{40}$/u.test(revision)) {
+      throw new TypeError("workflow actionは完全なcommit SHAで固定してください");
+    }
+    if (action != null && effectActionNames.includes(action)) {
+      const previous = effectActions.get(action);
+      if (previous != null && previous !== revision) {
+        throw new TypeError("workflow効果actionに異なるcommit SHAが混在しています");
+      }
+      effectActions.set(action, revision);
+    }
+  }
+  if (effectActionNames.some((name) => !effectActions.has(name))) {
+    throw new TypeError("workflowに必須の効果actionがありません");
+  }
+  const workflowAdapters = (
+    await readdir(resolve(repositoryPath, "src/cli/production-runtime/workflow"))
+  )
+    .filter((path) => path.endsWith(".ts"))
+    .map((path) => `src/cli/production-runtime/workflow/${path}`)
+    .sort();
+  const scripts = (await readdir(resolve(repositoryPath, ".github/scripts")))
+    .map((path) => `.github/scripts/${path}`)
+    .sort();
+  const adapterSourcesDigest = await hashSources(
+    repositoryPath,
+    [...scripts, ...workflowAdapters],
+    digest,
+  );
+  return digest.sha256Utf8(
+    serializeCanonicalJson({
+      effectActions: [...effectActions].sort(([left], [right]) =>
+        left < right ? -1 : left > right ? 1 : 0,
+      ),
+      adapterSourcesDigest,
+    }),
+  );
+}
+
+async function codeRevision(repositoryPath: string, filesDigest: string): Promise<string> {
+  const [head, status] = await Promise.all([
+    execFileAsync("git", ["rev-parse", "HEAD"], { cwd: repositoryPath }),
+    execFileAsync("git", ["status", "--porcelain", "--untracked-files=normal"], {
+      cwd: repositoryPath,
+    }),
+  ]);
+  const revision = head.stdout.trim();
+  if (!/^[0-9a-f]{40}$/u.test(revision)) {
+    throw new TypeError("runtimeのGit revisionが完全なcommit SHAではありません");
+  }
+  return status.stdout.length === 0 ? revision : `worktree:${filesDigest}`;
+}
+
+async function measuredToolchain(
+  repositoryPath: string,
+  shape: "sequential" | "split_workflow",
+  digest: ContentDigestPort,
+): Promise<z.output<typeof runtimeToolchainIdentitySchema>> {
+  const packageManagerVersion = await measuredPnpmVersion(repositoryPath);
+  const buildConfigDigest = await hashSources(
+    repositoryPath,
+    shape === "split_workflow"
+      ? [
+          "package.json",
+          ".node-version",
+          "tsconfig.json",
+          "tsconfig.build.json",
+          "workflow.vite.config.ts",
+        ]
+      : ["package.json", ".node-version", "tsconfig.json", "tsconfig.build.json"],
+    digest,
+  );
+  return runtimeToolchainIdentitySchema.parse({
+    nodeVersion: process.version,
+    packageManager: "pnpm",
+    packageManagerVersion,
+    platform: process.platform,
+    architecture: process.arch,
+    buildCommandId: shape === "split_workflow" ? "pnpm-build-workflow-cli-v1" : "pnpm-build-v1",
+    buildConfigDigest,
+  });
+}
+
+async function measuredPnpmVersion(repositoryPath: string): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), "voicevox-runtime-toolchain-"));
+  const outputPath = join(directory, "pnpm-version.txt");
+  try {
+    const output = await open(outputPath, "w");
+    try {
+      const result = spawnSync("pnpm", ["--version"], {
+        cwd: repositoryPath,
+        stdio: ["ignore", output.fd, "pipe"],
+      });
+      if (result.error != null) {
+        throw result.error;
+      }
+      if (result.status !== 0) {
+        throw new TypeError("pnpm versionの実測に失敗しました");
+      }
+    } finally {
+      await output.close();
+    }
+    const version = (await readFile(outputPath, "utf8")).trim();
+    if (version.length === 0) {
+      throw new TypeError("pnpm versionの実測値が空です");
+    }
+    return version;
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function createManifest(
+  repositoryPath: string,
+  shape: "sequential" | "split_workflow",
+  digest: ContentDigestPort,
+): Promise<z.output<typeof runtimeManifestSchema>> {
+  const root = resolve(
+    repositoryPath,
+    shape === "split_workflow" ? "artifacts/workflow/runtime" : "dist",
+  );
+  const files = await checkedFiles(root, root);
+  const entrypointRelativePath = normalizedBundlePathSchema.parse(
+    shape === "split_workflow" ? "tracker-run.mjs" : "cli/tracker-run.js",
+  );
+  const entrypoint = files.find((file) => file.path === entrypointRelativePath);
+  if (entrypoint == null) {
+    throw new TypeError("runtime entrypointがbuild outputにありません");
+  }
+  const filesDigest = digest.sha256Utf8(serializeCanonicalJson(files));
+  return runtimeManifestSchema.parse({
+    schemaVersion: 1,
+    codeRevision: await codeRevision(repositoryPath, filesDigest),
+    lockfileSha256: digest.sha256Bytes(await readFile(resolve(repositoryPath, "pnpm-lock.yaml"))),
+    toolchain: await measuredToolchain(repositoryPath, shape, digest),
+    files,
+    recoveryProtocol: {
+      protocolVersion: 1,
+      entrypointRelativePath,
+      entrypointSha256: entrypoint.digest,
+      inputContract: "tracking-run-recovery-input-v1",
+      outputContract: "tracking-run-recovery-output-v1",
+      workflowEffectObservationContract: "tracking-run-workflow-effect-observation-v1",
+      workflowEffectAdapterIdentityDigest: await workflowAdapterIdentity(repositoryPath, digest),
+    },
+  });
+}
+
+/** split workflowへ同梱するruntime manifestを生成する。 */
+export async function writeWorkflowRuntimeManifest(repositoryPath: string): Promise<void> {
+  const manifest = await createManifest(repositoryPath, "split_workflow", nodeContentDigestPort);
+  await writeFile(
+    resolve(repositoryPath, "artifacts/workflow/runtime", MANIFEST_FILE_NAME),
+    serializeCanonicalJsonLine(manifest),
+    { flag: "w" },
+  );
+}
+
+async function readWorkflowRuntimeManifest(
+  repositoryPath: string,
+  digest: ContentDigestPort,
+): Promise<z.output<typeof runtimeManifestSchema>> {
+  const root = resolve(repositoryPath, "artifacts/workflow/runtime");
+  const source = await readFile(resolve(root, MANIFEST_FILE_NAME), "utf8");
+  const value: unknown = JSON.parse(source);
+  const manifest = runtimeManifestSchema.parse(value);
+  if (source !== serializeCanonicalJsonLine(manifest)) {
+    throw new TypeError("workflow runtime manifestがcanonical JSONではありません");
+  }
+  const files = await checkedFiles(root, root);
+  const filesDigest = digest.sha256Utf8(serializeCanonicalJson(files));
+  const entrypoint = files.find(
+    (file) => file.path === manifest.recoveryProtocol.entrypointRelativePath,
+  );
+  if (
+    serializeCanonicalJson(files) !== serializeCanonicalJson(manifest.files) ||
+    manifest.codeRevision !== (await codeRevision(repositoryPath, filesDigest)) ||
+    manifest.lockfileSha256 !==
+      digest.sha256Bytes(await readFile(resolve(repositoryPath, "pnpm-lock.yaml"))) ||
+    manifest.toolchain.nodeVersion !== process.version ||
+    manifest.toolchain.platform !== process.platform ||
+    manifest.toolchain.architecture !== process.arch ||
+    manifest.toolchain.buildCommandId !== "pnpm-build-workflow-cli-v1" ||
+    manifest.toolchain.buildConfigDigest !==
+      (await hashSources(
+        repositoryPath,
+        [
+          "package.json",
+          ".node-version",
+          "tsconfig.json",
+          "tsconfig.build.json",
+          "workflow.vite.config.ts",
+        ],
+        digest,
+      )) ||
+    entrypoint?.digest !== manifest.recoveryProtocol.entrypointSha256 ||
+    manifest.recoveryProtocol.workflowEffectAdapterIdentityDigest !==
+      (await workflowAdapterIdentity(repositoryPath, digest))
+  ) {
+    throw new TypeError("workflow runtime manifestが実行byte列または静的adapterと一致しません");
+  }
+  return manifest;
+}
+
+/** 実行build outputを検証してcheckpointへ固定するruntime識別を返す。 */
+export async function readPublicationRuntimeContext(
+  repositoryPath: string,
+  policy: RunExecutionPolicy,
+  environment: Readonly<NodeJS.ProcessEnv>,
+): Promise<PublicationRuntimeContext> {
+  const shape = policy.executionShape;
+  const manifest =
+    shape === "split_workflow"
+      ? await readWorkflowRuntimeManifest(repositoryPath, nodeContentDigestPort)
+      : await createManifest(repositoryPath, shape, nodeContentDigestPort);
+  const manifestDigest = nodeContentDigestPort.sha256Utf8(serializeCanonicalJson(manifest));
+  const runtimeIdentity: RuntimeIdentity =
+    shape === "split_workflow"
+      ? {
+          kind: "workflow_bundle",
+          codeRevision: manifest.codeRevision,
+          bundleSha256: manifestDigest,
+          lockfileSha256: manifest.lockfileSha256,
+          toolchain: manifest.toolchain,
+        }
+      : {
+          kind: "source_process",
+          codeRevision: manifest.codeRevision,
+          runtimeManifestSha256: manifestDigest,
+          lockfileSha256: manifest.lockfileSha256,
+          toolchain: manifest.toolchain,
+        };
+  let runtimeRecoveryPlan: z.output<typeof runtimeRecoveryPlanSchema>;
+  if (manifest.codeRevision.startsWith("worktree:")) {
+    runtimeRecoveryPlan = runtimeRecoveryPlanSchema.parse({
+      schemaVersion: 1,
+      kind: "not_reproducible",
+      reason: "dirty_worktree",
+      runtimeIdentityDigest: nodeContentDigestPort.sha256Utf8(
+        serializeCanonicalJson(runtimeIdentity),
+      ),
+    });
+  } else if (runtimeIdentity.kind === "source_process") {
+    runtimeRecoveryPlan = runtimeRecoveryPlanSchema.parse({
+      schemaVersion: 1,
+      kind: "rebuild_exact",
+      codeRevision: manifest.codeRevision,
+      lockfileSha256: manifest.lockfileSha256,
+      toolchain: manifest.toolchain,
+      expectedRuntimeManifestSha256: manifestDigest,
+      recoveryProtocol: manifest.recoveryProtocol,
+    });
+  } else if (
+    environment["GITHUB_RUN_ID"] != null &&
+    environment["GITHUB_RUN_ATTEMPT"] != null &&
+    /^\d+$/u.test(environment["GITHUB_RUN_ID"]) &&
+    /^[1-9]\d*$/u.test(environment["GITHUB_RUN_ATTEMPT"])
+  ) {
+    runtimeRecoveryPlan = runtimeRecoveryPlanSchema.parse({
+      schemaVersion: 1,
+      kind: "workflow_bundle",
+      workflowRunId: environment["GITHUB_RUN_ID"],
+      workflowRunAttempt: Number(environment["GITHUB_RUN_ATTEMPT"]),
+      artifactName: "validated-public-run",
+      bundleSha256: manifestDigest,
+      codeRevision: manifest.codeRevision,
+      lockfileSha256: manifest.lockfileSha256,
+      toolchain: manifest.toolchain,
+      recoveryProtocol: manifest.recoveryProtocol,
+    });
+  } else {
+    runtimeRecoveryPlan = runtimeRecoveryPlanSchema.parse({
+      schemaVersion: 1,
+      kind: "not_reproducible",
+      reason: "runtime_artifact_unavailable",
+      runtimeIdentityDigest: nodeContentDigestPort.sha256Utf8(
+        serializeCanonicalJson(runtimeIdentity),
+      ),
+    });
+  }
+  return Object.freeze({ runtimeIdentity, runtimeRecoveryPlan });
+}
+
+/** 取得した旧bundleのfile一覧と固定回復entrypointを実測して照合する。 */
+export async function verifyRecoveryBundle(
+  root: string,
+  plan: Extract<z.output<typeof runtimeRecoveryPlanSchema>, { kind: "workflow_bundle" }>,
+): Promise<z.output<typeof runtimeManifestSchema>> {
+  if ((await lstat(root)).isSymbolicLink()) {
+    throw new TypeError("旧workflow bundleのrootにsymlinkは使用できません");
+  }
+  const source = await readFile(resolve(root, MANIFEST_FILE_NAME), "utf8");
+  const value: unknown = JSON.parse(source);
+  const manifest = runtimeManifestSchema.parse(value);
+  const files = await checkedFiles(root, root);
+  const entrypoint = files.find(
+    (file) => file.path === plan.recoveryProtocol.entrypointRelativePath,
+  );
+  if (
+    source !== serializeCanonicalJsonLine(manifest) ||
+    nodeContentDigestPort.sha256Utf8(serializeCanonicalJson(manifest)) !== plan.bundleSha256 ||
+    serializeCanonicalJson(files) !== serializeCanonicalJson(manifest.files) ||
+    serializeCanonicalJson(manifest.recoveryProtocol) !==
+      serializeCanonicalJson(plan.recoveryProtocol) ||
+    manifest.codeRevision !== plan.codeRevision ||
+    manifest.lockfileSha256 !== plan.lockfileSha256 ||
+    serializeCanonicalJson(manifest.toolchain) !== serializeCanonicalJson(plan.toolchain) ||
+    entrypoint?.digest !== plan.recoveryProtocol.entrypointSha256
+  ) {
+    throw new TypeError("旧workflow bundleのmanifestと実fileが一致しません");
+  }
+  return manifest;
+}
+
+/** exact revisionから再buildしたsource processを回復計画と照合する。 */
+export async function verifyRebuiltRuntime(
+  repositoryPath: string,
+  plan: Extract<z.output<typeof runtimeRecoveryPlanSchema>, { kind: "rebuild_exact" }>,
+): Promise<z.output<typeof runtimeManifestSchema>> {
+  const manifest = await createManifest(repositoryPath, "sequential", nodeContentDigestPort);
+  if (
+    nodeContentDigestPort.sha256Utf8(serializeCanonicalJson(manifest)) !==
+      plan.expectedRuntimeManifestSha256 ||
+    manifest.codeRevision !== plan.codeRevision ||
+    manifest.lockfileSha256 !== plan.lockfileSha256 ||
+    serializeCanonicalJson(manifest.toolchain) !== serializeCanonicalJson(plan.toolchain) ||
+    serializeCanonicalJson(manifest.recoveryProtocol) !==
+      serializeCanonicalJson(plan.recoveryProtocol)
+  ) {
+    throw new TypeError("再buildしたsource processが回復計画と一致しません");
+  }
+  return manifest;
+}

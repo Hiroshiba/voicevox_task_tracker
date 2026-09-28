@@ -61,7 +61,7 @@ export function createDailyDependencies(
     analyzePersonalReminders: createAnalyzePersonalRemindersStage(adapters),
     validateCompleteness: createValidateCompletenessStage(githubSessions),
     planPublication: (validated) => planPublication(validated, nodeContentDigestPort),
-    persistState: createPersistStateStage(),
+    persistState: createPersistStateStage(adapters),
     buildPages: createBuildPagesStage(adapters),
     sendDiscord: createSendDiscordStage(adapters),
     completeRun: createCompleteRunStage(adapters),

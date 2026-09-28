@@ -14,7 +14,10 @@ export function canonicalEqual(left: unknown, right: unknown): boolean {
   return serializeCanonicalJson(left) === serializeCanonicalJson(right);
 }
 
-export function sortByKey<Value>(values: readonly Value[], keyOf: (value: Value) => string): readonly Value[] {
+export function sortByKey<Value>(
+  values: readonly Value[],
+  keyOf: (value: Value) => string,
+): readonly Value[] {
   const sorted = [...values].sort((left, right) => compareStrings(keyOf(left), keyOf(right)));
   const keys = sorted.map(keyOf);
   if (new Set(keys).size !== keys.length) {
@@ -23,7 +26,9 @@ export function sortByKey<Value>(values: readonly Value[], keyOf: (value: Value)
   return Object.freeze(sorted);
 }
 
-export function canonicalSelection(selection: DiscordNotificationSelection): DiscordNotificationSelection {
+export function canonicalSelection(
+  selection: DiscordNotificationSelection,
+): DiscordNotificationSelection {
   const pendingNotifications = sortByKey(
     selection.pendingNotifications,
     (pending) => pending.notificationKey,
@@ -46,7 +51,10 @@ export function canonicalSelection(selection: DiscordNotificationSelection): Dis
       if (first == null) {
         throw new TypeError("公開計画の通知候補に理由がありません");
       }
-      const selectedReasons: DiscordNotificationCandidate["reasons"] = Object.freeze([first, ...rest]);
+      const selectedReasons: DiscordNotificationCandidate["reasons"] = Object.freeze([
+        first,
+        ...rest,
+      ]);
       if (candidate.severity !== calculateDiscordNotificationCandidateSeverity(selectedReasons)) {
         throw new TypeError("公開計画の通知候補と理由の重要度が一致しません");
       }
@@ -63,10 +71,14 @@ export function canonicalSelection(selection: DiscordNotificationSelection): Dis
   if (firstCandidate == null || firstReservation == null) {
     throw new TypeError("公開計画の通知候補と予約が空です");
   }
-  const selectedCandidates: Extract<DiscordNotificationSelection, { action: "create_digest" }>["candidates"] =
-    Object.freeze([firstCandidate, ...restCandidates]);
-  const selectedReservations: Extract<DiscordNotificationSelection, { action: "create_digest" }>["ledgerReservations"] =
-    Object.freeze([firstReservation, ...restReservations]);
+  const selectedCandidates: Extract<
+    DiscordNotificationSelection,
+    { action: "create_digest" }
+  >["candidates"] = Object.freeze([firstCandidate, ...restCandidates]);
+  const selectedReservations: Extract<
+    DiscordNotificationSelection,
+    { action: "create_digest" }
+  >["ledgerReservations"] = Object.freeze([firstReservation, ...restReservations]);
   return Object.freeze({
     action: "create_digest",
     candidates: selectedCandidates,
@@ -76,9 +88,7 @@ export function canonicalSelection(selection: DiscordNotificationSelection): Dis
 }
 
 /** runが所有する通常通知ledgerだけをcanonicalな値へ投影する。 */
-export function normalNotificationLedgerValue(
-  ledger: StateNotificationLedger,
-): Readonly<{
+export function normalNotificationLedgerValue(ledger: StateNotificationLedger): Readonly<{
   schemaVersion: StateNotificationLedger["schemaVersion"];
   entries: readonly StateNotificationLedger["entries"][number][];
   pendingNotifications: readonly StateNotificationLedger["pendingNotifications"][number][];
@@ -86,9 +96,6 @@ export function normalNotificationLedgerValue(
   return Object.freeze({
     schemaVersion: ledger.schemaVersion,
     entries: sortByKey(ledger.entries, (entry) => entry.notificationKey),
-    pendingNotifications: sortByKey(
-      ledger.pendingNotifications,
-      (entry) => entry.notificationKey,
-    ),
+    pendingNotifications: sortByKey(ledger.pendingNotifications, (entry) => entry.notificationKey),
   });
 }

@@ -72,15 +72,27 @@ export {
 } from "./run-report.js";
 export { createTrackerRunCliArguments, runTrackerCommand } from "./tracker-run.js";
 export {
-  assertWorkflowArtifactPublicSafety,
-  createWorkflowArtifact,
+  assertValidatedRunPayloadPublicSafety,
   createWorkflowRunMetadata,
-  readWorkflowArtifactFile,
-  workflowArtifactRepositoryInventory,
-  type WorkflowArtifact,
-  type WorkflowArtifactRepositoryAllowlistEntry,
+  parseValidatedRunPayload,
+  validatedRunPayloadRepositoryInventory,
+  validatedRunSerializablePayload,
+  type ValidatedRunPayload,
+  type ValidatedRunPayloadRepositoryAllowlistEntry,
   type WorkflowRunMetadata,
-} from "./workflow-artifact.js";
+} from "./validated-run-payload.js";
+export {
+  encodePublicationCheckpoint,
+  decodePublicationArtifact,
+  type DecodedPublicationArtifact,
+  type EncodedPublicationCheckpoint,
+} from "./publication-checkpoint-codec.js";
+export {
+  bindPublicationCheckpoint,
+  assertBoundPublicationCheckpoint,
+  type BoundPublicationCheckpoint,
+  type CheckpointBindingMetadata,
+} from "./publication-checkpoint-binding.js";
 export {
   WorkflowStageRunner,
   type WorkflowStageCliCommand,

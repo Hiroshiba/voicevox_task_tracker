@@ -142,6 +142,20 @@ export type VerifyStateCliCommand = Readonly<{
   configPath: string;
 }>;
 
+/** v19 checkpointとexact baseの結合を検証するCLI入力。 */
+export type VerifyCheckpointCliCommand = Readonly<{
+  kind: "verify-checkpoint";
+  configPath: string;
+  artifactPath: string;
+}>;
+
+/** 固定V1 protocolでexact runtimeを検証するCLI入力。 */
+export type VerifyRuntimeRecoveryCliCommand = Readonly<{
+  kind: "verify-runtime-recovery";
+  inputPath: string;
+  bundleRoot: string;
+}>;
+
 /** CLIの使用方法だけを表示する入力。 */
 export type HelpCliCommand = Readonly<{
   kind: "help";
@@ -160,6 +174,8 @@ export type CliCommand =
   | NotifyOperationsCliCommand
   | ReportWorkflowCliCommand
   | VerifyStateCliCommand
+  | VerifyCheckpointCliCommand
+  | VerifyRuntimeRecoveryCliCommand
   | HelpCliCommand;
 
 type ParsedOptions = ReadonlyMap<string, readonly string[]>;
@@ -643,6 +659,24 @@ function parseVerifyState(args: readonly string[]): VerifyStateCliCommand {
   });
 }
 
+function parseVerifyCheckpoint(args: readonly string[]): VerifyCheckpointCliCommand {
+  const options = parseOptions(args, new Set(["--artifact", "--config"]));
+  return Object.freeze({
+    kind: "verify-checkpoint",
+    artifactPath: singleOption(options, "--artifact", DEFAULT_WORKFLOW_ARTIFACT_PATH),
+    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
+  });
+}
+
+function parseVerifyRuntimeRecovery(args: readonly string[]): VerifyRuntimeRecoveryCliCommand {
+  const options = parseOptions(args, new Set(["--input", "--bundle-root"]));
+  return Object.freeze({
+    kind: "verify-runtime-recovery",
+    inputPath: requiredSingleOption(options, "--input", "verify-runtime-recovery"),
+    bundleRoot: requiredSingleOption(options, "--bundle-root", "verify-runtime-recovery"),
+  });
+}
+
 /** process argvからサブコマンドとoptionを検証して取り出す。 */
 export function parseCliArguments(args: readonly string[]): CliCommand {
   const subcommand = args[0];
@@ -681,6 +715,10 @@ export function parseCliArguments(args: readonly string[]): CliCommand {
       return parseReportWorkflow(options);
     case "verify-state":
       return parseVerifyState(options);
+    case "verify-checkpoint":
+      return parseVerifyCheckpoint(options);
+    case "verify-runtime-recovery":
+      return parseVerifyRuntimeRecovery(options);
     default:
       throw usageError(`未対応のサブコマンドです。対象: ${subcommand}`);
   }
@@ -702,5 +740,7 @@ export function formatCliUsage(): string {
     "  voicevox-task-tracker notify-operations --kind pages|discord --incident-id ID --occurred-at ISO",
     "  voicevox-task-tracker report-workflow --run-id ID --run-attempt NUMBER --quality-result RESULT --collect-analyze-result RESULT --persist-state-result RESULT --build-pages-result RESULT --deploy-pages-result RESULT --notify-discord-result RESULT --publish-notification-history-result RESULT --notify-operations-result RESULT",
     "  voicevox-task-tracker verify-state --state-directory PATH [--config PATH]",
+    "  voicevox-task-tracker verify-checkpoint [--artifact PATH] [--config PATH]",
+    "  voicevox-task-tracker verify-runtime-recovery --input PATH --bundle-root PATH",
   ].join("\n");
 }

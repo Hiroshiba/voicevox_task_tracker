@@ -2,7 +2,11 @@ import type { Sha256Hash } from "../canonical-json/sha256.js";
 import type { AiCacheEntry, PersonalReminderAiCacheEntry } from "../codex/index.js";
 import type { DiscordNotificationSelection } from "../discord/index.js";
 import type { PendingNotification } from "../domain/index.js";
-import type { StateHistoryInputEvent, StateNotificationLedger, StateSnapshot } from "../persistence/index.js";
+import type {
+  StateHistoryInputEvent,
+  StateNotificationLedger,
+  StateSnapshot,
+} from "../persistence/index.js";
 import type { RunMetrics } from "../cli/run-report.js";
 import type { ValidatedRun } from "../application/tracking-run/stages/validate-run.js";
 import type { PublicationInputs } from "../application/tracking-run/contracts/publication-inputs.js";
@@ -89,7 +93,10 @@ export type NotificationOutbox =
   | Readonly<{
       action: "acknowledge-current";
       delivery: "acknowledged";
-      acknowledgedEntries: readonly Extract<StateNotificationLedger["entries"][number], { status: "acknowledged" }>[];
+      acknowledgedEntries: readonly Extract<
+        StateNotificationLedger["entries"][number],
+        { status: "acknowledged" }
+      >[];
       pendingNotifications: readonly PendingNotification[];
       previousLedgerDigest: Sha256Hash;
       initialLedgerDigest: Sha256Hash;
@@ -116,7 +123,11 @@ export type RunFinalizationPolicy = Readonly<{
 
 /** 通知履歴Pagesを必要とする条件。 */
 export type NotificationHistoryPagesPolicy =
-  | Readonly<{ action: "send"; requirement: "when_sent_history_added"; context: "outbox_selected_context" }>
+  | Readonly<{
+      action: "send";
+      requirement: "when_sent_history_added";
+      context: "outbox_selected_context";
+    }>
   | Readonly<{ action: "hold" | "acknowledge-current"; requirement: "not_required" }>;
 
 /** checkpoint binding以前に確定できるdurable recordの業務部分。 */

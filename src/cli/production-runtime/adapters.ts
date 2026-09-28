@@ -23,7 +23,6 @@ import type {
 } from "../../persistence/index.js";
 import type { SandboxRunContext } from "../sandbox-context.js";
 import type { verifyPersistentStateDirectory } from "../state-verification.js";
-import type { readWorkflowArtifactFile } from "../workflow-artifact.js";
 
 /** 日次実行配線へ注入する外部接続、時刻、永続化の境界。 */
 export type ProductionRuntimeAdapters = Readonly<{
@@ -58,7 +57,6 @@ export type ProductionRuntimeAdapters = Readonly<{
     configuration: CodexAdapterConfiguration,
     dependencies: CodexAdapterDependencies,
   ) => Promise<void>;
-  readWorkflowArtifact: typeof readWorkflowArtifactFile;
   verifyStateDirectory: typeof verifyPersistentStateDirectory;
   createGitHubClient: (options: CreateGitHubClientOptions) => Promise<GitHubClient>;
   createStateBranchAdapter: () => StateBranchAdapter;
@@ -138,7 +136,6 @@ export type PublicationRuntimeAdapters = Pick<
   | "pagesOutputDirectory"
   | "loadConfig"
   | "openStateSession"
-  | "readWorkflowArtifact"
   | "createStateBranchAdapter"
   | "discordHttpClient"
   | "now"

@@ -5,6 +5,5 @@ import type { WorkflowStageDependencies } from "../../workflow-stage.js";
 export function createNotifyWorkflowDiscordStage(
   adapters: Parameters<typeof notifyWorkflowDiscord>[0]["adapters"],
 ): WorkflowStageDependencies["notifyDiscord"] {
-  return (command) =>
-    notifyWorkflowDiscord({ adapters }, command);
+  return (command) => notifyWorkflowDiscord({ adapters }, command);
 }

@@ -219,7 +219,10 @@ export class StatePersistenceSession {
 
   public readonly aiCache: AiCacheStore;
   public readonly personalReminderAiCache: PersonalReminderAiCacheStore;
-
+  /** sessionが固定したstate branch revision。 */
+  public get baseRevision(): StateBranchHead {
+    return this.#head;
+  }
   private constructor(
     adapter: StateBranchAdapter,
     configuration: StatePersistenceConfiguration,
@@ -925,7 +928,7 @@ export class StatePersistenceSession {
         ].sort(compareStrings),
       ) !== serializeCanonicalJsonLine(input.deletions)
     ) {
-      throw new StateHistoryError("初回公開計画の履歴基準または削除pathが固定revisionと一致しません");
+      throw new StateHistoryError("公開計画の履歴または削除pathが固定revisionと不一致です");
     }
     const existingHistorySource = await this.#readHistorySource(historyPath);
     const existingHistoryRecords =

@@ -744,8 +744,6 @@ function createPerformanceHarness(repositoryPath: string, config: Config): Perfo
     },
     executeCodexAuthenticationPreflight: () =>
       Promise.reject(new TypeError("性能profileではCodex認証preflightを実行しません")),
-    readWorkflowArtifact: () =>
-      Promise.reject(new TypeError("性能profileではworkflow artifactを読みません")),
     verifyStateDirectory: () =>
       Promise.reject(new TypeError("性能profileでは永続stateを検証しません")),
     createGitHubClient: () => {

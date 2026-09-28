@@ -101,6 +101,7 @@ export {
   type PersistStateTransactionResult,
   type StateSnapshotReadResult,
 } from "./state-persistence-session.js";
+export { readExactStateSnapshot } from "./exact-state-snapshot.js";
 export {
   createEmptyStateNotificationLedger,
   createStateNotificationLedger,

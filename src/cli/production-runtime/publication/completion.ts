@@ -10,6 +10,5 @@ type CompletionRuntimeAdapters = Pick<ProductionRuntimeAdapters, "now">;
 export function createCompleteRunStage(
   adapters: CompletionRuntimeAdapters,
 ): ProductionDailyDependencies["completeRun"] {
-  return (input) =>
-    completeDailyRun({ adapters }, input);
+  return (input) => completeDailyRun({ adapters }, input);
 }

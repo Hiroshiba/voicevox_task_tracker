@@ -145,7 +145,7 @@ function assertLedgerTransition(run: SerializedValidatedRun): void {
   }
 }
 
-/** v18の実保存値と公開witnessを照合する。 */
+/** checkpoint内の実保存値と公開witnessを照合する。 */
 export function assertSerializedValidatedRun(
   run: SerializedValidatedRun,
   digest: ContentDigestPort,
@@ -168,14 +168,6 @@ export function assertSerializedValidatedRun(
     run.core.identity.scheduledFor > run.core.identity.startedAt
   ) {
     throw new RunCompletenessError("field_mismatch", "time", ["core", "identity"], undefined);
-  }
-  if (run.core.executionPolicy.executionShape !== "split_workflow") {
-    throw new RunCompletenessError(
-      "field_mismatch",
-      "executionShape",
-      ["core", "executionPolicy"],
-      undefined,
-    );
   }
   assertRunValueMatches(
     digest.sha256Utf8(serializeCanonicalJson(run.snapshot.finalGraphProjection)),
@@ -273,7 +265,9 @@ export function assertSerializedValidatedRun(
   }
   const publicationInputs = parsePublicationInputs(run.publicationInputs);
   assertRunValueMatches(publicationInputs, run.publicationInputs, ["publicationInputs"], "run");
-  if (!publicationInputs.state.historyPath.endsWith(`/${run.snapshot.generatedAt.slice(0, 10)}.jsonl`)) {
+  if (
+    !publicationInputs.state.historyPath.endsWith(`/${run.snapshot.generatedAt.slice(0, 10)}.jsonl`)
+  ) {
     throw new RunCompletenessError(
       "field_mismatch",
       "historyPath",

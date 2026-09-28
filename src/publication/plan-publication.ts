@@ -10,7 +10,11 @@ import type {
   PublicationValidatedRun,
 } from "./publication-plan-contracts.js";
 import { planNotificationOutbox } from "./notification-outbox.js";
-import { canonicalSelection, normalNotificationLedgerValue, sortByKey } from "./publication-order.js";
+import {
+  canonicalSelection,
+  normalNotificationLedgerValue,
+  sortByKey,
+} from "./publication-order.js";
 
 /** 証明付きrunから副作用を伴わない確定済み公開計画を作る。 */
 export function planPublication(
@@ -34,14 +38,26 @@ export function planPublication(
     ],
     (path) => path,
   );
-  if (deletions.some((path) => path === state.snapshotPath || path === state.historyPath || path === state.notificationLedgerPath)) {
+  if (
+    deletions.some(
+      (path) =>
+        path === state.snapshotPath ||
+        path === state.historyPath ||
+        path === state.notificationLedgerPath,
+    )
+  ) {
     throw new TypeError("公開計画の削除pathが初回書込みpathと重複しています");
   }
   const initialStateValues = Object.freeze({
     snapshot: validated.snapshot,
-    historyInputEvents: sortByKey(validated.historyInputEvents, (event) => serializeCanonicalJson(event)),
+    historyInputEvents: sortByKey(validated.historyInputEvents, (event) =>
+      serializeCanonicalJson(event),
+    ),
     aiCacheAdditions: sortByKey(validated.aiCacheAdditions, (entry) => entry.cacheKey),
-    personalReminderAiCacheAdditions: sortByKey(validated.personalReminderAiCacheAdditions, (entry) => entry.cacheKey),
+    personalReminderAiCacheAdditions: sortByKey(
+      validated.personalReminderAiCacheAdditions,
+      (entry) => entry.cacheKey,
+    ),
     notificationLedger: validated.notificationLedger,
     paths: state,
     previousInitialPagesEvidence: Object.freeze({
@@ -52,9 +68,19 @@ export function planPublication(
     deletions,
     valueDigests: Object.freeze({
       snapshot: digest.sha256Utf8(serializeCanonicalJson(validated.snapshot)),
-      historyInputEvents: digest.sha256Utf8(serializeCanonicalJson(sortByKey(validated.historyInputEvents, (event) => serializeCanonicalJson(event)))),
-      aiCacheAdditions: digest.sha256Utf8(serializeCanonicalJson(sortByKey(validated.aiCacheAdditions, (entry) => entry.cacheKey))),
-      personalReminderAiCacheAdditions: digest.sha256Utf8(serializeCanonicalJson(sortByKey(validated.personalReminderAiCacheAdditions, (entry) => entry.cacheKey))),
+      historyInputEvents: digest.sha256Utf8(
+        serializeCanonicalJson(
+          sortByKey(validated.historyInputEvents, (event) => serializeCanonicalJson(event)),
+        ),
+      ),
+      aiCacheAdditions: digest.sha256Utf8(
+        serializeCanonicalJson(sortByKey(validated.aiCacheAdditions, (entry) => entry.cacheKey)),
+      ),
+      personalReminderAiCacheAdditions: digest.sha256Utf8(
+        serializeCanonicalJson(
+          sortByKey(validated.personalReminderAiCacheAdditions, (entry) => entry.cacheKey),
+        ),
+      ),
       notificationLedger: digest.sha256Utf8(
         serializeCanonicalJson(normalNotificationLedgerValue(validated.notificationLedger)),
       ),
@@ -77,7 +103,10 @@ export function planPublication(
   const runFinalizationPolicy = Object.freeze({
     notificationCountSource: "outbox_keys_with_sent_ledger_status" as const,
     metricsSource: "validated_run_and_notification_settlement_receipt" as const,
-    completeSuccessRequires: Object.freeze(["initial_pages_deployed", "notifications_settled"] as const),
+    completeSuccessRequires: Object.freeze([
+      "initial_pages_deployed",
+      "notifications_settled",
+    ] as const),
     configuredTrackingStartAt: validated.publicationInputs.configuredTrackingStartAt,
     trackingStartAtCondition: "complete_success" as const,
     report: Object.freeze({

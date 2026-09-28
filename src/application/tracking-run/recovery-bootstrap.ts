@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
+import { gitCommitRevisionSchema } from "./contracts/revision.js";
 import {
   runtimeIdentitySchema,
   runtimeToolchainIdentitySchema,
@@ -13,7 +14,7 @@ const MAX_BOOTSTRAP_NODES = 100_000;
 const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const nonEmptyStringSchema = z.string().min(1).max(1000);
 const positiveIntegerSchema = z.number().int().positive();
-const normalizedBundlePathSchema = z
+export const normalizedBundlePathSchema = z
   .string()
   .min(1)
   .max(1000)
@@ -26,9 +27,10 @@ const normalizedBundlePathSchema = z
         .split("/")
         .every((segment) => segment.length > 0 && segment !== "." && segment !== ".."),
     "bundle内の正規化された相対pathが必要です",
-  );
+  )
+  .brand<"NormalizedBundleRelativePath">();
 
-const protocolSchema = z.strictObject({
+export const runtimeRecoveryProtocolV1Schema = z.strictObject({
   protocolVersion: z.literal(1),
   entrypointRelativePath: normalizedBundlePathSchema,
   entrypointSha256: sha256Schema,
@@ -38,7 +40,7 @@ const protocolSchema = z.strictObject({
   workflowEffectAdapterIdentityDigest: sha256Schema,
 });
 
-const recoveryPlanSchema = z.discriminatedUnion("kind", [
+export const runtimeRecoveryPlanSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     schemaVersion: z.literal(1),
     kind: z.literal("workflow_bundle"),
@@ -46,19 +48,19 @@ const recoveryPlanSchema = z.discriminatedUnion("kind", [
     workflowRunAttempt: positiveIntegerSchema,
     artifactName: nonEmptyStringSchema,
     bundleSha256: sha256Schema,
-    codeRevision: nonEmptyStringSchema,
+    codeRevision: gitCommitRevisionSchema,
     lockfileSha256: sha256Schema,
     toolchain: runtimeToolchainIdentitySchema,
-    recoveryProtocol: protocolSchema,
+    recoveryProtocol: runtimeRecoveryProtocolV1Schema,
   }),
   z.strictObject({
     schemaVersion: z.literal(1),
     kind: z.literal("rebuild_exact"),
-    codeRevision: nonEmptyStringSchema,
+    codeRevision: gitCommitRevisionSchema,
     lockfileSha256: sha256Schema,
     toolchain: runtimeToolchainIdentitySchema,
     expectedRuntimeManifestSha256: sha256Schema,
-    recoveryProtocol: protocolSchema,
+    recoveryProtocol: runtimeRecoveryProtocolV1Schema,
   }),
   z.strictObject({
     schemaVersion: z.literal(1),
@@ -75,7 +77,7 @@ const recordBootstrapSchema = z.looseObject({
   checkpointDigest: sha256Schema,
   checkpointFileDigest: sha256Schema,
   runtimeIdentity: runtimeIdentitySchema,
-  runtimeRecoveryPlan: recoveryPlanSchema,
+  runtimeRecoveryPlan: runtimeRecoveryPlanSchema,
   recordDigest: sha256Schema,
 });
 
@@ -101,7 +103,7 @@ export type DurablePublicationRecoveryBootstrapV1 = Readonly<{
   runId: string;
   checkpointDigest: string;
   checkpointFileDigest: string;
-  runtimeRecoveryPlan: z.output<typeof recoveryPlanSchema>;
+  runtimeRecoveryPlan: z.output<typeof runtimeRecoveryPlanSchema>;
   runtimeIdentityDigest: string;
   recordDigest: string;
 }>;

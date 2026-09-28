@@ -5,10 +5,15 @@ import type { AnalysisPreviousState } from "./previous-state.js";
 import type { RunExecutionPolicy, RunIdentity } from "../request.js";
 import type { AiBudgetLedgerSnapshot } from "./ai-budget-ledger.js";
 import type { HistoricalAiSnapshotInput } from "./evidence-closure.js";
+import { z } from "zod";
+
+export const baseStateRevisionSchema = z.discriminatedUnion("status", [
+  z.strictObject({ status: z.literal("missing") }),
+  z.strictObject({ status: z.literal("present"), revision: z.string().min(1) }),
+]);
 
 /** 固定したstate branchの先頭revision。 */
-export type BaseStateRevision =
-  Readonly<{ status: "missing" }> | Readonly<{ status: "present"; revision: string }>;
+export type BaseStateRevision = z.output<typeof baseStateRevisionSchema>;
 
 /** 固定revisionから現行形式へ正規化した前回state。 */
 export type PreparedBaseState = Readonly<{

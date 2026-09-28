@@ -3,10 +3,7 @@ import type { PublicationPlannedRun } from "../../publication/publication-plan-c
 import type { Repository } from "../../domain/index.js";
 import { generatePublicData } from "../../pages/index.js";
 import type { StateHistoryRecord } from "../../persistence/index.js";
-import type {
-  PagesResult,
-  RunPublicationAdapters,
-} from "./contracts.js";
+import type { PagesResult, RunPublicationAdapters } from "./contracts.js";
 
 /** Pages成果物の生成と書込みに必要な値。 */
 export type BuildPublicPagesInput = Readonly<{

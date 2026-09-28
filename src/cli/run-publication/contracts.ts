@@ -2,10 +2,9 @@ import type { Config, loadConfig } from "../../config/index.js";
 import type { AiCacheEntry, PersonalReminderAiCacheEntry } from "../../codex/index.js";
 import type { ValidatedRun as TrackingValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
 import type { PublicationPlannedRun } from "../../publication/publication-plan-contracts.js";
+import type { BoundPublicationCheckpoint } from "../publication-checkpoint-binding.js";
 import type { Sha256Hash } from "../../canonical-json/sha256.js";
-import type {
-  Repository,
-} from "../../domain/index.js";
+import type { Repository } from "../../domain/index.js";
 import type {
   DiscordDigestDelivery,
   DiscordNotificationSelection,
@@ -32,7 +31,6 @@ import type {
   DailyTransactionTypeMap,
 } from "../daily-transaction.js";
 import type { RuntimeCredentials, RuntimeExecutionTarget } from "../production-runtime-setup.js";
-import type { readWorkflowArtifactFile } from "../workflow-artifact.js";
 
 /** 完全性検証を通過し、公開処理へ渡してよいrun。 */
 export type ValidatedRun = TrackingValidatedRun<
@@ -50,6 +48,7 @@ export type PersistedRun = Readonly<{
   result: PersistStateTransactionResult;
   historyRecords: readonly StateHistoryRecord[];
   notificationLedger: StateNotificationLedger;
+  bound: BoundPublicationCheckpoint;
 }>;
 
 /** Pages生成と書込みの結果。 */
@@ -109,7 +108,6 @@ export type RunPublicationAdapters = Readonly<{
     configuration: StatePersistenceConfiguration,
     migrationTimezone: string,
   ) => Promise<StatePersistenceSession>;
-  readWorkflowArtifact: typeof readWorkflowArtifactFile;
   createStateBranchAdapter: () => StateBranchAdapter;
   discordHttpClient: DiscordWebhookHttpClient;
   now: () => Date;

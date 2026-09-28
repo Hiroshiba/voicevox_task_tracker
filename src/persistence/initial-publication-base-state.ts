@@ -13,8 +13,7 @@ export type InitialPublicationBaseState = Readonly<{
 
 /** 固定revisionにある公開関連fileの有無とbyte digest。 */
 export type InitialPublicationFileState =
-  | Readonly<{ status: "missing" }>
-  | Readonly<{ status: "present"; digest: Sha256Hash }>;
+  Readonly<{ status: "missing" }> | Readonly<{ status: "present"; digest: Sha256Hash }>;
 
 function fileState(file: StateFileReadResult): InitialPublicationFileState {
   return file.status === "missing"

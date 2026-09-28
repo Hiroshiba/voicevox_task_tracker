@@ -1,11 +1,18 @@
 import { deliverDiscord, deliverOperationsAlert } from "../notification-delivery-runtime.js";
 import { assertValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
-import { workflowArtifactPayload } from "../workflow-artifact.js";
-import { createCollectAnalyzeArtifact } from "./artifact.js";
-import type {
-  DailyPublicationStageHandlers,
-  RunPublicationAdapters,
-} from "./contracts.js";
+import { basename, resolve } from "node:path";
+
+import { encodePublicationCheckpoint } from "../publication-checkpoint-codec.js";
+import { bindPublicationCheckpoint } from "../publication-checkpoint-binding.js";
+import { writePublicationCheckpointFile } from "../publication-checkpoint-file.js";
+import {
+  readPublicationRuntimeContext,
+  writeWorkflowRuntimeManifest,
+} from "../publication-runtime.js";
+import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content-digest.js";
+import { createCollectAnalyzePayload } from "./artifact.js";
+import { serializeCanonicalJson } from "../../canonical-json/value.js";
+import type { DailyPublicationStageHandlers, RunPublicationAdapters } from "./contracts.js";
 import { createRunMetadata } from "./metadata.js";
 import { buildPublicPages } from "./pages.js";
 import { persistSuccessfulRunCompletion, persistValidatedRun } from "./persistence.js";
@@ -26,15 +33,69 @@ type DailyNotificationAdapters = Pick<
 >;
 
 /** 完全性検証済みrunを初期保存へ渡す。 */
-export function persistDailyState(
+export async function persistDailyState(
+  dependencies: Readonly<{
+    adapters: Pick<
+      RunPublicationAdapters,
+      "repositoryPath" | "environment" | "createStateBranchAdapter"
+    >;
+  }>,
   input: Parameters<DailyPublicationStageHandlers["persistState"]>[0],
 ): ReturnType<DailyPublicationStageHandlers["persistState"]> {
   const { configuration, state, repositoryInventory, planned } = input;
+  if (
+    nodeContentDigestPort.sha256Utf8(serializeCanonicalJson(configuration.config)) !==
+    planned.validated.core.configDigest
+  ) {
+    throw new TypeError("sequential checkpointの設定digestが一致しません");
+  }
+  const runtime = await readPublicationRuntimeContext(
+    dependencies.adapters.repositoryPath,
+    planned.validated.core.executionPolicy,
+    dependencies.adapters.environment,
+  );
+  const validatedPayload = createCollectAnalyzePayload({
+    invocation: input.invocation,
+    configuration,
+    inventory: repositoryInventory,
+    validated: planned.validated,
+    diagnostics: input.diagnostics,
+  });
+  const encoded = encodePublicationCheckpoint(
+    {
+      planned,
+      validatedPayload,
+      runtimeIdentity: runtime.runtimeIdentity,
+      artifactFileName: "validated-run.json",
+    },
+    nodeContentDigestPort,
+  );
+  const snapshot = state.snapshot;
+  const bound = bindPublicationCheckpoint(
+    encoded.decoded,
+    {
+      checkpointFileDigest: encoded.decoded.checkpointFileDigest,
+      runtimeRecoveryPlan: runtime.runtimeRecoveryPlan,
+    },
+    {
+      revision: await dependencies.adapters
+        .createStateBranchAdapter()
+        .resolveHead(configuration.config.state.branch),
+      previousAiSnapshot:
+        snapshot.status === "available"
+          ? {
+              trackedItems: snapshot.snapshot.items,
+              collectionRepositories: snapshot.snapshot.collection.repositories,
+            }
+          : undefined,
+    },
+    nodeContentDigestPort,
+  );
   return persistValidatedRun({
     configuration,
     state,
     inventory: repositoryInventory,
-    planned,
+    bound,
   });
 }
 
@@ -45,11 +106,11 @@ export function buildDailyPages(
   }>,
   input: Parameters<DailyPublicationStageHandlers["buildPages"]>[0],
 ): ReturnType<DailyPublicationStageHandlers["buildPages"]> {
-  const { configuration, repositoryInventory, planned, persisted } = input;
+  const { configuration, repositoryInventory, persisted } = input;
   return buildPublicPages({
     writePublicData: dependencies.adapters.writePublicData,
     inventory: repositoryInventory.inventory,
-    planned,
+    planned: persisted.bound.planned,
     historyRecords: persisted.historyRecords,
     outputDirectory: dependencies.adapters.pagesOutputDirectory,
     knownSecrets: configuration.credentials.knownSecrets,
@@ -63,7 +124,8 @@ export async function sendDailyDiscord(
   }>,
   input: Parameters<DailyPublicationStageHandlers["sendDiscord"]>[0],
 ): ReturnType<DailyPublicationStageHandlers["sendDiscord"]> {
-  const { configuration, state, repositoryInventory, planned, pages } = input;
+  const { configuration, state, repositoryInventory, persisted, pages } = input;
+  const planned = persisted.bound.planned;
   const validated = planned.validated;
   assertValidatedRun(validated);
   if (planned.publicationPlan.notificationOutbox.action !== "send") {
@@ -71,7 +133,8 @@ export async function sendDailyDiscord(
       value: Object.freeze({
         delivery: Object.freeze({
           status: "skipped",
-          reason: planned.publicationPlan.notificationOutbox.action === "hold" ? "held" : "no_candidates",
+          reason:
+            planned.publicationPlan.notificationOutbox.action === "hold" ? "held" : "no_candidates",
         }),
         notificationEvents: Object.freeze([]),
         notificationLedger: validated.notificationLedger,
@@ -106,16 +169,9 @@ export function completeDailyRun(
   }>,
   input: Parameters<DailyPublicationStageHandlers["completeRun"]>[0],
 ): ReturnType<DailyPublicationStageHandlers["completeRun"]> {
-  const {
-    invocation,
-    configuration,
-    state,
-    repositoryInventory,
-    planned,
-    discord,
-    metrics,
-    diagnostics,
-  } = input;
+  const { invocation, configuration, state, repositoryInventory, discord, metrics, diagnostics } =
+    input;
+  const planned = input.persisted.bound.planned;
   const validated = planned.validated;
   return persistSuccessfulRunCompletion({
     now: dependencies.adapters.now,
@@ -176,23 +232,35 @@ export async function sendDailyOperationsAlert(
 }
 
 /** 日次runの解析結果からworkflow artifactを書き出す。 */
-export function writeDailyCollectAnalyzeArtifact(
+export async function writeDailyCollectAnalyzeArtifact(
   dependencies: Readonly<{
-    adapters: Pick<RunPublicationAdapters, "writeJsonArtifact">;
+    adapters: Pick<RunPublicationAdapters, "repositoryPath" | "environment">;
   }>,
   path: string,
   stageInput: Parameters<DailyPublicationStageHandlers["writeCollectAnalyzeArtifact"]>[1],
-): ReturnType<DailyPublicationStageHandlers["writeCollectAnalyzeArtifact"]> {
-  return dependencies.adapters.writeJsonArtifact(
-    path,
-    workflowArtifactPayload(
-      createCollectAnalyzeArtifact({
-        invocation: stageInput.invocation,
-        configuration: stageInput.configuration,
-        inventory: stageInput.repositoryInventory,
-        validated: stageInput.planned.validated,
-        diagnostics: stageInput.diagnostics,
-      }),
-    ),
+): Promise<void> {
+  await writeWorkflowRuntimeManifest(dependencies.adapters.repositoryPath);
+  const runtime = await readPublicationRuntimeContext(
+    dependencies.adapters.repositoryPath,
+    stageInput.planned.validated.core.executionPolicy,
+    dependencies.adapters.environment,
   );
+  const validatedPayload = createCollectAnalyzePayload({
+    invocation: stageInput.invocation,
+    configuration: stageInput.configuration,
+    inventory: stageInput.repositoryInventory,
+    validated: stageInput.planned.validated,
+    diagnostics: stageInput.diagnostics,
+  });
+  const outputPath = resolve(dependencies.adapters.repositoryPath, path);
+  const encoded = encodePublicationCheckpoint(
+    {
+      planned: stageInput.planned,
+      validatedPayload,
+      runtimeIdentity: runtime.runtimeIdentity,
+      artifactFileName: basename(outputPath),
+    },
+    nodeContentDigestPort,
+  );
+  await writePublicationCheckpointFile(outputPath, encoded);
 }

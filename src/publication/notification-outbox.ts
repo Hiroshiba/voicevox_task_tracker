@@ -20,7 +20,9 @@ function assertSelectedContext(
   selection: Extract<DiscordNotificationSelection, { action: "create_digest" }>,
 ): SelectedNotificationContext {
   const items = new Map(run.snapshot.items.map((item) => [item.nodeId, item]));
-  const reservations = new Map(selection.ledgerReservations.map((entry) => [entry.notificationKey, entry]));
+  const reservations = new Map(
+    selection.ledgerReservations.map((entry) => [entry.notificationKey, entry]),
+  );
   const selectedKeys = new Set<string>();
   for (const candidate of selection.candidates) {
     const item = items.get(candidate.itemNodeId);
@@ -68,7 +70,9 @@ function assertSelectedContext(
   return selection;
 }
 
-function assertInitialLedgerTransition(run: PublicationValidatedRun): readonly Extract<StateNotificationLedger["entries"][number], { status: "acknowledged" }>[] {
+function assertInitialLedgerTransition(
+  run: PublicationValidatedRun,
+): readonly Extract<StateNotificationLedger["entries"][number], { status: "acknowledged" }>[] {
   const action = run.core.executionPolicy.notificationAction;
   if (
     !canonicalEqual(
@@ -82,8 +86,12 @@ function assertInitialLedgerTransition(run: PublicationValidatedRun): readonly E
   ) {
     throw new TypeError("公開計画の未送信候補または運用通知ledgerが一致しません");
   }
-  const previous = new Map(run.previousNotificationLedger.entries.map((entry) => [entry.notificationKey, entry]));
-  const current = new Map(run.notificationLedger.entries.map((entry) => [entry.notificationKey, entry]));
+  const previous = new Map(
+    run.previousNotificationLedger.entries.map((entry) => [entry.notificationKey, entry]),
+  );
+  const current = new Map(
+    run.notificationLedger.entries.map((entry) => [entry.notificationKey, entry]),
+  );
   if (
     previous.size !== run.previousNotificationLedger.entries.length ||
     current.size !== run.notificationLedger.entries.length
@@ -93,7 +101,10 @@ function assertInitialLedgerTransition(run: PublicationValidatedRun): readonly E
   const selectedReservations = new Map(
     run.notificationSelection.ledgerReservations.map((entry) => [entry.notificationKey, entry]),
   );
-  const acknowledgements: Extract<StateNotificationLedger["entries"][number], { status: "acknowledged" }>[] = [];
+  const acknowledgements: Extract<
+    StateNotificationLedger["entries"][number],
+    { status: "acknowledged" }
+  >[] = [];
   for (const [key, oldEntry] of previous) {
     if (!current.has(key)) {
       throw new TypeError("公開計画の通常notification ledgerから既存entryが消えています");
@@ -123,7 +134,11 @@ function assertInitialLedgerTransition(run: PublicationValidatedRun): readonly E
         throw new TypeError("確認済みactionに想定外のledger遷移があります");
       }
     } else if (selectedReservations.has(key)) {
-      if (action !== "send" || entry.status !== "reserved" || !canonicalEqual(entry, selectedReservations.get(key))) {
+      if (
+        action !== "send" ||
+        entry.status !== "reserved" ||
+        !canonicalEqual(entry, selectedReservations.get(key))
+      ) {
         throw new TypeError("送信actionの初回ledger予約が一致しません");
       }
     } else if (oldEntry == null) {
@@ -159,26 +174,38 @@ export function planNotificationOutbox(
   );
   const acknowledgedEntries = assertInitialLedgerTransition(run);
   if (action === "hold") {
-    if (run.notificationSelection.action !== "skip_digest" || run.notificationSelection.reason !== "held") {
+    if (
+      run.notificationSelection.action !== "skip_digest" ||
+      run.notificationSelection.reason !== "held"
+    ) {
       throw new TypeError("保留actionの通知選別が一致しません");
     }
     return Object.freeze({
       action,
       delivery: "held",
-      pendingNotifications: sortByKey(run.notificationSelection.pendingNotifications, (entry) => entry.notificationKey),
+      pendingNotifications: sortByKey(
+        run.notificationSelection.pendingNotifications,
+        (entry) => entry.notificationKey,
+      ),
       previousLedgerDigest,
       initialLedgerDigest,
     });
   }
   if (action === "acknowledge-current") {
-    if (run.notificationSelection.action !== "skip_digest" || run.notificationSelection.reason !== "no_candidates") {
+    if (
+      run.notificationSelection.action !== "skip_digest" ||
+      run.notificationSelection.reason !== "no_candidates"
+    ) {
       throw new TypeError("確認済みactionの通知選別が一致しません");
     }
     return Object.freeze({
       action,
       delivery: "acknowledged",
       acknowledgedEntries,
-      pendingNotifications: sortByKey(run.notificationSelection.pendingNotifications, (entry) => entry.notificationKey),
+      pendingNotifications: sortByKey(
+        run.notificationSelection.pendingNotifications,
+        (entry) => entry.notificationKey,
+      ),
       previousLedgerDigest,
       initialLedgerDigest,
     });

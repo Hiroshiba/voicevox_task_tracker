@@ -80,6 +80,7 @@ jobs:
       queue: max
     outputs:
       public_boundary_status: ${{ steps.collect_analysis.outputs.public_boundary_status }}
+      run_id: ${{ steps.collect_analysis.outputs.run_id }}
     steps:
       - name: ソースコードを取得
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -169,7 +170,8 @@ jobs:
               arguments+=(--repository "$repository")
             done
           fi
-          pnpm tracker:run "${arguments[@]}"
+          node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs "${arguments[@]}"
+          echo "run_id=$(jq -r '.runId' artifacts/run-reports/collect-analyze.json)" >> "$GITHUB_OUTPUT"
       - name: 公開可能なrun artifactを保存
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -230,6 +232,8 @@ jobs:
   persist-state:
     needs: collect-analyze
     runs-on: ubuntu-24.04
+    env:
+      VOICEVOX_EXPECTED_RUN_ID: ${{ needs.collect-analyze.outputs.run_id }}
     permissions:
       contents: write
     steps:
@@ -284,8 +288,12 @@ jobs:
           retention-days: 7
 
   build-pages:
-    needs: persist-state
+    needs:
+      - collect-analyze
+      - persist-state
     runs-on: ubuntu-24.04
+    env:
+      VOICEVOX_EXPECTED_RUN_ID: ${{ needs.collect-analyze.outputs.run_id }}
     permissions:
       contents: read
     outputs:
@@ -382,6 +390,8 @@ jobs:
       github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
+    env:
+      VOICEVOX_EXPECTED_RUN_ID: ${{ needs.collect-analyze.outputs.run_id }}
     permissions:
       contents: write
     outputs:
@@ -403,15 +413,17 @@ jobs:
         with:
           name: validated-public-run
           path: artifacts/workflow
+      - name: checkpointとruntimeを検証
+        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs verify-checkpoint
       - name: 通知候補の有無を確認
         id: detect-notification-candidates
         run: |
           has_notification_candidates="$(jq -er '
-            if .notificationAction == "send" and .notificationSelection.action == "create_digest" then
+            if .payload.validatedPayload.notificationAction == "send" and .payload.validatedPayload.notificationSelection.action == "create_digest" then
               "true"
-            elif (.notificationAction == "send" and .notificationSelection.action == "skip_digest" and .notificationSelection.reason == "no_candidates") or
-              (.notificationAction == "acknowledge-current" and .notificationSelection.action == "skip_digest" and .notificationSelection.reason == "no_candidates") or
-              (.notificationAction == "hold" and .notificationSelection.action == "skip_digest" and .notificationSelection.reason == "held") then
+            elif (.payload.validatedPayload.notificationAction == "send" and .payload.validatedPayload.notificationSelection.action == "skip_digest" and .payload.validatedPayload.notificationSelection.reason == "no_candidates") or
+              (.payload.validatedPayload.notificationAction == "acknowledge-current" and .payload.validatedPayload.notificationSelection.action == "skip_digest" and .payload.validatedPayload.notificationSelection.reason == "no_candidates") or
+              (.payload.validatedPayload.notificationAction == "hold" and .payload.validatedPayload.notificationSelection.action == "skip_digest" and .payload.validatedPayload.notificationSelection.reason == "held") then
               "false"
             else
               error("workflow artifactの通知actionとselectionの組み合わせが不正です")
@@ -468,11 +480,15 @@ jobs:
           retention-days: 7
 
   publish-notification-history:
-    needs: notify-discord
+    needs:
+      - collect-analyze
+      - notify-discord
     if: >-
       needs.notify-discord.result == 'success' &&
       needs.notify-discord.outputs.has_notification_candidates == 'true'
     runs-on: ubuntu-24.04
+    env:
+      VOICEVOX_EXPECTED_RUN_ID: ${{ needs.collect-analyze.outputs.run_id }}
     timeout-minutes: 25
     permissions:
       contents: read

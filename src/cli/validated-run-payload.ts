@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-
 import { z } from "zod";
 
 import {
@@ -12,12 +10,9 @@ import {
 } from "../application/tracking-run/stages/validate-run.js";
 import type { ValidatedRun } from "./run-publication/contracts.js";
 
-import {
-  hashCanonicalJson,
-  parseSha256Hash,
-  serializeCanonicalJson,
-} from "../canonical-json/index.js";
+import { parseSha256Hash, serializeCanonicalJson } from "../canonical-json/index.js";
 import type { Sha256Hash } from "../canonical-json/index.js";
+import type { ContentDigestPort } from "../application/tracking-run/ports.js";
 import {
   createAiCacheEntry,
   createPersonalReminderAiCacheEntry,
@@ -48,7 +43,6 @@ import {
   createPublicRepositoryAllowlist,
   isEligiblePublicRepository,
 } from "../github/public-repository-allowlist.js";
-import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
 import {
   assertStatePublicSafety,
   assertPersonalReminderEvidenceClosure,
@@ -61,7 +55,6 @@ import {
   type StateSnapshot,
 } from "../persistence/index.js";
 import { assertNonNullable } from "../util/index.js";
-import { CliWorkflowArtifactError } from "./errors.js";
 import {
   parseWorkflowIdentityWitness,
   parseWorkflowValidation,
@@ -70,7 +63,6 @@ import {
 } from "./workflow-artifact-validation.js";
 
 const actionsSecretNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
-const WORKFLOW_ARTIFACT_SCHEMA_VERSION = "18";
 const nonNegativeIntegerSchema = z.number().int().nonnegative();
 const dateTimeSchema = z.iso
   .datetime({
@@ -266,9 +258,7 @@ const runMetadataSchema = z
       });
     }
   });
-const workflowArtifactSchema = z.strictObject({
-  schemaVersion: z.literal(WORKFLOW_ARTIFACT_SCHEMA_VERSION),
-  kind: z.literal("validated_public_run"),
+export const validatedRunPayloadSchema = z.strictObject({
   notificationAction: notificationActionSchema,
   repositoryAllowlist: z.array(repositoryAllowlistEntrySchema),
   repositoryInventory: z.array(repositoryInventoryEntrySchema),
@@ -292,7 +282,7 @@ const workflowArtifactSchema = z.strictObject({
   }),
 });
 
-export type WorkflowArtifactRepositoryAllowlistEntry = Readonly<{
+export type ValidatedRunPayloadRepositoryAllowlistEntry = Readonly<{
   id: Repository["id"];
   owner: Repository["owner"];
   name: Repository["name"];
@@ -307,11 +297,9 @@ export type WorkflowRunMetadata = Readonly<{
 }>;
 
 /** collect-analyzeが後続jobへ渡す公開可能な検証済み成果物。 */
-export type WorkflowArtifact = Readonly<{
-  schemaVersion: typeof WORKFLOW_ARTIFACT_SCHEMA_VERSION;
-  kind: "validated_public_run";
+export type ValidatedRunPayload = Readonly<{
   notificationAction: NotificationAction;
-  repositoryAllowlist: readonly WorkflowArtifactRepositoryAllowlistEntry[];
+  repositoryAllowlist: readonly ValidatedRunPayloadRepositoryAllowlistEntry[];
   repositoryInventory: readonly Repository[];
   allowlistDigest: Sha256Hash;
   snapshot: StateSnapshot;
@@ -334,10 +322,13 @@ export type WorkflowArtifact = Readonly<{
   validated: ValidatedRun;
 }>;
 
-type WorkflowArtifactPublicValue = Omit<WorkflowArtifact, "validated">;
+export type ValidatedRunSerializablePayload = z.output<typeof validatedRunPayloadSchema>;
+type ValidatedRunPublicValue = Omit<ValidatedRunPayload, "validated">;
 
-/** 証明を除いたv18 artifact保存値を返す。 */
-export function workflowArtifactPayload(artifact: WorkflowArtifact): WorkflowArtifactPublicValue {
+/** 証明を除いたcheckpoint内の検証済みrun保存値を返す。 */
+export function validatedRunSerializablePayload(
+  artifact: ValidatedRunPayload,
+): ValidatedRunPublicValue {
   assertValidatedRun(artifact.validated);
   const { validated, ...payload } = artifact;
   void validated;
@@ -432,8 +423,8 @@ function createPersonalReminderAiCacheEntries(
 
 function createRepositoryAllowlist(
   values: readonly z.output<typeof repositoryAllowlistEntrySchema>[],
-): readonly WorkflowArtifactRepositoryAllowlistEntry[] {
-  const entries: readonly WorkflowArtifactRepositoryAllowlistEntry[] = values.map((value) =>
+): readonly ValidatedRunPayloadRepositoryAllowlistEntry[] {
+  const entries: readonly ValidatedRunPayloadRepositoryAllowlistEntry[] = values.map((value) =>
     Object.freeze({ ...value }),
   );
   const repositoryIds = new Set(entries.map((repository) => repository.id));
@@ -480,8 +471,8 @@ function assertRunConsistency(snapshot: StateSnapshot, metadata: WorkflowRunMeta
 }
 
 function assertWorkflowValidationConsistency(
-  artifact: WorkflowArtifactPublicValue,
-  validated: WorkflowArtifact["validated"],
+  artifact: ValidatedRunPublicValue,
+  validated: ValidatedRunPayload["validated"],
 ): void {
   const { core, metrics, repositoryAllowlist } = validated;
   if (
@@ -705,8 +696,11 @@ function normalizePagesUrl(value: string): string {
 }
 
 /** workflow artifactを独立した公開境界で再検証する。 */
-export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
-  const result = workflowArtifactSchema.safeParse(value);
+export function parseValidatedRunPayload(
+  value: unknown,
+  digest: ContentDigestPort,
+): ValidatedRunPayload {
+  const result = validatedRunPayloadSchema.safeParse(value);
   if (!result.success) {
     throw new TypeError("workflow artifactがschemaに適合しません", {
       cause: result.error,
@@ -728,8 +722,6 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
   const validation = parseWorkflowValidation(result.data.validation);
   const identityWitness = parseWorkflowIdentityWitness(result.data.identityWitness);
   const artifact = Object.freeze({
-    schemaVersion: WORKFLOW_ARTIFACT_SCHEMA_VERSION,
-    kind: "validated_public_run",
     notificationAction: result.data.notificationAction,
     repositoryAllowlist: createRepositoryAllowlist(result.data.repositoryAllowlist),
     repositoryInventory: Object.freeze(
@@ -765,16 +757,19 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
     throw new TypeError("workflow artifactの保存値が検証済みの正規形と一致しません");
   }
   if (
-    artifact.presentationDigests.runMetadata !== hashCanonicalJson(artifact.runMetadata) ||
-    artifact.presentationDigests.pagesUrl !== hashCanonicalJson(artifact.pagesUrl) ||
-    artifact.presentationDigests.discordSettings !== hashCanonicalJson(artifact.discordSettings)
+    artifact.presentationDigests.runMetadata !==
+      digest.sha256Utf8(serializeCanonicalJson(artifact.runMetadata)) ||
+    artifact.presentationDigests.pagesUrl !==
+      digest.sha256Utf8(serializeCanonicalJson(artifact.pagesUrl)) ||
+    artifact.presentationDigests.discordSettings !==
+      digest.sha256Utf8(serializeCanonicalJson(artifact.discordSettings))
   ) {
     throw new TypeError("workflow artifactの公開設定とrun metadataがwitnessに一致しません");
   }
   assertRunConsistency(snapshot, runMetadata);
   assertNotificationActionConsistency(artifact.notificationAction, notificationSelection);
   assertNotificationSelectionConsistency(snapshot, notificationLedger, notificationSelection);
-  assertWorkflowArtifactPublicSafety(artifact, artifact.repositoryInventory, []);
+  assertValidatedRunPayloadPublicSafety(artifact, artifact.repositoryInventory, [], digest);
   const run: Omit<ValidatedRun, "proof"> = Object.freeze({
     ...validation,
     snapshot,
@@ -786,8 +781,8 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
     notificationPreview,
     repositoryAllowlist: createPublicRepositoryAllowlist(artifact.repositoryInventory).repositories,
   });
-  const validated = revalidateSerializedRun(run, nodeContentDigestPort, () => {
-    assertWorkflowArtifactPublicSafety(artifact, artifact.repositoryInventory, []);
+  const validated = revalidateSerializedRun(run, digest, () => {
+    assertValidatedRunPayloadPublicSafety(artifact, artifact.repositoryInventory, [], digest);
   });
   assertWorkflowValidationConsistency(artifact, validated);
   const validatedArtifact = Object.freeze({
@@ -822,8 +817,9 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
 }
 
 function assertRepositoryAllowlistConsistency(
-  artifact: WorkflowArtifactPublicValue,
+  artifact: ValidatedRunPublicValue,
   inventory: readonly Repository[],
+  digest: ContentDigestPort,
 ): void {
   const collectedAllowlist = inventory.filter(isEligiblePublicRepository);
   const artifactRepositories = new Map(
@@ -840,15 +836,17 @@ function assertRepositoryAllowlistConsistency(
     }
   }
   if (
-    hashCanonicalJson(
-      artifact.repositoryInventory.map((repository) => ({
-        id: repository.id,
-        owner: repository.owner,
-        name: repository.name,
-        visibility: repository.visibility,
-        archived: repository.archived,
-        disabled: repository.disabled,
-      })),
+    digest.sha256Utf8(
+      serializeCanonicalJson(
+        artifact.repositoryInventory.map((repository) => ({
+          id: repository.id,
+          owner: repository.owner,
+          name: repository.name,
+          visibility: repository.visibility,
+          archived: repository.archived,
+          disabled: repository.disabled,
+        })),
+      ),
     ) !== artifact.allowlistDigest ||
     serializeCanonicalJson(artifact.repositoryInventory) !==
       serializeCanonicalJson(collectedAllowlist)
@@ -861,12 +859,13 @@ function assertRepositoryAllowlistConsistency(
 }
 
 /** artifact全体へraw inventoryと既知secretを使った公開安全性検査を適用する。 */
-export function assertWorkflowArtifactPublicSafety(
-  artifact: WorkflowArtifactPublicValue,
+export function assertValidatedRunPayloadPublicSafety(
+  artifact: ValidatedRunPublicValue,
   inventory: readonly Repository[],
   knownSecrets: readonly string[],
+  digest: ContentDigestPort,
 ): void {
-  assertRepositoryAllowlistConsistency(artifact, inventory);
+  assertRepositoryAllowlistConsistency(artifact, inventory, digest);
   assertStatePublicSafety({
     snapshot: artifact.snapshot,
     repositoryInventory: inventory,
@@ -891,40 +890,8 @@ export function assertWorkflowArtifactPublicSafety(
 }
 
 /** workflow artifactの公開repository inventoryを返す。 */
-export function workflowArtifactRepositoryInventory(
-  artifact: Pick<WorkflowArtifact, "repositoryInventory">,
+export function validatedRunPayloadRepositoryInventory(
+  artifact: Pick<ValidatedRunPayload, "repositoryInventory">,
 ): readonly Repository[] {
   return artifact.repositoryInventory;
-}
-
-function hasErrorCode(error: unknown, code: string): boolean {
-  return typeof error === "object" && error != null && "code" in error && error.code === code;
-}
-
-/** 前stageが出力したJSON artifactを読み、全境界検証をやり直す。 */
-export async function readWorkflowArtifactFile(path: string): Promise<WorkflowArtifact> {
-  let source: string;
-  try {
-    source = await readFile(path, "utf8");
-  } catch (error: unknown) {
-    throw new CliWorkflowArtifactError(
-      path,
-      hasErrorCode(error, "ENOENT") ? "missing" : "invalid",
-      {
-        cause: error,
-      },
-    );
-  }
-  let value: unknown;
-  try {
-    const parseJson: (input: string) => unknown = JSON.parse;
-    value = parseJson(source);
-  } catch (error: unknown) {
-    throw new CliWorkflowArtifactError(path, "invalid", { cause: error });
-  }
-  try {
-    return createWorkflowArtifact(value);
-  } catch (error: unknown) {
-    throw new CliWorkflowArtifactError(path, "invalid", { cause: error });
-  }
 }

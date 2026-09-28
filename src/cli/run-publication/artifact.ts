@@ -1,10 +1,11 @@
 import {
-  assertWorkflowArtifactPublicSafety,
-  createWorkflowArtifact,
-} from "../workflow-artifact.js";
+  assertValidatedRunPayloadPublicSafety,
+  parseValidatedRunPayload,
+} from "../validated-run-payload.js";
 import { hashCanonicalJson } from "../../canonical-json/index.js";
 import { assertValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
-import type { WorkflowArtifact } from "../workflow-artifact.js";
+import type { ValidatedRunPayload } from "../validated-run-payload.js";
+import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content-digest.js";
 import type { DailyRunInvocation } from "../daily-transaction.js";
 import type {
   PublicationConfiguration,
@@ -24,12 +25,9 @@ export type CreateCollectAnalyzeArtifactInput = Readonly<{
 }>;
 
 /** 完全性検証済みcollect-analyze runを分割workflow artifactへ変換する。 */
-export function createCollectAnalyzeArtifact(
+export function createCollectAnalyzePayload(
   input: CreateCollectAnalyzeArtifactInput,
-): WorkflowArtifact {
-  if (input.invocation.command.kind !== "collect-analyze") {
-    throw new TypeError("collect-analyze以外のrunからworkflow artifactを生成できません");
-  }
+): ValidatedRunPayload {
   assertValidatedRun(input.validated);
   if (
     input.invocation.runId !== input.validated.core.identity.runId ||
@@ -49,53 +47,55 @@ export function createCollectAnalyzeArtifact(
   });
   const publishedPagesUrl = pagesUrl(input.configuration.config);
   const publishedDiscordSettings = discordDeliverySettings(input.configuration.config);
-  const artifact = createWorkflowArtifact({
-    schemaVersion: "18",
-    kind: "validated_public_run",
-    notificationAction: input.validated.core.executionPolicy.notificationAction,
-    repositoryAllowlist: input.validated.repositoryAllowlist.map((repository) => ({
-      id: repository.id,
-      owner: repository.owner,
-      name: repository.name,
-    })),
-    repositoryInventory: input.validated.repositoryAllowlist,
-    allowlistDigest: input.validated.core.allowlistDigest,
-    snapshot: input.validated.snapshot,
-    historyInputEvents: input.validated.historyInputEvents,
-    notificationLedger: input.validated.notificationLedger,
-    notificationSelection: input.validated.notificationSelection,
-    notificationPreview: input.validated.notificationPreview,
-    runMetadata,
-    aiCacheEntries: input.validated.aiCacheAdditions,
-    personalReminderAiCacheEntries: input.validated.personalReminderAiCacheAdditions,
-    pagesUrl: publishedPagesUrl,
-    discordSettings: publishedDiscordSettings,
-    validation: {
-      core: input.validated.core,
-      previousNotificationLedger: input.validated.previousNotificationLedger,
-      publicationInputs: input.validated.publicationInputs,
-      metrics: input.validated.metrics,
-      evidenceClosureSummary: input.validated.evidenceClosureSummary,
-      evidenceClosureWitness: input.validated.evidenceClosureWitness,
-      publicDiagnosticsSummary: input.validated.publicDiagnosticsSummary,
-      artifactValueDigests: input.validated.artifactValueDigests,
+  const artifact = parseValidatedRunPayload(
+    {
+      notificationAction: input.validated.core.executionPolicy.notificationAction,
+      repositoryAllowlist: input.validated.repositoryAllowlist.map((repository) => ({
+        id: repository.id,
+        owner: repository.owner,
+        name: repository.name,
+      })),
+      repositoryInventory: input.validated.repositoryAllowlist,
+      allowlistDigest: input.validated.core.allowlistDigest,
+      snapshot: input.validated.snapshot,
+      historyInputEvents: input.validated.historyInputEvents,
+      notificationLedger: input.validated.notificationLedger,
+      notificationSelection: input.validated.notificationSelection,
+      notificationPreview: input.validated.notificationPreview,
+      runMetadata,
+      aiCacheEntries: input.validated.aiCacheAdditions,
+      personalReminderAiCacheEntries: input.validated.personalReminderAiCacheAdditions,
+      pagesUrl: publishedPagesUrl,
+      discordSettings: publishedDiscordSettings,
+      validation: {
+        core: input.validated.core,
+        previousNotificationLedger: input.validated.previousNotificationLedger,
+        publicationInputs: input.validated.publicationInputs,
+        metrics: input.validated.metrics,
+        evidenceClosureSummary: input.validated.evidenceClosureSummary,
+        evidenceClosureWitness: input.validated.evidenceClosureWitness,
+        publicDiagnosticsSummary: input.validated.publicDiagnosticsSummary,
+        artifactValueDigests: input.validated.artifactValueDigests,
+      },
+      identityWitness: {
+        identity: input.validated.core.identity,
+        executionPolicy: input.validated.core.executionPolicy,
+        baseRevision: input.validated.core.baseRevision,
+        configDigest: input.validated.core.configDigest,
+      },
+      presentationDigests: {
+        runMetadata: hashCanonicalJson(runMetadata),
+        pagesUrl: hashCanonicalJson(publishedPagesUrl),
+        discordSettings: hashCanonicalJson(publishedDiscordSettings),
+      },
     },
-    identityWitness: {
-      identity: input.validated.core.identity,
-      executionPolicy: input.validated.core.executionPolicy,
-      baseRevision: input.validated.core.baseRevision,
-      configDigest: input.validated.core.configDigest,
-    },
-    presentationDigests: {
-      runMetadata: hashCanonicalJson(runMetadata),
-      pagesUrl: hashCanonicalJson(publishedPagesUrl),
-      discordSettings: hashCanonicalJson(publishedDiscordSettings),
-    },
-  });
-  assertWorkflowArtifactPublicSafety(
+    nodeContentDigestPort,
+  );
+  assertValidatedRunPayloadPublicSafety(
     artifact,
     input.inventory.inventory,
     input.configuration.credentials.knownSecrets,
+    nodeContentDigestPort,
   );
   return artifact;
 }

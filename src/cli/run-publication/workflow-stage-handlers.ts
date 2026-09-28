@@ -1,12 +1,11 @@
 import { resolve } from "node:path";
 
-import { assertValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
-import { planPublication } from "../../publication/plan-publication.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
-import { assertHistoricalAiWitnessMatchesBaseSnapshot } from "../../application/tracking-run/stages/run-validation-artifact-witness.js";
 import type { Config } from "../../config/index.js";
 import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content-digest.js";
-import { joinStatePath } from "../../persistence/index.js";
+import { joinStatePath, readExactStateSnapshot } from "../../persistence/index.js";
+import type { StateBranchAdapter } from "../../persistence/index.js";
+import type { BaseStateRevision } from "../../application/tracking-run/contracts/run-core.js";
 import { CliWorkflowArtifactError } from "../errors.js";
 import { readOptionalRunReportFile } from "../workflow-run-report.js";
 import type {
@@ -14,14 +13,21 @@ import type {
   NotifyDiscordCliCommand,
   NotifyOperationsCliCommand,
   PersistStateCliCommand,
+  VerifyCheckpointCliCommand,
 } from "../command.js";
 import { deliverDiscord, deliverOperationsAlert } from "../notification-delivery-runtime.js";
 import { requireEnvironmentValue } from "../production-runtime-setup.js";
-import { workflowArtifactRepositoryInventory } from "../workflow-artifact.js";
-import type {
-  RunPublicationAdapters,
-  ValidatedRun,
-} from "./contracts.js";
+import { validatedRunPayloadRepositoryInventory } from "../validated-run-payload.js";
+import {
+  readPublicationCheckpointFile,
+  readPublicationCheckpointHeader,
+} from "../publication-checkpoint-file.js";
+import { readPublicationRuntimeContext } from "../publication-runtime.js";
+import {
+  assertBoundPublicationCheckpoint,
+  type BoundPublicationCheckpoint,
+} from "../publication-checkpoint-binding.js";
+import type { RunPublicationAdapters, ValidatedRun } from "./contracts.js";
 import { buildPublicPages } from "./pages.js";
 import { assertPlannedAiCacheAdditions, persistSuccessfulRunCompletion } from "./persistence.js";
 import { discordDeliverySettings, projectPublicationSettings } from "./settings.js";
@@ -33,11 +39,7 @@ import {
 
 type WorkflowStateAdapters = Pick<
   RunPublicationAdapters,
-  | "repositoryPath"
-  | "readWorkflowArtifact"
-  | "loadConfig"
-  | "openStateSession"
-  | "createStateBranchAdapter"
+  "repositoryPath" | "environment" | "loadConfig" | "openStateSession" | "createStateBranchAdapter"
 >;
 
 type WorkflowDeliveryAdapters = Pick<
@@ -88,43 +90,99 @@ function assertWorkflowConfig(
   }
 }
 
+async function readWorkflowCheckpoint(
+  adapters: WorkflowStateAdapters,
+  artifactPath: string,
+  config: Config,
+  adapter: StateBranchAdapter,
+  baseRevision: BaseStateRevision,
+): Promise<BoundPublicationCheckpoint> {
+  const header = await readPublicationCheckpointHeader(artifactPath);
+  if (header.executionPolicy.executionShape !== "split_workflow") {
+    throw new TypeError("分割workflowにsequential checkpointは使えません");
+  }
+  const expectedRunId = adapters.environment["VOICEVOX_EXPECTED_RUN_ID"];
+  if (expectedRunId == null || expectedRunId.length === 0) {
+    throw new TypeError("workflowから期待するrun IDが渡されていません");
+  }
+  const previousSnapshot = await readExactStateSnapshot(
+    adapter,
+    config.state,
+    config.staleness.timezone,
+    baseRevision,
+  );
+  const runtime = await readPublicationRuntimeContext(
+    adapters.repositoryPath,
+    header.executionPolicy,
+    adapters.environment,
+  );
+  const bound = await readPublicationCheckpointFile(artifactPath, {
+    expectedRunId,
+    baseStateRevision: baseRevision,
+    configDigest: nodeContentDigestPort.sha256Utf8(serializeCanonicalJson(config)),
+    runtime,
+    baseWitness: {
+      revision: baseRevision,
+      previousAiSnapshot:
+        previousSnapshot.status === "available"
+          ? {
+              trackedItems: previousSnapshot.snapshot.items,
+              collectionRepositories: previousSnapshot.snapshot.collection.repositories,
+            }
+          : undefined,
+    },
+  });
+  assertBoundPublicationCheckpoint(bound);
+  assertWorkflowConfig(bound, config);
+  return bound;
+}
+
+/** artifactとsidecarをexact baseへ結合し、効果なしで検証する。 */
+export async function verifyWorkflowCheckpoint(
+  dependencies: Readonly<{ adapters: WorkflowStateAdapters }>,
+  command: VerifyCheckpointCliCommand,
+): Promise<void> {
+  const config = await dependencies.adapters.loadConfig(
+    resolve(dependencies.adapters.repositoryPath, command.configPath),
+  );
+  const artifactPath = resolve(dependencies.adapters.repositoryPath, command.artifactPath);
+  const header = await readPublicationCheckpointHeader(artifactPath);
+  const adapter = dependencies.adapters.createStateBranchAdapter();
+  await readWorkflowCheckpoint(
+    dependencies.adapters,
+    artifactPath,
+    config,
+    adapter,
+    header.baseStateRevision,
+  );
+}
+
 /** workflow artifactの検証済みstateを初期保存する。 */
 export async function persistWorkflowState(
   dependencies: Readonly<{ adapters: WorkflowStateAdapters }>,
   command: PersistStateCliCommand,
 ): Promise<void> {
-  const artifact = await dependencies.adapters.readWorkflowArtifact(
-    resolve(dependencies.adapters.repositoryPath, command.artifactPath),
-  );
-  assertValidatedRun(artifact.validated);
-  const planned = planPublication(artifact.validated, nodeContentDigestPort);
   const config = await dependencies.adapters.loadConfig(
     resolve(dependencies.adapters.repositoryPath, command.configPath),
   );
-  assertWorkflowConfig(artifact, config);
   const adapter = dependencies.adapters.createStateBranchAdapter();
   const baseRevision = await adapter.resolveHead(config.state.branch);
-  if (
-    serializeCanonicalJson(baseRevision) !==
-    serializeCanonicalJson(artifact.validated.core.baseRevision)
-  ) {
-    throw new TypeError("workflow artifactとstate branchの基準revisionが一致しません");
-  }
+  const artifact = await readWorkflowCheckpoint(
+    dependencies.adapters,
+    resolve(dependencies.adapters.repositoryPath, command.artifactPath),
+    config,
+    adapter,
+    baseRevision,
+  );
+  const planned = artifact.planned;
   const session = await dependencies.adapters.openStateSession(
     adapter,
     config.state,
     config.staleness.timezone,
   );
-  const previousSnapshot = await session.loadSnapshot();
-  assertHistoricalAiWitnessMatchesBaseSnapshot(
-    artifact.validated.evidenceClosureWitness,
-    previousSnapshot.status === "available"
-      ? {
-          trackedItems: previousSnapshot.snapshot.items,
-          collectionRepositories: previousSnapshot.snapshot.collection.repositories,
-        }
-      : undefined,
-  );
+  if (serializeCanonicalJson(session.baseRevision) !== serializeCanonicalJson(baseRevision)) {
+    throw new TypeError("workflow checkpointの固定base revisionがstate sessionと一致しません");
+  }
   for (const entry of artifact.validated.aiCacheAdditions) {
     await session.aiCache.write(entry);
   }
@@ -136,7 +194,7 @@ export async function persistWorkflowState(
     snapshot: planned.publicationPlan.initialStateWriteSet.snapshot,
     historyInputEvents: planned.publicationPlan.initialStateWriteSet.historyInputEvents,
     notificationLedger: planned.publicationPlan.initialStateWriteSet.notificationLedger,
-    repositoryInventory: workflowArtifactRepositoryInventory(artifact),
+    repositoryInventory: validatedRunPayloadRepositoryInventory(artifact.validatedPayload),
     repositoryAllowlist: artifact.validated.repositoryAllowlist,
     knownSecrets: [],
     expectedHistoryBase: planned.publicationPlan.initialStateWriteSet.paths.historyBase,
@@ -153,17 +211,22 @@ export async function buildWorkflowPages(
   }>,
   command: BuildPagesCliCommand,
 ): Promise<void> {
-  const artifact = await dependencies.adapters.readWorkflowArtifact(
-    resolve(dependencies.adapters.repositoryPath, command.artifactPath),
-  );
-  assertValidatedRun(artifact.validated);
-  const planned = planPublication(artifact.validated, nodeContentDigestPort);
   const config = await dependencies.adapters.loadConfig(
     resolve(dependencies.adapters.repositoryPath, command.configPath),
   );
-  assertWorkflowConfig(artifact, config);
+  const artifactPath = resolve(dependencies.adapters.repositoryPath, command.artifactPath);
+  const header = await readPublicationCheckpointHeader(artifactPath);
+  const adapter = dependencies.adapters.createStateBranchAdapter();
+  const artifact = await readWorkflowCheckpoint(
+    dependencies.adapters,
+    artifactPath,
+    config,
+    adapter,
+    header.baseStateRevision,
+  );
+  const planned = artifact.planned;
   const session = await dependencies.adapters.openStateSession(
-    dependencies.adapters.createStateBranchAdapter(),
+    adapter,
     config.state,
     config.staleness.timezone,
   );
@@ -176,7 +239,7 @@ export async function buildWorkflowPages(
   const historyRecords = await session.loadHistoryRecords();
   await buildPublicPages({
     writePublicData: dependencies.adapters.writePublicData,
-    inventory: workflowArtifactRepositoryInventory(artifact),
+    inventory: validatedRunPayloadRepositoryInventory(artifact.validatedPayload),
     planned,
     historyRecords,
     outputDirectory: resolve(dependencies.adapters.repositoryPath, command.outputDirectory),
@@ -187,24 +250,29 @@ export async function buildWorkflowPages(
 /** workflowのDiscord通知と完了保存を実行する。 */
 export async function notifyWorkflowDiscord(
   dependencies: Readonly<{
-    adapters: WorkflowDeliveryAdapters & Pick<RunPublicationAdapters, "readWorkflowArtifact">;
+    adapters: WorkflowDeliveryAdapters & WorkflowStateAdapters;
   }>,
   command: NotifyDiscordCliCommand,
 ): Promise<void> {
-  const artifact = await dependencies.adapters.readWorkflowArtifact(
-    resolve(dependencies.adapters.repositoryPath, command.artifactPath),
-  );
-  assertValidatedRun(artifact.validated);
-  const planned = planPublication(artifact.validated, nodeContentDigestPort);
   const config = await dependencies.adapters.loadConfig(
     resolve(dependencies.adapters.repositoryPath, command.configPath),
   );
-  assertWorkflowConfig(artifact, config);
-  if (command.pagesUrl !== artifact.pagesUrl) {
+  const artifactPath = resolve(dependencies.adapters.repositoryPath, command.artifactPath);
+  const header = await readPublicationCheckpointHeader(artifactPath);
+  const adapter = dependencies.adapters.createStateBranchAdapter();
+  const artifact = await readWorkflowCheckpoint(
+    dependencies.adapters,
+    artifactPath,
+    config,
+    adapter,
+    header.baseStateRevision,
+  );
+  const planned = artifact.planned;
+  if (command.pagesUrl !== artifact.validatedPayload.pagesUrl) {
     throw new TypeError("deploy済みPages URLがworkflow artifactの公開先と一致しません");
   }
   const session = await dependencies.adapters.openStateSession(
-    dependencies.adapters.createStateBranchAdapter(),
+    adapter,
     config.state,
     config.staleness.timezone,
   );
@@ -224,10 +292,10 @@ export async function notifyWorkflowDiscord(
     await persistSuccessfulRunCompletion({
       now: dependencies.adapters.now,
       state,
-      repositoryInventory: workflowArtifactRepositoryInventory(artifact),
+      repositoryInventory: validatedRunPayloadRepositoryInventory(artifact.validatedPayload),
       repositoryAllowlist: artifact.validated.repositoryAllowlist,
       planned,
-      runMetadata: artifact.runMetadata,
+      runMetadata: artifact.validatedPayload.runMetadata,
       delivery: {
         notificationLedger: state.notificationLedger,
         notificationCount: 0,
@@ -236,22 +304,22 @@ export async function notifyWorkflowDiscord(
     });
     return;
   }
-  const knownSecrets = artifact.discordSettings.enabled
+  const knownSecrets = artifact.validatedPayload.discordSettings.enabled
     ? Object.freeze([
         requireEnvironmentValue(
           dependencies.adapters.environment,
-          artifact.discordSettings.webhookSecretName,
+          artifact.validatedPayload.discordSettings.webhookSecretName,
         ),
         requireEnvironmentValue(
           dependencies.adapters.environment,
-          artifact.discordSettings.operationsWebhookSecretName,
+          artifact.validatedPayload.discordSettings.operationsWebhookSecretName,
         ),
       ])
     : Object.freeze([]);
   const result = await deliverDiscord(
     dependencies.adapters,
     state,
-    workflowArtifactRepositoryInventory(artifact),
+    validatedRunPayloadRepositoryInventory(artifact.validatedPayload),
     artifact.validated.repositoryAllowlist,
     knownSecrets,
     planned,
@@ -260,10 +328,10 @@ export async function notifyWorkflowDiscord(
   await persistSuccessfulRunCompletion({
     now: dependencies.adapters.now,
     state,
-    repositoryInventory: workflowArtifactRepositoryInventory(artifact),
+    repositoryInventory: validatedRunPayloadRepositoryInventory(artifact.validatedPayload),
     repositoryAllowlist: artifact.validated.repositoryAllowlist,
     planned,
-    runMetadata: artifact.runMetadata,
+    runMetadata: artifact.validatedPayload.runMetadata,
     delivery: {
       notificationLedger: result.notificationLedger,
       notificationCount: result.notificationCount,

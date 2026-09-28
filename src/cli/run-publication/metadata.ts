@@ -3,8 +3,8 @@ import type { StateRunReport, StateSnapshot } from "../../persistence/index.js";
 import type { UtcIsoDateTime } from "../../domain/index.js";
 import type { DailyRunInvocation } from "../daily-transaction.js";
 import type { RunMetrics } from "../run-report.js";
-import { createWorkflowRunMetadata } from "../workflow-artifact.js";
-import type { WorkflowRunMetadata } from "../workflow-artifact.js";
+import { createWorkflowRunMetadata } from "../validated-run-payload.js";
+import type { WorkflowRunMetadata } from "../validated-run-payload.js";
 import type { ValidatedRun } from "./contracts.js";
 
 /** 永続化対象のrun metricだけを現在の計算式で投影する。 */

@@ -28,7 +28,6 @@ import {
 } from "./production-runtime.js";
 import { verifyPersistentStateDirectory } from "./state-verification.js";
 import { parseSandboxContext } from "./sandbox-context.js";
-import { readWorkflowArtifactFile } from "./workflow-artifact.js";
 
 const DEFAULT_PAGES_OUTPUT_DIRECTORY = "artifacts/workflow/pages";
 
@@ -43,7 +42,6 @@ type ConcreteOperationName =
   | "loadConfig"
   | "openStateSession"
   | "readSandboxContext"
-  | "readWorkflowArtifact"
   | "verifyStateDirectory";
 
 /** 合成rootへ注入する外部接続、時刻、永続化の境界。 */
@@ -64,7 +62,6 @@ function createProductionAdapters(adapters: CliCompositionAdapters): ProductionR
     executeCodexPersonalReminderAnalysis,
     readSandboxContext: async (path) =>
       parseSandboxContext(JSON.parse(await readFile(path, "utf8"))),
-    readWorkflowArtifact: readWorkflowArtifactFile,
     verifyStateDirectory: verifyPersistentStateDirectory,
   });
 }
