@@ -178,7 +178,7 @@ const ledgerReservationSchema = z.strictObject({
   status: z.literal("reserved"),
 });
 const notificationSelectionSkipReasonSchema = z.enum(["no_candidates", "held"]);
-const notificationSelectionSchema = z.discriminatedUnion("action", [
+export const notificationSelectionSchema = z.discriminatedUnion("action", [
   z.strictObject({
     action: z.literal("skip_digest"),
     reason: notificationSelectionSkipReasonSchema,
@@ -193,7 +193,7 @@ const notificationSelectionSchema = z.discriminatedUnion("action", [
     pendingNotifications: z.array(pendingNotificationSchema),
   }),
 ]);
-const discordSettingsSchema = z.strictObject({
+export const discordSettingsSchema = z.strictObject({
   enabled: z.boolean(),
   webhookSecretName: actionsSecretNameSchema,
   operationsWebhookSecretName: actionsSecretNameSchema,
