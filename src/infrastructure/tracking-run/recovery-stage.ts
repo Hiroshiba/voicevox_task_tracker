@@ -68,11 +68,7 @@ function latestPagesDeploymentReceipt(
   return undefined;
 }
 
-function assertNotificationLedgerSafe(
-  record: DurablePublicationRecord,
-  ledger: StateNotificationLedger,
-  receipts: readonly Receipt[],
-): void {
+function assertNotificationReceiptsUnambiguous(receipts: readonly Receipt[]): void {
   if (
     receipts.some(
       (receipt) =>
@@ -80,17 +76,6 @@ function assertNotificationLedgerSafe(
     )
   ) {
     throw new TypeError("Discord結果が曖昧な通知を自動再開できません");
-  }
-  if (record.notificationOutbox.action !== "send") {
-    return;
-  }
-  const keys = selectedNotificationKeys(record);
-  if (
-    ledger.entries.some(
-      (entry) => keys.has(entry.notificationKey) && entry.status === "delivery_started",
-    )
-  ) {
-    throw new TypeError("配送開始済みの通知は外部結果の手動解決が必要です");
   }
 }
 
@@ -117,6 +102,10 @@ export function selectRecoveryStage(
   digest: ContentDigestPort,
 ): RecoveryStageInput {
   const { marker, record, receiptChain } = base;
+  if (notificationLedger.entries.some((entry) => entry.status === "delivery_started")) {
+    throw new TypeError("配送開始済みの通知は外部結果の手動解決が必要です");
+  }
+  assertNotificationReceiptsUnambiguous(receiptChain);
   if (marker.phase === "initial_state_committed") {
     const deployed = latestPagesDeploymentReceipt(receiptChain, "initial");
     if (deployed?.effectCertainty === "ambiguous") {
@@ -126,7 +115,6 @@ export function selectRecoveryStage(
       throw new TypeError("新しいrunによって初回Pages公開が無効化されています");
     }
     if (deployed?.effectCertainty === "committed" && deployed.result != null) {
-      assertNotificationLedgerSafe(record, notificationLedger, receiptChain);
       return Object.freeze({
         ...base,
         stage: "notifications",
@@ -144,7 +132,6 @@ export function selectRecoveryStage(
     throw new TypeError("通知段階のPages保存証拠が一致しません");
   }
   if (marker.phase === "notifications_in_progress") {
-    assertNotificationLedgerSafe(record, notificationLedger, receiptChain);
     const runtimeIdentityDigest = digest.sha256Utf8(serializeCanonicalJson(record.runtimeIdentity));
     const stateEvidence = {
       exactStateRevision: base.exactStateRevision,
@@ -157,6 +144,7 @@ export function selectRecoveryStage(
       },
       evidence,
     };
+    const lastReceipt = receiptChain.at(-1);
     const observedReceipt = observeInitialPagesDeployment(
       {
         state: stateEvidence,
@@ -169,12 +157,9 @@ export function selectRecoveryStage(
         },
         invocationId: observation.invocationId,
         localAttemptIndex: 0,
-        phaseSequence: Math.max(
-          marker.phaseSequence + 1,
-          (receiptChain.at(-1)?.phaseSequence ?? 0) + 1,
-        ),
-        previousReceiptDigest:
-          receiptChain.at(-1)?.receiptDigest ?? evidence.deploymentReceiptDigest,
+        phaseSequence:
+          lastReceipt == null ? marker.phaseSequence + 1 : lastReceipt.phaseSequence + 1,
+        previousReceiptDigest: lastReceipt?.receiptDigest ?? evidence.deploymentReceiptDigest,
         observedAt: observation.observedAt,
       },
       digest,
@@ -191,13 +176,7 @@ export function selectRecoveryStage(
     });
   }
   if (marker.phase === "notifications_settled") {
-    if (notificationLedger.entries.some((entry) => entry.status === "delivery_started")) {
-      throw new TypeError("通知settlement後のledgerに配送開始中のentryがあります");
-    }
     return Object.freeze({ ...base, stage: "run_finalization", notificationLedger });
-  }
-  if (notificationLedger.entries.some((entry) => entry.status === "delivery_started")) {
-    throw new TypeError("run確定後のledgerに配送開始中のentryがあります");
   }
   const selectedKeys = selectedNotificationKeys(record);
   if (
