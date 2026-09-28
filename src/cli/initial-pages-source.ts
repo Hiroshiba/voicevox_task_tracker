@@ -16,6 +16,7 @@ import { verifyRunTransactionFiles } from "../persistence/state-transaction-file
 import { assertStateValuesPublicSafety } from "../persistence/public-safety.js";
 import { parseReceipt } from "../application/tracking-run/receipt-codec.js";
 import type { InitialStateCommitReceipt } from "../application/tracking-run/receipt-schema.js";
+import type { StateCommitReceiptEvidence } from "../application/tracking-run/observed-state-commit.js";
 import {
   resumeInitialPagesBuild,
   type InitialPagesBuildInput,
@@ -62,6 +63,43 @@ function readHistoryRecords(
   return Object.freeze(records);
 }
 
+/** 初回receiptをexact commitの再観測結果へ結び付ける。 */
+export async function verifyInitialStateCommitReceiptAtRevision(
+  adapter: StateBranchAdapter,
+  stateConfiguration: StatePersistenceConfiguration,
+  initialReceipt: InitialStateCommitReceipt,
+  observedAt: string,
+): Promise<Extract<StateCommitReceiptEvidence, { receiptType: "initial_state_commit" }>> {
+  const receipt = parseReceipt(initialReceipt, digest);
+  if (
+    receipt.receiptType !== "initial_state_commit" ||
+    receipt.phaseSequence !== 1 ||
+    receipt.previousReceiptDigest != null
+  ) {
+    throw new TypeError("初回Pagesのstate commit receiptが初回の連鎖位置にありません");
+  }
+  const revision = receipt.result.resultingStateRevision;
+  const observed = await observeStateCommitAtRevision(
+    adapter,
+    stateConfiguration,
+    revision,
+    revision,
+    "initial_state_commit",
+    { invocationId: randomUUID(), observedAt, position: { kind: "first" } },
+  );
+  if (observed.evidence.receiptType !== "initial_state_commit") {
+    throw new TypeError("初回Pagesのstate commit証拠の種別が不正です");
+  }
+  if (
+    serializeCanonicalJson(receipt.result) !== serializeCanonicalJson(observed.receipt.result) ||
+    serializeCanonicalJson(receipt.binding) !== serializeCanonicalJson(observed.receipt.binding) ||
+    receipt.operationId !== observed.receipt.operationId
+  ) {
+    throw new TypeError("初回Pagesのstate commit receiptとexact commitが一致しません");
+  }
+  return observed.evidence;
+}
+
 /** receiptのresulting revisionとexact treeのrecord、marker、snapshot、履歴を照合する。 */
 export async function readInitialPagesSource(
   adapter: StateBranchAdapter,
@@ -87,21 +125,13 @@ export async function readInitialPagesSource(
   }
   const record = transaction.record;
   const projection = record.initialPagesProjection;
-  const observed = await observeStateCommitAtRevision(
+  const evidence = await verifyInitialStateCommitReceiptAtRevision(
     adapter,
     stateConfiguration,
-    revision,
-    revision,
-    "initial_state_commit",
-    { invocationId: randomUUID(), observedAt: now().toISOString(), position: { kind: "first" } },
+    receipt,
+    now().toISOString(),
   );
-  if (observed.evidence.receiptType !== "initial_state_commit") {
-    throw new TypeError("初回Pages buildのstate commit証拠の種別が不正です");
-  }
   if (
-    serializeCanonicalJson(receipt.result) !== serializeCanonicalJson(observed.receipt.result) ||
-    serializeCanonicalJson(receipt.binding) !== serializeCanonicalJson(observed.receipt.binding) ||
-    receipt.operationId !== observed.receipt.operationId ||
     digest.sha256Utf8(serializeCanonicalJson(config)) !== record.configDigest ||
     projection.snapshot.path !== stateConfiguration.snapshotPath ||
     projection.snapshot.digest !== transaction.snapshotDigest
@@ -139,9 +169,7 @@ export async function readInitialPagesSource(
       },
       expectedRevision: revision,
       initialStateCommitReceipt: receipt,
-      ...(receipt.receiptKind === "observed"
-        ? { initialStateCommitEvidence: observed.evidence }
-        : {}),
+      ...(receipt.receiptKind === "observed" ? { initialStateCommitEvidence: evidence } : {}),
     },
     digest,
   );

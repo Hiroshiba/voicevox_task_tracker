@@ -416,6 +416,11 @@ jobs:
         with:
           name: initial-pages-build-record
           path: artifacts/workflow
+      - name: 初回state commit receiptを取得
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: initial-state-commit-receipt
+          path: artifacts/workflow
       - name: Pages出力全fileを取得
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:

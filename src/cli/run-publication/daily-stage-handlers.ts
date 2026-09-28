@@ -170,6 +170,7 @@ export async function deployDailyPages(
     configuration: input.configuration.target.state,
     repositoryPath: dependencies.adapters.repositoryPath,
     artifact,
+    initialStateCommitReceipt: input.persisted.result.receipt,
     replay: false,
     observedAt: dependencies.adapters.now().toISOString(),
     effectTarget: input.configuration.target.kind,

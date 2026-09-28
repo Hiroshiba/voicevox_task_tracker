@@ -96,6 +96,7 @@ export type BuildPagesCliCommand = Readonly<{
 export type PreflightPagesDeploymentCliCommand = Readonly<{
   kind: "preflight-pages-deployment";
   configPath: string;
+  initialStateReceiptPath: string;
   buildArtifactPath: string;
   preflightPath: string;
   runAttempt: number;
@@ -496,7 +497,7 @@ function parsePreflightPagesDeployment(
 ): PreflightPagesDeploymentCliCommand {
   const options = parseOptions(
     args,
-    new Set(["--config", "--build-artifact", "--preflight", "--run-attempt"]),
+    new Set(["--config", "--receipt", "--build-artifact", "--preflight", "--run-attempt"]),
   );
   const runAttempt = Number(singleOption(options, "--run-attempt", "1"));
   if (!Number.isSafeInteger(runAttempt) || runAttempt < 1) {
@@ -505,6 +506,7 @@ function parsePreflightPagesDeployment(
   return Object.freeze({
     kind: "preflight-pages-deployment",
     configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
+    initialStateReceiptPath: singleOption(options, "--receipt", DEFAULT_INITIAL_STATE_RECEIPT_PATH),
     buildArtifactPath: singleOption(
       options,
       "--build-artifact",
@@ -891,7 +893,7 @@ export function formatCliUsage(): string {
     "  voicevox-task-tracker collect-analyze [--mode none|linked|all-open] [--notification-action send|hold|acknowledge-current] [--scheduled-for ISO] [--artifact PATH]",
     "  voicevox-task-tracker persist-state [--config PATH] [--artifact PATH] [--receipt PATH]",
     "  voicevox-task-tracker build-pages [--config PATH] [--receipt PATH] [--build-artifact PATH] [--output PATH]",
-    "  voicevox-task-tracker preflight-pages-deployment [--config PATH] [--build-artifact PATH] [--preflight PATH] [--run-attempt NUMBER]",
+    "  voicevox-task-tracker preflight-pages-deployment [--config PATH] [--receipt PATH] [--build-artifact PATH] [--preflight PATH] [--run-attempt NUMBER]",
     "  voicevox-task-tracker record-pages-deployment [--build-artifact PATH] [--preflight PATH] [--outcome PATH]",
     "  voicevox-task-tracker notify-discord [--artifact PATH] [--build-artifact PATH] [--pages-deployment PATH]",
     "  voicevox-task-tracker resolve-discord-delivery --delivery-id ID --resolution retry|acknowledge [--config PATH]",

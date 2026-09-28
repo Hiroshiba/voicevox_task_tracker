@@ -15,8 +15,10 @@ import {
   observeInitialPagesDeployment,
   parseReceipt,
 } from "../application/tracking-run/receipt-codec.js";
+import { verifyReceiptChain } from "../application/tracking-run/receipt-chain.js";
 import { pagesPublicUrlSchema, receiptSchema } from "../application/tracking-run/receipt-schema.js";
 import type {
+  InitialStateCommitReceipt,
   PagesDeploymentExternalReference,
   PagesDeploymentReceipt,
 } from "../application/tracking-run/receipt-schema.js";
@@ -32,6 +34,8 @@ import {
   decodeInitialPagesBuildArtifact,
   type InitialPagesBuildArtifact,
 } from "./initial-pages-build-artifact.js";
+import { verifyInitialStateCommitReceiptAtRevision } from "./initial-pages-source.js";
+import { resumeInitialPagesDeploy } from "./publication-resume-inputs.js";
 
 const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const revisionSchema = z.string().regex(/^[0-9a-f]{40}$/u);
@@ -230,6 +234,7 @@ export async function preflightInitialPagesDeployment(
     configuration: StatePersistenceConfiguration;
     repositoryPath: string;
     artifact: InitialPagesBuildArtifact;
+    initialStateCommitReceipt: InitialStateCommitReceipt;
     replay: boolean;
     observedAt: string;
     effectTarget: "production" | "sandbox" | "recording";
@@ -248,6 +253,56 @@ export async function preflightInitialPagesDeployment(
     input.configuration,
     artifact.intent.sourceStateRevision,
   );
+  if (source.marker.phase !== "initial_state_committed") {
+    throw new TypeError("Pages deploy指示の初回stateが初回commit段階にありません");
+  }
+  const initialReceipt = parseReceipt(input.initialStateCommitReceipt, digest);
+  if (initialReceipt.receiptType !== "initial_state_commit") {
+    throw new TypeError("Pages deploy指示に初回state commit receiptがありません");
+  }
+  const initialEvidence = await verifyInitialStateCommitReceiptAtRevision(
+    input.adapter,
+    input.configuration,
+    initialReceipt,
+    input.observedAt,
+  );
+  resumeInitialPagesDeploy(
+    {
+      record: source.record,
+      state: {
+        revision: artifact.intent.sourceStateRevision,
+        snapshotDigest: source.snapshotDigest,
+        normalNotificationLedgerDigest: source.notificationLedgerDigest,
+        marker: {
+          runId: source.marker.runId,
+          checkpointDigest: source.marker.checkpointDigest,
+          publicationRecordDigest: source.marker.publicationRecordDigest,
+          phase: source.marker.phase,
+          phaseSequence: source.marker.phaseSequence,
+        },
+      },
+      expectedRevision: artifact.intent.sourceStateRevision,
+      initialStateCommitReceipt: initialReceipt,
+      ...(initialReceipt.receiptKind === "observed"
+        ? { initialStateCommitEvidence: initialEvidence }
+        : {}),
+      initialPagesBuildReceipt: artifact.receipt,
+    },
+    digest,
+  );
+  verifyReceiptChain(
+    [
+      {
+        receipt: initialReceipt,
+        evidence:
+          initialReceipt.receiptKind === "observed"
+            ? { kind: "state_commit", state: initialEvidence }
+            : { kind: "none" },
+      },
+      { receipt: artifact.receipt, evidence: { kind: "none" } },
+    ],
+    digest,
+  );
   if (source.record.executionPolicy.effectTarget !== input.effectTarget) {
     throw new TypeError("Pages deploy指示のeffect targetがadapterと一致しません");
   }
@@ -260,7 +315,6 @@ export async function preflightInitialPagesDeployment(
     throw new TypeError("Pages action adapterがrecordの回復契約と一致しません");
   }
   if (
-    source.marker.phase !== "initial_state_committed" ||
     source.marker.runId !== artifact.intent.runId ||
     source.marker.checkpointDigest !== artifact.intent.checkpointDigest ||
     source.record.recordDigest !== artifact.intent.recordDigest ||

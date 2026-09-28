@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import { decodeReceipt } from "../../application/tracking-run/receipt-codec.js";
 import { decodeInitialPagesBuildArtifact } from "../initial-pages-build-artifact.js";
 import {
   preflightInitialPagesDeployment,
@@ -37,11 +38,19 @@ export async function preflightWorkflowPagesDeployment(
   const artifact = decodeInitialPagesBuildArtifact(
     await readFile(resolve(adapters.repositoryPath, command.buildArtifactPath)),
   );
+  const initialReceipt = decodeReceipt(
+    await readFile(resolve(adapters.repositoryPath, command.initialStateReceiptPath)),
+    nodeContentDigestPort,
+  );
+  if (initialReceipt.receiptType !== "initial_state_commit") {
+    throw new TypeError("Pages deploy直前の初回state commit receiptがありません");
+  }
   const preflight = await preflightInitialPagesDeployment({
     adapter: adapters.createStateBranchAdapter(),
     configuration: config.state,
     repositoryPath: adapters.repositoryPath,
     artifact,
+    initialStateCommitReceipt: initialReceipt,
     replay: command.runAttempt > 1,
     observedAt: adapters.now().toISOString(),
     effectTarget: "production",
