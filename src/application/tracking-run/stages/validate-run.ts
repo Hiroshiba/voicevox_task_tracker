@@ -1,5 +1,6 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type { Sha256Hash } from "../../../canonical-json/sha256.js";
+import { parsePublicationInputs, type PublicationInputs } from "../contracts/publication-inputs.js";
 import type { NotificationLedgerEntry, UtcIsoDateTime } from "../../../domain/index.js";
 import type {
   GitHubNodeId,
@@ -116,6 +117,8 @@ export type ValidatedRun<
   previousNotificationLedger: Ledger;
   notificationLedger: Ledger;
   notificationSelection: Selection;
+  notificationPreview: Selection;
+  publicationInputs: PublicationInputs;
   repositoryAllowlist: readonly PublicRepository[];
   metrics: Metrics;
   evidenceClosureSummary: Readonly<{
@@ -161,6 +164,8 @@ export type ValidateRunInput<
   previousNotificationLedger: Ledger;
   notificationLedger: Ledger;
   notificationSelection: Selection;
+  notificationPreview: Selection;
+  publicationInputs: PublicationInputs;
   ledgerEntriesToMerge: readonly NotificationLedgerEntry[];
   repositoryAllowlist: readonly PublicRepository[];
   metrics: Metrics;
@@ -395,6 +400,8 @@ export function validateRun<
     previousNotificationLedger: input.previousNotificationLedger,
     notificationLedger: input.notificationLedger,
     notificationSelection: input.notificationSelection,
+    notificationPreview: input.notificationPreview,
+    publicationInputs: parsePublicationInputs(input.publicationInputs),
     repositoryAllowlist: [...input.repositoryAllowlist].sort((left, right) =>
       left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
     ),

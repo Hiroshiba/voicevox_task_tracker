@@ -1,10 +1,12 @@
 import { resolve } from "node:path";
 
 import { assertValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
+import { planPublication } from "../../publication/plan-publication.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import { assertHistoricalAiWitnessMatchesBaseSnapshot } from "../../application/tracking-run/stages/run-validation-artifact-witness.js";
 import type { Config } from "../../config/index.js";
 import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content-digest.js";
+import { joinStatePath } from "../../persistence/index.js";
 import { CliWorkflowArtifactError } from "../errors.js";
 import { readOptionalRunReportFile } from "../workflow-run-report.js";
 import type {
@@ -17,14 +19,12 @@ import { deliverDiscord, deliverOperationsAlert } from "../notification-delivery
 import { requireEnvironmentValue } from "../production-runtime-setup.js";
 import { workflowArtifactRepositoryInventory } from "../workflow-artifact.js";
 import type {
-  NormalizeLabelRules,
-  ResolveCompletedTrackingStartAt,
   RunPublicationAdapters,
   ValidatedRun,
 } from "./contracts.js";
 import { buildPublicPages } from "./pages.js";
-import { persistSuccessfulRunCompletion } from "./persistence.js";
-import { discordDeliverySettings, pagesUrl } from "./settings.js";
+import { assertPlannedAiCacheAdditions, persistSuccessfulRunCompletion } from "./persistence.js";
+import { discordDeliverySettings, projectPublicationSettings } from "./settings.js";
 import {
   assertWorkflowDeliveryLedgerMatches,
   assertWorkflowInitialLedgerMatches,
@@ -64,6 +64,28 @@ function assertWorkflowConfig(
   ) {
     throw new TypeError("workflow artifactと現在の設定でconfig digestが一致しません");
   }
+  const projection = artifact.validated.publicationInputs;
+  if (
+    serializeCanonicalJson(projectPublicationSettings(config)) !==
+      serializeCanonicalJson({
+        pages: projection.pages,
+        discord: projection.discord,
+        configuredTrackingStartAt: projection.configuredTrackingStartAt,
+      }) ||
+    projection.state.snapshotPath !== config.state.snapshotPath ||
+    projection.state.notificationLedgerPath !== config.state.notificationLedgerPath ||
+    projection.state.aiCacheDirectory !== config.state.aiCacheDirectory ||
+    projection.state.personalReminderAiCacheDirectory !==
+      config.state.personalReminderAiCacheDirectory ||
+    projection.state.runReportsDirectory !== config.state.runReportsDirectory ||
+    projection.state.historyPath !==
+      joinStatePath(
+        config.state.historyDirectory,
+        `${artifact.validated.snapshot.generatedAt.slice(0, 10)}.jsonl`,
+      )
+  ) {
+    throw new TypeError("workflow artifactと現在の設定で公開計画の投影が一致しません");
+  }
 }
 
 /** workflow artifactの検証済みstateを初期保存する。 */
@@ -75,6 +97,7 @@ export async function persistWorkflowState(
     resolve(dependencies.adapters.repositoryPath, command.artifactPath),
   );
   assertValidatedRun(artifact.validated);
+  const planned = planPublication(artifact.validated, nodeContentDigestPort);
   const config = await dependencies.adapters.loadConfig(
     resolve(dependencies.adapters.repositoryPath, command.configPath),
   );
@@ -108,13 +131,18 @@ export async function persistWorkflowState(
   for (const entry of artifact.validated.personalReminderAiCacheAdditions) {
     await session.personalReminderAiCache.write(entry);
   }
+  assertPlannedAiCacheAdditions({ session }, planned);
   await session.persist({
-    snapshot: artifact.validated.snapshot,
-    historyInputEvents: artifact.validated.historyInputEvents,
-    notificationLedger: artifact.validated.notificationLedger,
+    snapshot: planned.publicationPlan.initialStateWriteSet.snapshot,
+    historyInputEvents: planned.publicationPlan.initialStateWriteSet.historyInputEvents,
+    notificationLedger: planned.publicationPlan.initialStateWriteSet.notificationLedger,
     repositoryInventory: workflowArtifactRepositoryInventory(artifact),
     repositoryAllowlist: artifact.validated.repositoryAllowlist,
     knownSecrets: [],
+    expectedHistoryBase: planned.publicationPlan.initialStateWriteSet.paths.historyBase,
+    expectedPreviousInitialPagesEvidence:
+      planned.publicationPlan.initialStateWriteSet.previousInitialPagesEvidence.expectedBase,
+    deletions: planned.publicationPlan.initialStateWriteSet.deletions,
   });
 }
 
@@ -122,7 +150,6 @@ export async function persistWorkflowState(
 export async function buildWorkflowPages(
   dependencies: Readonly<{
     adapters: WorkflowStateAdapters & Pick<RunPublicationAdapters, "writePublicData">;
-    normalizeLabelRules: NormalizeLabelRules;
   }>,
   command: BuildPagesCliCommand,
 ): Promise<void> {
@@ -130,13 +157,11 @@ export async function buildWorkflowPages(
     resolve(dependencies.adapters.repositoryPath, command.artifactPath),
   );
   assertValidatedRun(artifact.validated);
+  const planned = planPublication(artifact.validated, nodeContentDigestPort);
   const config = await dependencies.adapters.loadConfig(
     resolve(dependencies.adapters.repositoryPath, command.configPath),
   );
   assertWorkflowConfig(artifact, config);
-  if (pagesUrl(config) !== artifact.pagesUrl) {
-    throw new TypeError("workflow artifactと現在の設定でPages URLが一致しません");
-  }
   const session = await dependencies.adapters.openStateSession(
     dependencies.adapters.createStateBranchAdapter(),
     config.state,
@@ -151,14 +176,11 @@ export async function buildWorkflowPages(
   const historyRecords = await session.loadHistoryRecords();
   await buildPublicPages({
     writePublicData: dependencies.adapters.writePublicData,
-    config,
     inventory: workflowArtifactRepositoryInventory(artifact),
-    repositoryAllowlist: artifact.validated.repositoryAllowlist,
-    validated: artifact.validated,
+    planned,
     historyRecords,
     outputDirectory: resolve(dependencies.adapters.repositoryPath, command.outputDirectory),
     knownSecrets: [],
-    resolveLabelRules: () => dependencies.normalizeLabelRules(config),
   });
 }
 
@@ -166,8 +188,6 @@ export async function buildWorkflowPages(
 export async function notifyWorkflowDiscord(
   dependencies: Readonly<{
     adapters: WorkflowDeliveryAdapters & Pick<RunPublicationAdapters, "readWorkflowArtifact">;
-    normalizeLabelRules: NormalizeLabelRules;
-    resolveCompletedTrackingStartAt: ResolveCompletedTrackingStartAt;
   }>,
   command: NotifyDiscordCliCommand,
 ): Promise<void> {
@@ -175,18 +195,13 @@ export async function notifyWorkflowDiscord(
     resolve(dependencies.adapters.repositoryPath, command.artifactPath),
   );
   assertValidatedRun(artifact.validated);
+  const planned = planPublication(artifact.validated, nodeContentDigestPort);
   const config = await dependencies.adapters.loadConfig(
     resolve(dependencies.adapters.repositoryPath, command.configPath),
   );
   assertWorkflowConfig(artifact, config);
   if (command.pagesUrl !== artifact.pagesUrl) {
     throw new TypeError("deploy済みPages URLがworkflow artifactの公開先と一致しません");
-  }
-  if (
-    serializeCanonicalJson(discordDeliverySettings(config)) !==
-    serializeCanonicalJson(artifact.discordSettings)
-  ) {
-    throw new TypeError("workflow artifactと現在の設定でDiscord配送条件が一致しません");
   }
   const session = await dependencies.adapters.openStateSession(
     dependencies.adapters.createStateBranchAdapter(),
@@ -205,24 +220,19 @@ export async function notifyWorkflowDiscord(
     snapshot: persistedSnapshot,
     notificationLedger,
   });
-  if (
-    artifact.notificationAction === "acknowledge-current" ||
-    artifact.notificationAction === "hold"
-  ) {
+  if (planned.publicationPlan.notificationOutbox.action !== "send") {
     await persistSuccessfulRunCompletion({
       now: dependencies.adapters.now,
-      config,
       state,
       repositoryInventory: workflowArtifactRepositoryInventory(artifact),
       repositoryAllowlist: artifact.validated.repositoryAllowlist,
-      validated: artifact.validated,
+      planned,
       runMetadata: artifact.runMetadata,
       delivery: {
         notificationLedger: state.notificationLedger,
         notificationCount: 0,
       },
       knownSecrets: [],
-      resolveCompletedTrackingStartAt: dependencies.resolveCompletedTrackingStartAt,
     });
     return;
   }
@@ -240,30 +250,25 @@ export async function notifyWorkflowDiscord(
     : Object.freeze([]);
   const result = await deliverDiscord(
     dependencies.adapters,
-    config,
-    () => dependencies.normalizeLabelRules(config),
-    artifact.discordSettings,
     state,
     workflowArtifactRepositoryInventory(artifact),
     artifact.validated.repositoryAllowlist,
     knownSecrets,
-    artifact.validated,
+    planned,
     command.pagesUrl,
   );
   await persistSuccessfulRunCompletion({
     now: dependencies.adapters.now,
-    config,
     state,
     repositoryInventory: workflowArtifactRepositoryInventory(artifact),
     repositoryAllowlist: artifact.validated.repositoryAllowlist,
-    validated: artifact.validated,
+    planned,
     runMetadata: artifact.runMetadata,
     delivery: {
       notificationLedger: result.notificationLedger,
       notificationCount: result.notificationCount,
     },
     knownSecrets,
-    resolveCompletedTrackingStartAt: dependencies.resolveCompletedTrackingStartAt,
   });
 }
 

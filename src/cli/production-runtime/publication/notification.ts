@@ -5,7 +5,6 @@ import {
 } from "../../run-publication/daily-stage-handlers.js";
 import type { ProductionRuntimeAdapters } from "../adapters.js";
 import type { ProductionTypes } from "../contracts.js";
-import { normalizeLabelRules } from "../label-rules.js";
 
 type ProductionDailyDependencies = DailyTransactionDependencies<ProductionTypes>;
 type NotificationRuntimeAdapters = Pick<
@@ -26,7 +25,7 @@ type NotificationRuntimeAdapters = Pick<
 export function createSendDiscordStage(
   adapters: NotificationRuntimeAdapters,
 ): ProductionDailyDependencies["sendDiscord"] {
-  return (input) => sendDailyDiscord({ adapters, normalizeLabelRules }, input);
+  return (input) => sendDailyDiscord({ adapters }, input);
 }
 
 /** 日次runの障害通知を既存公開処理へ接続する。 */

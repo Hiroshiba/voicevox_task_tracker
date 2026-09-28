@@ -277,6 +277,7 @@ const workflowArtifactSchema = z.strictObject({
   historyInputEvents: z.array(z.unknown()),
   notificationLedger: z.unknown(),
   notificationSelection: z.unknown(),
+  notificationPreview: z.unknown(),
   runMetadata: runMetadataSchema,
   aiCacheEntries: z.array(z.unknown()),
   personalReminderAiCacheEntries: z.array(z.unknown()),
@@ -317,6 +318,7 @@ export type WorkflowArtifact = Readonly<{
   historyInputEvents: readonly StateHistoryInputEvent[];
   notificationLedger: StateNotificationLedger;
   notificationSelection: DiscordNotificationSelection;
+  notificationPreview: DiscordNotificationSelection;
   runMetadata: WorkflowRunMetadata;
   aiCacheEntries: readonly AiCacheEntry[];
   personalReminderAiCacheEntries: readonly PersonalReminderAiCacheEntry[];
@@ -497,7 +499,10 @@ function assertWorkflowValidationConsistency(
     artifact.notificationAction !== core.executionPolicy.notificationAction ||
     artifact.allowlistDigest !== core.allowlistDigest ||
     artifact.runMetadata.scheduledFor !== core.identity.scheduledFor ||
-    artifact.runMetadata.startedAt !== core.identity.startedAt
+    artifact.runMetadata.startedAt !== core.identity.startedAt ||
+    artifact.pagesUrl !== validated.publicationInputs.pages.url ||
+    serializeCanonicalJson(artifact.discordSettings) !==
+      serializeCanonicalJson(validated.publicationInputs.discord)
   ) {
     throw new TypeError("workflow artifactのrun識別と実行条件が一致しません");
   }
@@ -714,6 +719,7 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
   const historyInputEvents = createStateHistoryInputEvents(result.data.historyInputEvents);
   const notificationLedger = createStateNotificationLedger(result.data.notificationLedger);
   const notificationSelection = createNotificationSelection(result.data.notificationSelection);
+  const notificationPreview = createNotificationSelection(result.data.notificationPreview);
   const runMetadata = createWorkflowRunMetadata(result.data.runMetadata);
   const aiCacheEntries = createAiCacheEntries(result.data.aiCacheEntries);
   const personalReminderAiCacheEntries = createPersonalReminderAiCacheEntries(
@@ -734,6 +740,7 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
     historyInputEvents,
     notificationLedger,
     notificationSelection,
+    notificationPreview,
     runMetadata,
     aiCacheEntries,
     personalReminderAiCacheEntries,
@@ -776,6 +783,7 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
     personalReminderAiCacheAdditions: personalReminderAiCacheEntries,
     notificationLedger,
     notificationSelection,
+    notificationPreview,
     repositoryAllowlist: createPublicRepositoryAllowlist(artifact.repositoryInventory).repositories,
   });
   const validated = revalidateSerializedRun(run, nodeContentDigestPort, () => {
@@ -789,11 +797,13 @@ export function createWorkflowArtifact(value: unknown): WorkflowArtifact {
     historyInputEvents: validated.historyInputEvents,
     notificationLedger: validated.notificationLedger,
     notificationSelection: validated.notificationSelection,
+    notificationPreview: validated.notificationPreview,
     aiCacheEntries: validated.aiCacheAdditions,
     personalReminderAiCacheEntries: validated.personalReminderAiCacheAdditions,
     validation: Object.freeze({
       core: validated.core,
       previousNotificationLedger: validated.previousNotificationLedger,
+      publicationInputs: validated.publicationInputs,
       metrics: validated.metrics,
       evidenceClosureSummary: validated.evidenceClosureSummary,
       evidenceClosureWitness: validated.evidenceClosureWitness,
@@ -866,6 +876,7 @@ export function assertWorkflowArtifactPublicSafety(
       artifact.historyInputEvents,
       artifact.notificationLedger,
       artifact.notificationSelection,
+      artifact.notificationPreview,
       artifact.runMetadata,
       ...artifact.aiCacheEntries,
       ...artifact.personalReminderAiCacheEntries,

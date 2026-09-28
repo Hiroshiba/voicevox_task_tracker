@@ -1,4 +1,5 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
+import { parsePublicationInputs } from "../contracts/publication-inputs.js";
 import type { ContentDigestPort } from "../ports.js";
 import type { RunSnapshot, ValidatedRun } from "./validate-run.js";
 import type {
@@ -259,6 +260,35 @@ export function assertSerializedValidatedRun(
         undefined,
       );
     }
+  }
+  for (const [index, candidate] of run.notificationPreview.candidates.entries()) {
+    if (!items.has(candidate.itemNodeId)) {
+      throw new RunCompletenessError(
+        "wrong_owner",
+        candidate.itemNodeId,
+        ["notificationPreview", "candidates", index],
+        undefined,
+      );
+    }
+  }
+  const publicationInputs = parsePublicationInputs(run.publicationInputs);
+  assertRunValueMatches(publicationInputs, run.publicationInputs, ["publicationInputs"], "run");
+  if (!publicationInputs.state.historyPath.endsWith(`/${run.snapshot.generatedAt.slice(0, 10)}.jsonl`)) {
+    throw new RunCompletenessError(
+      "field_mismatch",
+      "historyPath",
+      ["publicationInputs", "state", "historyPath"],
+      undefined,
+    );
+  }
+  const deletionPaths = publicationInputs.state.oldCacheDeletionPaths;
+  if (new Set(deletionPaths).size !== deletionPaths.length) {
+    throw new RunCompletenessError(
+      "duplicate_id",
+      "oldCacheDeletionPaths",
+      ["publicationInputs", "state", "oldCacheDeletionPaths"],
+      undefined,
+    );
   }
   runValuesById(run.snapshot.relations, (relation) => relation.id, ["snapshot", "relations"]);
   runValuesById(run.repositoryAllowlist, (repository) => repository.id, ["repositoryAllowlist"]);

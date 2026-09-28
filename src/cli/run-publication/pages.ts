@@ -1,51 +1,46 @@
-import type { Config } from "../../config/index.js";
 import { assertValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
+import type { PublicationPlannedRun } from "../../publication/publication-plan-contracts.js";
 import type { Repository } from "../../domain/index.js";
-import { generatePublicData, PUBLIC_SUMMARY_GZIP_LIMIT_BYTES } from "../../pages/index.js";
-import type { PagesPublicSafetyInput } from "../../pages/index.js";
+import { generatePublicData } from "../../pages/index.js";
 import type { StateHistoryRecord } from "../../persistence/index.js";
 import type {
   PagesResult,
-  ResolveLabelRules,
   RunPublicationAdapters,
-  ValidatedRun,
 } from "./contracts.js";
-import { pagesUrl } from "./settings.js";
 
 /** Pages成果物の生成と書込みに必要な値。 */
 export type BuildPublicPagesInput = Readonly<{
   writePublicData: RunPublicationAdapters["writePublicData"];
-  config: Config;
   inventory: readonly Repository[];
-  repositoryAllowlist: PagesPublicSafetyInput["repositoryAllowlist"];
-  validated: ValidatedRun;
+  planned: PublicationPlannedRun;
   historyRecords: readonly StateHistoryRecord[];
   outputDirectory: string;
   knownSecrets: readonly string[];
-  resolveLabelRules: ResolveLabelRules;
 }>;
 
 /** 検証済みsnapshotと保存後履歴からPages成果物を生成して書き込む。 */
 export async function buildPublicPages(input: BuildPublicPagesInput): Promise<PagesResult> {
-  assertValidatedRun(input.validated);
+  const { validated, publicationPlan } = input.planned;
+  assertValidatedRun(validated);
+  const projection = publicationPlan.initialPagesProjection;
   const data = generatePublicData({
-    snapshot: input.validated.snapshot,
+    snapshot: publicationPlan.initialStateWriteSet.snapshot,
     historyRecords: input.historyRecords,
-    repositoryAllowlist: input.repositoryAllowlist,
+    repositoryAllowlist: projection.repositoryAllowlist,
     repositoryInventory: input.inventory,
     knownSecrets: input.knownSecrets,
     options: {
-      confidenceThresholds: input.config.ai.confidence,
-      labelRules: input.resolveLabelRules(),
-      maxInitialGraphNodes: input.config.web.graph.maxInitialNodes,
-      maxSummaryGzipBytes: PUBLIC_SUMMARY_GZIP_LIMIT_BYTES,
-      timezone: input.config.staleness.timezone,
+      confidenceThresholds: projection.settings.confidenceThresholds,
+      labelRules: projection.settings.labelRules,
+      maxInitialGraphNodes: projection.settings.maxInitialGraphNodes,
+      maxSummaryGzipBytes: projection.settings.maxSummaryGzipBytes,
+      timezone: projection.settings.timezone,
     },
   });
   const output = await input.writePublicData(input.outputDirectory, data);
   return Object.freeze({
     data,
     output,
-    pagesUrl: pagesUrl(input.config),
+    pagesUrl: projection.settings.url,
   });
 }

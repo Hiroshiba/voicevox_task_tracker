@@ -2,14 +2,10 @@ import { resolve } from "node:path";
 
 import { assertValidatedRun } from "../application/tracking-run/stages/validate-run.js";
 import { serializeCanonicalJson } from "../canonical-json/index.js";
-import { type Config, type loadConfig } from "../config/index.js";
+import { type loadConfig } from "../config/index.js";
 import {
-  calculatePersonalReminderStaleness,
-  createLabelEffectsResolver,
   createUtcIsoDateTime,
-  recalculateStalenessSeverity,
   type GitHubNodeId,
-  type LabelRule,
   type NotificationLedgerEntry,
   type OperationsAlertLedgerEntry,
   type PendingNotification,
@@ -17,15 +13,12 @@ import {
   type UtcIsoDateTime,
 } from "../domain/index.js";
 import {
-  assertDiscordPersonalReminderSelectionMatchesSnapshot,
-  calculateDiscordNotificationCandidateSeverity,
   type sendDiscordDigest,
   type DiscordDigestDelivery,
   type DiscordDeliverySettings,
   type DiscordNotificationCandidate,
   type DiscordNotificationSelection,
   type DiscordOperationsIncident,
-  type DiscordPersonalReminderSelectionValidationItem,
   type DiscordSecretProvider,
   type DiscordWebhookHttpClient,
 } from "../discord/index.js";
@@ -55,7 +48,8 @@ import {
   type SentNotificationLedgerEntry,
 } from "./notification-history-runtime.js";
 import { requireEnvironmentValue } from "./production-runtime-setup.js";
-import type { ValidatedRun } from "./run-publication/contracts.js";
+import type { PublicationPlannedRun } from "../publication/publication-plan-contracts.js";
+import { countSentOutboxNotifications } from "../publication/notification-outbox.js";
 
 const DISCORD_DELIVERY_ID_PATTERN = /^discord-digest:v1:[0-9a-f]{24}:message:[1-9][0-9]*$/u;
 
@@ -104,96 +98,6 @@ function environmentSecretProvider(
 }
 
 type DiscordDigestSelection = Extract<DiscordNotificationSelection, { action: "create_digest" }>;
-type SkippedDiscordDigestSelection = Extract<
-  DiscordNotificationSelection,
-  { action: "skip_digest" }
->;
-
-function nonEmptyNotificationReasons(
-  reasons: readonly DiscordNotificationCandidate["reasons"][number][],
-  itemNodeId: GitHubNodeId,
-): DiscordNotificationCandidate["reasons"] {
-  const [first, ...rest] = reasons;
-  assertNonNullable(first, `${itemNodeId}の通知理由がありません`);
-  return Object.freeze([first, ...rest]);
-}
-
-function nonEmptyNotificationCandidates(
-  candidates: readonly DiscordDigestSelection["candidates"][number][],
-): DiscordDigestSelection["candidates"] {
-  const [first, ...rest] = candidates;
-  assertNonNullable(first, "通知候補がありません");
-  return Object.freeze([first, ...rest]);
-}
-
-function nonEmptyNotificationReservations(
-  reservations: readonly DiscordDigestSelection["ledgerReservations"][number][],
-): DiscordDigestSelection["ledgerReservations"] {
-  const [first, ...rest] = reservations;
-  assertNonNullable(first, "通知候補に対応するledger予約がありません");
-  return Object.freeze([first, ...rest]);
-}
-
-function filterNotificationSelectionForLedger(
-  selection: DiscordNotificationSelection,
-  ledgerEntries: ReadonlyMap<string, NotificationLedgerEntry>,
-): DiscordNotificationSelection {
-  const emptyCandidates: SkippedDiscordDigestSelection["candidates"] = Object.freeze([]);
-  const emptyReservations: SkippedDiscordDigestSelection["ledgerReservations"] = Object.freeze([]);
-  const pendingNotifications = Object.freeze(
-    selection.pendingNotifications.filter((pending) => {
-      const entry = ledgerEntries.get(pending.notificationKey);
-      return entry?.status !== "sent" && entry?.status !== "acknowledged";
-    }),
-  );
-  if (selection.action === "skip_digest") {
-    return Object.freeze({
-      action: "skip_digest",
-      reason: selection.reason,
-      candidates: emptyCandidates,
-      ledgerReservations: emptyReservations,
-      pendingNotifications,
-    });
-  }
-  const candidates = selection.candidates.flatMap((candidate) => {
-    const reasons = candidate.reasons.filter((reason) => {
-      const entry = ledgerEntries.get(reason.notificationKey);
-      return entry?.status !== "sent" && entry?.status !== "acknowledged";
-    });
-    if (reasons.length === 0) {
-      return [];
-    }
-    const nonEmptyReasons = nonEmptyNotificationReasons(reasons, candidate.itemNodeId);
-    return [
-      Object.freeze({
-        ...candidate,
-        reasons: nonEmptyReasons,
-        severity: calculateDiscordNotificationCandidateSeverity(nonEmptyReasons),
-      }),
-    ];
-  });
-  const candidateKeys = new Set(
-    candidates.flatMap((candidate) => candidate.reasons.map((reason) => reason.notificationKey)),
-  );
-  const ledgerReservations = selection.ledgerReservations.filter((reservation) =>
-    candidateKeys.has(reservation.notificationKey),
-  );
-  if (candidates.length === 0) {
-    return Object.freeze({
-      action: "skip_digest",
-      reason: "no_candidates",
-      candidates: emptyCandidates,
-      ledgerReservations: emptyReservations,
-      pendingNotifications,
-    });
-  }
-  return Object.freeze({
-    action: "create_digest",
-    candidates: nonEmptyNotificationCandidates(candidates),
-    ledgerReservations: nonEmptyNotificationReservations(ledgerReservations),
-    pendingNotifications,
-  });
-}
 
 function notificationLedgerEntryIdentityMatches(
   left: NotificationLedgerEntry,
@@ -423,24 +327,6 @@ function assertNotificationDeliveryLedgerConsistency(
   }
 }
 
-function notificationCountForSelection(
-  selection: DiscordNotificationSelection,
-  entriesByKey: ReadonlyMap<string, NotificationLedgerEntry>,
-): number {
-  const notificationKeys = new Set(
-    selection.candidates.flatMap((candidate) =>
-      candidate.reasons.map((reason) => reason.notificationKey),
-    ),
-  );
-  let count = 0;
-  for (const notificationKey of notificationKeys) {
-    if (entriesByKey.get(notificationKey)?.status === "sent") {
-      count += 1;
-    }
-  }
-  return count;
-}
-
 function latestSentAtForSelection(
   selection: DiscordNotificationSelection,
   entriesByKey: ReadonlyMap<string, NotificationLedgerEntry>,
@@ -463,81 +349,14 @@ function latestSentAtForSelection(
   return latestSentAt;
 }
 
-function snapshotPersonalReminderSelectionValidationItems(
-  snapshot: StateSnapshot,
-  config: Config,
-  labelRules: readonly LabelRule[],
-): readonly DiscordPersonalReminderSelectionValidationItem[] {
-  const resolveLabelEffects = createLabelEffectsResolver(labelRules);
-  const repositoriesById = new Map(
-    snapshot.repositories.map((repository) => [repository.id, repository]),
-  );
-  if (repositoriesById.size !== snapshot.repositories.length) {
-    throw new TypeError("送信直前検証対象のsnapshot repository IDが重複しています");
-  }
-  return Object.freeze(
-    snapshot.items.map((item) => {
-      const repository = repositoriesById.get(item.repositoryId);
-      assertNonNullable(repository, `${item.nodeId}のsnapshot repositoryがありません`);
-      const repositoryName = `${repository.owner}/${repository.name}`;
-      const staleness = recalculateStalenessSeverity({
-        evaluatedAt: snapshot.generatedAt,
-        stallSince: item.stallSince,
-        confidence: item.confidence,
-        minimumAiConfidence: config.ai.confidence.medium,
-        repositoryFullName: repositoryName,
-        currentLabels: item.labels,
-        resolveLabelEffects,
-        thresholdsHours: config.staleness.thresholdsHours,
-        severityContext: item.severityContext,
-      });
-      const personalReminderCauses = Object.freeze(
-        item.personalReminderCauses.map((cause) =>
-          Object.freeze({
-            cause,
-            staleness: calculatePersonalReminderStaleness({
-              cause,
-              evaluatedAt: snapshot.generatedAt,
-              minimumAiConfidence: config.ai.confidence.medium,
-              repositoryFullName: repositoryName,
-              currentLabels: item.labels,
-              resolveLabelEffects,
-              thresholdsHours: config.staleness.thresholdsHours,
-            }),
-          }),
-        ),
-      );
-      return Object.freeze({
-        nodeId: item.nodeId,
-        current: Object.freeze({
-          status: item.status,
-          waitingOn: item.waitingOn,
-          severity: staleness.severity,
-          severityReason: staleness.severityReason,
-          waitClass: staleness.waitClass,
-          statusSince: item.statusSince,
-          ownerSince: item.ownerSince,
-          stallSince: item.stallSince,
-          lastProgressAt: item.lastProgressAt,
-        }),
-        personalReminderCauses,
-        personalReminderCausePlanning: item.personalReminderCausePlanning,
-      });
-    }),
-  );
-}
-
 /** 保存済みrunを照合してDiscord通知と通知履歴を送達する。 */
 export async function deliverDiscord(
   adapters: NotificationDeliveryRuntimeAdapters,
-  config: Config,
-  labelRules: () => readonly LabelRule[],
-  settings: DiscordDeliverySettings,
   state: NotificationDeliveryRuntimeState,
   repositoryInventory: readonly Repository[],
   repositoryAllowlist: readonly Pick<Repository, "id" | "owner" | "name">[],
   knownSecrets: readonly string[],
-  validated: ValidatedRun,
+  planned: PublicationPlannedRun,
   deployedPagesUrl: string,
 ): Promise<
   Readonly<{
@@ -548,7 +367,12 @@ export async function deliverDiscord(
     discordSentAt: UtcIsoDateTime | null;
   }>
 > {
+  const { validated, publicationPlan } = planned;
   assertValidatedRun(validated);
+  const outbox = publicationPlan.notificationOutbox;
+  if (outbox.action !== "send") {
+    throw new TypeError("送信action以外の公開計画をDiscord配送へ渡せません");
+  }
   const persistedSnapshot = await state.session.loadSnapshot();
   if (persistedSnapshot.status !== "available") {
     throw new TypeError("Discord通知対象のstate snapshotがありません");
@@ -558,6 +382,15 @@ export async function deliverDiscord(
   }
   const snapshot = persistedSnapshot.snapshot;
   const persistedLedger = await state.session.loadNotificationLedger();
+  if (
+    serializeCanonicalJson(persistedLedger) !==
+    serializeCanonicalJson(publicationPlan.initialStateWriteSet.notificationLedger)
+  ) {
+    throw new TypeError("Discord配送前の通常ledgerが公開計画の初回ledgerと一致しません");
+  }
+  if (deployedPagesUrl !== publicationPlan.initialPagesProjection.settings.url) {
+    throw new TypeError("Discord配送先のPages URLが公開計画と一致しません");
+  }
   let notificationEntriesByKey = new Map<string, NotificationLedgerEntry>(
     persistedLedger.entries.map((entry): readonly [string, NotificationLedgerEntry] => {
       const normalizedEntry = notificationLedgerEntry(entry);
@@ -570,23 +403,10 @@ export async function deliverDiscord(
       operationsAlertLedgerEntry(entry),
     ]),
   );
-  let pendingNotifications: readonly PendingNotification[] = Object.freeze(
-    persistedLedger.pendingNotifications.filter((pending) => {
-      const entry = notificationEntriesByKey.get(pending.notificationKey);
-      return entry?.status !== "sent" && entry?.status !== "acknowledged";
-    }),
-  );
-  assertNoStartedNotificationDelivery(validated.notificationSelection, notificationEntriesByKey);
-  const notificationSelection = filterNotificationSelectionForLedger(
-    validated.notificationSelection,
-    notificationEntriesByKey,
-  );
-  if (notificationSelection.action === "create_digest") {
-    assertDiscordPersonalReminderSelectionMatchesSnapshot(
-      notificationSelection,
-      snapshotPersonalReminderSelectionValidationItems(snapshot, config, labelRules()),
-    );
-  }
+  let pendingNotifications: readonly PendingNotification[] =
+    outbox.selectedContext.pendingNotifications;
+  const notificationSelection = outbox.selectedContext;
+  assertNoStartedNotificationDelivery(notificationSelection, notificationEntriesByKey);
   const notificationHistoryContext = createNotificationHistoryContext(
     snapshot,
     notificationSelection,
@@ -632,7 +452,7 @@ export async function deliverDiscord(
       status: "succeeded",
       pagesUrl: deployedPagesUrl,
     },
-    settings,
+    settings: outbox.settings,
     dependencies: {
       secretProvider: environmentSecretProvider(adapters.environment),
       httpClient: adapters.discordHttpClient,
@@ -737,10 +557,7 @@ export async function deliverDiscord(
     }),
     notificationEvents: Object.freeze(notificationEvents),
     notificationLedger,
-    notificationCount: notificationCountForSelection(
-      notificationSelection,
-      notificationEntriesByKey,
-    ),
+    notificationCount: countSentOutboxNotifications(outbox, notificationLedger),
     discordSentAt: sentAt,
   });
 }

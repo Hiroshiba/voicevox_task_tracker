@@ -64,6 +64,7 @@ export function createCollectAnalyzeArtifact(
     historyInputEvents: input.validated.historyInputEvents,
     notificationLedger: input.validated.notificationLedger,
     notificationSelection: input.validated.notificationSelection,
+    notificationPreview: input.validated.notificationPreview,
     runMetadata,
     aiCacheEntries: input.validated.aiCacheAdditions,
     personalReminderAiCacheEntries: input.validated.personalReminderAiCacheAdditions,
@@ -72,6 +73,7 @@ export function createCollectAnalyzeArtifact(
     validation: {
       core: input.validated.core,
       previousNotificationLedger: input.validated.previousNotificationLedger,
+      publicationInputs: input.validated.publicationInputs,
       metrics: input.validated.metrics,
       evidenceClosureSummary: input.validated.evidenceClosureSummary,
       evidenceClosureWitness: input.validated.evidenceClosureWitness,

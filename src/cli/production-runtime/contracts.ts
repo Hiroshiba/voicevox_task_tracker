@@ -27,6 +27,7 @@ import type { GenericAiAdoptedRun } from "../../application/tracking-run/stages/
 import type { GraphReconciledRun } from "../../application/tracking-run/stages/graph-reconciliation.js";
 import type { PersonalReminderFinalizedRun } from "../../application/tracking-run/stages/personal-reminder-finalization.js";
 import type { ValidatedRun as TrackingValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
+import type { PublicationPlannedRun } from "../../publication/publication-plan-contracts.js";
 import type { AiCacheEntry } from "../../codex/cache.js";
 import type { PersonalReminderAiCacheEntry } from "../../codex/personal-reminder-cache.js";
 import type { AiAnalysisDependency } from "../../domain/ai-analysis-dependencies.js";
@@ -264,6 +265,7 @@ export type ProductionTypes = DailyTransactionTypeMap &
     codexAnalysis: CodexAnalysis;
     personalReminderAnalysis: PersonalReminderAnalysis;
     validated: ValidatedRun;
+    planned: PublicationPlannedRun;
     persisted: PersistedRun;
     pages: PagesResult;
     discord: DiscordResult;

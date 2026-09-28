@@ -24,8 +24,9 @@ import {
   mergeSelectedNotificationLedger,
   selectValidationNotifications,
 } from "./notification-selection.js";
+import { projectPublicationInputs } from "./publication-inputs.js";
 
-function validateRunCompleteness(
+async function validateRunCompleteness(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
   state: RuntimeState,
@@ -37,7 +38,7 @@ function validateRunCompleteness(
   personalReminderAnalysis: PersonalReminderAnalysis,
   metrics: RunMetrics,
   sessions: GitHubRunSessions,
-): ValidatedRun {
+): Promise<ValidatedRun> {
   const notification = selectValidationNotifications(
     invocation,
     configuration,
@@ -66,6 +67,10 @@ function validateRunCompleteness(
     personalReminderAnalysis.finalized,
     closure,
     nodeContentDigestPort,
+  );
+  const publicationInputs = projectPublicationInputs(
+    configuration,
+    await state.session.initialPublicationBaseState(candidate.generatedAt.slice(0, 10)),
   );
   const notificationLedger = mergeSelectedNotificationLedger(state, notification);
   const aiCacheAdditions = state.session.pendingAiCacheEntries();
@@ -106,6 +111,8 @@ function validateRunCompleteness(
     previousNotificationLedger: state.notificationLedger,
     notificationLedger,
     notificationSelection: notification.notificationSelection,
+    notificationPreview: notification.notificationPreview,
+    publicationInputs,
     ledgerEntriesToMerge: notification.ledgerEntriesToMerge,
     repositoryAllowlist: inventory.allowlist.repositories,
     metrics,
@@ -132,7 +139,7 @@ function validateRunCompleteness(
 export function createValidateCompletenessStage(
   sessions: GitHubRunSessions,
 ): DailyTransactionDependencies<ProductionTypes>["validateCompleteness"] {
-  return ({
+  return async ({
     invocation,
     configuration,
     state,
@@ -145,7 +152,7 @@ export function createValidateCompletenessStage(
     metrics,
   }) => {
     try {
-      const value = validateRunCompleteness(
+      return await validateRunCompleteness(
         invocation,
         configuration,
         state,
@@ -158,7 +165,6 @@ export function createValidateCompletenessStage(
         metrics,
         sessions,
       );
-      return Promise.resolve(value);
     } finally {
       sessions.release(invocation.runId);
     }

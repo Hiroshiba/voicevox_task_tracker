@@ -75,6 +75,11 @@ import {
   type StateRunReport,
 } from "./state-documents.js";
 import { createUtcIsoDateTime, type Repository, type UtcIsoDateTime } from "../domain/index.js";
+import { INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1 } from "../application/tracking-run/contracts/recovery-paths.js";
+import {
+  createInitialPublicationBaseState,
+  type InitialPublicationBaseState,
+} from "./initial-publication-base-state.js";
 
 const CACHE_KEY_PREFIX = "sha256:";
 const HISTORY_FILE_PATTERN = /^(\d{4}-\d{2}-\d{2})\.jsonl$/u;
@@ -101,6 +106,9 @@ export type PersistStateTransactionInput = Readonly<{
   repositoryInventory: readonly Repository[];
   repositoryAllowlist: readonly Pick<Repository, "id" | "owner" | "name">[];
   knownSecrets: readonly string[];
+  expectedHistoryBase: InitialPublicationBaseState["historyBase"];
+  expectedPreviousInitialPagesEvidence: InitialPublicationBaseState["previousInitialPagesEvidence"];
+  deletions: readonly string[];
 }>;
 
 /** state永続化sessionがcommitしたrevisionとファイル一覧。 */
@@ -519,6 +527,21 @@ export class StatePersistenceSession {
     return this.#loadAllHistoryRecords();
   }
 
+  /** 固定revisionの履歴fileと移行で削除する旧cache pathを読む。 */
+  public async initialPublicationBaseState(runDate: string): Promise<InitialPublicationBaseState> {
+    const historyPath = joinStatePath(this.#configuration.historyDirectory, `${runDate}.jsonl`);
+    const [historyFile, previousInitialPagesEvidenceFile] = await Promise.all([
+      this.#readFile(historyPath),
+      this.#readFile(INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1),
+    ]);
+    return createInitialPublicationBaseState(
+      historyPath,
+      historyFile,
+      previousInitialPagesEvidenceFile,
+      this.#pendingAiCacheDeletionPaths,
+    );
+  }
+
   /** branch上の日次履歴を再生して任意の二日間の差分を返す。 */
   public async diffHistory(fromDate: string, toDate: string): Promise<StateHistoryDiff> {
     return diffStateHistory(await this.#loadAllHistoryRecords(), fromDate, toDate);
@@ -887,6 +910,23 @@ export class StatePersistenceSession {
       input.historyInputEvents,
     );
     const historyPath = joinStatePath(this.#configuration.historyDirectory, `${runDate}.jsonl`);
+    const base = await this.initialPublicationBaseState(runDate);
+    if (
+      serializeCanonicalJsonLine(base.historyBase) !==
+        serializeCanonicalJsonLine(input.expectedHistoryBase) ||
+      serializeCanonicalJsonLine(base.previousInitialPagesEvidence) !==
+        serializeCanonicalJsonLine(input.expectedPreviousInitialPagesEvidence) ||
+      serializeCanonicalJsonLine(
+        [
+          ...base.oldCacheDeletionPaths,
+          ...(base.previousInitialPagesEvidence.status === "present"
+            ? [INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1]
+            : []),
+        ].sort(compareStrings),
+      ) !== serializeCanonicalJsonLine(input.deletions)
+    ) {
+      throw new StateHistoryError("初回公開計画の履歴基準または削除pathが固定revisionと一致しません");
+    }
     const existingHistorySource = await this.#readHistorySource(historyPath);
     const existingHistoryRecords =
       existingHistorySource == null ? [] : parseStateHistoryRecords(existingHistorySource);
@@ -938,7 +978,7 @@ export class StatePersistenceSession {
       branch: this.#configuration.branch,
       expectedHead: this.#head,
       updates,
-      deletions: this.#pendingAiCacheDeletionPaths,
+      deletions: input.deletions,
       message: `tracker state ${runDate} ${snapshot.run.id}`,
       committedAt: snapshot.generatedAt,
     });

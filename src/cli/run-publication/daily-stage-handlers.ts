@@ -4,8 +4,6 @@ import { workflowArtifactPayload } from "../workflow-artifact.js";
 import { createCollectAnalyzeArtifact } from "./artifact.js";
 import type {
   DailyPublicationStageHandlers,
-  NormalizeLabelRules,
-  ResolveCompletedTrackingStartAt,
   RunPublicationAdapters,
 } from "./contracts.js";
 import { createRunMetadata } from "./metadata.js";
@@ -31,12 +29,12 @@ type DailyNotificationAdapters = Pick<
 export function persistDailyState(
   input: Parameters<DailyPublicationStageHandlers["persistState"]>[0],
 ): ReturnType<DailyPublicationStageHandlers["persistState"]> {
-  const { configuration, state, repositoryInventory, validated } = input;
+  const { configuration, state, repositoryInventory, planned } = input;
   return persistValidatedRun({
     configuration,
     state,
     inventory: repositoryInventory,
-    validated,
+    planned,
   });
 }
 
@@ -44,21 +42,17 @@ export function persistDailyState(
 export function buildDailyPages(
   dependencies: Readonly<{
     adapters: Pick<RunPublicationAdapters, "writePublicData" | "pagesOutputDirectory">;
-    normalizeLabelRules: NormalizeLabelRules;
   }>,
   input: Parameters<DailyPublicationStageHandlers["buildPages"]>[0],
 ): ReturnType<DailyPublicationStageHandlers["buildPages"]> {
-  const { configuration, repositoryInventory, validated, persisted } = input;
+  const { configuration, repositoryInventory, planned, persisted } = input;
   return buildPublicPages({
     writePublicData: dependencies.adapters.writePublicData,
-    config: configuration.config,
     inventory: repositoryInventory.inventory,
-    repositoryAllowlist: repositoryInventory.allowlist.repositories,
-    validated,
+    planned,
     historyRecords: persisted.historyRecords,
     outputDirectory: dependencies.adapters.pagesOutputDirectory,
     knownSecrets: configuration.credentials.knownSecrets,
-    resolveLabelRules: () => dependencies.normalizeLabelRules(configuration.config),
   });
 }
 
@@ -66,22 +60,18 @@ export function buildDailyPages(
 export async function sendDailyDiscord(
   dependencies: Readonly<{
     adapters: DailyNotificationAdapters;
-    normalizeLabelRules: NormalizeLabelRules;
   }>,
   input: Parameters<DailyPublicationStageHandlers["sendDiscord"]>[0],
 ): ReturnType<DailyPublicationStageHandlers["sendDiscord"]> {
-  const { invocation, configuration, state, repositoryInventory, validated, pages } = input;
+  const { configuration, state, repositoryInventory, planned, pages } = input;
+  const validated = planned.validated;
   assertValidatedRun(validated);
-  if (
-    invocation.executionPolicy.notificationAction === "acknowledge-current" ||
-    invocation.executionPolicy.notificationAction === "hold"
-  ) {
+  if (planned.publicationPlan.notificationOutbox.action !== "send") {
     return Object.freeze({
       value: Object.freeze({
         delivery: Object.freeze({
           status: "skipped",
-          reason:
-            invocation.executionPolicy.notificationAction === "hold" ? "held" : "no_candidates",
+          reason: planned.publicationPlan.notificationOutbox.action === "hold" ? "held" : "no_candidates",
         }),
         notificationEvents: Object.freeze([]),
         notificationLedger: validated.notificationLedger,
@@ -92,14 +82,11 @@ export async function sendDailyDiscord(
   }
   const result = await deliverDiscord(
     dependencies.adapters,
-    configuration.config,
-    () => dependencies.normalizeLabelRules(configuration.config),
-    discordDeliverySettings(configuration.config),
     state,
     repositoryInventory.inventory,
     repositoryInventory.allowlist.repositories,
     configuration.credentials.knownSecrets,
-    validated,
+    planned,
     pages.pagesUrl,
   );
   return Object.freeze({
@@ -116,7 +103,6 @@ export async function sendDailyDiscord(
 export function completeDailyRun(
   dependencies: Readonly<{
     adapters: Pick<RunPublicationAdapters, "now">;
-    resolveCompletedTrackingStartAt: ResolveCompletedTrackingStartAt;
   }>,
   input: Parameters<DailyPublicationStageHandlers["completeRun"]>[0],
 ): ReturnType<DailyPublicationStageHandlers["completeRun"]> {
@@ -125,25 +111,24 @@ export function completeDailyRun(
     configuration,
     state,
     repositoryInventory,
-    validated,
+    planned,
     discord,
     metrics,
     diagnostics,
   } = input;
+  const validated = planned.validated;
   return persistSuccessfulRunCompletion({
     now: dependencies.adapters.now,
-    config: configuration.config,
     state,
     repositoryInventory: repositoryInventory.inventory,
     repositoryAllowlist: repositoryInventory.allowlist.repositories,
-    validated,
+    planned,
     runMetadata: createRunMetadata({ invocation, validated, metrics, diagnostics }),
     delivery: {
       notificationLedger: discord.notificationLedger,
       notificationCount: metrics.notificationCount,
     },
     knownSecrets: configuration.credentials.knownSecrets,
-    resolveCompletedTrackingStartAt: dependencies.resolveCompletedTrackingStartAt,
   });
 }
 
@@ -205,7 +190,7 @@ export function writeDailyCollectAnalyzeArtifact(
         invocation: stageInput.invocation,
         configuration: stageInput.configuration,
         inventory: stageInput.repositoryInventory,
-        validated: stageInput.validated,
+        validated: stageInput.planned.validated,
         diagnostics: stageInput.diagnostics,
       }),
     ),

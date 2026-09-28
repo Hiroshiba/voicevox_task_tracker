@@ -11,6 +11,8 @@ type RunDigestValues = Readonly<{
   previousNotificationLedger: unknown;
   notificationLedger: unknown;
   notificationSelection: unknown;
+  notificationPreview: unknown;
+  publicationInputs: unknown;
   repositoryAllowlist: unknown;
   metrics: unknown;
   evidenceClosureSummary: unknown;
@@ -38,6 +40,8 @@ export function createRunArtifactValueDigests(
     previousNotificationLedger: hash(values.previousNotificationLedger),
     notificationLedger: hash(values.notificationLedger),
     notificationSelection: hash(values.notificationSelection),
+    notificationPreview: hash(values.notificationPreview),
+    publicationInputs: hash(values.publicationInputs),
     repositoryAllowlist: hash(values.repositoryAllowlist),
     metrics: hash(values.metrics),
     evidenceClosureSummary: hash(values.evidenceClosureSummary),

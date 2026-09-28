@@ -6,7 +6,6 @@ import {
   type UtcIsoDateTime,
 } from "../domain/index.js";
 import {
-  calculateDiscordNotificationCandidateSeverity,
   type DiscordDigestDelivery,
   type DiscordNotificationCandidate,
   type DiscordNotificationSelection,
@@ -246,7 +245,7 @@ export function createNotificationHistoryEventsForMessage(
       waitingOn: createNotificationWaitingOn(item, snapshot),
       reasons,
       personalReminders,
-      severity: calculateDiscordNotificationCandidateSeverity(sentReasons),
+      severity: candidate.severity,
       sentAt,
     });
   }

@@ -61,6 +61,7 @@ export type DailyTransactionTypeMap = Readonly<{
   codexAnalysis: unknown;
   personalReminderAnalysis: unknown;
   validated: unknown;
+  planned: unknown;
   persisted: unknown;
   pages: unknown;
   discord: unknown;
@@ -205,13 +206,14 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       metrics: RunMetrics;
     }>,
   ) => Promise<Types["validated"]>;
+  planPublication: (validated: Types["validated"]) => Types["planned"];
   persistState: (
     input: Readonly<{
       invocation: DailyRunInvocation;
       configuration: Types["configuration"];
       state: Types["state"];
       repositoryInventory: Types["repositoryInventory"];
-      validated: Types["validated"];
+      planned: Types["planned"];
       metrics: RunMetrics;
       status: "success" | "fallback";
       diagnostics: readonly string[];
@@ -222,7 +224,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       invocation: DailyRunInvocation;
       configuration: Types["configuration"];
       repositoryInventory: Types["repositoryInventory"];
-      validated: Types["validated"];
+      planned: Types["planned"];
       persisted: Types["persisted"];
     }>,
   ) => Promise<Types["pages"]>;
@@ -232,7 +234,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       configuration: Types["configuration"];
       state: Types["state"];
       repositoryInventory: Types["repositoryInventory"];
-      validated: Types["validated"];
+      planned: Types["planned"];
       persisted: Types["persisted"];
       pages: Types["pages"];
     }>,
@@ -243,7 +245,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       configuration: Types["configuration"];
       state: Types["state"];
       repositoryInventory: Types["repositoryInventory"];
-      validated: Types["validated"];
+      planned: Types["planned"];
       discord: Types["discord"];
       metrics: RunMetrics;
       status: "success" | "fallback";
@@ -262,7 +264,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
   ) => Promise<DiscordStageResult<Types["discord"]>>;
   writeDryRunArtifact: (
     path: string,
-    artifact: DryRunArtifact<Types["validated"]>,
+    artifact: DryRunArtifact<Types["planned"]>,
   ) => Promise<void>;
   writeCollectAnalyzeArtifact: (
     path: string,
@@ -271,7 +273,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       configuration: Types["configuration"];
       state: Types["state"];
       repositoryInventory: Types["repositoryInventory"];
-      validated: Types["validated"];
+      planned: Types["planned"];
       metrics: RunMetrics;
       status: "success" | "fallback";
       diagnostics: readonly string[];
@@ -348,7 +350,7 @@ function updateMetrics(metrics: RunMetrics, values: Partial<RunMetrics>): RunMet
 function createDryRunArtifact<Value>(
   invocation: DailyRunInvocation,
   status: "success" | "fallback",
-  validated: Value,
+  planned: Value,
   metrics: RunMetrics,
   diagnostics: readonly string[],
   finishedAt: UtcIsoDateTime,
@@ -362,7 +364,7 @@ function createDryRunArtifact<Value>(
     command: "dry-run",
     status,
     complete: true,
-    result: validated,
+    result: planned,
     metrics: completedMetrics,
     diagnostics: Object.freeze([...diagnostics]),
   });
@@ -687,6 +689,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         personalReminderAnalysis: personalReminderAnalysis.value,
         metrics,
       });
+      const planned = this.#dependencies.planPublication(validated);
 
       if (request.output.kind === "dry_run_artifact") {
         stage = "artifact";
@@ -695,7 +698,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           createDryRunArtifact(
             invocation,
             runStatus,
-            validated,
+            planned,
             metrics,
             diagnostics,
             currentTime(this.#runtime),
@@ -711,7 +714,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           configuration,
           state,
           repositoryInventory,
-          validated,
+          planned,
           metrics,
           status: runStatus,
           diagnostics,
@@ -726,7 +729,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           configuration,
           state,
           repositoryInventory,
-          validated,
+          planned,
           metrics,
           status: runStatus,
           diagnostics,
@@ -738,7 +741,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           invocation,
           configuration,
           repositoryInventory,
-          validated,
+          planned,
           persisted,
         });
         effects.pagesBuilt = true;
@@ -750,7 +753,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           configuration,
           state,
           repositoryInventory,
-          validated,
+          planned,
           persisted,
           pages,
         });
@@ -765,7 +768,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           configuration,
           state,
           repositoryInventory,
-          validated,
+          planned,
           discord: discord.value,
           metrics,
           status: runStatus,

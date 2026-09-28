@@ -6,6 +6,7 @@ import {
 } from "../application/tracking-run/request.js";
 import type { ValidatedRun } from "./run-publication/contracts.js";
 import { parseSha256Hash } from "../canonical-json/sha256.js";
+import { publicationInputsSchema } from "../application/tracking-run/contracts/publication-inputs.js";
 import { createUtcIsoDateTime } from "../domain/index.js";
 import { createStateNotificationLedger } from "../persistence/index.js";
 import { runMetricsSchema } from "./run-report.js";
@@ -80,6 +81,7 @@ const validationSchema = z.strictObject({
     aiBudgetSummary: budgetSummarySchema,
   }),
   previousNotificationLedger: z.unknown(),
+  publicationInputs: publicationInputsSchema,
   metrics: runMetricsSchema,
   evidenceClosureSummary: z.strictObject({
     referenceCount: nonNegativeIntegerSchema,
@@ -99,6 +101,8 @@ const validationSchema = z.strictObject({
     previousNotificationLedger: sha256Schema,
     notificationLedger: sha256Schema,
     notificationSelection: sha256Schema,
+    notificationPreview: sha256Schema,
+    publicationInputs: sha256Schema,
     repositoryAllowlist: sha256Schema,
     metrics: sha256Schema,
     evidenceClosureSummary: sha256Schema,
@@ -126,6 +130,7 @@ export type WorkflowValidation = Pick<
   Omit<ValidatedRun, "proof">,
   | "core"
   | "previousNotificationLedger"
+  | "publicationInputs"
   | "metrics"
   | "evidenceClosureSummary"
   | "evidenceClosureWitness"

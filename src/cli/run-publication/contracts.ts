@@ -1,12 +1,10 @@
 import type { Config, loadConfig } from "../../config/index.js";
 import type { AiCacheEntry, PersonalReminderAiCacheEntry } from "../../codex/index.js";
 import type { ValidatedRun as TrackingValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
+import type { PublicationPlannedRun } from "../../publication/publication-plan-contracts.js";
 import type { Sha256Hash } from "../../canonical-json/sha256.js";
 import type {
-  LabelRule,
   Repository,
-  TrackingStartAtState,
-  UtcIsoDateTime,
 } from "../../domain/index.js";
 import type {
   DiscordDigestDelivery,
@@ -125,19 +123,6 @@ export type RunPublicationAdapters = Readonly<{
   sendDiscord: typeof sendDiscordDigest;
 }>;
 
-/** production-runtimeに残すlabel rule正規化処理。 */
-export type NormalizeLabelRules = (config: Config) => readonly LabelRule[];
-
-/** すでに対象configを閉じ込めた遅延label rule取得処理。 */
-export type ResolveLabelRules = () => readonly LabelRule[];
-
-/** production-runtimeに残す完了時tracking.startAt確定処理。 */
-export type ResolveCompletedTrackingStartAt = (
-  config: Config,
-  snapshot: StateSnapshot,
-  completedAt: UtcIsoDateTime,
-) => TrackingStartAtState;
-
 /** 公開stageだけを具体化したdaily transaction型対応表。 */
 export type PublicationDailyTypes = DailyTransactionTypeMap &
   Readonly<{
@@ -145,6 +130,7 @@ export type PublicationDailyTypes = DailyTransactionTypeMap &
     state: PublicationState;
     repositoryInventory: PublicationRepositoryInventory;
     validated: ValidatedRun;
+    planned: PublicationPlannedRun;
     persisted: PersistedRun;
     pages: PagesResult;
     discord: DiscordResult;

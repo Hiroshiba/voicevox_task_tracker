@@ -1,6 +1,8 @@
 import type { DailyTransactionDependencies } from "../daily-transaction.js";
 import { analyzeDeterministically } from "../../application/tracking-run/stages/deterministic.js";
 import { reconcileAdoptedGraph } from "../../application/tracking-run/stages/graph-reconciliation.js";
+import { planPublication } from "../../publication/plan-publication.js";
+import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content-digest.js";
 import type { ProductionRuntimeAdapters } from "./adapters.js";
 import {
   createAdoptGenericAiStage,
@@ -58,6 +60,7 @@ export function createDailyDependencies(
     reconcileAdoptedGraph,
     analyzePersonalReminders: createAnalyzePersonalRemindersStage(adapters),
     validateCompleteness: createValidateCompletenessStage(githubSessions),
+    planPublication: (validated) => planPublication(validated, nodeContentDigestPort),
     persistState: createPersistStateStage(),
     buildPages: createBuildPagesStage(adapters),
     sendDiscord: createSendDiscordStage(adapters),
