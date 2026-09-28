@@ -1,7 +1,9 @@
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import type { RuntimeRecoveryInputV1 } from "../../application/tracking-run/contracts/runtime-recovery-v1.js";
 import type { Receipt } from "../../application/tracking-run/receipt-schema.js";
+import type { ObservedStateCommitPosition } from "../../application/tracking-run/observed-state-commit.js";
 import { verifyReceiptChain } from "../../application/tracking-run/receipt-chain.js";
+import type { ReceiptChainEntry } from "../../application/tracking-run/receipt-chain-schema.js";
 import { readRunTransactionMarkerRecoveryBootstrap } from "../../application/tracking-run/recovery-bootstrap.js";
 import {
   DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
@@ -46,7 +48,7 @@ export type InspectRunStateRequest =
       expectedWorkflowEffectAdapterIdentityDigest: string;
       runtimeRecoveryPlan: RuntimeRecoveryInputV1["runtimeRecoveryPlan"];
       observation: Readonly<{ invocationId: string; observedAt: string }>;
-      receipts: readonly unknown[];
+      receipts: readonly ReceiptChainEntry[];
     }>;
 
 /** 検証済みstateに基づく起動判断。 */
@@ -197,25 +199,7 @@ async function verifiedReceipts(
   if (request.receipts.length === 0) {
     return Object.freeze([]);
   }
-  const evidence =
-    verified.initialPagesEvidence == null || verified.marker.phase === "initial_state_committed"
-      ? ({ kind: "none" } as const)
-      : {
-          kind: "initial_pages_state" as const,
-          state: {
-            exactStateRevision: headRevision,
-            marker: {
-              runId: verified.marker.runId,
-              checkpointDigest: verified.marker.checkpointDigest,
-              phase: verified.marker.phase,
-              initialPagesPublicationEvidenceDigest:
-                verified.marker.initialPagesPublicationEvidenceDigest,
-              initialStateRevision: verified.marker.initialStateRevision,
-            },
-            evidence: verified.initialPagesEvidence,
-          },
-        };
-  const chain = verifyReceiptChain(request.receipts, nodeContentDigestPort, evidence).receipts;
+  const chain = verifyReceiptChain(request.receipts, nodeContentDigestPort).receipts;
   const runtimeDigest = nodeContentDigestPort.sha256Utf8(
     serializeCanonicalJson(verified.record.runtimeIdentity),
   );
@@ -362,6 +346,16 @@ export async function inspectRunState(
       finalStateRevision,
     );
     let stateReceipt: Awaited<ReturnType<typeof observeStateCommitAtRevision>> | undefined;
+    const precedingReceipt = receipts.at(-1);
+    const position: ObservedStateCommitPosition =
+      precedingReceipt == null
+        ? { kind: "first" }
+        : {
+            kind: "after",
+            previousReceiptDigest: precedingReceipt.receiptDigest,
+            previousPhaseSequence: precedingReceipt.phaseSequence,
+          };
+    const stateObservation = { ...request.observation, position };
     if (verified.marker.phase === "initial_state_committed") {
       stateReceipt = await observeStateCommitAtRevision(
         adapter,
@@ -369,7 +363,7 @@ export async function inspectRunState(
         initialStateRevision,
         initialStateRevision,
         "initial_state_commit",
-        request.observation,
+        stateObservation,
       );
     } else if (verified.marker.phase === "notifications_settled") {
       stateReceipt = await observeStateCommitAtRevision(
@@ -378,7 +372,7 @@ export async function inspectRunState(
         finalStateRevision,
         initialStateRevision,
         "notification_settlement",
-        request.observation,
+        stateObservation,
       );
     } else if (verified.marker.phase === "run_finalized") {
       stateReceipt = await observeStateCommitAtRevision(
@@ -387,7 +381,7 @@ export async function inspectRunState(
         finalStateRevision,
         initialStateRevision,
         "run_finalization",
-        request.observation,
+        stateObservation,
       );
     }
     const stageInput = selectRecoveryStage(

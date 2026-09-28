@@ -2,11 +2,9 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { z } from "zod";
-
 import { serializeCanonicalJsonLine } from "../canonical-json/value.js";
 import { verifyReceiptChain } from "../application/tracking-run/receipt-chain.js";
-import { initialPagesPublicationEvidenceSchema } from "../application/tracking-run/initial-pages-evidence.js";
+import { receiptChainEnvelopeSchema } from "../application/tracking-run/receipt-chain-schema.js";
 import {
   createPublicFailureArtifact,
   failedRunSchema,
@@ -95,34 +93,8 @@ export async function verifyReceiptChainCommand(
   if (source !== serializeCanonicalJsonLine(raw)) {
     throw new TypeError("receipt chainがcanonical JSONではありません");
   }
-  const input = z
-    .strictObject({
-      schemaVersion: z.literal(1),
-      receipts: z.array(z.unknown()).min(1),
-      evidence: z.discriminatedUnion("kind", [
-        z.strictObject({ kind: z.literal("none") }),
-        z.strictObject({
-          kind: z.literal("initial_pages_state"),
-          state: z.strictObject({
-            exactStateRevision: z.string().regex(/^[0-9a-f]{40}$/u),
-            marker: z.strictObject({
-              runId: z.string().regex(/^tracker-run:[0-9a-f]{64}$/u),
-              checkpointDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
-              phase: z.enum([
-                "notifications_in_progress",
-                "notifications_settled",
-                "run_finalized",
-              ]),
-              initialPagesPublicationEvidenceDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
-              initialStateRevision: z.string().regex(/^[0-9a-f]{40}$/u),
-            }),
-            evidence: initialPagesPublicationEvidenceSchema,
-          }),
-        }),
-      ]),
-    })
-    .parse(raw);
-  const verified = verifyReceiptChain(input.receipts, nodeContentDigestPort, input.evidence);
+  const input = receiptChainEnvelopeSchema.parse(raw);
+  const verified = verifyReceiptChain(input.entries, nodeContentDigestPort);
   await adapters.writeStandardOutput(
     serializeCanonicalJsonLine({
       lastReceiptDigest: verified.proof.lastReceiptDigest,

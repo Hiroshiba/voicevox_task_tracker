@@ -38,18 +38,20 @@ export type InitialPagesPublicationEvidence = z.output<
   typeof initialPagesPublicationEvidenceSchema
 >;
 
+export const initialPagesEvidenceStateSchema = z.strictObject({
+  exactStateRevision: revisionSchema,
+  marker: z.strictObject({
+    runId: runIdSchema,
+    checkpointDigest: sha256Schema,
+    phase: z.enum(["notifications_in_progress", "notifications_settled", "run_finalized"]),
+    initialPagesPublicationEvidenceDigest: sha256Schema,
+    initialStateRevision: revisionSchema,
+  }),
+  evidence: initialPagesPublicationEvidenceSchema,
+});
+
 /** 同じexact revisionで読んだmarkerとevidenceの対応。 */
-export type InitialPagesEvidenceState = Readonly<{
-  exactStateRevision: string;
-  marker: Readonly<{
-    runId: string;
-    checkpointDigest: string;
-    phase: "notifications_in_progress" | "notifications_settled" | "run_finalized";
-    initialPagesPublicationEvidenceDigest: string;
-    initialStateRevision: string;
-  }>;
-  evidence: InitialPagesPublicationEvidence;
-}>;
+export type InitialPagesEvidenceState = z.output<typeof initialPagesEvidenceStateSchema>;
 
 /** build、deploy、intentの一致から初回Pages保存証拠を作る。 */
 export function createInitialPagesPublicationEvidence(

@@ -8,9 +8,9 @@ import {
 } from "../application/tracking-run/receipt-codec.js";
 import {
   verifyReceiptChain,
-  type ReceiptChainEvidence,
   type ReceiptChainProof,
 } from "../application/tracking-run/receipt-chain.js";
+import type { ReceiptChainEvidence } from "../application/tracking-run/receipt-chain-schema.js";
 import type {
   PagesDeploymentReceipt,
   Receipt,
@@ -139,7 +139,13 @@ function verifyResumeReceipts(
       throw new TypeError("再開receiptのcheckpointまたはruntime結合が一致しません");
     }
   }
-  return verifyReceiptChain(receipts, digest, evidence).proof;
+  return verifyReceiptChain(
+    receipts.map((receipt, index) => ({
+      receipt,
+      evidence: index === 0 ? evidence : { kind: "none" },
+    })),
+    digest,
+  ).proof;
 }
 
 function stateCommitChainEvidence(

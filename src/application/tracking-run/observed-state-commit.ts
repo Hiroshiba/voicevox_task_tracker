@@ -12,6 +12,15 @@ import { runTransactionMarkerSchema } from "./run-transaction-marker.js";
 type StateCommitReceipt =
   InitialStateCommitReceipt | NotificationSettlementReceipt | RunFinalizationReceipt;
 
+/** 観測receiptを列先頭または直前receiptへ連結する位置。 */
+export type ObservedStateCommitPosition =
+  | Readonly<{ kind: "first" }>
+  | Readonly<{
+      kind: "after";
+      previousReceiptDigest: string;
+      previousPhaseSequence: number;
+    }>;
+
 const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const revisionSchema = z.string().regex(/^[0-9a-f]{40}$/u);
 const runIdSchema = z.string().regex(/^tracker-run:[0-9a-f]{64}$/u);
@@ -141,12 +150,22 @@ export function digestStateCommitReceiptContent(
 /** 保存済みstateとcommitから新しい試行のobserved receiptを発行する。 */
 export function observeStateCommitReceipt(
   evidence: StateCommitReceiptEvidence,
-  invocationId: string,
-  observedAt: string,
+  observation: Readonly<{
+    invocationId: string;
+    observedAt: string;
+    position: ObservedStateCommitPosition;
+  }>,
   digest: ContentDigestPort,
 ): StateCommitReceipt {
   const parsed = stateCommitReceiptEvidenceSchema.parse(evidence);
   assertStateCommitEvidence(parsed);
+  if (
+    observation.position.kind === "after" &&
+    (!Number.isSafeInteger(observation.position.previousPhaseSequence) ||
+      observation.position.previousPhaseSequence < 1)
+  ) {
+    throw new TypeError("観測receiptの先行phase sequenceが不正です");
+  }
   const { record, commit } = parsed;
   if (
     commit.operationId !==
@@ -178,11 +197,15 @@ export function observeStateCommitReceipt(
     schemaVersion: 1,
     binding,
     logicalTarget: record.checkpointDigest,
-    invocationId,
+    invocationId: observation.invocationId,
     localAttemptIndex: 0,
-    phaseSequence: 1,
+    phaseSequence:
+      observation.position.kind === "first" ? 1 : observation.position.previousPhaseSequence + 1,
+    ...(observation.position.kind === "first"
+      ? {}
+      : { previousReceiptDigest: observation.position.previousReceiptDigest }),
     receiptKind: "observed",
-    observedAt,
+    observedAt: observation.observedAt,
     effectCertainty: "committed",
   } satisfies Pick<
     ReceiptDraft,
@@ -261,12 +284,16 @@ export function observeStateCommitReceipt(
 export function assertObservedStateCommitReceipt(
   receipt: StateCommitReceipt,
   evidence: StateCommitReceiptEvidence,
+  position: ObservedStateCommitPosition,
   digest: ContentDigestPort,
 ): void {
   const expected = observeStateCommitReceipt(
     evidence,
-    receipt.invocationId,
-    receipt.observedAt,
+    {
+      invocationId: receipt.invocationId,
+      observedAt: receipt.observedAt,
+      position,
+    },
     digest,
   );
   if (serializeCanonicalJson(receipt) !== serializeCanonicalJson(expected)) {

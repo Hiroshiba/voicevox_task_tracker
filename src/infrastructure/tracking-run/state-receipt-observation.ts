@@ -1,6 +1,7 @@
 import { hashCanonicalJson } from "../../canonical-json/index.js";
 import {
   observeStateCommitReceipt,
+  type ObservedStateCommitPosition,
   type StateCommitReceiptEvidence,
 } from "../../application/tracking-run/observed-state-commit.js";
 import type {
@@ -200,7 +201,11 @@ export async function observeStateCommitAtRevision(
   revision: string,
   initialStateRevision: string,
   receiptType: StateCommitReceiptEvidence["receiptType"],
-  observation: Readonly<{ invocationId: string; observedAt: string }>,
+  observation: Readonly<{
+    invocationId: string;
+    observedAt: string;
+    position: ObservedStateCommitPosition;
+  }>,
 ): Promise<
   ObservedCommit<InitialStateCommitReceipt | NotificationSettlementReceipt | RunFinalizationReceipt>
 > {
@@ -290,12 +295,10 @@ export async function observeStateCommitAtRevision(
       runReportDigest: runReportDigest(tree.files, configuration, tree.transaction),
     };
   }
-  const receipt = observeStateCommitReceipt(
-    evidence,
-    observation.invocationId,
-    observation.observedAt,
+  const receipt = observeStateCommitReceipt(evidence, observation, nodeContentDigestPort);
+  verifyReceiptChain(
+    [{ receipt, evidence: { kind: "state_commit", state: evidence } }],
     nodeContentDigestPort,
   );
-  verifyReceiptChain([receipt], nodeContentDigestPort, { kind: "state_commit", state: evidence });
   return Object.freeze({ receipt, evidence });
 }

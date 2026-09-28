@@ -1,15 +1,13 @@
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import type { ContentDigestPort } from "./ports.js";
 import { parseReceipt } from "./receipt-codec.js";
+import { receiptChainEntrySchema, type ReceiptChainEvidence } from "./receipt-chain-schema.js";
 import {
   assertObservedStateCommitReceipt,
-  type StateCommitReceiptEvidence,
+  type ObservedStateCommitPosition,
 } from "./observed-state-commit.js";
 import type { Receipt } from "./receipt-schema.js";
-import {
-  parseInitialPagesPublicationEvidence,
-  type InitialPagesEvidenceState,
-} from "./initial-pages-evidence.js";
+import { parseInitialPagesPublicationEvidence } from "./initial-pages-evidence.js";
 
 const receiptChainProofBrand: unique symbol = Symbol("receiptChainProof");
 
@@ -26,18 +24,16 @@ export type VerifiedReceiptChain = Readonly<{
   proof: ReceiptChainProof;
 }>;
 
-/** observed receiptの根拠となるexact state証拠。 */
-export type ReceiptChainEvidence =
-  | Readonly<{ kind: "none" }>
-  | Readonly<{ kind: "initial_pages_state"; state: InitialPagesEvidenceState }>
-  | Readonly<{ kind: "state_commit"; state: StateCommitReceiptEvidence }>;
-
 function assertObservedReceiptEvidence(
   receipt: Receipt,
   witness: ReceiptChainEvidence,
+  previous: Receipt | undefined,
   digest: ContentDigestPort,
 ): void {
   if (receipt.receiptKind !== "observed") {
+    if (witness.kind !== "none") {
+      throw new TypeError("通常receiptへ観測証拠を付けられません");
+    }
     return;
   }
   if (
@@ -48,7 +44,23 @@ function assertObservedReceiptEvidence(
     if (witness.kind !== "state_commit") {
       throw new TypeError("observed state receiptのcommit証拠がありません");
     }
-    assertObservedStateCommitReceipt(receipt, witness.state, digest);
+    let position: ObservedStateCommitPosition;
+    if (previous != null) {
+      position = {
+        kind: "after",
+        previousReceiptDigest: previous.receiptDigest,
+        previousPhaseSequence: previous.phaseSequence,
+      };
+    } else if (receipt.previousReceiptDigest != null) {
+      position = {
+        kind: "after",
+        previousReceiptDigest: receipt.previousReceiptDigest,
+        previousPhaseSequence: receipt.phaseSequence - 1,
+      };
+    } else {
+      position = { kind: "first" };
+    }
+    assertObservedStateCommitReceipt(receipt, witness.state, position, digest);
     return;
   }
   if (
@@ -210,7 +222,6 @@ function assertCompatibleOperation(
 export function verifyReceiptChain(
   values: readonly unknown[],
   digest: ContentDigestPort,
-  evidence: ReceiptChainEvidence,
 ): VerifiedReceiptChain {
   const receipts: Receipt[] = [];
   const byAttempt = new Map<string, Receipt>();
@@ -221,8 +232,12 @@ export function verifyReceiptChain(
   let preCheckpointConfigDigest: string | undefined;
   let lastTrackingStateRevision: string | undefined;
   for (const value of values) {
-    const receipt = parseReceipt(value, digest);
-    assertObservedReceiptEvidence(receipt, evidence, digest);
+    const entry = receiptChainEntrySchema.parse(value);
+    const receipt = parseReceipt(entry.receipt, digest);
+    const evidence = entry.evidence;
+    const priorAttempt = byAttempt.get(receipt.attemptId);
+    const previous = priorAttempt == null ? receipts.at(-1) : undefined;
+    assertObservedReceiptEvidence(receipt, evidence, previous, digest);
     if (receipt.binding.bindingKind === "checkpoint") {
       const binding = serializeCanonicalJson(receipt.binding);
       if (
@@ -248,7 +263,6 @@ export function verifyReceiptChain(
       preCheckpointBaseRevision = baseRevision;
       preCheckpointConfigDigest = receipt.binding.configDigest;
     }
-    const priorAttempt = byAttempt.get(receipt.attemptId);
     if (priorAttempt != null) {
       if (priorAttempt.receiptDigest !== receipt.receiptDigest) {
         throw new TypeError("同じattempt IDに異なるreceiptがあります");
@@ -259,7 +273,6 @@ export function verifyReceiptChain(
     if (priorOperation != null) {
       assertCompatibleOperation(priorOperation.receipt, receipt, receipts, priorOperation.index);
     }
-    const previous = receipts.at(-1);
     if (previous != null) {
       if (
         receipt.previousReceiptDigest !== previous.receiptDigest ||
