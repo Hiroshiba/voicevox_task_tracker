@@ -121,23 +121,6 @@ function activeProofForPreservedEdge(
   });
 }
 
-function pendingProofForPreservedInactiveEdge(
-  proof: RelationCandidateDecisionProof,
-  dependency: AiAnalysisDependency,
-): RelationCandidateDecisionProof {
-  return Object.freeze({
-    candidateId: proof.candidateId,
-    endpointNodeIds: proof.endpointNodeIds,
-    authority: proof.authority,
-    resolution: Object.freeze({
-      candidateId: proof.candidateId,
-      status: "pending",
-      reason: "assessment_missing",
-    }),
-    dependency,
-  });
-}
-
 /** 未確認の前回辺を保持して候補判定の証明を整える。 */
 export function preserveUnverifiedGraphEdges(
   collection: GraphWorkingCollection,
@@ -151,7 +134,6 @@ export function preserveUnverifiedGraphEdges(
   candidateResolutions: readonly RelationCandidateResolution[];
   candidateDecisionProofs: readonly RelationCandidateDecisionProof[];
 }> {
-  const staleNodeIds = new Set<string>(collection.staleItems.map((item) => item.nodeId));
   const candidatesById = new Map(candidates.map((candidate) => [candidate.id, candidate]));
   const detailsByNodeId = new Map<GraphNodeId, GitHubItemDetail>(
     collection.details.map((detail) => [detail.nodeId, detail]),
@@ -163,6 +145,9 @@ export function preserveUnverifiedGraphEdges(
     candidates,
     detailsByNodeId,
   );
+  const proofsByCandidateId = new Map(
+    candidateDecisionProofs.map((proof) => [proof.candidateId, proof]),
+  );
   const preservedEdges = new Map(
     previousEdges
       .filter((edge) => {
@@ -170,7 +155,14 @@ export function preserveUnverifiedGraphEdges(
           return false;
         }
         if (edge.provenance !== "native") {
-          return staleNodeIds.has(edge.fromNodeId) || staleNodeIds.has(edge.toNodeId);
+          const candidate = candidatesById.get(edge.id);
+          const resolution = proofsByCandidateId.get(edge.id)?.resolution;
+          return (
+            edge.active &&
+            candidate?.authority === "inferred" &&
+            resolution?.status === "pending" &&
+            resolution.reason === "assessment_missing"
+          );
         }
         if (candidatesById.has(edge.id)) {
           return false;
@@ -180,9 +172,6 @@ export function preserveUnverifiedGraphEdges(
         );
       })
       .map((edge) => [edge.id, edge]),
-  );
-  const proofsByCandidateId = new Map(
-    candidateDecisionProofs.map((proof) => [proof.candidateId, proof]),
   );
   const preservedSourceDependencies = new Map<RelationCandidateId, AiAnalysisDependency>();
   const result = reconciledEdges
@@ -229,24 +218,6 @@ export function preserveUnverifiedGraphEdges(
               nodeId: fallbackProducerNode.nodeId,
               element: "relations",
             } satisfies AiAnalysisDependencyProducer);
-      if (!preserved.active) {
-        if (!edge.active) {
-          return preserved;
-        }
-        const sourceDependency = downgradedPreservedRelationDependency(
-          preserved,
-          proof?.dependency,
-          fallbackProducer,
-        );
-        if (sourceDependency == null) {
-          return preserved;
-        }
-        preservedSourceDependencies.set(preserved.id, sourceDependency);
-        return Object.freeze({
-          ...preserved,
-          aiDependency: aiAnalysisDependencyForRelation(preserved.id, sourceDependency),
-        });
-      }
       const sourceDependency = downgradedPreservedRelationDependency(
         preserved,
         proof?.dependency,
@@ -271,17 +242,6 @@ export function preserveUnverifiedGraphEdges(
     const preserved = preservedEdges.get(proof.candidateId);
     if (preserved == null || preserved.provenance === "native") {
       return proof;
-    }
-    if (!preserved.active) {
-      if (proof.resolution.status !== "active") {
-        return proof;
-      }
-      const sourceDependency = preservedSourceDependencies.get(proof.candidateId);
-      assertNonNullable(
-        sourceDependency,
-        `inactive stale edgeの降格済みAI依存がありません。対象: ${proof.candidateId}`,
-      );
-      return pendingProofForPreservedInactiveEdge(proof, sourceDependency);
     }
     const sourceDependency = preservedSourceDependencies.get(proof.candidateId);
     assertNonNullable(

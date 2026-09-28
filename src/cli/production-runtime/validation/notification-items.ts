@@ -32,6 +32,7 @@ import type {
 import { normalizeLabelRules } from "../label-rules.js";
 import { previousTrackedItem } from "../previous-state/snapshot.js";
 import { findRepository, repositoryFullName } from "../repository-lookup.js";
+import { currentNotificationGraph } from "./notification-graph-currentness.js";
 
 function notificationLatestChange(
   current: GraphReducedItem,
@@ -129,6 +130,7 @@ function notificationItem(
   inventory: RepositoryInventory,
   enumeratedItemsByNodeId: ReadonlyMap<GitHubNodeId, EnumeratedGitHubItem>,
   graph: GraphReconciliationResult,
+  currentGraph: ReturnType<typeof currentNotificationGraph>,
   evaluatedAt: UtcIsoDateTime,
   item: GraphFinalItem,
   staleness: GraphTrackedItemStaleness,
@@ -140,7 +142,7 @@ function notificationItem(
 ): DiscordNotificationItem {
   const repository = findRepository(inventory, item.repositoryId);
   const previous = previousTrackedItem(state, item.nodeId);
-  const downstreamImpact = graph.analysis.downstreamImpacts.find(
+  const downstreamImpact = currentGraph.analysis.downstreamImpacts.find(
     (impact) => impact.nodeId === item.nodeId,
   );
   assertNonNullable(downstreamImpact, `通知対象 ${item.nodeId}のdownstream impactがありません`);
@@ -148,7 +150,7 @@ function notificationItem(
     repositoryFullName(repository),
     item.labels,
   );
-  const cycleIds = graph.analysis.dependencyCycles
+  const cycleIds = currentGraph.analysis.dependencyCycles
     .filter((cycle) => cycle.nodeIds.includes(item.nodeId))
     .map((cycle) => cycle.id);
   const notificationRecommendation =
@@ -156,14 +158,14 @@ function notificationItem(
       ? analysisState.value.notificationRecommendation
       : (retainedNotificationRecommendation ?? Object.freeze({ availability: "not_available" }));
   const previousDependencyCycles: DiscordNotificationItem["graph"]["previousDependencyCycles"] =
-    graph.previousAnalysis.availability === "unavailable"
+    currentGraph.previousAnalysis == null
       ? Object.freeze({
           availability: "not_available",
         })
       : Object.freeze({
           availability: "available",
           cycleIds: Object.freeze(
-            graph.previousAnalysis.value.dependencyCycles
+            currentGraph.previousAnalysis.dependencyCycles
               .filter((cycle) => cycle.nodeIds.includes(item.nodeId))
               .map((cycle) => cycle.id),
           ),
@@ -250,7 +252,9 @@ function notificationItem(
     personalReminderCausePlanning,
     graph: Object.freeze({
       downstreamImpact,
-      newlyUnblocked: graph.analysis.newlyUnblockedNodeIds.includes(item.nodeId),
+      newlyUnblocked:
+        currentGraph.analysis.newlyUnblockedNodeIds.includes(item.nodeId) &&
+        !currentGraph.unverifiedOpenBlockerNodeIds.has(item.nodeId),
       hasOpenBlockers:
         graph.openNodeIds.includes(item.nodeId) &&
         !graph.analysis.actionableFrontier.includes(item.nodeId),
@@ -270,6 +274,7 @@ export function notificationItems(
   personalReminderAnalysis: PersonalReminderAnalysis,
 ): readonly DiscordNotificationItem[] {
   const { reduction, graph, finalItems } = reconciled.data;
+  const currentGraph = currentNotificationGraph(state, finalItems, graph);
   const staleRepositoryIds = new Set<GitHubRepositoryId>(
     collection.repositoryResults
       .filter((result) => result.freshness === "stale")
@@ -298,6 +303,7 @@ export function notificationItems(
           inventory,
           enumeratedItemsByNodeId,
           graph,
+          currentGraph,
           collection.evaluatedAt,
           item,
           staleness,

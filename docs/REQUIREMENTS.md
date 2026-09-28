@@ -275,6 +275,7 @@ terminal項目と`waiting_for_unblock`の項目は要対応度scoreを0とする
 個人向けの`assessment_overdue`、`owner_overdue`、`decision_overdue`、`review_overdue`、`revision_overdue`、`reply_overdue`、`work_overdue`、`merge_overdue`は、現在有効な`actionable`の原因が閾値へ到達した場合だけ生成する。
 項目全体のstatusや旧AIの通知推薦から同じ理由を重ねて生成しない。
 `automation_stuck`、`owner_unknown`、`blocker_overdue`、循環、依存解消、責務変更などのsystem通知は、理由固有の確定事実と変化から選ぶ。
+`blocker_overdue`、`newly_unblocked`、`dependency_cycle`は、最終snapshotで現在入力による確認が済んだ関係辺だけを根拠に選ぶ。未検証の辺だけから通知条件が成立しても送らない。
 
 通知0件なら投稿しない。同じnotification keyは一度だけ送信する。
 個人通知では責務期間、責任主体、行動、実行可能性・停滞の起点、閾値からkeyを決める。入力hashや説明文だけの変更ではkeyを変えない。進捗や待機解消で起点が変わった場合は、現在の閾値から選び直す。

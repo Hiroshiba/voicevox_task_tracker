@@ -7,36 +7,16 @@ import type { GitHubNodeId } from "../../../domain/types.js";
 import type {
   GenericAiAdoptedValue,
   GenericAiElementAdoption,
-  GenericAiEvaluatedValue,
 } from "./generic-ai-adoption-contracts.js";
 
-function applicationFor(
-  adopted: GenericAiAdoptedValue,
-  attempt: GenericAiElementAdoption["attemptStatus"],
-  evaluated: GenericAiEvaluatedValue | undefined,
-): AiAnalysisElementApplication {
+function applicationFor(adopted: GenericAiAdoptedValue): AiAnalysisElementApplication {
   if (adopted.status === "ai") {
-    if (adopted.currentness === "current") {
-      return Object.freeze({
-        status: "current_ai",
-        origin:
-          adopted.origin === "executed" || adopted.origin === "cache"
-            ? adopted.origin
-            : "verified_reuse",
-      });
-    }
-    if (adopted.origin === "migration") {
-      return Object.freeze({ status: "unknown", reason: "migration" });
-    }
-    if (attempt === "failed" || attempt === "deferred") {
-      return Object.freeze({ status: "retained_ai", reason: attempt });
-    }
     return Object.freeze({
-      status: "retained_ai",
-      reason:
-        attempt === "completed" && evaluated != null && evaluated.origin !== "snapshot"
-          ? "current_evaluation_not_adopted"
-          : "proof_unknown",
+      status: "current_ai",
+      origin:
+        adopted.origin === "executed" || adopted.origin === "cache"
+          ? adopted.origin
+          : "verified_reuse",
     });
   }
   if (adopted.status === "deterministic") {
@@ -65,8 +45,6 @@ export function adoptionProvenance(
   nodeId: GitHubNodeId,
   element: AiAnalysisElement,
   adopted: GenericAiAdoptedValue,
-  attempt: GenericAiElementAdoption["attemptStatus"],
-  evaluated: GenericAiEvaluatedValue | undefined,
 ): Pick<GenericAiElementAdoption, "producer" | "application" | "aiDependency"> {
   let producer: GenericAiElementAdoption["producer"];
   if (adopted.status === "ai") {
@@ -76,7 +54,7 @@ export function adoptionProvenance(
   } else {
     producer = Object.freeze({ kind: "unavailable", nodeId, element });
   }
-  const application = applicationFor(adopted, attempt, evaluated);
+  const application = applicationFor(adopted);
   return Object.freeze({
     producer,
     application,

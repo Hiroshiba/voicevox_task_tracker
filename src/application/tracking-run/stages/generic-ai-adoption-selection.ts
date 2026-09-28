@@ -88,6 +88,7 @@ function unverifiedReasons(
   proof: AiAnalysisElementReuseProof,
 ): readonly GenericAiUnverifiedReason[] {
   if (
+    !isStateElement(plan.element) &&
     determineAnalysisElementReuse({
       element: plan.element,
       inputFingerprint: plan.inputFingerprint,
@@ -111,10 +112,10 @@ function unverifiedReasons(
   if (proof.inputFingerprint !== plan.inputFingerprint) {
     reasons.push("input_mismatch");
   }
-  if (proof.dependencyFingerprint !== plan.dependencyFingerprint) {
+  if (!isStateElement(plan.element) && proof.dependencyFingerprint !== plan.dependencyFingerprint) {
     reasons.push("dependency_mismatch");
   }
-  if (reasons.length === 0) {
+  if (reasons.length === 0 && !isStateElement(plan.element)) {
     reasons.push("proof_unknown");
   }
   return Object.freeze(reasons);
@@ -229,6 +230,7 @@ function adoptValue(
   plan: GenericAiElementPlan,
   result: RunElement | undefined,
   retained: GenericAiRetainedValue | undefined,
+  evaluated: GenericAiEvaluatedValue | undefined,
   attempt: GenericAiElementAdoption["attemptStatus"],
   minimumConfidence: number,
   rejectSelectedState: boolean,
@@ -236,6 +238,7 @@ function adoptValue(
   aiEnabled: boolean,
 ): GenericAiAdoptedValue {
   const stateElement = isStateElement(plan.element);
+  const noUnverifiedReasons: readonly [] = Object.freeze([]);
   if (attempt === "not_required") {
     return Object.freeze({
       status: "deterministic",
@@ -275,22 +278,37 @@ function adoptValue(
         "current_generation",
         ["current_generation"],
       ),
-      unverifiedReasons: Object.freeze([]),
+      unverifiedReasons: noUnverifiedReasons,
     });
   }
-  if (retained != null) {
+  if (retained?.currentness === "current") {
     return Object.freeze({
       status: "ai",
       origin: retained.origin,
-      currentness: retained.currentness,
-      reason:
-        plan.choice === "snapshot_reuse" && retained.currentness === "current"
-          ? "snapshot_reuse"
-          : retentionReason(attempt),
+      currentness: "current",
+      reason: plan.choice === "snapshot_reuse" ? "snapshot_reuse" : retentionReason(attempt),
       result: retained.result,
       ...(retained.generation == null ? {} : { generation: retained.generation }),
       proof: retained.proof,
-      unverifiedReasons: retained.unverifiedReasons,
+      unverifiedReasons: noUnverifiedReasons,
+    });
+  }
+  if (
+    plan.choice === "snapshot_reuse" &&
+    evaluated != null &&
+    unverifiedReasons(plan, evaluated.proof).length === 0 &&
+    !(stateElement && rejectSelectedState) &&
+    effectiveElementConfidence(plan.element, evaluated.result) >= minimumConfidence
+  ) {
+    return Object.freeze({
+      status: "ai",
+      origin: "snapshot",
+      currentness: "current",
+      reason: "snapshot_reuse",
+      result: evaluated.result,
+      generation: evaluated.generation,
+      proof: evaluated.proof,
+      unverifiedReasons: noUnverifiedReasons,
     });
   }
   if (stateElement) {
@@ -321,17 +339,18 @@ export function adoptionRecord(
   const result = resultElement(outcome, element);
   const attempt = attemptStatus(plan, outcome, result);
   const retained = retainedValue(item, plan);
-  if (plan.choice === "snapshot_reuse" && retained == null) {
+  const evaluated = evaluatedValue(item, plan, result);
+  if (plan.choice === "snapshot_reuse" && retained == null && evaluated == null) {
     throw new TypeError(
-      `再利用を計画した汎用AIの保持値がありません。対象: ${item.nodeId}/${element}`,
+      `再利用を計画した汎用AIの完了値がありません。対象: ${item.nodeId}/${element}`,
     );
   }
-  const evaluated = evaluatedValue(item, plan, result);
   const adopted = adoptValue(
     item,
     plan,
     result,
     retained,
+    evaluated,
     attempt,
     minimumConfidence,
     rejectSelectedState,
@@ -347,6 +366,6 @@ export function adoptionRecord(
     adopted,
     ...(retained == null ? {} : { retained }),
     ...(evaluated == null ? {} : { evaluated }),
-    ...adoptionProvenance(item.nodeId, element, adopted, attempt, evaluated),
+    ...adoptionProvenance(item.nodeId, element, adopted),
   });
 }

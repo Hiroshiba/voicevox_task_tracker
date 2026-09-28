@@ -33,7 +33,7 @@ export type GenericAiAdoptedValue =
   | Readonly<{
       status: "ai";
       origin: "executed" | "cache" | "snapshot" | "migration";
-      currentness: "current" | "unverified";
+      currentness: "current";
       reason:
         | "completed_result"
         | "snapshot_reuse"
@@ -44,7 +44,7 @@ export type GenericAiAdoptedValue =
       result: AiAnalysisElementMigrationResult;
       generation?: AiAnalysisElementSourceGeneration;
       proof: AiAnalysisElementReuseProof;
-      unverifiedReasons: readonly GenericAiUnverifiedReason[];
+      unverifiedReasons: readonly [];
     }>
   | Readonly<{
       status: "deterministic";

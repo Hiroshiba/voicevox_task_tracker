@@ -159,19 +159,18 @@ function withStateProof(
             currentness: retainedCurrentness,
             unverifiedReasons: retainedReasons,
           });
-    let updatedAdopted = adopted;
+    let updatedAdopted: GenericAiAdoptedValue = adopted;
     if (adopted.status === "ai" && (adopted.origin === "cache" || adopted.origin === "executed")) {
       updatedAdopted = Object.freeze({ ...adopted, proof });
-    } else if (adopted.status === "ai") {
-      assertNonNullable(updatedRetained, `状態要素の保持値がありません。対象: ${element}`);
+    } else if (
+      adopted.status === "ai" &&
+      (adopted.proof.status !== "verified" ||
+        adopted.proof.dependencyFingerprint !== dependencyFingerprint)
+    ) {
       updatedAdopted = Object.freeze({
-        ...adopted,
-        currentness: updatedRetained.currentness,
-        unverifiedReasons: updatedRetained.unverifiedReasons,
-        reason:
-          adopted.reason === "snapshot_reuse" && updatedRetained.currentness === "unverified"
-            ? "retained_after_nonadoption"
-            : adopted.reason,
+        status: "deterministic",
+        currentness: "current",
+        reason: "ai_unavailable",
       });
     }
     const updatedEvaluated =
@@ -187,21 +186,20 @@ function withStateProof(
       adopted: updatedAdopted,
       ...(updatedRetained == null ? {} : { retained: updatedRetained }),
       ...(updatedEvaluated == null ? {} : { evaluated: updatedEvaluated }),
-      ...adoptionProvenance(
-        analysis.item.nodeId,
-        element,
-        updatedAdopted,
-        record.attemptStatus,
-        updatedEvaluated,
-      ),
+      ...adoptionProvenance(analysis.item.nodeId, element, updatedAdopted),
     });
   };
-  return Object.freeze({
+  const updated = Object.freeze({
     ...records,
     status: update("status"),
     waitingOn: update("waitingOn"),
     nextAction: update("nextAction"),
   });
+  return STATE_ELEMENTS.some(
+    (element) => records[element].adopted.status !== updated[element].adopted.status,
+  )
+    ? withStateProof(updated, analysis, digest)
+    : updated;
 }
 
 /** 計画と部分結果を含む実行結果から9要素の採用記録を確定する。 */
@@ -305,22 +303,11 @@ function inputFailureRecord(
       currentness: "current",
       reason: "ai_unavailable",
     });
-  } else if (retained == null) {
+  } else {
     adopted = Object.freeze({
       status: "unavailable",
       currentness: "not_applicable",
       reason: "failed",
-    });
-  } else {
-    adopted = Object.freeze({
-      status: "ai",
-      origin: retained.origin,
-      currentness: "unverified",
-      reason: "retained_after_failure",
-      result: retained.result,
-      ...(retained.generation == null ? {} : { generation: retained.generation }),
-      proof: retained.proof,
-      unverifiedReasons: retained.unverifiedReasons,
     });
   }
   const oldEvaluation = failure.previousEvaluated[element];
@@ -342,7 +329,7 @@ function inputFailureRecord(
     adopted,
     ...(retained == null ? {} : { retained }),
     ...(evaluated == null ? {} : { evaluated }),
-    ...adoptionProvenance(failure.candidateId, element, adopted, "failed", evaluated),
+    ...adoptionProvenance(failure.candidateId, element, adopted),
   });
 }
 
