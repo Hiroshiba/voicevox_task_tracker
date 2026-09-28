@@ -2,6 +2,7 @@ import type { DailyRunInvocation, DailyTransactionDependencies } from "../../dai
 import type { GitHubRunSessions } from "../../../infrastructure/tracking-run/github-port.js";
 import type { GenericAiAdoptedRun } from "../../../application/tracking-run/stages/generic-ai-adoption.js";
 import type { GraphReconciledRun } from "../../../application/tracking-run/stages/graph-reconciliation.js";
+import { closeFinalizedRunEvidence } from "../../../application/tracking-run/stages/evidence-closure.js";
 import type {
   CodexAnalysis,
   CollectedItems,
@@ -12,6 +13,7 @@ import type {
   RuntimeState,
   ValidatedRunWithPreview,
 } from "../contracts.js";
+import { createEvidenceClosureAdditions } from "./evidence-additions.js";
 import { stateHistoryInputEvents } from "./history-events.js";
 import {
   mergeSelectedNotificationLedger,
@@ -30,16 +32,6 @@ function validateRunCompleteness(
   graphReconciled: GraphReconciledRun,
   personalReminderAnalysis: PersonalReminderAnalysis,
 ): ValidatedRunWithPreview {
-  const snapshot = createValidatedSnapshot(
-    invocation,
-    configuration,
-    state,
-    collection,
-    codexAnalysis,
-    genericAiAdopted,
-    graphReconciled,
-    personalReminderAnalysis,
-  );
   const notification = selectValidationNotifications(
     invocation,
     configuration,
@@ -49,12 +41,37 @@ function validateRunCompleteness(
     graphReconciled,
     personalReminderAnalysis,
   );
+  const historyInputEvents = stateHistoryInputEvents(graphReconciled.data.reduction);
+  const closure = closeFinalizedRunEvidence(
+    personalReminderAnalysis.finalized,
+    createEvidenceClosureAdditions(
+      state,
+      codexAnalysis,
+      graphReconciled,
+      personalReminderAnalysis,
+      historyInputEvents,
+      notification.notificationItems,
+      notification.pendingNotifications,
+    ),
+  );
+  const snapshot = createValidatedSnapshot(
+    invocation,
+    configuration,
+    state,
+    collection,
+    codexAnalysis,
+    genericAiAdopted,
+    graphReconciled,
+    personalReminderAnalysis,
+    closure,
+  );
   return Object.freeze({
     snapshot,
-    historyInputEvents: stateHistoryInputEvents(graphReconciled.data.reduction),
+    historyInputEvents,
     notificationLedger: mergeSelectedNotificationLedger(state, notification),
     notificationSelection: notification.notificationSelection,
     notificationPreview: notification.notificationPreview,
+    evidenceClosure: closure,
   });
 }
 

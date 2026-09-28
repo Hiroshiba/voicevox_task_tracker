@@ -321,7 +321,8 @@ finalizationは、期待する項目と入力項目が一致し、planの適用�
 これらの契約違反は例外として既存の診断経路へ伝播させ、AI失敗時の`fallback`へ変換しません。
 
 `production-runtime/personal-reminder/stage.ts`は各段階の入力と既存の個人催促moduleを接続し、結果を`validation/`へ渡します。`validation/`は通知候補とsnapshotへ結果を反映し、原因、現在性、停滞、根拠、列挙計画の最終値を再導出しません。
-`src/persistence`は保存値の完全性を独立に検証します。根拠の閉包を含む生成規則は個人催促moduleが所有し、persistenceのvalidatorへ依存させません。
+`PersonalReminderFinalizedRun`の項目、関係、AI採用値に、保存予定の履歴、AI cache、通知原因、未送信候補を加えて`EvidenceCatalog`で参照を閉じます。同じsource IDの不変fieldが衝突する場合や、参照元が欠落、非公開、未来時刻、別項目の所有に当たる場合は、保存、Pages生成、Discord通知の前に停止します。今回のsource事実と前回から保持する根拠を区別し、保持値から今回の根拠を作りません。
+閉包済みの項目と関係をsnapshotへ渡します。`src/persistence`は保存値の形と公開安全性を独立に検証し、根拠を補いません。
 PagesとDiscordは、同じ保存済みの原因と現在性を表示・通知の判断に使います。
 
 `src/domain/personal-reminder-causes.ts`の原因は、実行対象、責任主体の集合、行動、通知理由、責務期間を持ちます。`causeId`は同じ責務期間で安定させ、入力fingerprintや表示文の変化で作り直しません。複数reviewerの同じ依頼を人ごとの別原因へ分解せず、責任主体の集合として扱います。
@@ -428,6 +429,7 @@ block中も独立した行動が継続して可能なら両起点を保持し、
 ## 公開DTOとWeb UI
 
 `src/pages`はsnapshotの各項目を公開DTO schema version 10の`PublicItemSummaryDto`へ変換し、重要度、期限日、期限の切迫度、要対応度、`currentResponses`を公開します。
+現在対応の根拠文は対象項目のsnapshotに保存された一致する根拠から写し、評価理由の文章や別項目の根拠から作りません。通知原因は今回のイベントと一致するsource事実を用い、同じsource IDに異なる時刻や行為者があれば停止します。
 summaryとdetailsは同じ項目summaryを持ち、Web UIは両者の一致を検証します。
 各項目の`aiAnalysis`は、項目単位のAI実行状態を表す`runStatus`、判定要素の一部または全部を決定論的に不要としたかを表す`omission`、現在入力で未検証の表示値を列挙する`aiAnalysis.unverifiedValues`を分けて公開します。
 `runStatus`が成功でも保持したAI結果に依存する値は未検証になり得ます。反対に、確定規則だけで決まった表示値は、別の判定要素の失敗や延期だけを理由に未検証にしません。

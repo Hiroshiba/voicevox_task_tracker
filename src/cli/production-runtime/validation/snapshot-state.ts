@@ -2,6 +2,7 @@ import type { AiAnalysisRunIdentity } from "../../../codex/index.js";
 import { hashCanonicalJson } from "../../../canonical-json/index.js";
 import type { GenericAiAdoptedRun } from "../../../application/tracking-run/stages/generic-ai-adoption.js";
 import type { GraphReconciledRun } from "../../../application/tracking-run/stages/graph-reconciliation.js";
+import type { EvidenceClosureResult } from "../../../application/tracking-run/contracts/evidence-closure.js";
 import { AI_ANALYSIS_ELEMENTS } from "../../../domain/ai-analysis-elements.js";
 import {
   analysisPlanFingerprintForItem,
@@ -245,9 +246,10 @@ export function createValidatedSnapshot(
   adopted: GenericAiAdoptedRun,
   reconciled: GraphReconciledRun,
   personalReminderAnalysis: PersonalReminderAnalysis,
+  closure: EvidenceClosureResult,
 ): StateSnapshot {
   const { reduction, graph } = reconciled.data;
-  const items = snapshotItems(reconciled, personalReminderAnalysis);
+  const items = snapshotItems(reconciled, closure);
   const itemsByNodeId = new Map(items.map((item) => [item.nodeId, item]));
   const finalGraphProjection = reconciled.data.finalGraphProjection;
   const snapshot = createStateSnapshot({
@@ -271,7 +273,7 @@ export function createValidatedSnapshot(
     }),
     graphNodeStateObservations: graph.graphNodeStateObservations,
     externalReferences: graph.externalReferences,
-    relations: graph.edges.map(toStateRelation),
+    relations: closure.outward.relations.map(toStateRelation),
     finalGraphProjection,
     finalGraphProjectionDigest: hashCanonicalJson(finalGraphProjection),
     run: {

@@ -26,6 +26,7 @@ import type { GenericAiExecutedRun } from "../../application/tracking-run/stages
 import type { GenericAiAdoptedRun } from "../../application/tracking-run/stages/generic-ai-adoption.js";
 import type { GraphReconciledRun } from "../../application/tracking-run/stages/graph-reconciliation.js";
 import type { PersonalReminderFinalizedRun } from "../../application/tracking-run/stages/personal-reminder-finalization.js";
+import type { EvidenceClosureResult } from "../../application/tracking-run/contracts/evidence-closure.js";
 import type { AiCacheEntry } from "../../codex/cache.js";
 import type { PersonalReminderAiCacheEntry } from "../../codex/personal-reminder-cache.js";
 import type { AiAnalysisDependency } from "../../domain/ai-analysis-dependencies.js";
@@ -120,7 +121,10 @@ export type RuntimeState = Readonly<{
 }>;
 
 export type ValidatedRunWithPreview = ValidatedRun &
-  Readonly<{ notificationPreview: DiscordNotificationSelection }>;
+  Readonly<{
+    notificationPreview: DiscordNotificationSelection;
+    evidenceClosure: EvidenceClosureResult;
+  }>;
 
 export type RepositoryInventory = Readonly<{
   inventory: readonly Repository[];

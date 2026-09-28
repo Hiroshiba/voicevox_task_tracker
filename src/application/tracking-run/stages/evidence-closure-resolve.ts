@@ -14,6 +14,14 @@ function historyEventKinds(kind: string): readonly string[] {
   if (kind === "comment") return ["github_issue_comment", "github_pull_request_review_comment"];
   if (kind === "push") return ["github_timeline_event", "github_pull_request_commit"];
   if (kind === "review") return ["github_pull_request_review"];
+  if (kind === "relation") {
+    return [
+      "github_timeline_event",
+      "github_native_dependency",
+      "github_native_hierarchy",
+      "github_native_closing_issue",
+    ];
+  }
   return ["github_timeline_event"];
 }
 

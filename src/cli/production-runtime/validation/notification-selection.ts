@@ -2,6 +2,7 @@ import type { NotificationLedgerEntry, PendingNotification } from "../../../doma
 import {
   createAcknowledgedNotificationLedgerEntries,
   selectDiscordNotifications,
+  type DiscordNotificationItem,
   type DiscordNotificationSelection,
 } from "../../../discord/index.js";
 import type { StateNotificationLedger } from "../../../persistence/index.js";
@@ -18,6 +19,7 @@ import { notificationItems } from "./notification-items.js";
 import { mergeNotificationLedger, notificationLedgerEntries } from "./notification-ledger.js";
 
 type ValidationNotificationSelection = Readonly<{
+  notificationItems: readonly DiscordNotificationItem[];
   notificationSelection: DiscordNotificationSelection;
   notificationPreview: DiscordNotificationSelection;
   ledgerEntriesToMerge: readonly NotificationLedgerEntry[];
@@ -34,16 +36,17 @@ export function selectValidationNotifications(
   reconciled: GraphReconciledRun,
   personalReminderAnalysis: PersonalReminderAnalysis,
 ): ValidationNotificationSelection {
+  const items = notificationItems(
+    configuration,
+    state,
+    inventory,
+    collection,
+    reconciled,
+    personalReminderAnalysis,
+  );
   const notificationInput = {
     evaluatedAt: collection.evaluatedAt,
-    items: notificationItems(
-      configuration,
-      state,
-      inventory,
-      collection,
-      reconciled,
-      personalReminderAnalysis,
-    ),
+    items,
     ledger: notificationLedgerEntries(state, reconciled.data.finalItems),
     pendingNotifications: state.notificationLedger.pendingNotifications,
     settings: {
@@ -92,6 +95,7 @@ export function selectValidationNotifications(
       : notificationSelection.ledgerReservations;
   const notificationPendingToMerge = notificationSelection.pendingNotifications;
   return Object.freeze({
+    notificationItems: items,
     notificationSelection,
     notificationPreview: recalculatedSelection,
     ledgerEntriesToMerge: notificationLedgerEntriesToMerge,

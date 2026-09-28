@@ -319,6 +319,12 @@ function walkNotifications(emit: EvidenceUseSink, outward: EvidenceClosureOutwar
       kind: "item",
       itemNodeId: value.itemNodeId,
     });
+    const ownerNodeIds = Object.freeze([
+      value.itemNodeId,
+      ...outward.relations
+        .filter((relation) => relation.type === "blocks" && relation.toNodeId === value.itemNodeId)
+        .map((relation) => relation.fromNodeId),
+    ]);
     for (const reason of reasons) {
       const cause = value.causes[reason];
       if (cause.status !== "complete") continue;
@@ -329,7 +335,7 @@ function walkNotifications(emit: EvidenceUseSink, outward: EvidenceClosureOutwar
           destination,
           "notification_cause",
           "current",
-          [value.itemNodeId],
+          ownerNodeIds,
           [],
         );
       }
@@ -342,7 +348,7 @@ function walkNotifications(emit: EvidenceUseSink, outward: EvidenceClosureOutwar
           destination,
           "notification_dependency_cause",
           "current",
-          [value.itemNodeId],
+          ownerNodeIds,
           [],
         );
       }

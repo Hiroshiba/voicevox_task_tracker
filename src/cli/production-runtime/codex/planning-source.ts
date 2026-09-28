@@ -149,6 +149,7 @@ export function createGenericAiPlanningPort(
         {},
         previousObservedAt,
         createEarliestRelationSourceOccurredAtById,
+        run.data.collection.observedItems,
       );
       return Object.freeze({
         baseInput,
@@ -183,6 +184,7 @@ export function createGenericAiPlanningPort(
         ),
         previousTrackedItem(state, analysis.item.nodeId)?.observedAt,
         createEarliestRelationSourceOccurredAtById,
+        run.data.collection.observedItems,
       );
     },
     resolvePrevious: (
@@ -224,6 +226,7 @@ export function createGenericAiPlanningPort(
         preservedElementsForSelection(analysis, planning, target, source.baseInput),
         previousTrackedItem(state, analysis.item.nodeId)?.observedAt,
         createEarliestRelationSourceOccurredAtById,
+        run.data.collection.observedItems,
       ),
     serializeTransportInput: serializeCodexTransportAnalysisInput,
     recordInputValidationFailure: async (candidateId: string, error: unknown): Promise<void> => {

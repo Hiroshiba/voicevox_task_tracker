@@ -7,11 +7,6 @@
       "sha256": "faf8ad553742609545f91cfafc4d099f4e1260f134a4fd481c43eb7bdcb76f01"
     },
     {
-      "path": "src/discord/notification-cause.ts",
-      "lineCount": 1227,
-      "sha256": "f29d1ce8dc745877b6f507f324c749dd1f3da5ccdc07d4ec6e80b31e44821155"
-    },
-    {
       "path": "src/discord/notification-selection.ts",
       "lineCount": 2727,
       "sha256": "8cdf91885c120a19cade208874716519f0e8cce1c27debafe8cf271e8c103d6c"

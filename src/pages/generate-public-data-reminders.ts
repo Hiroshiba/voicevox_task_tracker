@@ -34,7 +34,6 @@ export type PublicPersonalReminderResponses = Readonly<{
   currentResponseSubjectChanges: PublicCurrentResponseSubjectChangesDto;
 }>;
 type EvidenceSourceItem = Readonly<Pick<TrackedItem, "nodeId" | "url">>;
-type EvidenceBySourceId = ReadonlyMap<SourceId, readonly Evidence[]>;
 type PublicAiAnalysis = PublicItemSummaryDto["aiAnalysis"];
 type PublicUnverifiedValue = PublicAiAnalysis["unverifiedValues"][number];
 type PublicPersonalReminderCausePlanningStatus =
@@ -395,77 +394,23 @@ export function createPublicEvidence(
   );
 }
 
-/** snapshotの根拠をsource IDで索引化する。 */
-export function createEvidenceBySourceId(snapshot: StateSnapshot): EvidenceBySourceId {
-  const evidenceBySourceId = new Map<SourceId, Evidence[]>();
-  for (const evidence of [
-    ...snapshot.items.flatMap((item) => item.evidence),
-    ...snapshot.relations.flatMap((relation) => relation.evidence),
-  ]) {
-    const existing = evidenceBySourceId.get(evidence.sourceId);
-    if (existing == null) {
-      evidenceBySourceId.set(evidence.sourceId, [evidence]);
-      continue;
-    }
-    existing.push(evidence);
-  }
-  return new Map(
-    [...evidenceBySourceId.entries()].map(([sourceId, evidence]) => [
-      sourceId,
-      Object.freeze([...evidence]),
-    ]),
-  );
-}
-
 function createPersonalReminderResponseEvidence(
   sourceIds: readonly SourceId[],
-  assessmentReferences:
-    | Readonly<{
-        sourceIds: readonly SourceId[];
-        reasonSummary: string;
-      }>
-    | undefined,
   currentSourceItem: StateSnapshot["items"][number],
   allSourceItems: readonly EvidenceSourceItem[],
   sourceOwnersById: EvidenceSourceUrlMap,
-  evidenceBySourceId: EvidenceBySourceId,
 ): PublicPersonalReminderResponse["evidence"] {
   const uniqueSourceIds = [...new Set(sourceIds)].sort(compareStrings);
   return uniquePublicEvidence(
-    uniqueSourceIds.map((sourceId) => {
-      if (assessmentReferences?.sourceIds.includes(sourceId) === true) {
-        const sourceEvidence = evidenceBySourceId.get(sourceId);
-        if (sourceEvidence == null || sourceEvidence.length === 0) {
-          throw new PublicDtoSemanticError(
-            `personal reminder causeのassessment evidence sourceを公開根拠へ解決できません。対象: ${sourceId}`,
-          );
-        }
-        return createPublicEvidenceEntry(
-          {
-            sourceId,
-            supports: "notification",
-            summary: assessmentReferences.reasonSummary,
-          },
-          currentSourceItem,
-          allSourceItems,
-          sourceOwnersById,
-        );
-      }
-      const currentEvidence = currentSourceItem.evidence.find(
-        (evidence) => evidence.sourceId === sourceId,
-      );
-      const fallbackEvidence = evidenceBySourceId.get(sourceId)?.[0];
-      const evidence = currentEvidence ?? fallbackEvidence;
-      if (evidence == null) {
+    uniqueSourceIds.flatMap((sourceId) => {
+      const evidence = currentSourceItem.evidence.filter((entry) => entry.sourceId === sourceId);
+      if (evidence.length === 0) {
         throw new PublicDtoSemanticError(
           `personal reminder causeのevidence sourceを公開根拠へ解決できません。対象: ${sourceId}`,
         );
       }
-      return createPublicEvidenceEntry(
-        evidence,
-        currentSourceItem,
-        allSourceItems,
-        sourceOwnersById,
+      return evidence.map((entry) =>
+        createPublicEvidenceEntry(entry, currentSourceItem, allSourceItems, sourceOwnersById),
       );
     }),
   );
@@ -522,7 +467,6 @@ function createPersonalReminderResponse(
   currentSourceItem: StateSnapshot["items"][number],
   allSourceItems: readonly EvidenceSourceItem[],
   sourceOwnersById: EvidenceSourceUrlMap,
-  evidenceBySourceId: EvidenceBySourceId,
 ): PublicPersonalReminderResponse | undefined {
   if (assessment.status === "available") {
     if (assessment.result.verdict === "duplicate" || assessment.result.verdict === "not_required") {
@@ -537,11 +481,9 @@ function createPersonalReminderResponse(
       : undefined;
   const evidence = createPersonalReminderResponseEvidence(
     [...cause.evidenceSourceIds, ...(assessmentReferences?.sourceIds ?? [])],
-    assessmentReferences,
     currentSourceItem,
     allSourceItems,
     sourceOwnersById,
-    evidenceBySourceId,
   );
   const hasCurrentAssessmentEvidence =
     assessmentReferences != null && assessmentReferences.sourceIds.length > 0;
@@ -614,7 +556,6 @@ export function createPersonalReminderResponses(
   item: StateSnapshot["items"][number],
   allSourceItems: readonly EvidenceSourceItem[],
   sourceOwnersById: EvidenceSourceUrlMap,
-  evidenceBySourceId: EvidenceBySourceId,
 ): PublicPersonalReminderResponses {
   const planning = item.personalReminderCausePlanning;
   if (
@@ -652,7 +593,6 @@ export function createPersonalReminderResponses(
       item,
       allSourceItems,
       sourceOwnersById,
-      evidenceBySourceId,
     );
     if (response != null) {
       responses.push(response);

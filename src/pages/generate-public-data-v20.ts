@@ -22,7 +22,6 @@ import { createEvidenceSourceUrlMap } from "./evidence-source-url.js";
 import { PublicDtoSemanticError } from "./errors.js";
 import { createPublicNotificationHistory } from "./generate-public-data-notification-history.js";
 import {
-  createEvidenceBySourceId,
   createPersonalReminderResponses,
   createPublicAiAnalysis,
   createPublicEvidence,
@@ -831,7 +830,6 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
       })),
     ),
   );
-  const evidenceBySourceId = createEvidenceBySourceId(snapshot);
   const graph = createPublicGraph(snapshot);
   const repositoriesById = new Map(
     snapshot.repositories.map((repository) => [repository.id, repository]),
@@ -861,7 +859,6 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
       item,
       snapshot.items,
       sourceOwnersById,
-      evidenceBySourceId,
     );
     return createItemSummary(
       item,

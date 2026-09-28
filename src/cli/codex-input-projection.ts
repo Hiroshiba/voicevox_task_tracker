@@ -1,4 +1,5 @@
 import { type Config } from "../config/index.js";
+import { serializeCanonicalJson } from "../canonical-json/value.js";
 import {
   createCodexAnalysisInput,
   projectCodexLockedElements,
@@ -57,10 +58,11 @@ function authorType(item: FreshObservedGitHubItem): "human" | "bot" | "unknown" 
   return item.author.actor.type;
 }
 
-function addMirroredNativeBlockerSourceRecords(
+function addNativeBlockerSourceRecords(
   sourceRecords: Map<string, unknown>,
   item: FreshObservedGitHubItem,
   relationCandidates: readonly RelationCandidate[],
+  observedItems: readonly FreshObservedGitHubItem[],
 ): void {
   for (const candidate of relationCandidates) {
     if (
@@ -70,30 +72,51 @@ function addMirroredNativeBlockerSourceRecords(
     ) {
       continue;
     }
-    const currentEvent = item.events.find(
-      (event) =>
-        event.kind === "relation" &&
-        event.provenance === "native" &&
-        event.relationType === "blocks" &&
-        candidate.sourceIds.includes(event.sourceId),
-    );
-    if (currentEvent == null) {
-      continue;
-    }
     for (const sourceId of candidate.sourceIds) {
-      if (sourceRecords.has(sourceId)) {
-        continue;
-      }
-      sourceRecords.set(
-        sourceId,
-        Object.freeze({
-          id: sourceId,
-          kind: currentEvent.kind,
-          actorType: currentEvent.actor.type,
-          author: createUnavailableCodexSourceAuthor(),
-          createdAt: currentEvent.occurredAt,
-        }),
+      const matches = observedItems.flatMap((sourceItem) =>
+        sourceItem.events
+          .filter((event) => event.sourceId === sourceId)
+          .map((event) => Object.freeze({ itemNodeId: sourceItem.nodeId, event })),
       );
+      const source = matches[0];
+      assertNonNullable(source, `native blockerの元source recordがありません。対象: ${sourceId}`);
+      if (
+        parseSourceId(sourceId).kind !== "github_native_dependency" ||
+        source.event.kind !== "relation" ||
+        source.event.itemNodeId !== source.itemNodeId ||
+        source.event.provenance !== "native" ||
+        source.event.relationType !== "blocks" ||
+        source.event.target.type !== "node" ||
+        ![candidate.relation.blocker.nodeId, candidate.relation.blocked.nodeId].includes(
+          source.itemNodeId,
+        ) ||
+        ![candidate.relation.blocker.nodeId, candidate.relation.blocked.nodeId].includes(
+          source.event.target.nodeId,
+        ) ||
+        source.itemNodeId === source.event.target.nodeId ||
+        (source.itemNodeId === candidate.relation.blocker.nodeId
+          ? source.event.direction !== "from_item"
+          : source.event.direction !== "to_item") ||
+        matches.some((match) => serializeCanonicalJson(match) !== serializeCanonicalJson(source))
+      ) {
+        throw new TypeError(
+          `native blockerの元source recordが関係候補と一致しません。対象: ${sourceId}`,
+        );
+      }
+      const record = Object.freeze({
+        id: sourceId,
+        kind: source.event.kind,
+        actorType: source.event.actor.type,
+        author: createUnavailableCodexSourceAuthor(),
+        createdAt: source.event.occurredAt,
+      });
+      const existing = sourceRecords.get(sourceId);
+      if (existing != null && serializeCanonicalJson(existing) !== serializeCanonicalJson(record)) {
+        throw new TypeError(
+          `native blockerの元source recordが既存のrecordと競合しています。対象: ${sourceId}`,
+        );
+      }
+      sourceRecords.set(sourceId, record);
     }
   }
 }
@@ -551,6 +574,7 @@ export function createCodexInput(
   preservedElements: CodexPreservedElements,
   previousObservedAt: UtcIsoDateTime | undefined,
   relationSourceOccurredAt: RelationSourceOccurredAt,
+  observedItems: readonly FreshObservedGitHubItem[],
 ): CodexAnalysisInput {
   const relationCandidates = deduplicateByStableId(
     selectRelationAssessmentCandidates(analysis.item.nodeId, analysis.relationCandidates),
@@ -650,7 +674,7 @@ export function createCodexInput(
       }),
     );
   }
-  addMirroredNativeBlockerSourceRecords(sourceRecords, analysis.item, relationCandidates);
+  addNativeBlockerSourceRecords(sourceRecords, analysis.item, relationCandidates, observedItems);
   sourceRecords.set(
     analysis.detail.bodySourceId,
     Object.freeze({
