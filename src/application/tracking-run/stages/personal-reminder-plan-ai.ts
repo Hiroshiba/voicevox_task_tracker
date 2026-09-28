@@ -255,7 +255,14 @@ function initialDecision(
   if (
     entry.previousCause?.currentInput.fingerprint === fingerprint &&
     entry.previousCause.currentInput.rulesVersion === PERSONAL_REMINDER_ASSESSMENT_RULES_VERSION &&
-    currentPersonalReminderAssessment(entry.previousCause).status === "available"
+    currentPersonalReminderAssessment({
+      currentInput: {
+        fingerprint,
+        rulesVersion: PERSONAL_REMINDER_ASSESSMENT_RULES_VERSION,
+        aiDependency: entry.currentInputAiDependency,
+      },
+      adoptedAssessment: entry.previousCause.adoptedAssessment,
+    }).status === "available"
   ) {
     return Object.freeze({
       decision: Object.freeze({

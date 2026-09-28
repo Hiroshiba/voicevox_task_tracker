@@ -155,7 +155,7 @@ function currentCause(
     adoptedAssessment: adoption.adoptedAssessment,
     actionableClock: clock,
   });
-  if (currentPersonalReminderAssessment(cause).status !== adoption.currentness) {
+  if (currentPersonalReminderAssessment(cause).status !== adoption.currentAssessment.status) {
     throw new TypeError(`個人催促原因と採用結果の現在性が一致しません。対象: ${decision.causeId}`);
   }
   return Object.freeze({ cause, adoption });
@@ -427,13 +427,7 @@ export function finalizePersonalReminders(
     run.data.plan.causePlan.deferredStructuralEndNodeIds.length > 0 ||
     items.some((item) => item.planning.status === "pending") ||
     items.some((item) =>
-      item.causeResults.some(({ cause }) => {
-        const current = currentPersonalReminderAssessment(cause);
-        return (
-          current.status !== "available" &&
-          (cause.latestAttempt.status === "failed" || cause.latestAttempt.status === "deferred")
-        );
-      }),
+      item.causeResults.some(({ assessment }) => assessment.currentness === "unverified"),
     )
       ? "fallback"
       : "success";
