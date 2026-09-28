@@ -1,0 +1,171 @@
+import { parseInitialPagesPublicationEvidence } from "../application/tracking-run/initial-pages-evidence.js";
+import { stateCommitReceiptOperationId } from "../application/tracking-run/observed-state-commit.js";
+import { verifyReceiptChain } from "../application/tracking-run/receipt-chain.js";
+import type { ReceiptChainEvidence } from "../application/tracking-run/receipt-chain-schema.js";
+import { createReceipt } from "../application/tracking-run/receipt-codec.js";
+import type { Receipt } from "../application/tracking-run/receipt-schema.js";
+import type { PreparedDiscordDigestMessage } from "../discord/payload.js";
+import { nodeContentDigestPort as digest } from "../infrastructure/tracking-run/content-digest.js";
+import { observeStateCommitAtRevision } from "../infrastructure/tracking-run/state-receipt-observation.js";
+import {
+  authorizeAdvanceAfterOrthogonalCommits,
+  MAX_INTERVENING_COMMITS,
+} from "../persistence/state-orthogonal-advance.js";
+import { assertSettledNotificationContent } from "./notification-settlement-validation.js";
+import {
+  readNotificationMessageState,
+  type NotificationMessageState,
+} from "./notification-message-state.js";
+import type {
+  NotificationSettlementInput,
+  NotificationSettlementOutcome,
+  NotificationSettlementPort,
+  SettledMessageReceipt,
+} from "./notification-settlement.js";
+
+export function assertNextReceipt(
+  previous: Receipt,
+  current: Receipt,
+  expectedRevision: string,
+): void {
+  if (
+    current.previousReceiptDigest !== previous.receiptDigest ||
+    current.phaseSequence !== previous.phaseSequence + 1 ||
+    current.expectedStateRevision !== expectedRevision
+  ) {
+    throw new TypeError("通知settlementのreceipt列またはstate revisionが連続していません");
+  }
+}
+
+export async function settledRevision(
+  input: NotificationSettlementInput,
+  port: NotificationSettlementPort,
+  headRevision: string,
+): Promise<string> {
+  const operationId = stateCommitReceiptOperationId(
+    "notification_settlement",
+    input.record.runIdentity.runId,
+    input.record.checkpointDigest,
+    digest,
+  );
+  let revision = headRevision;
+  for (let count = 0; count < MAX_INTERVENING_COMMITS; count += 1) {
+    const commit = await port.adapter.readCommit(revision);
+    if (commit.metadata.commitScope === "operations_alert") {
+      if (commit.parent.status !== "present") {
+        throw new TypeError("通知settlementの運用通知commitに親がありません");
+      }
+      await authorizeAdvanceAfterOrthogonalCommits(
+        port.adapter,
+        port.configuration,
+        commit.parent.revision,
+        revision,
+      );
+      revision = commit.parent.revision;
+      continue;
+    }
+    if (
+      commit.metadata.commitScope !== "tracking_run" ||
+      commit.metadata.runId !== input.record.runIdentity.runId ||
+      commit.metadata.operationId !== operationId
+    ) {
+      throw new TypeError("通知settlementのGit祖先に対象commitがありません");
+    }
+    return revision;
+  }
+  throw new TypeError("通知settlementのGit祖先探索が上限を超えています");
+}
+
+export async function receiptForSettlement(
+  input: NotificationSettlementInput,
+  port: NotificationSettlementPort,
+  revision: string,
+  expectedRevision: string,
+  previousReceipt: Receipt,
+  messageReceipts: readonly SettledMessageReceipt[],
+  initial: NotificationMessageState,
+  messages: readonly PreparedDiscordDigestMessage[],
+  invocationId: string,
+  executed: boolean,
+): Promise<Extract<NotificationSettlementOutcome, { kind: "settled" }>> {
+  const observed = await observeStateCommitAtRevision(
+    port.adapter,
+    port.configuration,
+    revision,
+    input.initialStateReceipt.result.resultingStateRevision,
+    "notification_settlement",
+    {
+      invocationId,
+      observedAt: port.now().toISOString(),
+      position: {
+        kind: "after",
+        previousReceiptDigest: previousReceipt.receiptDigest,
+        previousPhaseSequence: previousReceipt.phaseSequence,
+      },
+    },
+  );
+  if (
+    observed.receipt.receiptType !== "notification_settlement" ||
+    observed.evidence.receiptType !== "notification_settlement"
+  ) {
+    throw new TypeError("通知settlementの再観測receipt種別が一致しません");
+  }
+  const receipt = executed
+    ? createReceipt(
+        {
+          schemaVersion: 1,
+          receiptType: "notification_settlement",
+          stage: "notifications_settled",
+          phase: "notification",
+          binding: observed.receipt.binding,
+          logicalTarget: input.record.checkpointDigest,
+          invocationId,
+          localAttemptIndex: 0,
+          phaseSequence: previousReceipt.phaseSequence + 1,
+          previousReceiptDigest: previousReceipt.receiptDigest,
+          expectedStateRevision: expectedRevision,
+          receiptKind: "executed",
+          observedAt: observed.receipt.observedAt,
+          status: "settled",
+          effectCertainty: "committed",
+          result: observed.receipt.result,
+        },
+        digest,
+      )
+    : observed.receipt;
+  if (receipt.receiptType !== "notification_settlement") {
+    throw new TypeError("通知settlement receiptの型が一致しません");
+  }
+  assertNextReceipt(previousReceipt, receipt, expectedRevision);
+  const evidence: ReceiptChainEvidence = executed
+    ? { kind: "none" }
+    : { kind: "state_commit", state: observed.evidence };
+  verifyReceiptChain([...messageReceipts, { receipt, evidence }], digest);
+  const state = await readNotificationMessageState(port.adapter, port.configuration, revision);
+  const pagesEvidence = parseInitialPagesPublicationEvidence(input.initialPages.evidence, digest);
+  const content = assertSettledNotificationContent(
+    input.record,
+    initial,
+    state,
+    messages,
+    messageReceipts.map((entry) => entry.receipt),
+    port.configuration,
+  );
+  if (
+    state.transaction.marker.phase !== "notifications_settled" ||
+    receipt.result.notificationLedgerDigest !== content.ledgerDigest ||
+    receipt.result.notificationHistoryDigest !== content.historyDigest ||
+    receipt.result.action !== input.record.notificationOutbox.action ||
+    state.transaction.initialPagesEvidence?.evidenceDigest !== pagesEvidence.evidenceDigest
+  ) {
+    throw new TypeError("通知settlement receiptと最終stateが一致しません");
+  }
+  return Object.freeze({
+    kind: "settled",
+    receipt,
+    receiptEvidence: evidence,
+    messageReceipts: Object.freeze([...messageReceipts]),
+    stateRevision: revision,
+    notificationCount: content.notificationCount,
+  });
+}
