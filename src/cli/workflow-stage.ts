@@ -2,7 +2,8 @@ import {
   type BuildPagesCliCommand,
   type PreflightPagesDeploymentCliCommand,
   type RecordPagesDeploymentCliCommand,
-  type NotifyDiscordCliCommand,
+  type SettleNotificationsCliCommand,
+  type FinalizeRunCliCommand,
   type NotifyOperationsCliCommand,
   type PersistStateCliCommand,
   type ReportWorkflowCliCommand,
@@ -20,7 +21,8 @@ export type WorkflowStageCliCommand =
   | BuildPagesCliCommand
   | PreflightPagesDeploymentCliCommand
   | RecordPagesDeploymentCliCommand
-  | NotifyDiscordCliCommand
+  | SettleNotificationsCliCommand
+  | FinalizeRunCliCommand
   | ResolveDiscordDeliveryCliCommand
   | NotifyOperationsCliCommand
   | ReportWorkflowCliCommand
@@ -36,7 +38,8 @@ export type WorkflowStageDependencies = Readonly<{
   buildPages: (command: BuildPagesCliCommand) => Promise<void>;
   preflightPagesDeployment: (command: PreflightPagesDeploymentCliCommand) => Promise<void>;
   recordPagesDeployment: (command: RecordPagesDeploymentCliCommand) => Promise<void>;
-  notifyDiscord: (command: NotifyDiscordCliCommand) => Promise<void>;
+  settleNotifications: (command: SettleNotificationsCliCommand) => Promise<void>;
+  finalizeRun: (command: FinalizeRunCliCommand) => Promise<void>;
   resolveDiscordDelivery: (command: ResolveDiscordDeliveryCliCommand) => Promise<void>;
   notifyOperations: (command: NotifyOperationsCliCommand) => Promise<void>;
   reportWorkflow: (command: ReportWorkflowCliCommand) => Promise<void>;
@@ -70,8 +73,11 @@ export class WorkflowStageRunner {
       case "record-pages-deployment":
         await this.#dependencies.recordPagesDeployment(command);
         return;
-      case "notify-discord":
-        await this.#dependencies.notifyDiscord(command);
+      case "settle-notifications":
+        await this.#dependencies.settleNotifications(command);
+        return;
+      case "finalize-run":
+        await this.#dependencies.finalizeRun(command);
         return;
       case "resolve-discord-delivery":
         await this.#dependencies.resolveDiscordDelivery(command);

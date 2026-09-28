@@ -1,5 +1,6 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import { parsePublicationInputs } from "../contracts/publication-inputs.js";
+import { parsePublicRunDiagnostics } from "../contracts/public-diagnostics.js";
 import type { ContentDigestPort } from "../ports.js";
 import type { RunSnapshot, ValidatedRun } from "./validate-run.js";
 import type {
@@ -264,6 +265,12 @@ export function assertSerializedValidatedRun(
     }
   }
   const publicationInputs = parsePublicationInputs(run.publicationInputs);
+  assertRunValueMatches(
+    parsePublicRunDiagnostics(run.diagnostics),
+    run.diagnostics,
+    ["diagnostics"],
+    "run",
+  );
   assertRunValueMatches(publicationInputs, run.publicationInputs, ["publicationInputs"], "run");
   if (
     !publicationInputs.state.historyPath.endsWith(`/${run.snapshot.generatedAt.slice(0, 10)}.jsonl`)

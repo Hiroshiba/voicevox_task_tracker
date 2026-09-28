@@ -15,6 +15,7 @@ import { pagesPublicUrlSchema } from "../application/tracking-run/receipt-schema
 import { NOTIFICATION_LEDGER_REASON_CODE_VALUES } from "../persistence/state-documents.js";
 import { PUBLIC_DTO_SCHEMA_VERSION } from "../pages/public-dto.js";
 import { publicationInputsSchema } from "../application/tracking-run/contracts/publication-inputs.js";
+import { publicRunDiagnosticsSchema } from "../application/tracking-run/contracts/public-diagnostics.js";
 import { runMetricsSchema } from "./run-report.js";
 import { discordSettingsSchema, notificationSelectionSchema } from "./validated-run-payload.js";
 import {
@@ -101,6 +102,7 @@ const runFinalizationPolicySchema = z.strictObject({
     startedAt: z.iso.datetime({ offset: true }),
     status: z.enum(["success", "fallback"]),
     metrics: runMetricsSchema,
+    diagnostics: publicRunDiagnosticsSchema,
     completionSource: z.literal("notification_settlement_receipt"),
   }),
   ledgerAndHistorySource: z.literal("notification_settlement_receipt"),

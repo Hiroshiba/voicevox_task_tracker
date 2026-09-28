@@ -7,6 +7,7 @@ import {
 import type { ValidatedRun } from "./run-publication/contracts.js";
 import { parseSha256Hash } from "../canonical-json/sha256.js";
 import { publicationInputsSchema } from "../application/tracking-run/contracts/publication-inputs.js";
+import { publicRunDiagnosticsSchema } from "../application/tracking-run/contracts/public-diagnostics.js";
 import { baseStateRevisionSchema } from "../application/tracking-run/contracts/run-core.js";
 import { createUtcIsoDateTime } from "../domain/index.js";
 import { createStateNotificationLedger } from "../persistence/index.js";
@@ -81,6 +82,7 @@ const validationSchema = z.strictObject({
   previousNotificationLedger: z.unknown(),
   publicationInputs: publicationInputsSchema,
   metrics: runMetricsSchema,
+  diagnostics: publicRunDiagnosticsSchema,
   evidenceClosureSummary: z.strictObject({
     referenceCount: nonNegativeIntegerSchema,
     sourceIds: z.array(z.string().min(1)),
@@ -103,6 +105,7 @@ const validationSchema = z.strictObject({
     publicationInputs: sha256Schema,
     repositoryAllowlist: sha256Schema,
     metrics: sha256Schema,
+    diagnostics: sha256Schema,
     evidenceClosureSummary: sha256Schema,
     evidenceClosureWitness: sha256Schema,
     publicDiagnosticsSummary: sha256Schema,
@@ -130,6 +133,7 @@ export type WorkflowValidation = Pick<
   | "previousNotificationLedger"
   | "publicationInputs"
   | "metrics"
+  | "diagnostics"
   | "evidenceClosureSummary"
   | "evidenceClosureWitness"
   | "publicDiagnosticsSummary"

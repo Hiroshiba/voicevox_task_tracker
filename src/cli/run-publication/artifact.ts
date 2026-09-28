@@ -3,6 +3,7 @@ import {
   parseValidatedRunPayload,
 } from "../validated-run-payload.js";
 import { hashCanonicalJson } from "../../canonical-json/index.js";
+import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import { assertValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
 import type { ValidatedRunPayload } from "../validated-run-payload.js";
 import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content-digest.js";
@@ -35,7 +36,9 @@ export function createCollectAnalyzePayload(
     input.invocation.scheduledFor !== input.validated.core.identity.scheduledFor ||
     input.invocation.startedAt !== input.validated.core.identity.startedAt ||
     input.invocation.executionPolicy.notificationAction !==
-      input.validated.core.executionPolicy.notificationAction
+      input.validated.core.executionPolicy.notificationAction ||
+    serializeCanonicalJson(input.diagnostics) !==
+      serializeCanonicalJson(input.validated.diagnostics)
   ) {
     throw new TypeError("collect-analyzeのrun識別が検証済みrunと一致しません");
   }
@@ -72,6 +75,7 @@ export function createCollectAnalyzePayload(
         previousNotificationLedger: input.validated.previousNotificationLedger,
         publicationInputs: input.validated.publicationInputs,
         metrics: input.validated.metrics,
+        diagnostics: input.validated.diagnostics,
         evidenceClosureSummary: input.validated.evidenceClosureSummary,
         evidenceClosureWitness: input.validated.evidenceClosureWitness,
         publicDiagnosticsSummary: input.validated.publicDiagnosticsSummary,

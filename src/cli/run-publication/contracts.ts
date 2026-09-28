@@ -1,4 +1,5 @@
 import type { Config, loadConfig } from "../../config/index.js";
+import type { DiagnosticsJsonlRecorder } from "../../diagnostics/recorder.js";
 import type { AiCacheEntry, PersonalReminderAiCacheEntry } from "../../codex/index.js";
 import type { ValidatedRun as TrackingValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
 import type { PublicationPlannedRun } from "../../publication/publication-plan-contracts.js";
@@ -14,6 +15,7 @@ import type {
 import type { PublicRepositoryAllowlist } from "../../github/index.js";
 import type { GeneratedPublicData, PublicDataWriteResult } from "../../pages/index.js";
 import type { RunMetrics } from "../run-report.js";
+import type { NotificationSettlementOutcome } from "../notification-settlement.js";
 import type {
   StateBranchAdapter,
   StateHistoryInputEvent,
@@ -88,12 +90,6 @@ export type DiscordResult = DiscordDeliveryResult &
     notificationLedger: StateNotificationLedger;
   }>;
 
-/** run完了保存に必要な通知結果。 */
-export type RunCompletionDelivery = Readonly<{
-  notificationLedger: StateNotificationLedger;
-  notificationCount: number;
-}>;
-
 /** 公開処理が参照してよい設定とcredential。 */
 export type PublicationConfiguration = Readonly<{
   config: Config;
@@ -118,6 +114,7 @@ export type PublicationRepositoryInventory = Readonly<{
 /** 公開処理だけが必要とする外部接続。 */
 export type RunPublicationAdapters = Readonly<{
   environment: Readonly<NodeJS.ProcessEnv>;
+  diagnosticsRecorder?: DiagnosticsJsonlRecorder;
   repositoryPath: string;
   pagesOutputDirectory: string;
   loadConfig: typeof loadConfig;
@@ -152,7 +149,8 @@ export type PublicationDailyTypes = DailyTransactionTypeMap &
     persisted: PersistedRun;
     pagesPrepared: InitialPagesPreparedRun;
     pages: InitialPagesPublishedRun;
-    discord: DiscordResult;
+    notifications: Extract<NotificationSettlementOutcome, { kind: "settled" }>;
+    operationsAlert: DiscordResult;
   }>;
 
 /** 完全性検証後の出力・永続化stageだけを受け持つ依存。 */
@@ -161,8 +159,8 @@ export type DailyPublicationStageHandlers = Pick<
   | "persistState"
   | "buildPages"
   | "deployPages"
-  | "sendDiscord"
-  | "completeRun"
+  | "settleNotifications"
+  | "finalizeRun"
   | "sendOperationsAlert"
   | "writeCollectAnalyzeArtifact"
 >;

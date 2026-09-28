@@ -15,6 +15,7 @@ type RunDigestValues = Readonly<{
   publicationInputs: unknown;
   repositoryAllowlist: unknown;
   metrics: unknown;
+  diagnostics: unknown;
   evidenceClosureSummary: unknown;
   evidenceClosureWitness: unknown;
   publicDiagnosticsSummary: unknown;
@@ -44,6 +45,7 @@ export function createRunArtifactValueDigests(
     publicationInputs: hash(values.publicationInputs),
     repositoryAllowlist: hash(values.repositoryAllowlist),
     metrics: hash(values.metrics),
+    diagnostics: hash(values.diagnostics),
     evidenceClosureSummary: hash(values.evidenceClosureSummary),
     evidenceClosureWitness: hash(values.evidenceClosureWitness),
     publicDiagnosticsSummary: hash(values.publicDiagnosticsSummary),

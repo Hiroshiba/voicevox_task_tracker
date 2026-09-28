@@ -65,7 +65,8 @@ export type DailyTransactionTypeMap = Readonly<{
   persisted: unknown;
   pagesPrepared: unknown;
   pages: unknown;
-  discord: unknown;
+  notifications: unknown;
+  operationsAlert: unknown;
 }>;
 
 /** run内の全段階へ渡す安定した識別情報。 */
@@ -107,12 +108,15 @@ export type PersonalReminderAnalysisStageResult<Value> = Readonly<{
   diagnostics: readonly string[];
 }>;
 
-/** Discord段階の値と通知指標。 */
-export type DiscordStageResult<Value> = Readonly<{
+/** 通知段階の値と送信指標。 */
+export type NotificationStageResult<Value> = Readonly<{
   value: Value;
   notificationCount: number;
   discordSentAt: UtcIsoDateTime | null;
 }>;
+
+/** 運用通知段階の値と送信指標。 */
+export type DiscordStageResult<Value> = NotificationStageResult<Value>;
 
 /** 日次transactionの外部接続と各モジュールの結合境界。 */
 export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> = Readonly<{
@@ -205,6 +209,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       graphReconciled: Types["graphReconciled"];
       personalReminderAnalysis: Types["personalReminderAnalysis"];
       metrics: RunMetrics;
+      diagnostics: readonly string[];
     }>,
   ) => Promise<Types["validated"]>;
   planPublication: (validated: Types["validated"]) => Types["planned"];
@@ -237,29 +242,22 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       pagesPrepared: Types["pagesPrepared"];
     }>,
   ) => Promise<Types["pages"]>;
-  sendDiscord: (
+  settleNotifications: (
     input: Readonly<{
       invocation: DailyRunInvocation;
       configuration: Types["configuration"];
-      state: Types["state"];
       repositoryInventory: Types["repositoryInventory"];
-      planned: Types["planned"];
       persisted: Types["persisted"];
       pages: Types["pages"];
     }>,
-  ) => Promise<DiscordStageResult<Types["discord"]>>;
-  completeRun: (
+  ) => Promise<NotificationStageResult<Types["notifications"]>>;
+  finalizeRun: (
     input: Readonly<{
       invocation: DailyRunInvocation;
       configuration: Types["configuration"];
-      state: Types["state"];
       repositoryInventory: Types["repositoryInventory"];
-      planned: Types["planned"];
       persisted: Types["persisted"];
-      discord: Types["discord"];
-      metrics: RunMetrics;
-      status: "success" | "fallback";
-      diagnostics: readonly string[];
+      notifications: Types["notifications"];
     }>,
   ) => Promise<void>;
   sendOperationsAlert: (
@@ -271,7 +269,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       kind: "collection" | "pages";
       retryAttempts: number;
     }>,
-  ) => Promise<DiscordStageResult<Types["discord"]>>;
+  ) => Promise<DiscordStageResult<Types["operationsAlert"]>>;
   writeDryRunArtifact: (path: string, artifact: DryRunArtifact<Types["planned"]>) => Promise<void>;
   writeCollectAnalyzeArtifact: (
     path: string,
@@ -695,6 +693,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         graphReconciled,
         personalReminderAnalysis: personalReminderAnalysis.value,
         metrics,
+        diagnostics,
       });
       const planned = this.#dependencies.planPublication(validated);
 
@@ -761,33 +760,26 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         });
 
         stage = "discord";
-        effects.discordAttempted = true;
-        const discord = await this.#dependencies.sendDiscord({
+        effects.discordAttempted = request.executionPolicy.notificationAction === "send";
+        const notifications = await this.#dependencies.settleNotifications({
           invocation,
           configuration,
-          state,
           repositoryInventory,
-          planned,
           persisted,
           pages,
         });
-        discordSentAt = discord.discordSentAt;
+        discordSentAt = notifications.discordSentAt;
         metrics = updateMetrics(metrics, {
-          notificationCount: discord.notificationCount,
+          notificationCount: notifications.notificationCount,
         });
 
         stage = "state_persistence";
-        await this.#dependencies.completeRun({
+        await this.#dependencies.finalizeRun({
           invocation,
           configuration,
-          state,
           repositoryInventory,
-          planned,
           persisted,
-          discord: discord.value,
-          metrics,
-          status: runStatus,
-          diagnostics,
+          notifications: notifications.value,
         });
       }
 

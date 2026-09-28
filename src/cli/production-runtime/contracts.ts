@@ -89,6 +89,7 @@ import type { StateBranchHead } from "../../persistence/branch-adapter.js";
 import type { StateHistoryRecord } from "../../persistence/history.js";
 import type { DailyTransactionTypeMap } from "../daily-transaction.js";
 import type { RunMetrics } from "../run-report.js";
+import type { NotificationSettlementOutcome } from "../notification-settlement.js";
 import type { DeterministicItemAnalysis } from "../../application/tracking-run/stages/deterministic-item.js";
 import type { EffectiveAssigneeCandidateContext } from "../../application/tracking-run/stages/deterministic-responsibility.js";
 import type { PersonalReminderAnalysisResult } from "../personal-reminder/index.js";
@@ -274,7 +275,8 @@ export type ProductionTypes = DailyTransactionTypeMap &
     persisted: PersistedRun;
     pagesPrepared: InitialPagesPreparedRun;
     pages: InitialPagesPublishedRun;
-    discord: DiscordResult;
+    notifications: Extract<NotificationSettlementOutcome, { kind: "settled" }>;
+    operationsAlert: DiscordResult;
   }>;
 
 export type BlockerValueAiDependencies = Readonly<{

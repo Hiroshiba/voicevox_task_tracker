@@ -95,9 +95,7 @@ export {
 export { migrateStateSnapshot } from "./snapshot-v21-migration.js";
 export {
   StatePersistenceSession,
-  type PersistNotificationDeliveryInput,
   type PersistNotificationLedgerInput,
-  type PersistRunCompletionInput,
   type PersistStateTransactionResult,
   type StateSnapshotReadResult,
 } from "./state-persistence-session.js";

@@ -528,7 +528,10 @@ function assertWorkflowValidationConsistency(
     scheduleDelayMilliseconds: metrics.scheduleDelayMilliseconds,
   });
   if (
-    serializeCanonicalJson(expectedMetrics) !== serializeCanonicalJson(artifact.runMetadata.metrics)
+    serializeCanonicalJson(expectedMetrics) !==
+      serializeCanonicalJson(artifact.runMetadata.metrics) ||
+    serializeCanonicalJson(validated.diagnostics) !==
+      serializeCanonicalJson(artifact.runMetadata.diagnostics)
   ) {
     throw new TypeError("workflow artifactのrun指標が検証済みrunと一致しません");
   }
@@ -800,6 +803,7 @@ export function parseValidatedRunPayload(
       previousNotificationLedger: validated.previousNotificationLedger,
       publicationInputs: validated.publicationInputs,
       metrics: validated.metrics,
+      diagnostics: validated.diagnostics,
       evidenceClosureSummary: validated.evidenceClosureSummary,
       evidenceClosureWitness: validated.evidenceClosureWitness,
       publicDiagnosticsSummary: validated.publicDiagnosticsSummary,

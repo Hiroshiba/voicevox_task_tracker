@@ -115,7 +115,8 @@ export function createTrackerRunCliArguments(args: readonly string[]): readonly 
     args[0] === "build-pages" ||
     args[0] === "preflight-pages-deployment" ||
     args[0] === "record-pages-deployment" ||
-    args[0] === "notify-discord" ||
+    args[0] === "settle-notifications" ||
+    args[0] === "finalize-run" ||
     args[0] === "resolve-discord-delivery" ||
     args[0] === "notify-operations" ||
     args[0] === "report-workflow" ||
@@ -184,9 +185,11 @@ function topLevelDiagnosticStage(command: CliCommand): RunStage | "unknown" {
     case "preflight-pages-deployment":
     case "record-pages-deployment":
       return "pages";
-    case "notify-discord":
+    case "settle-notifications":
     case "notify-operations":
       return "discord";
+    case "finalize-run":
+      return "state_persistence";
     case "report-workflow":
       return "artifact";
     case "daily":

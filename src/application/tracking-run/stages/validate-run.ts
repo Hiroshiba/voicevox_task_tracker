@@ -1,6 +1,7 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type { Sha256Hash } from "../../../canonical-json/sha256.js";
 import { parsePublicationInputs, type PublicationInputs } from "../contracts/publication-inputs.js";
+import { parsePublicRunDiagnostics } from "../contracts/public-diagnostics.js";
 import type { NotificationLedgerEntry, UtcIsoDateTime } from "../../../domain/index.js";
 import type {
   GitHubNodeId,
@@ -121,6 +122,7 @@ export type ValidatedRun<
   publicationInputs: PublicationInputs;
   repositoryAllowlist: readonly PublicRepository[];
   metrics: Metrics;
+  diagnostics: readonly string[];
   evidenceClosureSummary: Readonly<{
     referenceCount: number;
     sourceIds: readonly string[];
@@ -169,6 +171,7 @@ export type ValidateRunInput<
   ledgerEntriesToMerge: readonly NotificationLedgerEntry[];
   repositoryAllowlist: readonly PublicRepository[];
   metrics: Metrics;
+  diagnostics: readonly string[];
   digest: ContentDigestPort;
   createCompleteSnapshot: (candidate: FinalSnapshotCandidate) => Snapshot;
   assertPublicSafety: (snapshot: Snapshot, values: readonly unknown[]) => void;
@@ -406,6 +409,7 @@ export function validateRun<
       left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
     ),
     metrics: input.metrics,
+    diagnostics: parsePublicRunDiagnostics(input.diagnostics),
     evidenceClosureSummary: {
       referenceCount: evidenceClosureWitness.resolvedUses.length,
       sourceIds,

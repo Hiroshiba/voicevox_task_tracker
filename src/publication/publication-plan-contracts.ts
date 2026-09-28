@@ -115,6 +115,7 @@ export type RunFinalizationPolicy = Readonly<{
     startedAt: PublicationValidatedRun["core"]["identity"]["startedAt"];
     status: StateSnapshot["run"]["status"];
     metrics: RunMetrics;
+    diagnostics: readonly string[];
     completionSource: "notification_settlement_receipt";
   }>;
   ledgerAndHistorySource: "notification_settlement_receipt";

@@ -1,8 +1,6 @@
 import type { DailyTransactionDependencies } from "../../daily-transaction.js";
-import {
-  sendDailyDiscord,
-  sendDailyOperationsAlert,
-} from "../../run-publication/daily-stage-handlers.js";
+import { sendDailyOperationsAlert } from "../../run-publication/daily-stage-handlers.js";
+import { settleDailyNotifications } from "../../run-publication/notification-stage.js";
 import type { ProductionRuntimeAdapters } from "../adapters.js";
 import type { ProductionTypes } from "../contracts.js";
 
@@ -19,13 +17,14 @@ type NotificationRuntimeAdapters = Pick<
   | "sleep"
   | "random"
   | "sendDiscord"
+  | "diagnosticsRecorder"
 >;
 
-/** 日次runのDiscord通知を既存公開処理へ接続する。 */
-export function createSendDiscordStage(
+/** 日次runの通知settlementを共通stageへ接続する。 */
+export function createSettleNotificationsStage(
   adapters: NotificationRuntimeAdapters,
-): ProductionDailyDependencies["sendDiscord"] {
-  return (input) => sendDailyDiscord({ adapters }, input);
+): ProductionDailyDependencies["settleNotifications"] {
+  return (input) => settleDailyNotifications(adapters, input);
 }
 
 /** 日次runの障害通知を既存公開処理へ接続する。 */

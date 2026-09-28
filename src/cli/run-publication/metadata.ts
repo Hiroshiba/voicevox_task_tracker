@@ -1,6 +1,3 @@
-import { createStateRunReport } from "../../persistence/index.js";
-import type { StateRunReport, StateSnapshot } from "../../persistence/index.js";
-import type { UtcIsoDateTime } from "../../domain/index.js";
 import type { DailyRunInvocation } from "../daily-transaction.js";
 import type { RunMetrics } from "../run-report.js";
 import { createWorkflowRunMetadata } from "../validated-run-payload.js";
@@ -53,33 +50,5 @@ export function createRunMetadata(input: CreateRunMetadataInput): WorkflowRunMet
     startedAt: input.invocation.startedAt,
     metrics: persistedMetrics(input.metrics, input.validated),
     diagnostics: input.diagnostics,
-  });
-}
-
-/** 完了済みrunのstate reportを作る入力。 */
-export type CreatePersistedRunReportInput = Readonly<{
-  snapshot: StateSnapshot;
-  metadata: WorkflowRunMetadata;
-  notificationCount: number;
-  finishedAt: UtcIsoDateTime;
-}>;
-
-/** 完了済みrunのstate reportを作る。 */
-export function createPersistedRunReport(input: CreatePersistedRunReportInput): StateRunReport {
-  return createStateRunReport({
-    schemaVersion: "3",
-    runId: input.snapshot.run.id,
-    date: input.metadata.startedAt.slice(0, 10),
-    status: input.snapshot.run.status,
-    complete: true,
-    scheduledFor: input.metadata.scheduledFor,
-    startedAt: input.metadata.startedAt,
-    finishedAt: input.finishedAt,
-    metrics: {
-      ...input.metadata.metrics,
-      notificationCount: input.notificationCount,
-      durationMilliseconds: Date.parse(input.finishedAt) - Date.parse(input.metadata.startedAt),
-    },
-    diagnostics: input.metadata.diagnostics,
   });
 }

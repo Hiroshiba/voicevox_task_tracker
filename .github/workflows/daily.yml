@@ -486,8 +486,7 @@ jobs:
     permissions:
       contents: write
     outputs:
-      has_notification_candidates: ${{ steps.detect-notification-candidates.outputs.has_notification_candidates }}
-      public_boundary_violation: ${{ steps.send_discord.outputs.public_boundary_violation || steps.acknowledge_current.outputs.public_boundary_violation || steps.hold_discord.outputs.public_boundary_violation }}
+      public_boundary_violation: ${{ steps.settle_notifications.outputs.public_boundary_violation || steps.finalize_run.outputs.public_boundary_violation }}
     steps:
       - name: ソースコードを取得
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -504,6 +503,11 @@ jobs:
         with:
           name: validated-public-run
           path: artifacts/workflow
+      - name: 初回state commit receiptを取得
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: initial-state-commit-receipt
+          path: artifacts/workflow
       - name: Pages build recordを取得
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -516,41 +520,34 @@ jobs:
           path: artifacts/workflow
       - name: checkpointとruntimeを検証
         run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs verify-checkpoint
-      - name: 通知候補の有無を確認
-        id: detect-notification-candidates
-        run: |
-          has_notification_candidates="$(jq -er '
-            if .payload.validatedPayload.notificationAction == "send" and .payload.validatedPayload.notificationSelection.action == "create_digest" then
-              "true"
-            elif (.payload.validatedPayload.notificationAction == "send" and .payload.validatedPayload.notificationSelection.action == "skip_digest" and .payload.validatedPayload.notificationSelection.reason == "no_candidates") or
-              (.payload.validatedPayload.notificationAction == "acknowledge-current" and .payload.validatedPayload.notificationSelection.action == "skip_digest" and .payload.validatedPayload.notificationSelection.reason == "no_candidates") or
-              (.payload.validatedPayload.notificationAction == "hold" and .payload.validatedPayload.notificationSelection.action == "skip_digest" and .payload.validatedPayload.notificationSelection.reason == "held") then
-              "false"
-            else
-              error("workflow artifactの通知actionとselectionの組み合わせが不正です")
-            end
-          ' artifacts/workflow/validated-run.json)"
-          echo "has_notification_candidates=$has_notification_candidates" >> "$GITHUB_OUTPUT"
-      - name: Discordへ通知
-        id: send_discord
-        if: github.event_name != 'workflow_dispatch' || inputs.notification_action == 'send'
+      - name: 通知をsettleする
+        id: settle_notifications
         env:
           DISCORD_OPERATIONS_WEBHOOK_URL: ${{ secrets.DISCORD_OPERATIONS_WEBHOOK_URL }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
-        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs notify-discord
-      - name: 通知候補を確認済みにする
-        id: acknowledge_current
-        if: github.event_name == 'workflow_dispatch' && inputs.notification_action == 'acknowledge-current'
+        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs settle-notifications
+      - name: settlement receiptを保存
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: notification-settlement-record
+          path: artifacts/workflow/notification-settlement-receipt.json
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 7
+      - name: runをfinalizeする
+        id: finalize_run
         env:
           VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
-        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs notify-discord
-      - name: 通知を保留してrunを完了する
-        id: hold_discord
-        if: github.event_name == 'workflow_dispatch' && inputs.notification_action == 'hold'
-        env:
-          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
-        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs notify-discord
+        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs finalize-run
+      - name: finalization receiptを保存
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: run-finalization-record
+          path: artifacts/workflow/run-finalization-receipt.json
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 7
       - name: 診断JSONLを暗号化
         if: >-
           always() &&
@@ -575,11 +572,7 @@ jobs:
     needs:
       - collect-analyze
       - notify-discord
-    # Task 30でfinal state revisionを正本にする通知履歴Pagesの生成へ接続する。
-    if: >-
-      false &&
-      needs.notify-discord.result == 'success' &&
-      needs.notify-discord.outputs.has_notification_candidates == 'true'
+    if: false
     runs-on: ubuntu-24.04
     env:
       VOICEVOX_EXPECTED_RUN_ID: ${{ needs.collect-analyze.outputs.run_id }}
@@ -782,6 +775,9 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
+      - name: 既存stateを取得
+        continue-on-error: true
+        run: git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state
       - name: Node.jsを準備
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -799,6 +795,24 @@ jobs:
         with:
           name: daily-run-report-${{ github.run_id }}-${{ github.run_attempt }}-collect-analyze
           path: artifacts/run-reports
+      - name: 初回state receiptを取得
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: initial-state-commit-receipt
+          path: artifacts/workflow
+      - name: 通知settlement receiptを取得
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: notification-settlement-record
+          path: artifacts/workflow
+      - name: 最終state receiptを取得
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: run-finalization-record
+          path: artifacts/workflow
       - name: workflow run reportを作成
         env:
           BUILD_PAGES_RESULT: ${{ needs.build-pages.result }}

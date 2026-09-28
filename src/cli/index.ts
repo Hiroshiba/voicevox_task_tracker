@@ -16,7 +16,8 @@ export {
   type DailyCliCommand,
   type DryRunCliCommand,
   type HelpCliCommand,
-  type NotifyDiscordCliCommand,
+  type SettleNotificationsCliCommand,
+  type FinalizeRunCliCommand,
   type NotifyOperationsCliCommand,
   type PersistStateCliCommand,
   type ReportWorkflowCliCommand,
@@ -35,6 +36,7 @@ export {
   type DailyTransactionDependencies,
   type DailyTransactionTypeMap,
   type DiscordStageResult,
+  type NotificationStageResult,
   type DryRunArtifact,
   type OnlineCliCommand,
 } from "./daily-transaction.js";

@@ -12,14 +12,12 @@ import { CliWorkflowArtifactError } from "../errors.js";
 import { readOptionalRunReportFile } from "../workflow-run-report.js";
 import type {
   BuildPagesCliCommand,
-  NotifyDiscordCliCommand,
   NotifyOperationsCliCommand,
   PersistStateCliCommand,
   VerifyCheckpointCliCommand,
 } from "../command.js";
-import { deliverDiscord, deliverOperationsAlert } from "../notification-delivery-runtime.js";
+import { deliverOperationsAlert } from "../notification-delivery-runtime.js";
 import { requireEnvironmentValue } from "../production-runtime-setup.js";
-import { validatedRunPayloadRepositoryInventory } from "../validated-run-payload.js";
 import {
   readPublicationCheckpointFile,
   readPublicationCheckpointHeader,
@@ -31,18 +29,9 @@ import {
 } from "../publication-checkpoint-binding.js";
 import type { RunPublicationAdapters, ValidatedRun } from "./contracts.js";
 import { buildPublicPages } from "./pages.js";
-import { persistSuccessfulRunCompletion } from "./persistence.js";
 import { commitInitialState } from "../initial-state-commit.js";
-import {
-  decodeInitialPagesBuildArtifact,
-  parseInitialPagesBuildArtifact,
-} from "../initial-pages-build-artifact.js";
-import { readInitialPagesDeploymentOutcome } from "../initial-pages-deployment.js";
+import { parseInitialPagesBuildArtifact } from "../initial-pages-build-artifact.js";
 import { discordDeliverySettings, projectPublicationSettings } from "./settings.js";
-import {
-  assertWorkflowDeliveryLedgerMatches,
-  assertWorkflowSnapshotMatches,
-} from "./workflow-state-identity.js";
 
 type WorkflowStateAdapters = Pick<
   RunPublicationAdapters,
@@ -248,116 +237,6 @@ export async function buildWorkflowPages(
       receipt: result.receipt,
     }),
   );
-}
-
-/** workflowのDiscord通知と完了保存を実行する。 */
-export async function notifyWorkflowDiscord(
-  dependencies: Readonly<{
-    adapters: WorkflowDeliveryAdapters & WorkflowStateAdapters;
-  }>,
-  command: NotifyDiscordCliCommand,
-): Promise<void> {
-  const buildArtifact = decodeInitialPagesBuildArtifact(
-    await readFile(resolve(dependencies.adapters.repositoryPath, command.buildArtifactPath)),
-  );
-  const deployment = await readInitialPagesDeploymentOutcome(
-    resolve(dependencies.adapters.repositoryPath, command.deploymentOutcomePath),
-    buildArtifact,
-  );
-  if (
-    deployment.kind !== "success" ||
-    deployment.receipt.result?.externalReference.kind !== "github_pages_actions"
-  ) {
-    throw new TypeError("Discord開始前のPages成功receiptがありません");
-  }
-  const config = await dependencies.adapters.loadConfig(
-    resolve(dependencies.adapters.repositoryPath, command.configPath),
-  );
-  const artifactPath = resolve(dependencies.adapters.repositoryPath, command.artifactPath);
-  const header = await readPublicationCheckpointHeader(artifactPath);
-  const adapter = dependencies.adapters.createStateBranchAdapter();
-  const artifact = await readWorkflowCheckpoint(
-    dependencies.adapters,
-    artifactPath,
-    config,
-    adapter,
-    header.baseStateRevision,
-  );
-  const planned = artifact.planned;
-  if (
-    deployment.receipt.result.pageUrl !== artifact.validatedPayload.pagesUrl ||
-    buildArtifact.intent.runId !== artifact.checkpoint.runIdentity.runId ||
-    buildArtifact.intent.checkpointDigest !== artifact.checkpointDigest
-  ) {
-    throw new TypeError("Pages公開receiptとworkflow checkpointが一致しません");
-  }
-  const session = await dependencies.adapters.openStateSession(
-    adapter,
-    config.state,
-    config.staleness.timezone,
-  );
-  const persistedSnapshot = await session.loadSnapshot();
-  if (persistedSnapshot.status !== "available") {
-    throw new TypeError("Discord通知対象のstate snapshotがありません");
-  }
-  assertWorkflowSnapshotMatches(artifact.validated, persistedSnapshot.snapshot);
-  const notificationLedger = await session.loadNotificationLedger();
-  assertWorkflowDeliveryLedgerMatches(artifact.validated, notificationLedger);
-  const state = Object.freeze({
-    session,
-    snapshot: persistedSnapshot,
-    notificationLedger,
-  });
-  if (planned.publicationPlan.notificationOutbox.action !== "send") {
-    await persistSuccessfulRunCompletion({
-      now: dependencies.adapters.now,
-      state,
-      repositoryInventory: validatedRunPayloadRepositoryInventory(artifact.validatedPayload),
-      repositoryAllowlist: artifact.validated.repositoryAllowlist,
-      planned,
-      runMetadata: artifact.validatedPayload.runMetadata,
-      delivery: {
-        notificationLedger: state.notificationLedger,
-        notificationCount: 0,
-      },
-      knownSecrets: [],
-    });
-    return;
-  }
-  const knownSecrets = artifact.validatedPayload.discordSettings.enabled
-    ? Object.freeze([
-        requireEnvironmentValue(
-          dependencies.adapters.environment,
-          artifact.validatedPayload.discordSettings.webhookSecretName,
-        ),
-        requireEnvironmentValue(
-          dependencies.adapters.environment,
-          artifact.validatedPayload.discordSettings.operationsWebhookSecretName,
-        ),
-      ])
-    : Object.freeze([]);
-  const result = await deliverDiscord(
-    dependencies.adapters,
-    state,
-    validatedRunPayloadRepositoryInventory(artifact.validatedPayload),
-    artifact.validated.repositoryAllowlist,
-    knownSecrets,
-    planned,
-    deployment.receipt.result.pageUrl,
-  );
-  await persistSuccessfulRunCompletion({
-    now: dependencies.adapters.now,
-    state,
-    repositoryInventory: validatedRunPayloadRepositoryInventory(artifact.validatedPayload),
-    repositoryAllowlist: artifact.validated.repositoryAllowlist,
-    planned,
-    runMetadata: artifact.validatedPayload.runMetadata,
-    delivery: {
-      notificationLedger: result.notificationLedger,
-      notificationCount: result.notificationCount,
-    },
-    knownSecrets,
-  });
 }
 
 /** workflowの障害通知を実行する。 */

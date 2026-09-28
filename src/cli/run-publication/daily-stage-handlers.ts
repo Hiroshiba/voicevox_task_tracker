@@ -1,5 +1,4 @@
-import { deliverDiscord, deliverOperationsAlert } from "../notification-delivery-runtime.js";
-import { assertValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
+import { deliverOperationsAlert } from "../notification-delivery-runtime.js";
 import { basename, resolve } from "node:path";
 
 import { encodePublicationCheckpoint } from "../publication-checkpoint-codec.js";
@@ -18,9 +17,8 @@ import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content
 import { createCollectAnalyzePayload } from "./artifact.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import type { DailyPublicationStageHandlers, RunPublicationAdapters } from "./contracts.js";
-import { createRunMetadata } from "./metadata.js";
 import { buildPublicPages } from "./pages.js";
-import { persistSuccessfulRunCompletion, persistValidatedRun } from "./persistence.js";
+import { persistValidatedRun } from "./persistence.js";
 import { discordDeliverySettings } from "./settings.js";
 
 type DailyNotificationAdapters = Pick<
@@ -201,81 +199,6 @@ export async function deployDailyPages(
     prepared: input.pagesPrepared,
     deployment,
     pagesUrl: deployment.receipt.result.pageUrl,
-  });
-}
-
-/** 日次runのDiscord配送または通知省略を実行する。 */
-export async function sendDailyDiscord(
-  dependencies: Readonly<{
-    adapters: DailyNotificationAdapters;
-  }>,
-  input: Parameters<DailyPublicationStageHandlers["sendDiscord"]>[0],
-): ReturnType<DailyPublicationStageHandlers["sendDiscord"]> {
-  const { configuration, state, repositoryInventory, persisted, pages } = input;
-  const planned = persisted.bound.planned;
-  const validated = planned.validated;
-  assertValidatedRun(validated);
-  if (planned.publicationPlan.notificationOutbox.action !== "send") {
-    return Object.freeze({
-      value: Object.freeze({
-        delivery: Object.freeze({
-          status: "skipped",
-          reason:
-            planned.publicationPlan.notificationOutbox.action === "hold" ? "held" : "no_candidates",
-        }),
-        notificationEvents: Object.freeze([]),
-        notificationLedger: validated.notificationLedger,
-      }),
-      notificationCount: 0,
-      discordSentAt: null,
-    });
-  }
-  const result = await deliverDiscord(
-    dependencies.adapters,
-    Object.freeze({
-      ...state,
-      session: persisted.session,
-      notificationLedger: persisted.notificationLedger,
-    }),
-    repositoryInventory.inventory,
-    repositoryInventory.allowlist.repositories,
-    configuration.credentials.knownSecrets,
-    planned,
-    pages.pagesUrl,
-  );
-  return Object.freeze({
-    value: Object.freeze({
-      ...result.value,
-      notificationLedger: result.notificationLedger,
-    }),
-    notificationCount: result.notificationCount,
-    discordSentAt: result.discordSentAt,
-  });
-}
-
-/** Discord結果を使って日次runの完了状態を保存する。 */
-export function completeDailyRun(
-  dependencies: Readonly<{
-    adapters: Pick<RunPublicationAdapters, "now">;
-  }>,
-  input: Parameters<DailyPublicationStageHandlers["completeRun"]>[0],
-): ReturnType<DailyPublicationStageHandlers["completeRun"]> {
-  const { invocation, configuration, state, repositoryInventory, discord, metrics, diagnostics } =
-    input;
-  const planned = input.persisted.bound.planned;
-  const validated = planned.validated;
-  return persistSuccessfulRunCompletion({
-    now: dependencies.adapters.now,
-    state: Object.freeze({ ...state, session: input.persisted.session }),
-    repositoryInventory: repositoryInventory.inventory,
-    repositoryAllowlist: repositoryInventory.allowlist.repositories,
-    planned,
-    runMetadata: createRunMetadata({ invocation, validated, metrics, diagnostics }),
-    delivery: {
-      notificationLedger: discord.notificationLedger,
-      notificationCount: metrics.notificationCount,
-    },
-    knownSecrets: configuration.credentials.knownSecrets,
   });
 }
 

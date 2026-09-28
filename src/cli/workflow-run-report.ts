@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { z } from "zod";
 
 import { CliWorkflowArtifactError } from "./errors.js";
+import { createStateRunReport, type StateRunReport } from "../persistence/state-run-report.js";
 import {
   createEmptyRunMetrics,
   createRunReport,
@@ -29,6 +30,7 @@ const workflowRunReportInputSchema = z.strictObject({
   workflowRunAttempt: z.number().int().positive(),
   jobs: workflowJobResultsSchema,
   collectAnalyzeReport: z.union([z.record(z.string(), z.unknown()), z.null()]),
+  finalReport: z.union([z.record(z.string(), z.unknown()), z.null()]),
 });
 const fileNotFoundErrorSchema = z.object({
   code: z.literal("ENOENT"),
@@ -40,9 +42,9 @@ export type WorkflowJobResult = z.output<typeof workflowJobResultSchema>;
 /** 日次workflowで集約する全jobの完了結果。 */
 export type WorkflowJobResults = Readonly<z.output<typeof workflowJobResultsSchema>>;
 
-/** CLI reportと全job結果をまとめたworkflow run report。 */
+/** 最終state reportと全job結果をまとめたworkflow run report。 */
 export type WorkflowRunReport = Readonly<{
-  schemaVersion: "5";
+  schemaVersion: "6";
   workflowRunId: string;
   workflowRunAttempt: number;
   status: "success" | "fallback" | "failure";
@@ -50,37 +52,10 @@ export type WorkflowRunReport = Readonly<{
   jobs: WorkflowJobResults;
   metrics: RunMetrics;
   collectAnalyzeReport: RunReport | null;
+  finalReport: StateRunReport | null;
 }>;
 
-function requiredJobFailed(jobs: WorkflowJobResults): boolean {
-  return (
-    jobs.quality !== "success" ||
-    jobs["collect-analyze"] !== "success" ||
-    jobs["persist-state"] !== "success" ||
-    jobs["build-pages"] !== "success" ||
-    jobs["deploy-pages"] !== "success" ||
-    jobs["notify-discord"] !== "success" ||
-    (jobs["publish-notification-history"] !== "success" &&
-      jobs["publish-notification-history"] !== "skipped")
-  );
-}
-
-function workflowStatus(
-  jobs: WorkflowJobResults,
-  collectAnalyzeReport: RunReport | null,
-): WorkflowRunReport["status"] {
-  if (
-    collectAnalyzeReport == null ||
-    collectAnalyzeReport.status === "failure" ||
-    requiredJobFailed(jobs) ||
-    jobs["notify-operations"] !== "skipped"
-  ) {
-    return "failure";
-  }
-  return collectAnalyzeReport.status;
-}
-
-/** CLI reportと全job結果を検証してworkflow run reportを作る。 */
+/** 最終state reportと全job結果を検証してworkflow run reportを作る。 */
 export function createWorkflowRunReport(value: unknown): WorkflowRunReport {
   const parsed = workflowRunReportInputSchema.safeParse(value);
   if (!parsed.success) {
@@ -92,17 +67,28 @@ export function createWorkflowRunReport(value: unknown): WorkflowRunReport {
     parsed.data.collectAnalyzeReport == null
       ? null
       : createRunReport(parsed.data.collectAnalyzeReport);
+  const finalReport =
+    parsed.data.finalReport == null ? null : createStateRunReport(parsed.data.finalReport);
   if (collectAnalyzeReport != null && collectAnalyzeReport.command !== "collect-analyze") {
     throw new TypeError("workflow run reportにはcollect-analyzeのCLI reportを指定してください");
   }
-  const status = workflowStatus(parsed.data.jobs, collectAnalyzeReport);
-  const metrics = collectAnalyzeReport?.metrics ?? createEmptyRunMetrics();
+  if (
+    finalReport != null &&
+    collectAnalyzeReport != null &&
+    (collectAnalyzeReport.status === "failure" ||
+      collectAnalyzeReport.runId !== finalReport.runId ||
+      collectAnalyzeReport.status !== finalReport.status)
+  ) {
+    throw new TypeError("workflowの最終state reportと収集run reportが一致しません");
+  }
+  const status = finalReport?.status ?? "failure";
+  const metrics = finalReport?.metrics ?? collectAnalyzeReport?.metrics ?? createEmptyRunMetrics();
   return Object.freeze({
-    schemaVersion: "5",
+    schemaVersion: "6",
     workflowRunId: parsed.data.workflowRunId,
     workflowRunAttempt: parsed.data.workflowRunAttempt,
     status,
-    complete: status !== "failure",
+    complete: finalReport != null,
     jobs: Object.freeze({
       ...parsed.data.jobs,
     }),
@@ -110,6 +96,7 @@ export function createWorkflowRunReport(value: unknown): WorkflowRunReport {
       ...metrics,
     }),
     collectAnalyzeReport,
+    finalReport,
   });
 }
 

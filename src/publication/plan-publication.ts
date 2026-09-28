@@ -115,6 +115,7 @@ export function planPublication(
       startedAt: validated.core.identity.startedAt,
       status: validated.snapshot.run.status,
       metrics: validated.metrics,
+      diagnostics: validated.diagnostics,
       completionSource: "notification_settlement_receipt" as const,
     }),
     ledgerAndHistorySource: "notification_settlement_receipt" as const,

@@ -37,6 +37,7 @@ async function validateRunCompleteness(
   graphReconciled: GraphReconciledRun,
   personalReminderAnalysis: PersonalReminderAnalysis,
   metrics: RunMetrics,
+  diagnostics: readonly string[],
   sessions: GitHubRunSessions,
 ): Promise<ValidatedRun> {
   const notification = selectValidationNotifications(
@@ -116,6 +117,7 @@ async function validateRunCompleteness(
     ledgerEntriesToMerge: notification.ledgerEntriesToMerge,
     repositoryAllowlist: inventory.allowlist.repositories,
     metrics,
+    diagnostics,
     digest: nodeContentDigestPort,
     createCompleteSnapshot: (value) =>
       createStateSnapshot({
@@ -150,6 +152,7 @@ export function createValidateCompletenessStage(
     graphReconciled,
     personalReminderAnalysis,
     metrics,
+    diagnostics,
   }) => {
     try {
       return await validateRunCompleteness(
@@ -163,6 +166,7 @@ export function createValidateCompletenessStage(
         graphReconciled,
         personalReminderAnalysis,
         metrics,
+        diagnostics,
         sessions,
       );
     } finally {

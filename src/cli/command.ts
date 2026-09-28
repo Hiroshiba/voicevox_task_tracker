@@ -13,6 +13,8 @@ const DEFAULT_REPORT_DIRECTORY = "artifacts/run-reports";
 const DEFAULT_ARTIFACT_DIRECTORY = "artifacts";
 const DEFAULT_WORKFLOW_ARTIFACT_PATH = "artifacts/workflow/validated-run.json";
 const DEFAULT_INITIAL_STATE_RECEIPT_PATH = "artifacts/workflow/initial-state-commit-receipt.json";
+const DEFAULT_SETTLEMENT_RECEIPT_PATH = "artifacts/workflow/notification-settlement-receipt.json";
+const DEFAULT_FINALIZATION_RECEIPT_PATH = "artifacts/workflow/run-finalization-receipt.json";
 const DEFAULT_COLLECT_ANALYZE_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/collect-analyze.json`;
 const DEFAULT_WORKFLOW_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/workflow.json`;
 const REPOSITORY_FILTER_PATTERN = /^VOICEVOX\/[A-Za-z0-9._-]+$/u;
@@ -110,13 +112,23 @@ export type RecordPagesDeploymentCliCommand = Readonly<{
   outcomePath: string;
 }>;
 
-/** Pagesのdeploy成功後にDiscord通知を送るCLI入力。 */
-export type NotifyDiscordCliCommand = Readonly<{
-  kind: "notify-discord";
+/** 初回Pages成功後に通知settlementを確定するCLI入力。 */
+export type SettleNotificationsCliCommand = Readonly<{
+  kind: "settle-notifications";
   configPath: string;
-  artifactPath: string;
+  initialStateReceiptPath: string;
   buildArtifactPath: string;
   deploymentOutcomePath: string;
+  settlementReceiptPath: string;
+}>;
+
+/** settlement済みrunの最終CASを確定するCLI入力。 */
+export type FinalizeRunCliCommand = Readonly<{
+  kind: "finalize-run";
+  configPath: string;
+  initialStateReceiptPath: string;
+  settlementReceiptPath: string;
+  finalizationReceiptPath: string;
 }>;
 
 /** Discord通知の送信保留を解除するCLI入力。 */
@@ -149,7 +161,11 @@ export type NotifyOperationsCliCommand = NotifyOperationsCommandFields &
 /** workflow全体のjob結果をCLI reportへ統合する入力。 */
 export type ReportWorkflowCliCommand = Readonly<{
   kind: "report-workflow";
+  configPath: string;
   collectAnalyzeReportPath: string;
+  initialStateReceiptPath: string;
+  settlementReceiptPath: string;
+  finalizationReceiptPath: string;
   outputPath: string;
   workflowRunId: string;
   workflowRunAttempt: number;
@@ -215,7 +231,8 @@ export type CliCommand =
   | BuildPagesCliCommand
   | PreflightPagesDeploymentCliCommand
   | RecordPagesDeploymentCliCommand
-  | NotifyDiscordCliCommand
+  | SettleNotificationsCliCommand
+  | FinalizeRunCliCommand
   | ResolveDiscordDeliveryCliCommand
   | NotifyOperationsCliCommand
   | ReportWorkflowCliCommand
@@ -543,15 +560,21 @@ function parseRecordPagesDeployment(args: readonly string[]): RecordPagesDeploym
   });
 }
 
-function parseNotifyDiscord(args: readonly string[]): NotifyDiscordCliCommand {
+function parseSettleNotifications(args: readonly string[]): SettleNotificationsCliCommand {
   const options = parseOptions(
     args,
-    new Set(["--artifact", "--config", "--build-artifact", "--pages-deployment"]),
+    new Set([
+      "--receipt",
+      "--config",
+      "--build-artifact",
+      "--pages-deployment",
+      "--settlement-receipt",
+    ]),
   );
   return Object.freeze({
-    kind: "notify-discord",
+    kind: "settle-notifications",
     configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
-    artifactPath: singleOption(options, "--artifact", DEFAULT_WORKFLOW_ARTIFACT_PATH),
+    initialStateReceiptPath: singleOption(options, "--receipt", DEFAULT_INITIAL_STATE_RECEIPT_PATH),
     buildArtifactPath: singleOption(
       options,
       "--build-artifact",
@@ -561,6 +584,33 @@ function parseNotifyDiscord(args: readonly string[]): NotifyDiscordCliCommand {
       options,
       "--pages-deployment",
       "artifacts/workflow/initial-pages-deployment.json",
+    ),
+    settlementReceiptPath: singleOption(
+      options,
+      "--settlement-receipt",
+      DEFAULT_SETTLEMENT_RECEIPT_PATH,
+    ),
+  });
+}
+
+function parseFinalizeRun(args: readonly string[]): FinalizeRunCliCommand {
+  const options = parseOptions(
+    args,
+    new Set(["--config", "--receipt", "--settlement-receipt", "--finalization-receipt"]),
+  );
+  return Object.freeze({
+    kind: "finalize-run",
+    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
+    initialStateReceiptPath: singleOption(options, "--receipt", DEFAULT_INITIAL_STATE_RECEIPT_PATH),
+    settlementReceiptPath: singleOption(
+      options,
+      "--settlement-receipt",
+      DEFAULT_SETTLEMENT_RECEIPT_PATH,
+    ),
+    finalizationReceiptPath: singleOption(
+      options,
+      "--finalization-receipt",
+      DEFAULT_FINALIZATION_RECEIPT_PATH,
     ),
   });
 }
@@ -712,6 +762,10 @@ function parseReportWorkflow(args: readonly string[]): ReportWorkflowCliCommand 
       "--build-pages-result",
       "--collect-analyze-result",
       "--collect-report",
+      "--config",
+      "--receipt",
+      "--settlement-receipt",
+      "--finalization-receipt",
       "--deploy-pages-result",
       "--notify-discord-result",
       "--notify-operations-result",
@@ -734,7 +788,19 @@ function parseReportWorkflow(args: readonly string[]): ReportWorkflowCliCommand 
   }
   return Object.freeze({
     kind: "report-workflow",
+    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
     collectAnalyzeReportPath,
+    initialStateReceiptPath: singleOption(options, "--receipt", DEFAULT_INITIAL_STATE_RECEIPT_PATH),
+    settlementReceiptPath: singleOption(
+      options,
+      "--settlement-receipt",
+      DEFAULT_SETTLEMENT_RECEIPT_PATH,
+    ),
+    finalizationReceiptPath: singleOption(
+      options,
+      "--finalization-receipt",
+      DEFAULT_FINALIZATION_RECEIPT_PATH,
+    ),
     outputPath,
     workflowRunId: parseWorkflowRunId(options),
     workflowRunAttempt: parseWorkflowRunAttempt(options),
@@ -858,8 +924,10 @@ export function parseCliArguments(args: readonly string[]): CliCommand {
       return parsePreflightPagesDeployment(options);
     case "record-pages-deployment":
       return parseRecordPagesDeployment(options);
-    case "notify-discord":
-      return parseNotifyDiscord(options);
+    case "settle-notifications":
+      return parseSettleNotifications(options);
+    case "finalize-run":
+      return parseFinalizeRun(options);
     case "resolve-discord-delivery":
       return parseResolveDiscordDelivery(options);
     case "notify-operations":
@@ -895,7 +963,8 @@ export function formatCliUsage(): string {
     "  voicevox-task-tracker build-pages [--config PATH] [--receipt PATH] [--build-artifact PATH] [--output PATH]",
     "  voicevox-task-tracker preflight-pages-deployment [--config PATH] [--receipt PATH] [--build-artifact PATH] [--preflight PATH] [--run-attempt NUMBER]",
     "  voicevox-task-tracker record-pages-deployment [--build-artifact PATH] [--preflight PATH] [--outcome PATH]",
-    "  voicevox-task-tracker notify-discord [--artifact PATH] [--build-artifact PATH] [--pages-deployment PATH]",
+    "  voicevox-task-tracker settle-notifications [--receipt PATH] [--build-artifact PATH] [--pages-deployment PATH] [--settlement-receipt PATH]",
+    "  voicevox-task-tracker finalize-run [--receipt PATH] [--settlement-receipt PATH] [--finalization-receipt PATH]",
     "  voicevox-task-tracker resolve-discord-delivery --delivery-id ID --resolution retry|acknowledge [--config PATH]",
     "  voicevox-task-tracker notify-operations --kind collection --incident-id ID --occurred-at ISO --collect-analyze-report PATH",
     "  voicevox-task-tracker notify-operations --kind pages|discord --incident-id ID --occurred-at ISO",

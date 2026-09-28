@@ -25,7 +25,8 @@ export type CliExecutionResult =
         | "build-pages"
         | "preflight-pages-deployment"
         | "record-pages-deployment"
-        | "notify-discord"
+        | "settle-notifications"
+        | "finalize-run"
         | "resolve-discord-delivery"
         | "notify-operations"
         | "report-workflow"
@@ -85,7 +86,8 @@ export class CliApplication<Types extends DailyTransactionTypeMap> {
       case "build-pages":
       case "preflight-pages-deployment":
       case "record-pages-deployment":
-      case "notify-discord":
+      case "settle-notifications":
+      case "finalize-run":
       case "resolve-discord-delivery":
       case "notify-operations":
       case "report-workflow":

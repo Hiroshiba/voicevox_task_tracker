@@ -5,7 +5,8 @@ import {
   preflightWorkflowPagesDeployment,
   recordWorkflowPagesDeployment,
 } from "../../run-publication/deployment.js";
-import { createNotifyWorkflowDiscordStage } from "./notify-discord.js";
+import { createSettleWorkflowNotificationsStage } from "./settle-notifications.js";
+import { createFinalizeWorkflowRunStage } from "./finalize-run.js";
 import { createNotifyWorkflowOperationsStage } from "./notify-operations.js";
 import { createPersistWorkflowStateStage } from "./persist-state.js";
 import { reportWorkflowRun } from "./report-run.js";
@@ -18,7 +19,7 @@ import {
   inspectRunStateCommand,
 } from "../../verify-publication.js";
 
-/** workflowの6段階を既存実行順に接続する。 */
+/** workflowの各stageを実行順に接続する。 */
 export function createWorkflowStageRunner(
   adapters: ProductionRuntimeAdapters,
 ): WorkflowStageRunner {
@@ -27,7 +28,8 @@ export function createWorkflowStageRunner(
     buildPages: createBuildWorkflowPagesStage(adapters),
     preflightPagesDeployment: (command) => preflightWorkflowPagesDeployment(adapters, command),
     recordPagesDeployment: (command) => recordWorkflowPagesDeployment(adapters, command),
-    notifyDiscord: createNotifyWorkflowDiscordStage(adapters),
+    settleNotifications: createSettleWorkflowNotificationsStage(adapters),
+    finalizeRun: createFinalizeWorkflowRunStage(adapters),
     notifyOperations: createNotifyWorkflowOperationsStage(adapters),
     resolveDiscordDelivery: createResolveDiscordDeliveryStage(adapters),
     reportWorkflow: (command) => reportWorkflowRun(adapters, command),
