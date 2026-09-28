@@ -1,4 +1,5 @@
 import { AI_ANALYSIS_ELEMENTS } from "./analysis-elements.js";
+import { createAnalysisElementExactInput } from "./analysis-element-dependencies.js";
 import type {
   AiAnalysisSkipReason,
   AiAnalysisTarget,
@@ -69,6 +70,21 @@ export function selectPlannedCandidates(plan: GenericAiPlan): Readonly<{
         throw new TypeError(
           `AI計画のfingerprintが候補と一致しません。対象: ${item.nodeId}/${element.element}`,
         );
+      }
+      if (element.selected && element.choice !== "ai_disabled") {
+        const input =
+          element.choice === "execute" || element.choice === "budget_deferred"
+            ? item.executionCandidate?.input
+            : item.candidate.input;
+        if (
+          input == null ||
+          createAnalysisElementExactInput(input, element.element).fingerprint !==
+            element.inputFingerprint
+        ) {
+          throw new TypeError(
+            `AI計画の厳密入力が実輸送入力と一致しません。対象: ${item.nodeId}/${element.element}`,
+          );
+        }
       }
     }
     const cached = item.elements

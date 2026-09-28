@@ -14,6 +14,7 @@ import {
   type AnalysisElementSelectionCandidates,
 } from "./element-selection.js";
 import type { AiAnalysisTarget } from "./analysis-selection.js";
+import { determineAnalysisElementReuse } from "./analysis-reuse.js";
 import { assertNonNullable } from "../util/index.js";
 import {
   GENERIC_AI_ELEMENT_DEFINITIONS,
@@ -122,6 +123,28 @@ export function planAnalysisElements(input: AnalysisElementPlanningInput): Analy
     candidates,
     selection: selectAnalysisElements(candidates),
   });
+}
+
+/** 現在の意味入力で再利用を証明できる保存結果を返す。 */
+export function verifiedPlannedElementResult(
+  planning: AnalysisElementPlanning,
+  element: AnalysisElement,
+): AnalysisElementReuseRecord["result"] | undefined {
+  const candidate = planning.candidates[element];
+  const record = candidate.savedReuse;
+  if (
+    record != null &&
+    determineAnalysisElementReuse({
+      element,
+      inputFingerprint: candidate.inputFingerprint,
+      inputProjectionVersion: candidate.inputProjectionVersion,
+      dependencyFingerprint: candidate.dependencyFingerprint,
+      savedProof: record.proof,
+    }) === "verified"
+  ) {
+    return record.result;
+  }
+  return undefined;
 }
 
 /** 強制解析では指定要素だけを既存の必要条件に従って選択する。 */

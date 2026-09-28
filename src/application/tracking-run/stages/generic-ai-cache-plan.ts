@@ -35,7 +35,7 @@ type GenericAiElementDecision =
   | Readonly<{ choice: "cache_hit"; reason: "current_input_cached"; entry: GenericAiCachedEntry }>
   | Readonly<{
       choice: "execute";
-      reason: "cache_miss" | "cache_stale" | "forced_target";
+      reason: "cache_miss" | "cache_stale" | "forced_target" | "state_pair_required";
     }>
   | Readonly<{
       choice: "budget_deferred";
@@ -144,6 +144,27 @@ export async function planGenericAiCachedElements(
         inputFingerprint: exact.fingerprint,
         dependencyFingerprint: candidate.dependencyFingerprint,
       }),
+    );
+  }
+  const status = elements.find((value) => value.element === "status");
+  const waitingOn = elements.find((value) => value.element === "waitingOn");
+  if (
+    status?.selected === true &&
+    waitingOn?.selected === true &&
+    ((status.choice === "cache_hit" && waitingOn.choice === "execute") ||
+      (waitingOn.choice === "cache_hit" && status.choice === "execute"))
+  ) {
+    const coupledExecution = Object.freeze({
+      choice: "execute",
+      reason: "state_pair_required",
+    } satisfies GenericAiElementDecision);
+    return Object.freeze(
+      elements.map((value) =>
+        (value.element === "status" || value.element === "waitingOn") &&
+        value.choice === "cache_hit"
+          ? Object.freeze({ ...value, ...coupledExecution })
+          : value,
+      ),
     );
   }
   return Object.freeze(elements);

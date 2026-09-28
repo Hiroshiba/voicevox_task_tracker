@@ -1,11 +1,11 @@
 import {
-  determineAnalysisElementReuse,
   type AiAnalysisTarget,
   type AnalysisElementNecessityInput,
   type AnalysisElementPlanning,
   type CodexAnalysisInput,
   type CodexPreservedElements,
 } from "../../../codex/index.js";
+import { verifiedPlannedElementResult } from "../../../codex/element-planning.js";
 import {
   AI_ANALYSIS_ELEMENTS,
   type AiAnalysisElement,
@@ -17,37 +17,21 @@ import type { DeterministicItemAnalysis } from "../../../application/tracking-ru
 import { deterministicElementResult } from "../analysis-identity.js";
 import type { RuntimeState } from "../contracts.js";
 import { preservedElementsWithCompatibleRelations } from "../preserved-codex-relations.js";
-import {
-  verifiedCurrentAdoptedResultForElement,
-  verifiedMigrationAdoptedResultForElement,
-} from "../previous-state/ai-reuse.js";
-import {
-  currentSavedResultForElement,
-  migrationAdoptedResultForElement,
-} from "../previous-state/saved-ai-elements.js";
 import { previousTrackedItem } from "../previous-state/snapshot.js";
 import { checkFailureSourceIds } from "../source-ids.js";
 
-function preservedElementsForForcedTargetInput(
-  state: RuntimeState,
+/** 現在の確定判定だけをCodexの固定contextへ投影する。 */
+export function deterministicPreservedElementsForAnalysis(
   analysis: DeterministicItemAnalysis,
-  planning: AnalysisElementPlanning,
-  target: AiAnalysisTarget,
+  necessities: AnalysisElementPlanning["necessities"],
 ): CodexPreservedElements {
-  const selectedElements = new Set(target.elements);
   const preservedElements: Partial<Record<AiAnalysisElement, AiAnalysisElementMigrationResult>> =
     {};
   for (const element of AI_ANALYSIS_ELEMENTS) {
-    if (selectedElements.has(element)) {
+    if (necessities[element] === "required") {
       continue;
     }
-    const candidate = planning.candidates[element];
-    const result =
-      candidate.necessity === "not_required"
-        ? deterministicElementResult(analysis, element)
-        : (currentSavedResultForElement(state, analysis, element) ??
-          migrationAdoptedResultForElement(state, analysis, element) ??
-          deterministicElementResult(analysis, element));
+    const result = deterministicElementResult(analysis, element);
     if (result != null) {
       preservedElements[element] = result;
     }
@@ -56,60 +40,34 @@ function preservedElementsForForcedTargetInput(
 }
 
 export function preservedElementsForSelection(
-  state: RuntimeState,
   analysis: DeterministicItemAnalysis,
   planning: AnalysisElementPlanning,
   target: AiAnalysisTarget | undefined,
   input: CodexAnalysisInput,
 ): CodexPreservedElements {
-  if (target?.nodeId === analysis.item.nodeId) {
-    return preservedElementsWithCompatibleRelations(
-      preservedElementsForForcedTargetInput(state, analysis, planning, target),
-      input,
-    );
-  }
-  const preservedElements: Partial<Record<AiAnalysisElement, AiAnalysisElementMigrationResult>> =
-    {};
-  for (const skipped of planning.selection.skipped) {
-    if (skipped.reason === "up_to_date") {
-      const savedReuse = skipped.candidate.savedReuse;
-      let reused: AiAnalysisElementMigrationResult | undefined;
-      if (
-        savedReuse != null &&
-        determineAnalysisElementReuse({
-          element: skipped.candidate.element,
-          inputFingerprint: skipped.candidate.inputFingerprint,
-          inputProjectionVersion: skipped.candidate.inputProjectionVersion,
-          dependencyFingerprint: skipped.candidate.dependencyFingerprint,
-          savedProof: savedReuse.proof,
-        }) === "verified"
-      ) {
-        reused = savedReuse.result;
-      }
-      const adopted = verifiedCurrentAdoptedResultForElement(
-        state,
-        analysis,
-        skipped.candidate.element,
-        skipped.candidate.inputFingerprint,
-        savedReuse,
-      );
-      const migrated = verifiedMigrationAdoptedResultForElement(
-        state,
-        analysis,
-        skipped.candidate.element,
-        skipped.candidate.inputFingerprint,
-        savedReuse,
-      );
-      const deterministic = deterministicElementResult(analysis, skipped.candidate.element);
-      const result = reused ?? adopted ?? migrated ?? deterministic;
-      if (result != null) {
-        preservedElements[skipped.candidate.element] = result;
-      }
+  const preservedElements: Partial<Record<AiAnalysisElement, AiAnalysisElementMigrationResult>> = {
+    ...deterministicPreservedElementsForAnalysis(analysis, planning.necessities),
+  };
+  const selected = new Set(planning.selection.selected.map((candidate) => candidate.element));
+  for (const element of AI_ANALYSIS_ELEMENTS) {
+    if (
+      selected.has(element) ||
+      planning.necessities[element] !== "required" ||
+      preservedElements[element] != null
+    ) {
       continue;
     }
-    const deterministic = deterministicElementResult(analysis, skipped.candidate.element);
-    if (deterministic != null) {
-      preservedElements[skipped.candidate.element] = deterministic;
+    if (
+      target?.nodeId !== analysis.item.nodeId &&
+      !planning.selection.skipped.some(
+        (skipped) => skipped.candidate.element === element && skipped.reason === "up_to_date",
+      )
+    ) {
+      continue;
+    }
+    const verified = verifiedPlannedElementResult(planning, element);
+    if (verified != null) {
+      preservedElements[element] = verified;
     }
   }
   return preservedElementsWithCompatibleRelations(Object.freeze(preservedElements), input);

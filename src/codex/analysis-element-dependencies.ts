@@ -310,6 +310,43 @@ export function createAnalysisElementExactInputs(
   });
 }
 
+/** 実行要素だけ実輸送入力の意味文脈へ差し替える。 */
+export function withExecutedAnalysisElementExactInputs(
+  candidateInputs: AnalysisElementExactInputMap,
+  executionInput: CodexAnalysisInput,
+): AnalysisElementExactInputMap {
+  const selected = new Set(executionInput.selectedElements);
+  return Object.freeze({
+    status: selected.has("status")
+      ? createAnalysisElementExactInput(executionInput, "status")
+      : candidateInputs.status,
+    waitingOn: selected.has("waitingOn")
+      ? createAnalysisElementExactInput(executionInput, "waitingOn")
+      : candidateInputs.waitingOn,
+    nextAction: selected.has("nextAction")
+      ? createAnalysisElementExactInput(executionInput, "nextAction")
+      : candidateInputs.nextAction,
+    relations: selected.has("relations")
+      ? createAnalysisElementExactInput(executionInput, "relations")
+      : candidateInputs.relations,
+    progress: selected.has("progress")
+      ? createAnalysisElementExactInput(executionInput, "progress")
+      : candidateInputs.progress,
+    importance: selected.has("importance")
+      ? createAnalysisElementExactInput(executionInput, "importance")
+      : candidateInputs.importance,
+    deadline: selected.has("deadline")
+      ? createAnalysisElementExactInput(executionInput, "deadline")
+      : candidateInputs.deadline,
+    notification: selected.has("notification")
+      ? createAnalysisElementExactInput(executionInput, "notification")
+      : candidateInputs.notification,
+    selfCommitment: selected.has("selfCommitment")
+      ? createAnalysisElementExactInput(executionInput, "selfCommitment")
+      : candidateInputs.selfCommitment,
+  });
+}
+
 /** 現在の要素別意味入力fingerprintを求める。 */
 export function elementInputFingerprints(
   exactInputs: AnalysisElementExactInputMap,

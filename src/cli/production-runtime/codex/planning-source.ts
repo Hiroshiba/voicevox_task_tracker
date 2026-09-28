@@ -12,10 +12,14 @@ import {
 import { estimateAiInputCost } from "../../../codex/budget.js";
 import { listNativeRelationConstraints } from "../../../codex/semantic-validation.js";
 import { recordCodexDiagnostic, type CodexDiagnosticsContext } from "../../../codex/diagnostics.js";
-import type { AnalysisElementPlanning } from "../../../codex/element-planning.js";
+import {
+  determineAnalysisElementNecessities,
+  type AnalysisElementPlanning,
+} from "../../../codex/element-planning.js";
 import type { CodexAnalysisInput } from "../../../codex/input.js";
 import { serializeCodexTransportAnalysisInput } from "../../../codex/transport-alias.js";
 import type { GraphNodeId, Relation } from "../../../domain/index.js";
+import { AI_ANALYSIS_ELEMENTS } from "../../../domain/ai-analysis-elements.js";
 import type { AnalyzeGraphResult } from "../../../graph/index.js";
 import { relationNodes } from "../../../graph/relation-candidate-endpoints.js";
 import { createCodexInput } from "../../codex-input-projection.js";
@@ -24,10 +28,15 @@ import { elementDependencyFingerprints } from "../analysis-identity.js";
 import { forcedAiAnalysisTarget } from "../ai-analysis-target.js";
 import type { RuntimeConfiguration, RuntimeState } from "../contracts.js";
 import { previousGraphIndex } from "../previous-state/graph.js";
+import { preservedElementsWithCompatibleRelations } from "../preserved-codex-relations.js";
 import { savedGenerationsForItem } from "../previous-state/saved-ai-elements.js";
 import { previousSnapshot, previousTrackedItem } from "../previous-state/snapshot.js";
 import { createEarliestRelationSourceOccurredAtById } from "../relation-source-occurrence.js";
-import { necessityInputForAnalysis, preservedElementsForSelection } from "./input.js";
+import {
+  deterministicPreservedElementsForAnalysis,
+  necessityInputForAnalysis,
+  preservedElementsForSelection,
+} from "./input.js";
 import { analysisImpactProofsForItem } from "./reuse.js";
 import { reserveGenericAiBudget } from "./budget-plan.js";
 import { createGenericAiCacheLookup } from "./planning-cache.js";
@@ -156,15 +165,35 @@ export function createGenericAiPlanningPort(
         priority: createPriority(state, run, analysis, previousImpactByNodeId, previousRelations),
       });
     },
+    createCandidateInput: (
+      run: DeterministicallyAnalyzedRun,
+      analysis: DeterministicItemAnalysis,
+      source: GenericAiPlanningItemSource,
+    ): CodexAnalysisInput => {
+      const necessities = determineAnalysisElementNecessities(source.necessityInput);
+      return createCodexInput(
+        configuration,
+        run.data.collection.evaluatedAt,
+        analysis,
+        AI_ANALYSIS_ELEMENTS.filter((element) => necessities[element] === "required"),
+        preservedElementsWithCompatibleRelations(
+          deterministicPreservedElementsForAnalysis(analysis, necessities),
+          source.baseInput,
+        ),
+        previousTrackedItem(state, analysis.item.nodeId)?.observedAt,
+        createEarliestRelationSourceOccurredAtById,
+      );
+    },
     resolvePrevious: (
       analysis: DeterministicItemAnalysis,
       source: GenericAiPlanningItemSource,
+      input: CodexAnalysisInput,
       inputFingerprints: AnalysisElementInputFingerprintMap,
     ) => {
       const impact = analysisImpactProofsForItem(
         state,
         analysis,
-        source.baseInput,
+        input,
         inputFingerprints,
         source.dependencyFingerprints,
       );
@@ -193,7 +222,7 @@ export function createGenericAiPlanningPort(
         run.data.collection.evaluatedAt,
         analysis,
         planning.selection.selected.map((candidate) => candidate.element),
-        preservedElementsForSelection(state, analysis, planning, target, source.baseInput),
+        preservedElementsForSelection(analysis, planning, target, source.baseInput),
         previousTrackedItem(state, analysis.item.nodeId)?.observedAt,
         createEarliestRelationSourceOccurredAtById,
       ),

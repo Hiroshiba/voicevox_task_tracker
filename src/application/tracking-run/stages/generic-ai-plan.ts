@@ -1,7 +1,9 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import {
   elementInputFingerprints,
+  createAnalysisElementExactInput,
   createAnalysisElementExactInputs,
+  withExecutedAnalysisElementExactInputs,
   type AnalysisElementDependencyFingerprintMap,
   type AnalysisElementInputFingerprintMap,
   type AnalysisImpactDecisionForDiagnostics,
@@ -13,6 +15,7 @@ import {
   forceAnalysisElementSelection,
   determineAnalysisElementNecessities,
   planAnalysisElements,
+  verifiedPlannedElementResult,
   type AnalysisElementNecessityInput,
   type AnalysisElementPlanning,
 } from "../../../codex/element-planning.js";
@@ -28,7 +31,6 @@ import type { AnalysisElementReuseRecord } from "../../../codex/analysis-element
 import { AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS } from "../../../codex/generic-ai-definition.js";
 import {
   createCodexAnalysisInput,
-  projectCodexLockedElementResult,
   serializeCodexAnalysisInput,
   type CodexAnalysisInput,
 } from "../../../codex/input.js";
@@ -146,9 +148,15 @@ export type GenericAiPlanningPort = Readonly<{
     run: DeterministicallyAnalyzedRun,
     analysis: DeterministicItemAnalysis,
   ) => GenericAiPlanningItemSource;
+  createCandidateInput: (
+    run: DeterministicallyAnalyzedRun,
+    analysis: DeterministicItemAnalysis,
+    source: GenericAiPlanningItemSource,
+  ) => CodexAnalysisInput;
   resolvePrevious: (
     analysis: DeterministicItemAnalysis,
     source: GenericAiPlanningItemSource,
+    input: CodexAnalysisInput,
     inputFingerprints: AnalysisElementInputFingerprintMap,
   ) => GenericAiPreviousElements;
   createTransportInput: (
@@ -181,6 +189,36 @@ function executionFingerprints(
   return Object.freeze(
     z.record(aiAnalysisElementSchema, aiAnalysisElementFingerprintSchema).parse(values),
   );
+}
+
+function targetWithRequiredStateCompanion(
+  target: AiAnalysisTarget,
+  input: CodexAnalysisInput,
+  planning: AnalysisElementPlanning,
+): AiAnalysisTarget {
+  const statusSelected = target.elements.includes("status");
+  const waitingOnSelected = target.elements.includes("waitingOn");
+  if (statusSelected === waitingOnSelected) {
+    return target;
+  }
+  const counterpart = statusSelected ? "waitingOn" : "status";
+  if (
+    input.lockedElements[counterpart] != null ||
+    verifiedPlannedElementResult(planning, counterpart) != null
+  ) {
+    return target;
+  }
+  if (planning.necessities[counterpart] !== "required") {
+    throw new TypeError(`状態要素の固定値も実行候補もありません。対象: ${counterpart}`);
+  }
+  return Object.freeze({
+    ...target,
+    elements: Object.freeze(
+      AI_ANALYSIS_ELEMENTS.filter(
+        (element) => target.elements.includes(element) || element === counterpart,
+      ),
+    ),
+  });
 }
 
 /** 確定済み判定から全9要素の汎用AI計画を作る。 */
@@ -229,9 +267,56 @@ export async function planGenericAi(
       );
       continue;
     }
-    const exactInputs = createAnalysisElementExactInputs(source.baseInput);
+    const candidateInput = port.createCandidateInput(analyzed, analysis, source);
+    const candidateExactInputs = createAnalysisElementExactInputs(candidateInput);
+    const candidateFingerprints = elementInputFingerprints(candidateExactInputs);
+    const candidatePrevious = port.resolvePrevious(
+      analysis,
+      source,
+      candidateInput,
+      candidateFingerprints,
+    );
+    const preliminaryPlanning = planAnalysisElements({
+      necessities: determineAnalysisElementNecessities(source.necessityInput),
+      inputFingerprints: candidateFingerprints,
+      executionFingerprints: currentExecutionFingerprints,
+      inputProjectionVersions: AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS,
+      dependencyFingerprints: source.dependencyFingerprints,
+      savedGenerations: candidatePrevious.generations,
+      savedEvaluations: candidatePrevious.evaluations,
+      savedReuses: candidatePrevious.reuses,
+    });
+    const targetForItem = target?.nodeId === nodeId ? target : undefined;
+    const executionTarget =
+      targetForItem == null
+        ? undefined
+        : targetWithRequiredStateCompanion(targetForItem, candidateInput, preliminaryPlanning);
+    const preliminaryExecutionPlanning =
+      target == null
+        ? preliminaryPlanning
+        : executionTarget != null
+          ? Object.freeze({
+              ...preliminaryPlanning,
+              selection: forceAnalysisElementSelection(preliminaryPlanning, executionTarget),
+            })
+          : Object.freeze({
+              ...preliminaryPlanning,
+              selection: Object.freeze({
+                ...preliminaryPlanning.selection,
+                selected: Object.freeze([]),
+                shouldCallAi: false,
+              }),
+            });
+    let input = port.createTransportInput(
+      analyzed,
+      analysis,
+      source,
+      preliminaryExecutionPlanning,
+      executionTarget,
+    );
+    const exactInputs = withExecutedAnalysisElementExactInputs(candidateExactInputs, input);
     const inputFingerprints = elementInputFingerprints(exactInputs);
-    const previous = port.resolvePrevious(analysis, source, inputFingerprints);
+    const previous = port.resolvePrevious(analysis, source, input, inputFingerprints);
     for (const impact of previous.impacts) {
       analysisImpactDecisions.push(Object.freeze({ candidateId: nodeId, ...impact }));
     }
@@ -245,14 +330,13 @@ export async function planGenericAi(
       savedEvaluations: previous.evaluations,
       savedReuses: previous.reuses,
     });
-    const targetForItem = target?.nodeId === nodeId ? target : undefined;
     const executionPlanning =
       target == null
         ? planning
-        : targetForItem != null
+        : executionTarget != null
           ? Object.freeze({
               ...planning,
-              selection: forceAnalysisElementSelection(planning, targetForItem),
+              selection: forceAnalysisElementSelection(planning, executionTarget),
             })
           : Object.freeze({
               ...planning,
@@ -262,30 +346,40 @@ export async function planGenericAi(
                 shouldCallAi: false,
               }),
             });
+    const selectedElements = executionPlanning.selection.selected.map((value) => value.element);
+    if (selectedElements.some((element) => !input.selectedElements.includes(element))) {
+      throw new TypeError(`汎用AIの確定計画に新しい選択要素があります。対象: ${nodeId}`);
+    }
+    if (input.selectedElements.length !== selectedElements.length) {
+      input = createCodexAnalysisInput({ ...input, selectedElements });
+    }
+    for (const element of selectedElements) {
+      if (
+        createAnalysisElementExactInput(input, element).fingerprint !==
+        exactInputs[element].fingerprint
+      ) {
+        throw new TypeError(
+          `汎用AIの実輸送入力が確定済みfingerprintと一致しません。対象: ${nodeId}/${element}`,
+        );
+      }
+    }
     const elements = await planGenericAiCachedElements(
       exactInputs,
       executionPlanning,
-      target,
+      executionTarget ?? target,
       nodeId,
       analyzed.core.config.ai.enabled,
       identity,
       port.lookupCache,
-    );
-    const input = port.createTransportInput(
-      analyzed,
-      analysis,
-      source,
-      executionPlanning,
-      targetForItem,
     );
     const candidate = prepareAiAnalysisCandidate(
       Object.freeze({
         id: nodeId,
         input,
         elements:
-          targetForItem == null
+          executionTarget == null
             ? Object.freeze(AI_ANALYSIS_ELEMENTS.map((element) => planning.candidates[element]))
-            : forceAnalysisCandidateElements(planning, targetForItem),
+            : forceAnalysisCandidateElements(planning, executionTarget),
         promptFingerprint,
         priority: source.priority,
         estimatedCostUsd: estimateAiInputCost(
@@ -296,24 +390,12 @@ export async function planGenericAi(
       executionPlanning.selection,
     );
     const misses = elements.filter((element) => element.choice === "execute");
-    const cachedLockedElements = Object.fromEntries(
-      elements
-        .filter((element) => element.choice === "cache_hit")
-        .map((element) => [
-          element.element,
-          projectCodexLockedElementResult(element.element, element.entry.generation.result),
-        ]),
-    );
     const executionInput =
       misses.length === 0
         ? undefined
         : createCodexAnalysisInput({
             ...input,
             selectedElements: misses.map((element) => element.element),
-            lockedElements: Object.freeze({
-              ...input.lockedElements,
-              ...cachedLockedElements,
-            }),
           });
     const preparedExecutionCandidate =
       executionInput == null
