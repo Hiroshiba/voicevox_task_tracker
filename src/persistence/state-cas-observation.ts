@@ -10,6 +10,7 @@ import {
 import { StateBranchConflictError } from "./errors.js";
 import { assertRunTransactionMarkerTransition } from "../application/tracking-run/run-transaction-marker.js";
 import { createStateChangedPathManifest, digestStateManifest } from "./state-commit-metadata.js";
+import { verifyStateCasCandidate } from "./state-cas-candidate.js";
 import type { StateCommitIdentity } from "./state-commit-metadata.js";
 import {
   verifyRunTransactionFiles,
@@ -36,6 +37,11 @@ export type StateCasWriteResult =
 /** 実際のCAS親が確定してからstate変更を組み立てる。 */
 export type StateCasCommitRequestFactory = Readonly<{
   commitIdentity: StateCommitIdentity;
+  verifyCandidate?: (
+    files: ReadonlyMap<string, StateFileReadResult>,
+    revision: string,
+    request: Omit<StateBranchCommitRequest, "branch" | "expectedHead">,
+  ) => void | Promise<void>;
   build: (
     parent: StateBranchHead,
     advance: OrthogonalCommitAdvance,
@@ -213,6 +219,14 @@ export async function observeCommittedStateWrite(
       const manifest = createStateChangedPathManifest(before, after);
       if (digestStateManifest(manifest) !== inspected.metadata.changedPathManifestDigest) {
         throw new StateBranchConflictError();
+      }
+      try {
+        const candidateFiles = await verifyStateCasCandidate(adapter, inspected, request);
+        if ("build" in requestInput) {
+          await requestInput.verifyCandidate?.(candidateFiles, inspected.revision, request);
+        }
+      } catch (error: unknown) {
+        throw new StateBranchConflictError({ cause: error });
       }
       try {
         await authorizeObservedSuccessors(adapter, configuration, inspected, successorsNewestFirst);

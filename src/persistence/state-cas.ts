@@ -10,6 +10,7 @@ import { StateBranchConflictError } from "./errors.js";
 import { verifyRunTransactionFiles } from "./state-transaction-files.js";
 import { assertRunTransactionMarkerTransition } from "../application/tracking-run/run-transaction-marker.js";
 import { digestStateManifest } from "./state-commit-metadata.js";
+import { verifyStateCasCandidate } from "./state-cas-candidate.js";
 import {
   authorizeAdvanceAfterOrthogonalCommits,
   findInitialStateRevision,
@@ -142,8 +143,10 @@ export async function writeStateCas(
   ) {
     throw new TypeError("commit候補のmetadataをexact commitから照合できません");
   }
-  const candidatePaths = await adapter.listFiles(commit.revision, "state");
-  const candidateFiles = await adapter.readFiles(commit.revision, candidatePaths);
+  const candidateFiles = await verifyStateCasCandidate(adapter, inspectedCommit, request);
+  if ("build" in requestInput) {
+    await requestInput.verifyCandidate?.(candidateFiles, commit.revision, request);
+  }
   const verifiedCandidate = verifyRunTransactionFiles(candidateFiles, configuration);
   const previousFiles =
     observedHead.status === "present"
