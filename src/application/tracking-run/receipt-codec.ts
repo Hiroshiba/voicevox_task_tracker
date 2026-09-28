@@ -100,12 +100,19 @@ function assertReceiptSemantics(receipt: Receipt): void {
     throw new TypeError("checkpoint前の運用通知に存在しないstate revisionがあります");
   }
   if (receipt.receiptKind === "observed") {
-    if (
-      receipt.receiptType !== "pages_deployment" ||
-      receipt.phase !== "initial" ||
-      receipt.status !== "deployed" ||
-      receipt.result?.observedSourceReceiptDigest == null ||
-      receipt.result.evidenceDigest == null
+    if (receipt.receiptType === "pages_deployment") {
+      if (
+        receipt.phase !== "initial" ||
+        receipt.status !== "deployed" ||
+        receipt.result?.observedSourceReceiptDigest == null ||
+        receipt.result.evidenceDigest == null
+      ) {
+        throw new TypeError("observed receiptにはstateで裏付けた初回Pages証拠が必要です");
+      }
+    } else if (
+      receipt.receiptType !== "initial_state_commit" &&
+      receipt.receiptType !== "notification_settlement" &&
+      receipt.receiptType !== "run_finalization"
     ) {
       throw new TypeError("observed receiptにはstateで裏付けた初回Pages証拠が必要です");
     }
@@ -249,7 +256,7 @@ export function createReceipt(value: ReceiptDraft, digest: ContentDigestPort): R
 }
 
 /** state evidence照合済みのobserved receiptを発行する。 */
-function sealObservedReceipt(value: ReceiptDraft, digest: ContentDigestPort): Receipt {
+export function sealObservedReceipt(value: ReceiptDraft, digest: ContentDigestPort): Receipt {
   if (value.receiptKind !== "observed") {
     throw new TypeError("observed receipt以外は通常の生成関数を使用してください");
   }

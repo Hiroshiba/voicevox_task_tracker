@@ -1,6 +1,10 @@
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import type { ContentDigestPort } from "./ports.js";
 import { parseReceipt } from "./receipt-codec.js";
+import {
+  assertObservedStateCommitReceipt,
+  type StateCommitReceiptEvidence,
+} from "./observed-state-commit.js";
 import type { Receipt } from "./receipt-schema.js";
 import {
   parseInitialPagesPublicationEvidence,
@@ -25,7 +29,8 @@ export type VerifiedReceiptChain = Readonly<{
 /** observed receiptの根拠となるexact state証拠。 */
 export type ReceiptChainEvidence =
   | Readonly<{ kind: "none" }>
-  | Readonly<{ kind: "initial_pages_state"; state: InitialPagesEvidenceState }>;
+  | Readonly<{ kind: "initial_pages_state"; state: InitialPagesEvidenceState }>
+  | Readonly<{ kind: "state_commit"; state: StateCommitReceiptEvidence }>;
 
 function assertObservedReceiptEvidence(
   receipt: Receipt,
@@ -33,6 +38,17 @@ function assertObservedReceiptEvidence(
   digest: ContentDigestPort,
 ): void {
   if (receipt.receiptKind !== "observed") {
+    return;
+  }
+  if (
+    receipt.receiptType === "initial_state_commit" ||
+    receipt.receiptType === "notification_settlement" ||
+    receipt.receiptType === "run_finalization"
+  ) {
+    if (witness.kind !== "state_commit") {
+      throw new TypeError("observed state receiptのcommit証拠がありません");
+    }
+    assertObservedStateCommitReceipt(receipt, witness.state, digest);
     return;
   }
   if (

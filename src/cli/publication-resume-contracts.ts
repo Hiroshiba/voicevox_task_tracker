@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { initialPagesPublicationEvidenceSchema } from "../application/tracking-run/initial-pages-evidence.js";
 import { receiptSchema } from "../application/tracking-run/receipt-schema.js";
+import { stateCommitReceiptEvidenceSchema } from "../application/tracking-run/observed-state-commit.js";
 import { durablePublicationRecordSchema } from "./durable-record-schema.js";
 
 const revisionSchema = z.string().regex(/^[0-9a-f]{40}$/u);
@@ -36,10 +37,12 @@ const resumeBase = {
 export const resumeInitialPagesBuildInputSchema = z.strictObject({
   ...resumeBase,
   initialStateCommitReceipt: receiptSchema.options[0],
+  initialStateCommitEvidence: stateCommitReceiptEvidenceSchema.options[0].optional(),
 });
 export const resumeInitialPagesDeployInputSchema = z.strictObject({
   ...resumeBase,
   initialStateCommitReceipt: receiptSchema.options[0],
+  initialStateCommitEvidence: stateCommitReceiptEvidenceSchema.options[0].optional(),
   initialPagesBuildReceipt: receiptSchema.options[1],
 });
 export const resumeNotificationsInputSchema = z.strictObject({
@@ -63,14 +66,17 @@ export const resumeNotificationsInputSchema = z.strictObject({
 export const resumeFinalizationInputSchema = z.strictObject({
   ...resumeBase,
   notificationSettlementReceipt: receiptSchema.options[4],
+  notificationSettlementEvidence: stateCommitReceiptEvidenceSchema.options[1].optional(),
 });
 export const resumeNotificationHistoryBuildInputSchema = z.strictObject({
   ...resumeBase,
   runFinalizationReceipt: receiptSchema.options[7],
+  runFinalizationEvidence: stateCommitReceiptEvidenceSchema.options[2].optional(),
 });
 export const resumeNotificationHistoryDeployInputSchema = z.strictObject({
   ...resumeBase,
   runFinalizationReceipt: receiptSchema.options[7],
+  runFinalizationEvidence: stateCommitReceiptEvidenceSchema.options[2].optional(),
   notificationHistoryPagesBuildReceipt: receiptSchema.options[1],
 });
 

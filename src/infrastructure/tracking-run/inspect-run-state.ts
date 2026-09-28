@@ -31,6 +31,7 @@ import {
 import { selectRecoveryStage, type RecoveryStageInput } from "./recovery-stage.js";
 import { inspectRunBootstrapState } from "./bootstrap-state.js";
 import { nodeContentDigestPort } from "./content-digest.js";
+import { observeStateCommitAtRevision } from "./state-receipt-observation.js";
 
 /** 現行run開始と特定runのexact再開を区別する要求。 */
 export type InspectRunStateRequest =
@@ -360,16 +361,48 @@ export async function inspectRunState(
       initialStateRevision,
       finalStateRevision,
     );
+    let stateReceipt: Awaited<ReturnType<typeof observeStateCommitAtRevision>> | undefined;
+    if (verified.marker.phase === "initial_state_committed") {
+      stateReceipt = await observeStateCommitAtRevision(
+        adapter,
+        configuration,
+        initialStateRevision,
+        initialStateRevision,
+        "initial_state_commit",
+        request.observation,
+      );
+    } else if (verified.marker.phase === "notifications_settled") {
+      stateReceipt = await observeStateCommitAtRevision(
+        adapter,
+        configuration,
+        finalStateRevision,
+        initialStateRevision,
+        "notification_settlement",
+        request.observation,
+      );
+    } else if (verified.marker.phase === "run_finalized") {
+      stateReceipt = await observeStateCommitAtRevision(
+        adapter,
+        configuration,
+        finalStateRevision,
+        initialStateRevision,
+        "run_finalization",
+        request.observation,
+      );
+    }
     const stageInput = selectRecoveryStage(
       {
         record: verified.record,
         marker: verified.marker,
         exactStateRevision: head.revision,
         initialStateRevision,
+        snapshotDigest: verified.snapshotDigest,
+        normalNotificationLedgerDigest: verified.notificationLedgerDigest,
         receiptChain: receipts,
       },
       notificationLedger,
       verified.initialPagesEvidence,
+      stateReceipt,
       request.observation,
       nodeContentDigestPort,
     );

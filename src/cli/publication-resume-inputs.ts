@@ -16,6 +16,7 @@ import type {
   Receipt,
 } from "../application/tracking-run/receipt-schema.js";
 import type { ContentDigestPort } from "../application/tracking-run/ports.js";
+import type { StateCommitReceiptEvidence } from "../application/tracking-run/observed-state-commit.js";
 import {
   durablePublicationRecordSchema,
   parseDurablePublicationRecord,
@@ -141,6 +142,37 @@ function verifyResumeReceipts(
   return verifyReceiptChain(receipts, digest, evidence).proof;
 }
 
+function stateCommitChainEvidence(
+  receipt: Receipt,
+  state: StateCommitReceiptEvidence | undefined,
+): ReceiptChainEvidence {
+  if (receipt.receiptKind === "observed") {
+    if (state?.receiptType !== receipt.receiptType) {
+      throw new TypeError("再観測したstate commit receiptの根拠がありません");
+    }
+    return { kind: "state_commit", state };
+  }
+  if (state != null) {
+    throw new TypeError("実行時receiptへ再観測のstate根拠を付けられません");
+  }
+  return { kind: "none" };
+}
+
+function verifyStateAndBuildReceipts(
+  stateReceipt: Receipt,
+  stateEvidence: StateCommitReceiptEvidence | undefined,
+  buildReceipt: Receipt,
+  record: z.output<typeof durablePublicationRecordSchema>,
+  digest: ContentDigestPort,
+): ReceiptChainProof {
+  const evidence = stateCommitChainEvidence(stateReceipt, stateEvidence);
+  if (stateReceipt.receiptKind === "observed") {
+    verifyResumeReceipts([stateReceipt], record, digest, evidence);
+    return verifyResumeReceipts([buildReceipt], record, digest, { kind: "none" });
+  }
+  return verifyResumeReceipts([stateReceipt, buildReceipt], record, digest, evidence);
+}
+
 /** 初回commitの結果から初回Pages buildだけを再開する。 */
 export function resumeInitialPagesBuild(
   input: ResumeInitialPagesBuildInput,
@@ -152,7 +184,7 @@ export function resumeInitialPagesBuild(
     [parsed.initialStateCommitReceipt],
     parsed.record,
     digest,
-    { kind: "none" },
+    stateCommitChainEvidence(parsed.initialStateCommitReceipt, parsed.initialStateCommitEvidence),
   );
   if (
     parsed.state.marker.phase !== "initial_state_committed" ||
@@ -170,18 +202,21 @@ export function resumeInitialPagesDeploy(
 ): InitialPagesDeployInput {
   const parsed = resumeInitialPagesDeployInputSchema.parse(input);
   const bindingProof = assertRecordState(parsed, digest);
-  const receiptChainProof = verifyResumeReceipts(
-    [parsed.initialStateCommitReceipt, parsed.initialPagesBuildReceipt],
+  const receiptChainProof = verifyStateAndBuildReceipts(
+    parsed.initialStateCommitReceipt,
+    parsed.initialStateCommitEvidence,
+    parsed.initialPagesBuildReceipt,
     parsed.record,
     digest,
-    { kind: "none" },
   );
   if (
     parsed.state.marker.phase !== "initial_state_committed" ||
     parsed.initialStateCommitReceipt.result.resultingStateRevision !== parsed.state.revision ||
     parsed.initialPagesBuildReceipt.phase !== "initial" ||
     parsed.initialPagesBuildReceipt.status !== "built" ||
-    parsed.initialPagesBuildReceipt.result?.sourceStateRevision !== parsed.state.revision
+    parsed.initialPagesBuildReceipt.result?.sourceStateRevision !== parsed.state.revision ||
+    (parsed.initialPagesBuildReceipt.expectedStateRevision != null &&
+      parsed.initialPagesBuildReceipt.expectedStateRevision !== parsed.state.revision)
   ) {
     throw new TypeError("初回Pages deployのbuild結果とstate revisionが一致しません");
   }
@@ -296,7 +331,10 @@ export function resumeFinalization(
     [parsed.notificationSettlementReceipt],
     parsed.record,
     digest,
-    { kind: "none" },
+    stateCommitChainEvidence(
+      parsed.notificationSettlementReceipt,
+      parsed.notificationSettlementEvidence,
+    ),
   );
   if (
     parsed.state.marker.phase !== "notifications_settled" ||
@@ -320,7 +358,7 @@ export function resumeNotificationHistoryBuild(
     [parsed.runFinalizationReceipt],
     parsed.record,
     digest,
-    { kind: "none" },
+    stateCommitChainEvidence(parsed.runFinalizationReceipt, parsed.runFinalizationEvidence),
   );
   if (
     parsed.state.marker.phase !== "run_finalized" ||
@@ -338,18 +376,21 @@ export function resumeNotificationHistoryDeploy(
 ): NotificationHistoryPagesDeployInput {
   const parsed = resumeNotificationHistoryDeployInputSchema.parse(input);
   const bindingProof = assertRecordState(parsed, digest);
-  const receiptChainProof = verifyResumeReceipts(
-    [parsed.runFinalizationReceipt, parsed.notificationHistoryPagesBuildReceipt],
+  const receiptChainProof = verifyStateAndBuildReceipts(
+    parsed.runFinalizationReceipt,
+    parsed.runFinalizationEvidence,
+    parsed.notificationHistoryPagesBuildReceipt,
     parsed.record,
     digest,
-    { kind: "none" },
   );
   if (
     parsed.state.marker.phase !== "run_finalized" ||
     parsed.runFinalizationReceipt.result.resultingStateRevision !== parsed.state.revision ||
     parsed.notificationHistoryPagesBuildReceipt.phase !== "notification_history" ||
     parsed.notificationHistoryPagesBuildReceipt.result?.sourceStateRevision !==
-      parsed.state.revision
+      parsed.state.revision ||
+    (parsed.notificationHistoryPagesBuildReceipt.expectedStateRevision != null &&
+      parsed.notificationHistoryPagesBuildReceipt.expectedStateRevision !== parsed.state.revision)
   ) {
     throw new TypeError("通知履歴Pages deployのbuild結果とfinal stateが一致しません");
   }
