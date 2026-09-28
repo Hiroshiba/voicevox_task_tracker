@@ -1,7 +1,6 @@
 import type { AnalysisRunStageName } from "./closed-values.js";
 
 const stageProofBrand: unique symbol = Symbol("stageProof");
-const runCompletenessProofBrand: unique symbol = Symbol("runCompletenessProof");
 const checkpointBindingProofBrand: unique symbol = Symbol("checkpointBindingProof");
 const resumeBindingProofBrand: unique symbol = Symbol("resumeBindingProof");
 const receiptChainProofBrand: unique symbol = Symbol("receiptChainProof");
@@ -55,14 +54,6 @@ class StageProofToken<StageName extends AnalysisRunStageName> {
 
   public static personalReminderFinalized(): StageProofToken<"personal_reminder_finalized"> {
     return new StageProofToken("personal_reminder_finalized");
-  }
-}
-
-class RunCompletenessProofToken {
-  readonly [runCompletenessProofBrand]: true;
-
-  private constructor() {
-    this[runCompletenessProofBrand] = true;
   }
 }
 
@@ -151,9 +142,6 @@ export function createPersonalReminderExecutedStageProof(): StageProofFor<"perso
 export function createPersonalReminderFinalizedStageProof(): StageProofFor<"personal_reminder_finalized"> {
   return StageProofToken.personalReminderFinalized();
 }
-
-/** 公開前の完全性検証を通過した証明。 */
-export type RunCompletenessProof = RunCompletenessProofToken;
 
 /** checkpointと保存先の結合を検証した証明。 */
 export type CheckpointBindingProof = CheckpointBindingProofToken;

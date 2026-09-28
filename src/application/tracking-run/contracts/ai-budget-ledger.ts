@@ -96,7 +96,10 @@ function validateCharge(charge: AiBudgetCharge): void {
 /** run開始時の空のAI予算履歴を作る。 */
 export function createInitialAiBudgetLedger(
   ledgerId: string,
-  budget: AiRunBudget,
+  budget: Pick<
+    AiRunBudget,
+    "maxCodexExecAttemptsPerRun" | "maxTotalInputCharactersPerRun" | "maxEstimatedCostUsdPerRun"
+  >,
 ): AiBudgetLedgerSnapshot & Readonly<{ sequence: 0 }> {
   if (ledgerId.length === 0) {
     throw new TypeError("AI予算のledger IDは空にできません");

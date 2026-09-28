@@ -1,11 +1,13 @@
 import type { DailyRunInvocation, DailyTransactionDependencies } from "../../daily-transaction.js";
 import type { GitHubRunSessions } from "../../../infrastructure/tracking-run/github-port.js";
 import type { GraphReconciledRun } from "../../../application/tracking-run/stages/graph-reconciliation.js";
+import type { GenericAiAdoptedRun } from "../../../application/tracking-run/stages/generic-ai-adoption.js";
 import { closeFinalizedRunEvidence } from "../../../application/tracking-run/stages/evidence-closure.js";
 import { buildFinalSnapshot } from "../../../application/tracking-run/stages/final-snapshot.js";
-import type { FinalSnapshotCandidate } from "../../../application/tracking-run/contracts/final-snapshot.js";
+import { validateRun } from "../../../application/tracking-run/stages/validate-run.js";
 import { nodeContentDigestPort } from "../../../infrastructure/tracking-run/content-digest.js";
-import { createStateSnapshot, type StateSnapshot } from "../../../persistence/index.js";
+import { assertStatePublicSafety, createStateSnapshot } from "../../../persistence/index.js";
+import type { RunMetrics } from "../../run-report.js";
 import type {
   CodexAnalysis,
   CollectedItems,
@@ -14,7 +16,7 @@ import type {
   RepositoryInventory,
   RuntimeConfiguration,
   RuntimeState,
-  ValidatedRunWithPreview,
+  ValidatedRun,
 } from "../contracts.js";
 import { createEvidenceClosureAdditions } from "./evidence-additions.js";
 import { stateHistoryInputEvents } from "./history-events.js";
@@ -23,14 +25,6 @@ import {
   selectValidationNotifications,
 } from "./notification-selection.js";
 
-function provisionalSnapshotForLegacyValidation(candidate: FinalSnapshotCandidate): StateSnapshot {
-  // TODO: Task17-2の完全性proofが生成された後だけcompleteを付与する。
-  return createStateSnapshot({
-    ...candidate,
-    run: Object.freeze({ ...candidate.run, complete: true }),
-  });
-}
-
 function validateRunCompleteness(
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
@@ -38,9 +32,12 @@ function validateRunCompleteness(
   inventory: RepositoryInventory,
   collection: CollectedItems,
   codexAnalysis: CodexAnalysis,
+  genericAiAdopted: GenericAiAdoptedRun,
   graphReconciled: GraphReconciledRun,
   personalReminderAnalysis: PersonalReminderAnalysis,
-): ValidatedRunWithPreview {
+  metrics: RunMetrics,
+  sessions: GitHubRunSessions,
+): ValidatedRun {
   const notification = selectValidationNotifications(
     invocation,
     configuration,
@@ -51,28 +48,82 @@ function validateRunCompleteness(
     personalReminderAnalysis,
   );
   const historyInputEvents = stateHistoryInputEvents(graphReconciled.data.reduction);
-  const closure = closeFinalizedRunEvidence(
-    personalReminderAnalysis.finalized,
-    createEvidenceClosureAdditions(
-      state,
-      codexAnalysis,
-      graphReconciled,
-      personalReminderAnalysis,
-      historyInputEvents,
-      notification.notificationItems,
-      notification.pendingNotifications,
-    ),
-  );
-  const snapshot = provisionalSnapshotForLegacyValidation(
-    buildFinalSnapshot(personalReminderAnalysis.finalized, closure, nodeContentDigestPort),
-  );
-  return Object.freeze({
-    snapshot,
+  const initialAiCacheEntries = state.session.pendingAiCacheEntries();
+  const initialPersonalReminderAiCacheEntries =
+    state.session.pendingPersonalReminderAiCacheEntries();
+  const initialAdditions = createEvidenceClosureAdditions(
+    initialAiCacheEntries,
+    initialPersonalReminderAiCacheEntries,
+    codexAnalysis,
+    graphReconciled,
+    personalReminderAnalysis,
     historyInputEvents,
-    notificationLedger: mergeSelectedNotificationLedger(state, notification),
+    notification.notificationItems,
+    notification.pendingNotifications,
+  );
+  const closure = closeFinalizedRunEvidence(personalReminderAnalysis.finalized, initialAdditions);
+  const candidate = buildFinalSnapshot(
+    personalReminderAnalysis.finalized,
+    closure,
+    nodeContentDigestPort,
+  );
+  const notificationLedger = mergeSelectedNotificationLedger(state, notification);
+  const aiCacheAdditions = state.session.pendingAiCacheEntries();
+  const personalReminderAiCacheAdditions = state.session.pendingPersonalReminderAiCacheEntries();
+  const actualOutwardAdditions = createEvidenceClosureAdditions(
+    aiCacheAdditions,
+    personalReminderAiCacheAdditions,
+    codexAnalysis,
+    graphReconciled,
+    personalReminderAnalysis,
+    historyInputEvents,
+    notification.notificationItems,
+    notificationLedger.pendingNotifications,
+  );
+  return validateRun({
+    expectedCore: Object.freeze({
+      identity: Object.freeze({
+        runId: invocation.runId,
+        invocationId: invocation.invocationId,
+        scheduledFor: invocation.scheduledFor,
+        startedAt: invocation.startedAt,
+      }),
+      executionPolicy: invocation.executionPolicy,
+      baseRevision: configuration.baseStateHead,
+      configDigest: configuration.configDigest,
+      evaluatedAt: collection.evaluatedAt,
+    }),
+    genericAiAdopted,
+    graphReconciled,
+    finalized: personalReminderAnalysis.finalized,
+    candidate,
+    closure,
+    actualOutwardAdditions,
+    historyInputEvents,
+    aiCacheAdditions,
+    personalReminderAiCacheAdditions,
+    previousNotificationLedger: state.notificationLedger,
+    notificationLedger,
     notificationSelection: notification.notificationSelection,
-    notificationPreview: notification.notificationPreview,
-    evidenceClosure: closure,
+    ledgerEntriesToMerge: notification.ledgerEntriesToMerge,
+    repositoryAllowlist: inventory.allowlist.repositories,
+    metrics,
+    digest: nodeContentDigestPort,
+    createCompleteSnapshot: (value) =>
+      createStateSnapshot({
+        ...value,
+        run: Object.freeze({ ...value.run, complete: true }),
+      }),
+    assertPublicSafety: (snapshot, values) => {
+      assertStatePublicSafety({
+        snapshot,
+        repositoryInventory: inventory.inventory,
+        repositoryAllowlist: inventory.allowlist.repositories,
+        additionalValues: values.slice(1),
+        knownSecrets: configuration.credentials.knownSecrets,
+      });
+      sessions.assertPublicBoundary(invocation.runId, values);
+    },
   });
 }
 
@@ -87,8 +138,10 @@ export function createValidateCompletenessStage(
     repositoryInventory,
     collection,
     codexAnalysis,
+    genericAiAdopted,
     graphReconciled,
     personalReminderAnalysis,
+    metrics,
   }) => {
     try {
       const value = validateRunCompleteness(
@@ -98,21 +151,13 @@ export function createValidateCompletenessStage(
         repositoryInventory,
         collection,
         codexAnalysis,
+        genericAiAdopted,
         graphReconciled,
         personalReminderAnalysis,
+        metrics,
+        sessions,
       );
-      sessions.assertPublicBoundary(invocation.runId, [
-        value,
-        state.session.pendingAiCacheEntries(),
-        state.session.pendingPersonalReminderAiCacheEntries(),
-      ]);
-      return Promise.resolve(
-        Object.freeze({
-          status: "complete",
-          value,
-          diagnostics: Object.freeze([]),
-        }),
-      );
+      return Promise.resolve(value);
     } finally {
       sessions.release(invocation.runId);
     }

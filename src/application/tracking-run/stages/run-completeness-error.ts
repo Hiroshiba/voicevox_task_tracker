@@ -9,16 +9,21 @@ export type RunCompletenessErrorCode =
   | "wrong_owner"
   | "kind_mismatch"
   | "source_id_conflict"
-  | "invalid_reference";
+  | "invalid_reference"
+  | "duplicate_id"
+  | "missing_value"
+  | "field_mismatch"
+  | "ledger_mismatch"
+  | "unsafe_public_value";
 
-/** 不完全なoutward参照の位置と期待範囲を保持する。 */
+/** runの不完全な値の位置と対象を保持する。 */
 export class RunCompletenessError extends Error {
   public readonly code: RunCompletenessErrorCode;
   public readonly sourceId: string;
   public readonly path: readonly (string | number)[];
   public readonly use: EvidenceUse | undefined;
 
-  /** 不完全な参照と元の検証失敗を保持する。 */
+  /** 不完全な値と元の検証失敗を保持する。 */
   public constructor(
     code: RunCompletenessErrorCode,
     sourceId: string,
@@ -26,7 +31,7 @@ export class RunCompletenessError extends Error {
     use: EvidenceUse | undefined,
     cause?: unknown,
   ) {
-    super(`根拠参照を閉包できません。種別: ${code} source: ${sourceId}`, { cause });
+    super(`runの完全性を確認できません。種別: ${code} 対象: ${sourceId}`, { cause });
     this.name = "RunCompletenessError";
     this.code = code;
     this.sourceId = sourceId;

@@ -1,15 +1,17 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type { EvidenceClosureAdditions } from "../../../application/tracking-run/stages/evidence-closure.js";
 import type { GraphReconciledRun } from "../../../application/tracking-run/stages/graph-reconciliation.js";
+import type { AiCacheEntry } from "../../../codex/cache.js";
+import type { PersonalReminderAiCacheEntry } from "../../../codex/personal-reminder-cache.js";
 import { createGitHubNodeId } from "../../../domain/types.js";
 import type { DiscordNotificationItem } from "../../../discord/notification-selection.js";
 import { assertNonNullable } from "../../../util/index.js";
-import type { CodexAnalysis, PersonalReminderAnalysis, RuntimeState } from "../contracts.js";
+import type { CodexAnalysis, PersonalReminderAnalysis } from "../contracts.js";
 
 type NotificationCause = EvidenceClosureAdditions["notificationCauses"][number];
 
 function genericAiCacheAdditions(
-  state: RuntimeState,
+  entries: readonly AiCacheEntry[],
   codexAnalysis: CodexAnalysis,
   personalReminderAnalysis: PersonalReminderAnalysis,
 ): EvidenceClosureAdditions["aiCacheAdditions"] {
@@ -38,7 +40,7 @@ function genericAiCacheAdditions(
     }
   }
   return Object.freeze(
-    state.session.pendingAiCacheEntries().map((entry) => {
+    entries.map((entry) => {
       const result = results.get(entry.cacheKey);
       assertNonNullable(
         result,
@@ -62,7 +64,7 @@ function genericAiCacheAdditions(
 }
 
 function personalReminderAiCacheAdditions(
-  state: RuntimeState,
+  entries: readonly PersonalReminderAiCacheEntry[],
   personalReminderAnalysis: PersonalReminderAnalysis,
 ): EvidenceClosureAdditions["personalReminderAiCacheAdditions"] {
   const owners = new Map(
@@ -71,7 +73,7 @@ function personalReminderAiCacheAdditions(
     ),
   );
   return Object.freeze(
-    state.session.pendingPersonalReminderAiCacheEntries().map((entry) => {
+    entries.map((entry) => {
       const itemNodeId = owners.get(entry.causeId);
       assertNonNullable(
         itemNodeId,
@@ -104,7 +106,8 @@ function notificationCauses(
 
 /** 保存と通知へ進む実値から閉包の追加参照を作る。 */
 export function createEvidenceClosureAdditions(
-  state: RuntimeState,
+  aiCacheEntries: readonly AiCacheEntry[],
+  personalReminderAiCacheEntries: readonly PersonalReminderAiCacheEntry[],
   codexAnalysis: CodexAnalysis,
   graphReconciled: GraphReconciledRun,
   personalReminderAnalysis: PersonalReminderAnalysis,
@@ -114,9 +117,13 @@ export function createEvidenceClosureAdditions(
 ): EvidenceClosureAdditions {
   return Object.freeze({
     historyInputEvents,
-    aiCacheAdditions: genericAiCacheAdditions(state, codexAnalysis, personalReminderAnalysis),
+    aiCacheAdditions: genericAiCacheAdditions(
+      aiCacheEntries,
+      codexAnalysis,
+      personalReminderAnalysis,
+    ),
     personalReminderAiCacheAdditions: personalReminderAiCacheAdditions(
-      state,
+      personalReminderAiCacheEntries,
       personalReminderAnalysis,
     ),
     notificationCauses: notificationCauses(graphReconciled, notificationItems),

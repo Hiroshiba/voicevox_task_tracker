@@ -24,7 +24,6 @@ export {
 export {
   DailyTransactionRunner,
   type CodexAnalysisStageResult,
-  type CompletenessValidationResult,
   type DailyRunEffects,
   type DailyRunExecutionResult,
   type DailyRunInvocation,

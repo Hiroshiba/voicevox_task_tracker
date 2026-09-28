@@ -105,18 +105,6 @@ export type PersonalReminderAnalysisStageResult<Value> = Readonly<{
   diagnostics: readonly string[];
 }>;
 
-/** 公開前検証が完全性を満たしたかを表す。 */
-export type CompletenessValidationResult<Value> =
-  | Readonly<{
-      status: "complete";
-      value: Value;
-      diagnostics: readonly string[];
-    }>
-  | Readonly<{
-      status: "incomplete";
-      diagnostics: readonly [string, ...string[]];
-    }>;
-
 /** Discord段階の値と通知指標。 */
 export type DiscordStageResult<Value> = Readonly<{
   value: Value;
@@ -214,8 +202,9 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       genericAiAdopted: Types["genericAiAdopted"];
       graphReconciled: Types["graphReconciled"];
       personalReminderAnalysis: Types["personalReminderAnalysis"];
+      metrics: RunMetrics;
     }>,
-  ) => Promise<CompletenessValidationResult<Types["validated"]>>;
+  ) => Promise<Types["validated"]>;
   persistState: (
     input: Readonly<{
       invocation: DailyRunInvocation;
@@ -306,26 +295,16 @@ export type DailyRunExecutionResult = Readonly<{
 }>;
 
 /** dry-runが公開副作用の代わりに保存する検証済み成果物。 */
-export type DryRunArtifact<Value> =
-  | Readonly<{
-      schemaVersion: "2";
-      runId: string;
-      command: "dry-run";
-      status: "success" | "fallback";
-      complete: true;
-      result: Value;
-      metrics: RunMetrics;
-      diagnostics: readonly string[];
-    }>
-  | Readonly<{
-      schemaVersion: "2";
-      runId: string;
-      command: "dry-run";
-      status: "failure";
-      complete: false;
-      metrics: RunMetrics;
-      diagnostics: readonly string[];
-    }>;
+export type DryRunArtifact<Value> = Readonly<{
+  schemaVersion: "2";
+  runId: string;
+  command: "dry-run";
+  status: "success" | "fallback";
+  complete: true;
+  result: Value;
+  metrics: RunMetrics;
+  diagnostics: readonly string[];
+}>;
 
 /** 日次transactionの時刻を注入する境界。 */
 export type DailyRunRuntime = Readonly<{
@@ -369,7 +348,7 @@ function updateMetrics(metrics: RunMetrics, values: Partial<RunMetrics>): RunMet
 function createDryRunArtifact<Value>(
   invocation: DailyRunInvocation,
   status: "success" | "fallback",
-  validation: CompletenessValidationResult<Value>,
+  validated: Value,
   metrics: RunMetrics,
   diagnostics: readonly string[],
   finishedAt: UtcIsoDateTime,
@@ -377,24 +356,13 @@ function createDryRunArtifact<Value>(
   const completedMetrics = updateMetrics(metrics, {
     durationMilliseconds: Date.parse(finishedAt) - Date.parse(invocation.startedAt),
   });
-  if (validation.status === "incomplete") {
-    return Object.freeze({
-      schemaVersion: "2",
-      runId: invocation.runId,
-      command: "dry-run",
-      status: "failure",
-      complete: false,
-      metrics: completedMetrics,
-      diagnostics: Object.freeze([...diagnostics]),
-    });
-  }
   return Object.freeze({
     schemaVersion: "2",
     runId: invocation.runId,
     command: "dry-run",
     status,
     complete: true,
-    result: validation.value,
+    result: validated,
     metrics: completedMetrics,
     diagnostics: Object.freeze([...diagnostics]),
   });
@@ -706,7 +674,8 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
       }
 
       stage = "completeness_validation";
-      const validation = await this.#dependencies.validateCompleteness({
+      metrics = this.#metricsWithAiProcessAttemptCount(metrics, configuration);
+      const validated = await this.#dependencies.validateCompleteness({
         invocation,
         configuration,
         state,
@@ -716,9 +685,8 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         genericAiAdopted,
         graphReconciled,
         personalReminderAnalysis: personalReminderAnalysis.value,
+        metrics,
       });
-      diagnostics.push(...validation.diagnostics);
-      metrics = this.#metricsWithAiProcessAttemptCount(metrics, configuration);
 
       if (request.output.kind === "dry_run_artifact") {
         stage = "artifact";
@@ -727,27 +695,13 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           createDryRunArtifact(
             invocation,
             runStatus,
-            validation,
+            validated,
             metrics,
             diagnostics,
             currentTime(this.#runtime),
           ),
         );
         effects.artifactWritten = true;
-      }
-
-      if (validation.status === "incomplete") {
-        return await this.#writeFailure(
-          invocation,
-          request.reportPath,
-          "completeness_validation",
-          "other",
-          metrics,
-          configuration,
-          diagnostics,
-          discordSentAt,
-          effects,
-        );
       }
 
       if (request.output.kind === "analysis_artifact") {
@@ -757,7 +711,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           configuration,
           state,
           repositoryInventory,
-          validated: validation.value,
+          validated,
           metrics,
           status: runStatus,
           diagnostics,
@@ -772,7 +726,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           configuration,
           state,
           repositoryInventory,
-          validated: validation.value,
+          validated,
           metrics,
           status: runStatus,
           diagnostics,
@@ -784,7 +738,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           invocation,
           configuration,
           repositoryInventory,
-          validated: validation.value,
+          validated,
           persisted,
         });
         effects.pagesBuilt = true;
@@ -796,7 +750,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           configuration,
           state,
           repositoryInventory,
-          validated: validation.value,
+          validated,
           persisted,
           pages,
         });
@@ -811,7 +765,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           configuration,
           state,
           repositoryInventory,
-          validated: validation.value,
+          validated,
           discord: discord.value,
           metrics,
           status: runStatus,

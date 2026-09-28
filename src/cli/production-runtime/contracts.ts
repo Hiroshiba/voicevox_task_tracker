@@ -26,7 +26,7 @@ import type { GenericAiExecutedRun } from "../../application/tracking-run/stages
 import type { GenericAiAdoptedRun } from "../../application/tracking-run/stages/generic-ai-adoption.js";
 import type { GraphReconciledRun } from "../../application/tracking-run/stages/graph-reconciliation.js";
 import type { PersonalReminderFinalizedRun } from "../../application/tracking-run/stages/personal-reminder-finalization.js";
-import type { EvidenceClosureResult } from "../../application/tracking-run/contracts/evidence-closure.js";
+import type { ValidatedRun as TrackingValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
 import type { AiCacheEntry } from "../../codex/cache.js";
 import type { PersonalReminderAiCacheEntry } from "../../codex/personal-reminder-cache.js";
 import type { AiAnalysisDependency } from "../../domain/ai-analysis-dependencies.js";
@@ -78,23 +78,21 @@ import type {
   SnapshotCollectionItem,
   SnapshotCollectionRepository,
   SnapshotGraphNodeStateObservation,
+  StateHistoryInputEvent,
   StateNotificationLedger,
   StatePersistenceSession,
+  StateSnapshot,
   StateSnapshotReadResult,
 } from "../../persistence/index.js";
 import type { StateBranchHead } from "../../persistence/branch-adapter.js";
 import type { StateHistoryRecord } from "../../persistence/history.js";
 import type { DailyTransactionTypeMap } from "../daily-transaction.js";
+import type { RunMetrics } from "../run-report.js";
 import type { DeterministicItemAnalysis } from "../../application/tracking-run/stages/deterministic-item.js";
 import type { EffectiveAssigneeCandidateContext } from "../../application/tracking-run/stages/deterministic-responsibility.js";
 import type { PersonalReminderAnalysisResult } from "../personal-reminder/index.js";
 import type { RuntimeCredentials, RuntimeExecutionTarget } from "../production-runtime-setup.js";
-import type {
-  DiscordResult,
-  PagesResult,
-  PersistedRun,
-  ValidatedRun,
-} from "../run-publication/contracts.js";
+import type { DiscordResult, PagesResult, PersistedRun } from "../run-publication/contracts.js";
 
 export type MutablePartial<Value> = {
   -readonly [Key in keyof Value]?: Value[Key];
@@ -120,11 +118,15 @@ export type RuntimeState = Readonly<{
   previousState: AnalysisPreviousState;
 }>;
 
-export type ValidatedRunWithPreview = ValidatedRun &
-  Readonly<{
-    notificationPreview: DiscordNotificationSelection;
-    evidenceClosure: EvidenceClosureResult;
-  }>;
+export type ValidatedRun = TrackingValidatedRun<
+  StateSnapshot,
+  readonly StateHistoryInputEvent[],
+  readonly AiCacheEntry[],
+  readonly PersonalReminderAiCacheEntry[],
+  StateNotificationLedger,
+  DiscordNotificationSelection,
+  RunMetrics
+>;
 
 export type RepositoryInventory = Readonly<{
   inventory: readonly Repository[];
@@ -261,7 +263,7 @@ export type ProductionTypes = DailyTransactionTypeMap &
     collection: CollectedItems;
     codexAnalysis: CodexAnalysis;
     personalReminderAnalysis: PersonalReminderAnalysis;
-    validated: ValidatedRunWithPreview;
+    validated: ValidatedRun;
     persisted: PersistedRun;
     pages: PagesResult;
     discord: DiscordResult;

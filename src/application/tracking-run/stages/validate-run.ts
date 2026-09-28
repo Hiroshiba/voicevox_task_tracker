@@ -1,0 +1,338 @@
+import { serializeCanonicalJson } from "../../../canonical-json/value.js";
+import type { Sha256Hash } from "../../../canonical-json/sha256.js";
+import type { NotificationLedgerEntry, UtcIsoDateTime } from "../../../domain/index.js";
+import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
+import type {
+  EvidenceClosureResult,
+  EvidenceHistoryInputEvent,
+} from "../contracts/evidence-closure.js";
+import type { FinalSnapshotCandidate } from "../contracts/final-snapshot.js";
+import type { AiBudgetLedgerSummary } from "../contracts/ai-budget-ledger.js";
+import type { BaseStateRevision } from "../contracts/run-core.js";
+import type { ContentDigestPort } from "../ports.js";
+import type { RunExecutionPolicy, RunIdentity } from "../request.js";
+import type { EvidenceClosureAdditions } from "./evidence-closure.js";
+import type { PersonalReminderFinalizedRun } from "./personal-reminder-finalization.js";
+import { RunCompletenessError } from "./run-completeness-error.js";
+import {
+  assertRunValueMatches,
+  assertRunValuesMatch,
+  frozenRunCopy,
+} from "./run-validation-compare.js";
+import { assertActualOutwardMatches } from "./run-validation-outward.js";
+import { assertFinalSnapshotCandidateMatches } from "./run-validation-snapshot.js";
+import { assertRunStageLineage } from "./run-validation-lineage.js";
+import { assertAiBudgetLedgerMatches } from "./run-validation-budget.js";
+import {
+  assertNotificationLedger,
+  assertPublicUrls,
+  assertRunMetrics,
+  type RunNotificationSelection,
+  type RunValidationLedger,
+  type RunValidationMetrics,
+} from "./run-validation-final-checks.js";
+import type { GenericAiAdoptedRun } from "./generic-ai-adoption.js";
+import type { GraphReconciledRun } from "./graph-reconciliation.js";
+
+const runCompletenessProofBrand: unique symbol = Symbol("runCompletenessProof");
+
+/** validatorだけが発行する公開前の完全性証明。 */
+export type RunCompletenessProof = Readonly<{ [runCompletenessProofBrand]: true }>;
+
+type RunSnapshot = Readonly<{
+  schemaVersion: "21";
+  generatedAt: FinalSnapshotCandidate["generatedAt"];
+  trackingStartAt: FinalSnapshotCandidate["trackingStartAt"];
+  ai: FinalSnapshotCandidate["ai"];
+  finalGraphProjection: FinalSnapshotCandidate["finalGraphProjection"];
+  finalGraphProjectionDigest: FinalSnapshotCandidate["finalGraphProjectionDigest"];
+  items: readonly Readonly<{ nodeId: string }>[];
+  relations: readonly Readonly<{ id: string }>[];
+  repositories: readonly Readonly<{ id: string }>[];
+  collection: Readonly<{ repositories: readonly Readonly<{ repositoryId: string }>[] }>;
+  externalReferences: readonly Readonly<{ nodeId: string }>[];
+  graphNodeStateObservations: readonly Readonly<{ nodeId: string }>[];
+  run: Readonly<{ id: string; status: "success" | "fallback"; complete: true }>;
+}>;
+
+/** 完全性を満たし公開段階へ渡すrun。 */
+export type ValidatedRun<
+  Snapshot extends RunSnapshot,
+  History extends readonly EvidenceHistoryInputEvent[],
+  AiCache extends readonly unknown[],
+  PersonalCache extends readonly unknown[],
+  Ledger extends RunValidationLedger,
+  Selection extends RunNotificationSelection,
+  Metrics extends RunValidationMetrics,
+> = Readonly<{
+  core: Readonly<{
+    identity: RunIdentity;
+    executionPolicy: RunExecutionPolicy;
+    baseRevision: BaseStateRevision;
+    configDigest: Sha256Hash;
+    allowlistDigest: Sha256Hash;
+    generatedAt: Snapshot["generatedAt"];
+    aiBudget: PersonalReminderFinalizedRun["core"]["aiBudget"];
+    aiBudgetSummary: AiBudgetLedgerSummary;
+  }>;
+  snapshot: Snapshot;
+  historyInputEvents: History;
+  aiCacheAdditions: AiCache;
+  personalReminderAiCacheAdditions: PersonalCache;
+  previousNotificationLedger: Ledger;
+  notificationLedger: Ledger;
+  notificationSelection: Selection;
+  repositoryAllowlist: readonly PublicRepository[];
+  metrics: Metrics;
+  evidenceClosureSummary: Readonly<{
+    referenceCount: number;
+    sourceIds: readonly string[];
+  }>;
+  publicDiagnosticsSummary: Readonly<{
+    status: "success" | "fallback";
+    pendingNotificationCount: number;
+  }>;
+  proof: RunCompletenessProof;
+}>;
+
+/** validatorへ渡す実保存値と公開安全性の検査口。 */
+export type ValidateRunInput<
+  Snapshot extends RunSnapshot,
+  History extends readonly EvidenceHistoryInputEvent[],
+  AiCache extends readonly unknown[],
+  PersonalCache extends readonly unknown[],
+  Ledger extends RunValidationLedger,
+  Selection extends RunNotificationSelection,
+  Metrics extends RunValidationMetrics,
+> = Readonly<{
+  expectedCore: Readonly<{
+    identity: RunIdentity;
+    executionPolicy: RunExecutionPolicy;
+    baseRevision: BaseStateRevision;
+    configDigest: Sha256Hash;
+    evaluatedAt: UtcIsoDateTime;
+  }>;
+  genericAiAdopted: GenericAiAdoptedRun;
+  graphReconciled: GraphReconciledRun;
+  finalized: PersonalReminderFinalizedRun;
+  candidate: FinalSnapshotCandidate;
+  closure: EvidenceClosureResult;
+  actualOutwardAdditions: EvidenceClosureAdditions;
+  historyInputEvents: History;
+  aiCacheAdditions: AiCache;
+  personalReminderAiCacheAdditions: PersonalCache;
+  previousNotificationLedger: Ledger;
+  notificationLedger: Ledger;
+  notificationSelection: Selection;
+  ledgerEntriesToMerge: readonly NotificationLedgerEntry[];
+  repositoryAllowlist: readonly PublicRepository[];
+  metrics: Metrics;
+  digest: ContentDigestPort;
+  createCompleteSnapshot: (candidate: FinalSnapshotCandidate) => Snapshot;
+  assertPublicSafety: (snapshot: Snapshot, values: readonly unknown[]) => void;
+}>;
+
+/** 全候補と実outward値の検証後にだけ証明付きrunを作る。 */
+export function validateRun<
+  Snapshot extends RunSnapshot,
+  History extends readonly EvidenceHistoryInputEvent[],
+  AiCache extends readonly unknown[],
+  PersonalCache extends readonly unknown[],
+  Ledger extends RunValidationLedger,
+  Selection extends RunNotificationSelection,
+  Metrics extends RunValidationMetrics,
+>(
+  input: ValidateRunInput<Snapshot, History, AiCache, PersonalCache, Ledger, Selection, Metrics>,
+): ValidatedRun<Snapshot, History, AiCache, PersonalCache, Ledger, Selection, Metrics> {
+  const run = input.finalized;
+  assertRunValueMatches(
+    input.expectedCore.identity,
+    run.core.identity,
+    ["core", "identity"],
+    "run",
+  );
+  assertRunValueMatches(
+    input.expectedCore.executionPolicy,
+    run.core.executionPolicy,
+    ["core", "executionPolicy"],
+    "run",
+  );
+  assertRunValueMatches(
+    input.expectedCore.baseRevision,
+    run.core.baseRevision,
+    ["core", "baseRevision"],
+    "run",
+  );
+  assertRunValueMatches(
+    input.expectedCore.configDigest,
+    run.core.configDigest,
+    ["core", "configDigest"],
+    "run",
+  );
+  assertRunValueMatches(
+    input.expectedCore.evaluatedAt,
+    run.data.sourceRecords.evaluatedAt,
+    ["generatedAt"],
+    "run",
+  );
+  assertRunStageLineage(input.genericAiAdopted, input.graphReconciled, run);
+  assertFinalSnapshotCandidateMatches(run, input.closure, input.candidate, input.digest);
+  assertActualOutwardMatches(run, input.closure, input.candidate, input.actualOutwardAdditions);
+  assertRunValueMatches(
+    input.historyInputEvents,
+    input.actualOutwardAdditions.historyInputEvents,
+    ["historyInputEvents"],
+    "history",
+  );
+  assertRunValuesMatch(
+    run.data.approvedRepositories,
+    input.repositoryAllowlist,
+    (repository) => repository.id,
+    (repository) => repository.id,
+    ["repositoryAllowlist"],
+  );
+  assertNotificationLedger(input);
+  const budgetSummary = assertAiBudgetLedgerMatches(run.core.aiBudget);
+  assertRunMetrics(input, budgetSummary);
+  let snapshot: Snapshot;
+  try {
+    snapshot = input.createCompleteSnapshot(input.candidate);
+  } catch (cause: unknown) {
+    throw new RunCompletenessError("field_mismatch", "snapshot", ["snapshot"], undefined, cause);
+  }
+  assertRunValueMatches(
+    input.candidate.schemaVersion,
+    snapshot.schemaVersion,
+    ["snapshot", "schemaVersion"],
+    "run",
+  );
+  assertRunValueMatches(
+    input.candidate.run,
+    { id: snapshot.run.id, status: snapshot.run.status },
+    ["snapshot", "run"],
+    "run",
+  );
+  assertRunValueMatches(true, snapshot.run.complete, ["snapshot", "run", "complete"], "run");
+  assertRunValueMatches(
+    input.candidate.generatedAt,
+    snapshot.generatedAt,
+    ["snapshot", "generatedAt"],
+    "run",
+  );
+  assertRunValueMatches(
+    input.candidate.trackingStartAt,
+    snapshot.trackingStartAt,
+    ["snapshot", "trackingStartAt"],
+    "run",
+  );
+  assertRunValueMatches(input.candidate.ai, snapshot.ai, ["snapshot", "ai"], "run");
+  assertRunValueMatches(
+    input.candidate.finalGraphProjection,
+    snapshot.finalGraphProjection,
+    ["snapshot", "finalGraphProjection"],
+    "graph",
+  );
+  assertRunValueMatches(
+    input.candidate.finalGraphProjectionDigest,
+    snapshot.finalGraphProjectionDigest,
+    ["snapshot", "finalGraphProjectionDigest"],
+    "graph",
+  );
+  assertRunValuesMatch(
+    input.candidate.items,
+    snapshot.items,
+    (item) => item.nodeId,
+    (item) => item.nodeId,
+    ["snapshot", "items"],
+  );
+  assertRunValuesMatch(
+    input.candidate.relations,
+    snapshot.relations,
+    (relation) => relation.id,
+    (relation) => relation.id,
+    ["snapshot", "relations"],
+  );
+  assertRunValuesMatch(
+    input.candidate.repositories,
+    snapshot.repositories,
+    (repository) => repository.id,
+    (repository) => repository.id,
+    ["snapshot", "repositories"],
+  );
+  assertRunValuesMatch(
+    input.candidate.collection.repositories,
+    snapshot.collection.repositories,
+    (repository) => repository.repositoryId,
+    (repository) => repository.repositoryId,
+    ["snapshot", "collection", "repositories"],
+  );
+  assertRunValuesMatch(
+    input.candidate.externalReferences,
+    snapshot.externalReferences,
+    (reference) => reference.nodeId,
+    (reference) => reference.nodeId,
+    ["snapshot", "externalReferences"],
+  );
+  assertRunValuesMatch(
+    input.candidate.graphNodeStateObservations,
+    snapshot.graphNodeStateObservations,
+    (observation) => observation.nodeId,
+    (observation) => observation.nodeId,
+    ["snapshot", "graphNodeStateObservations"],
+  );
+  const sourceIds = Object.freeze(
+    [...new Set(input.closure.uses.map((use) => use.sourceId))].sort(),
+  );
+  const payload = {
+    core: {
+      identity: run.core.identity,
+      executionPolicy: run.core.executionPolicy,
+      baseRevision: run.core.baseRevision,
+      configDigest: run.core.configDigest,
+      allowlistDigest: run.data.allowlistDigest,
+      generatedAt: snapshot.generatedAt,
+      aiBudget: run.core.aiBudget,
+      aiBudgetSummary: budgetSummary,
+    },
+    snapshot,
+    historyInputEvents: input.historyInputEvents,
+    aiCacheAdditions: input.aiCacheAdditions,
+    personalReminderAiCacheAdditions: input.personalReminderAiCacheAdditions,
+    previousNotificationLedger: input.previousNotificationLedger,
+    notificationLedger: input.notificationLedger,
+    notificationSelection: input.notificationSelection,
+    repositoryAllowlist: [...input.repositoryAllowlist].sort((left, right) =>
+      left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
+    ),
+    metrics: input.metrics,
+    evidenceClosureSummary: { referenceCount: input.closure.uses.length, sourceIds },
+    publicDiagnosticsSummary: {
+      status: snapshot.run.status,
+      pendingNotificationCount: input.notificationLedger.pendingNotifications.length,
+    },
+  };
+  try {
+    serializeCanonicalJson(payload);
+  } catch (cause: unknown) {
+    throw new RunCompletenessError("field_mismatch", "payload", ["payload"], undefined, cause);
+  }
+  const publicValues = [snapshot, payload, input.actualOutwardAdditions];
+  assertPublicUrls(publicValues, ["publicValues"]);
+  try {
+    input.assertPublicSafety(snapshot, publicValues);
+  } catch (cause: unknown) {
+    throw new RunCompletenessError(
+      "unsafe_public_value",
+      "public_boundary",
+      ["publicValues"],
+      undefined,
+      cause,
+    );
+  }
+  const canonicalPayload = frozenRunCopy(payload);
+  const proof: RunCompletenessProof = Object.freeze({ [runCompletenessProofBrand]: true });
+  return Object.freeze({
+    ...canonicalPayload,
+    proof,
+  });
+}
