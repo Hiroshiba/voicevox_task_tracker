@@ -71,11 +71,18 @@ validate_repository() {
 validate_run_identity() {
   require_environment GITHUB_RUN_ID
   require_environment GITHUB_RUN_ATTEMPT
+  require_environment GITHUB_SHA
   if [[ ! "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
     die "GITHUB_RUN_IDが不正です"
   fi
   if [[ ! "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
     die "GITHUB_RUN_ATTEMPTが不正です"
+  fi
+  validate_revision "$GITHUB_SHA"
+  local checkout_revision
+  checkout_revision="$(git rev-parse --verify 'HEAD^{commit}')" || die "checkoutしたコードのcommit SHAを取得できません"
+  if [[ "$checkout_revision" != "$GITHUB_SHA" ]]; then
+    die "checkoutしたコードのcommit SHAがworkflow SHAと一致しません"
   fi
 }
 
@@ -124,6 +131,9 @@ source_branch_revision() {
   validate_revision "$code_revision"
   if [[ "$branch_revision" != "$code_revision" ]]; then
     die "checkoutしたコードのcommit SHAがsource_refのfork branchと一致しません"
+  fi
+  if [[ "$branch_revision" != "$GITHUB_SHA" ]]; then
+    die "source_refのfork branchがworkflow SHAと一致しません"
   fi
   printf '%s\n' "$code_revision"
 }
@@ -476,6 +486,9 @@ prepare_continue() {
   local branch="${STATE_BRANCH_PREFIX}/${environment_id}"
   local remote_revision
   remote_revision="$(remote_branch_head "$branch")"
+  if [[ -n "${SANDBOX_EXPECTED_BASE_REVISION-}" && "$remote_revision" != "$SANDBOX_EXPECTED_BASE_REVISION" ]]; then
+    die "continuity secondのremote base revisionがfirstのfinal revisionと一致しません"
+  fi
   fetch_remote_branch "$branch"
   local manifest
   manifest="$(manifest_source "$remote_revision")"
