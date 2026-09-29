@@ -192,7 +192,11 @@ function assertFailedRunSemantics(value: FailedRun): void {
     (value.finalStateRevision != null &&
       (value.evidence.bindingKind !== "checkpoint" ||
         (value.failedStage !== "notification_history_pages_prepared" &&
-          value.failedStage !== "notification_history_pages_published"))) ||
+          value.failedStage !== "notification_history_pages_published" &&
+          (value.failedStage !== "workflow_effect_observation" ||
+            value.failureKind !== "diagnostics_encryption_failure")) ||
+        (value.failureKind === "diagnostics_encryption_failure" &&
+          value.lastReceiptDigest == null))) ||
     (value.recoveryDisposition === "safe_to_retry_same_input" &&
       value.failedOperationEffectCertainty !== "no_effect") ||
     (value.failedOperationEffectCertainty === "ambiguous" &&

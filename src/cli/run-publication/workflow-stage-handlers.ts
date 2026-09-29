@@ -375,9 +375,11 @@ export async function notifyWorkflowOperations(
         ),
       ])
     : Object.freeze([]);
-  const isNotificationHistoryFailure =
+  const hasFinalEvidence =
     primary.failure.failedStage === "notification_history_pages_prepared" ||
-    primary.failure.failedStage === "notification_history_pages_published";
+    primary.failure.failedStage === "notification_history_pages_published" ||
+    (primary.failure.failedStage === "workflow_effect_observation" &&
+      primary.failure.failureKind === "diagnostics_encryption_failure");
   let delivered: Awaited<ReturnType<typeof deliverOperationsAlert>>;
   try {
     delivered = await deliverOperationsAlert(
@@ -394,10 +396,10 @@ export async function notifyWorkflowOperations(
         context: {
           failureKind: primary.failure.failureKind,
           failedStage: primary.failure.failedStage,
-          ...(isNotificationHistoryFailure && primary.failure.finalStateRevision != null
+          ...(hasFinalEvidence && primary.failure.finalStateRevision != null
             ? { finalStateRevision: primary.failure.finalStateRevision }
             : {}),
-          ...(isNotificationHistoryFailure && primary.failure.lastReceiptDigest != null
+          ...(hasFinalEvidence && primary.failure.lastReceiptDigest != null
             ? { lastReceiptDigest: primary.failure.lastReceiptDigest }
             : {}),
         },

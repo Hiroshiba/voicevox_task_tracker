@@ -24,6 +24,11 @@ import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-di
 import { GitStateBranchAdapter } from "../persistence/index.js";
 import { writeCliJsonArtifact } from "./file-output.js";
 import type { BootstrapFailureObservation } from "./failure-context-state.js";
+import {
+  readManualFinalReceiptChain,
+  readManualPagesRecordEvidence,
+  type ManualPagesRecordPaths,
+} from "./manual-exact-evidence.js";
 import type { ManualExactCommand } from "./manual-exact-runtime.js";
 
 const execFileAsync = promisify(execFile);
@@ -35,6 +40,7 @@ type ManualExactFailureInput = Readonly<{
   failureDirectory: string;
   inputInvalid: boolean;
   childStarted: boolean;
+  pagesRecordPaths?: ManualPagesRecordPaths;
 }>;
 
 function failedStage(command: ManualExactCommand | undefined): FailedRun["failedStage"] {
@@ -107,6 +113,21 @@ function receiptStateRevision(receipt: Receipt): string {
   throw new TypeError("旧runtimeの直前receiptに確定済みstate revisionがありません");
 }
 
+function receiptMarkerPhase(receipt: Receipt): string {
+  switch (receipt.receiptType) {
+    case "initial_state_commit":
+      return "initial_state_committed";
+    case "manual_resolution":
+      return "notifications_in_progress";
+    case "notification_settlement":
+      return "notifications_settled";
+    case "run_finalization":
+      return "run_finalized";
+    default:
+      throw new TypeError("旧runtimeの直前receiptがstate commitではありません");
+  }
+}
+
 async function precedingReceipt(
   command: ManualExactCommand | undefined,
   evidence: Extract<FailedRun["evidence"], { bindingKind: "checkpoint" }> | undefined,
@@ -147,10 +168,11 @@ async function precedingReceipt(
   if (
     marker.runId !== evidence.runId ||
     marker.checkpointDigest !== evidence.checkpointDigest ||
+    marker.phase !== receiptMarkerPhase(receipt) ||
     marker.publicationRecordDigest !== record.recordDigest ||
     record.checkpointFileDigest !== evidence.checkpointFileDigest ||
     record.runtimeIdentityDigest !== evidence.runtimeIdentityDigest ||
-    marker.phaseSequence < receipt.phaseSequence
+    marker.phaseSequence > receipt.phaseSequence
   ) {
     throw new TypeError("旧runtimeの直前receiptとexact stateが一致しません");
   }
@@ -191,9 +213,15 @@ export async function reportManualExactFailure(
   const bootstrapAlert =
     after?.evidence?.bindingKind === "state_bootstrap_alert" ? after : undefined;
   const encryptionFailed = command === "encrypt-diagnostics";
+  const historyCommand =
+    command === "prepare-notification-history-pages" ||
+    command === "preflight-notification-history-deployment" ||
+    command === "record-notification-history-deployment";
   let receipt: Receipt | undefined;
+  let finalStateRevision: string | undefined;
+  let pagesEffectCertainty: FailedRun["failedOperationEffectCertainty"] | undefined;
   let diagnosticError = error;
-  if (!encryptionFailed && evidence != null && bootstrapAlert == null) {
+  if (!encryptionFailed && !historyCommand && evidence != null && bootstrapAlert == null) {
     try {
       const observedRevision = revision(observed);
       if (observedRevision == null) {
@@ -207,6 +235,38 @@ export async function reportManualExactFailure(
         { cause: error },
       );
     }
+  }
+  if (evidence != null && bootstrapAlert == null) {
+    const observedRevision = revision(observed);
+    if (observedRevision == null) {
+      throw new TypeError("旧runtimeの最終証拠の比較先stateがありません");
+    }
+    if (
+      encryptionFailed ||
+      (historyCommand &&
+        (command !== "record-notification-history-deployment" || !input.childStarted))
+    ) {
+      const final = await readManualFinalReceiptChain(evidence, observedRevision);
+      if (final != null) {
+        finalStateRevision = final.finalStateRevision;
+        receipt = final.lastReceipt;
+      }
+    }
+    if (command === "record-notification-history-deployment" && input.childStarted) {
+      if (input.pagesRecordPaths == null) {
+        throw new TypeError("旧runtimeの通知履歴Pages結果の保存先がありません");
+      }
+      const pages = await readManualPagesRecordEvidence(
+        input.pagesRecordPaths,
+        evidence,
+        observedRevision,
+      );
+      finalStateRevision = pages.finalStateRevision;
+      receipt = pages.lastReceipt;
+      pagesEffectCertainty = pages.certainty;
+    }
+  } else if (command === "record-notification-history-deployment" && input.childStarted) {
+    throw new TypeError("旧runtimeの通知履歴Pages結果をcheckpointへ結び付けられません");
   }
   const recordId = encryptionFailed ? undefined : randomUUID();
   if (recordId != null) {
@@ -237,11 +297,12 @@ export async function reportManualExactFailure(
     command === "preflight-notification-history-deployment" ||
     encryptionFailed;
   const effectCertainty: FailedRun["failedOperationEffectCertainty"] =
-    !input.childStarted ||
+    pagesEffectCertainty ??
+    (!input.childStarted ||
     readOnly ||
     (command === "resolve-discord-delivery" && sameHead && matchingAfter)
       ? "no_effect"
-      : "ambiguous";
+      : "ambiguous");
   const common = {
     invocationId,
     failedStage: bootstrapAlert == null ? failedStage(command) : "runtime_bootstrap",
@@ -255,6 +316,7 @@ export async function reportManualExactFailure(
           checkpointFileDigest: evidence.checkpointFileDigest,
         }),
     lastVerifiedReceipt: receipt,
+    ...(finalStateRevision == null ? {} : { finalStateRevision }),
     stateObservation: bootstrapAlert == null ? stateObservation : bootstrapAlert.stateObservation,
   };
   let failure: FailedRun;

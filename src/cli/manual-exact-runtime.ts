@@ -16,10 +16,15 @@ import { writeCliTextFile } from "./file-output.js";
 import { observeBootstrap, type BootstrapFailureObservation } from "./failure-context-state.js";
 import { encryptManualDiagnostics } from "./manual-diagnostics-encryption.js";
 import {
+  assertManualPagesOutcomeAbsent,
+  type ManualPagesRecordPaths,
+} from "./manual-exact-evidence.js";
+import {
   isExpectedCheckpoint,
   reportManualExactFailure,
   revision,
 } from "./manual-exact-failure.js";
+import { parseRecordNotificationHistoryDeployment } from "./notification-history-deployment-command.js";
 
 const commandSchema = z.enum([
   "verify-checkpoint",
@@ -170,6 +175,7 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
   let inCheckout = false;
   let inputValidated = false;
   let childStarted = false;
+  let pagesRecordPaths: ManualPagesRecordPaths | undefined;
   let before: BootstrapFailureObservation | undefined;
   try {
     command = commandSchema.parse(args[0]);
@@ -198,6 +204,15 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
       childStarted = true;
       await selectRuntime(entrypoint, input.runId, input.codeRevision, stateRevision);
     } else {
+      if (command === "record-notification-history-deployment") {
+        const paths = parseRecordNotificationHistoryDeployment(args.slice(1));
+        pagesRecordPaths = {
+          buildArtifactPath: resolve(paths.buildArtifactPath),
+          preflightPath: resolve(paths.preflightPath),
+          outcomePath: resolve(paths.outcomePath),
+        };
+        await assertManualPagesOutcomeAbsent(pagesRecordPaths.outcomePath);
+      }
       childStarted = true;
       await runExactCli(entrypoint, [command, ...args.slice(1)], false);
     }
@@ -253,6 +268,7 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
         failureDirectory: resolve(paths.failureDirectory),
         inputInvalid: !inputValidated,
         childStarted,
+        ...(pagesRecordPaths == null ? {} : { pagesRecordPaths }),
       };
     } catch (reportingError: unknown) {
       throw new AggregateError(
