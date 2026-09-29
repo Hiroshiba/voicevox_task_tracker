@@ -181,7 +181,32 @@ export async function workflowAdapterIdentityV2(
   repositoryPath: string,
   digest: ContentDigestPort,
 ): Promise<ReturnType<ContentDigestPort["sha256Utf8"]>> {
-  return digest.sha256Utf8(serializeCanonicalJson(await readWorkflowV2Adapter(repositoryPath)));
+  const workflowSource = await readFile(
+    resolve(repositoryPath, ".github/workflows/_tracking-run.yml"),
+    "utf8",
+  );
+  const actionSources = await workflowActionSources(repositoryPath, [workflowSource], digest);
+  const scripts = (await readdir(resolve(repositoryPath, ".github/scripts")))
+    .map((path) => `.github/scripts/${path}`)
+    .sort();
+  const adapterSourcesDigest = await hashSources(
+    repositoryPath,
+    [
+      "src/application/tracking-run/contracts/runtime-recovery-v2.ts",
+      "src/cli/runtime-recovery-launcher-v2.ts",
+      "src/cli/initial-pages-deployment.ts",
+      "src/cli/notification-history-pages-deployment-record.ts",
+      ...scripts,
+    ],
+    digest,
+  );
+  return digest.sha256Utf8(
+    serializeCanonicalJson({
+      adapter: await readWorkflowV2Adapter(repositoryPath),
+      actionSources,
+      adapterSourcesDigest,
+    }),
+  );
 }
 
 async function codeRevision(repositoryPath: string, filesDigest: string): Promise<string> {

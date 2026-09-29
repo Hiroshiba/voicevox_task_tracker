@@ -291,6 +291,7 @@ export async function recoverSplitRuntimeV2(
   }
   await assertRecoveryToolchain(repositoryPath, plan);
   return withExactWorktree(repositoryPath, plan.codeRevision, async (checkoutPath) => {
+    await installExactDependencies(checkoutPath, plan.lockfileSha256);
     const current = splitStagePaths(repositoryPath, input.runId);
     const exact = splitStagePaths(checkoutPath, input.runId);
     const inputs: readonly (readonly [string, string])[] = [
