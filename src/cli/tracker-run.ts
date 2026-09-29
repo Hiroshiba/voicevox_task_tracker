@@ -388,8 +388,8 @@ export async function runTrackerCliMain(args: readonly string[]): Promise<number
   return result.exitCode;
 }
 
-if (isMainModule(import.meta.url, process.argv[1])) {
-  const args = process.argv.slice(2);
+/** CLI実行入口の終了状態と診断失敗を処理する。 */
+export async function runTrackerCliEntrypoint(args: readonly string[]): Promise<void> {
   try {
     process.exitCode = await runTrackerCliMain(args);
   } catch (error: unknown) {
@@ -399,4 +399,8 @@ if (isMainModule(import.meta.url, process.argv[1])) {
     writeDiagnosticsTopLevelError(error);
     process.exitCode = 1;
   }
+}
+
+if (isMainModule(import.meta.url, process.argv[1])) {
+  await runTrackerCliEntrypoint(process.argv.slice(2));
 }
