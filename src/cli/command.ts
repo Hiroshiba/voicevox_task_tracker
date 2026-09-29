@@ -722,10 +722,11 @@ function parseNotifyOperations(args: readonly string[]): NotifyOperationsCliComm
     "build-pages",
     "deploy-pages",
     "notify-discord",
+    "resolve-and-finalize",
     "publish-notification-history",
   ]);
   if (failedJobs.some((job) => !allowedJobs.has(job))) {
-    throw usageError("--failed-jobには既知の日次job名を指定してください");
+    throw usageError("--failed-jobには既知のworkflow job名を指定してください");
   }
   return Object.freeze({
     kind: "notify-operations",

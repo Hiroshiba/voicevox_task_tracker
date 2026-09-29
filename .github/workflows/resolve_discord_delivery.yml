@@ -52,9 +52,15 @@ jobs:
     permissions:
       contents: write
       actions: read
+    outputs:
+      public_boundary_violation: ${{ steps.verify_checkpoint.outputs.public_boundary_violation || steps.verify_runtime.outputs.public_boundary_violation || steps.resolve_delivery.outputs.public_boundary_violation || steps.settle_notifications.outputs.public_boundary_violation || steps.finalize_run.outputs.public_boundary_violation }}
+      command_failed: ${{ steps.verify_checkpoint.outcome == 'failure' || steps.verify_runtime.outcome == 'failure' || steps.resolve_delivery.outcome == 'failure' || steps.settle_notifications.outcome == 'failure' || steps.finalize_run.outcome == 'failure' || steps.encrypt_diagnostics.outcome == 'failure' }}
+      action_failed: ${{ steps.failure_upload.outcome == 'failure' }}
     env:
       VOICEVOX_EXPECTED_RUN_ID: ${{ inputs.run_id }}
     steps:
+      - name: 診断先を設定
+        run: echo "VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH=$RUNNER_TEMP/voicevox-task-tracker-diagnostics-$GITHUB_JOB.jsonl" >> "$GITHUB_ENV"
       - name: 元runのコードを取得
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -85,18 +91,20 @@ jobs:
           run-id: ${{ inputs.source_run_id }}
           github-token: ${{ github.token }}
       - name: 元runのcheckpointを検証
+        id: verify_checkpoint
         run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs verify-checkpoint
       - name: 元runのexact runtimeを検証
+        id: verify_runtime
         env:
           MANUAL_RUN_ID: ${{ inputs.run_id }}
           MANUAL_CODE_REVISION: ${{ inputs.code_revision }}
         run: |
           state_revision=$(git rev-parse refs/heads/tracker-state)
           node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs inspect-run-state --run-id "$MANUAL_RUN_ID" --state-revision "$state_revision" > "$RUNNER_TEMP/manual-recovery-decision.json"
-          jq -e --arg run "$MANUAL_RUN_ID" --arg code "$MANUAL_CODE_REVISION" '.kind == "resume_with_exact_runtime" and .recoveryInput.runId == $run and .recoveryInput.runtimeRecoveryPlan.codeRevision == $code' "$RUNNER_TEMP/manual-recovery-decision.json"
-          jq -cS '.recoveryInput' "$RUNNER_TEMP/manual-recovery-decision.json" > "$RUNNER_TEMP/manual-recovery-input.json"
+          jq -cS --arg run "$MANUAL_RUN_ID" --arg code "$MANUAL_CODE_REVISION" 'if .kind == "resume_with_exact_runtime" and .recoveryInput.runId == $run and .recoveryInput.runtimeRecoveryPlan.codeRevision == $code then .recoveryInput else null end' "$RUNNER_TEMP/manual-recovery-decision.json" > "$RUNNER_TEMP/manual-recovery-input.json"
           node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs verify-runtime-recovery --input "$RUNNER_TEMP/manual-recovery-input.json" --bundle-root artifacts/workflow/runtime
       - name: 曖昧な送達を手動解決
+        id: resolve_delivery
         env:
           MANUAL_NOTIFICATION_KEYS: ${{ inputs.notification_keys }}
           MANUAL_RUN_ID: ${{ inputs.run_id }}
@@ -125,10 +133,10 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: 同じrunの残り通知をsettleする
+        id: settle_notifications
         env:
           DISCORD_OPERATIONS_WEBHOOK_URL: ${{ secrets.DISCORD_OPERATIONS_WEBHOOK_URL }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
         run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs settle-notifications --manual-resolution-receipt artifacts/workflow/manual-resolution-receipt.json
       - name: settlement receiptを保存
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -138,14 +146,33 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: 同じrunをfinalizeする
-        env:
-          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
+        id: finalize_run
         run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs finalize-run
       - name: finalization receiptを保存
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: run-finalization-record
           path: artifacts/workflow/run-finalization-receipt.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: 公開失敗artifactを保存
+        id: failure_upload
+        if: always()
+        uses: ./.github/actions/upload-failure-artifact
+        with:
+          artifact-name: manual-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+      - name: 診断JSONLを暗号化
+        id: encrypt_diagnostics
+        if: always() && (steps.verify_checkpoint.outcome == 'success' || steps.verify_checkpoint.outcome == 'failure')
+        env:
+          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 }}
+        run: .github/scripts/encrypt-diagnostics.sh artifacts/workflow/runtime/tracker-run.mjs
+      - name: 暗号化済み診断artifactを保存
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: manual-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          path: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.bundle
           if-no-files-found: error
           retention-days: 7
 
@@ -157,12 +184,18 @@ jobs:
       actions: read
       pages: write
       id-token: write
+    outputs:
+      public_boundary_violation: ${{ steps.prepare_history_pages.outputs.public_boundary_violation || steps.preflight.outputs.public_boundary_violation || steps.record.outputs.public_boundary_violation }}
+      command_failed: ${{ steps.prepare_history_pages.outcome == 'failure' || steps.preflight.outcome == 'failure' || steps.record.outcome == 'failure' || steps.encrypt_diagnostics.outcome == 'failure' }}
+      action_failed: ${{ steps.configure.outcome == 'failure' || steps.upload.outcome == 'failure' || steps.deployment.outcome == 'failure' || steps.failure_upload.outcome == 'failure' }}
     env:
       VOICEVOX_EXPECTED_RUN_ID: ${{ inputs.run_id }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: 診断先を設定
+        run: echo "VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH=$RUNNER_TEMP/voicevox-task-tracker-diagnostics-$GITHUB_JOB.jsonl" >> "$GITHUB_ENV"
       - name: 元runのコードを取得
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -193,6 +226,7 @@ jobs:
           name: run-finalization-record
           path: artifacts/workflow
       - name: 通知履歴Pagesを準備
+        id: prepare_history_pages
         run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs prepare-notification-history-pages
       - name: 通知履歴Pages build receiptを保存
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -208,6 +242,7 @@ jobs:
           echo "kind=$(jq -r .kind artifacts/workflow/notification-history-pages-preflight.json)" >> "$GITHUB_OUTPUT"
           echo "intent_digest=$(jq -r '.deploymentIntentDigest // ""' artifacts/workflow/notification-history-pages-preflight.json)" >> "$GITHUB_OUTPUT"
       - name: Pagesを構成
+        id: configure
         if: steps.preflight.outputs.kind == 'ready'
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
       - name: 通知履歴Pages artifactを保存
@@ -225,6 +260,7 @@ jobs:
           artifact_name: manual-pages-${{ github.run_id }}-${{ github.run_attempt }}-notification-history
           timeout: 1200000
       - name: 通知履歴Pages actionの結果を記録
+        id: record
         if: always() && steps.preflight.outcome == 'success'
         env:
           PAGES_UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
@@ -237,10 +273,126 @@ jobs:
           PAGES_URL: ${{ steps.deployment.outputs.page_url }}
         run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs record-notification-history-deployment
       - name: 通知履歴Pages receiptまたは失敗を保存
-        if: always() && steps.preflight.outcome == 'success'
+        if: always() && steps.record.outcome != 'skipped'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: notification-history-pages-deployment-record
           path: artifacts/workflow/notification-history-pages-deployment.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: 公開失敗artifactを保存
+        id: failure_upload
+        if: always()
+        uses: ./.github/actions/upload-failure-artifact
+        with:
+          artifact-name: manual-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+      - name: 診断JSONLを暗号化
+        id: encrypt_diagnostics
+        if: always() && (steps.prepare_history_pages.outcome == 'success' || steps.prepare_history_pages.outcome == 'failure')
+        env:
+          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 }}
+        run: .github/scripts/encrypt-diagnostics.sh artifacts/workflow/runtime/tracker-run.mjs
+      - name: 暗号化済み診断artifactを保存
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: manual-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          path: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.bundle
+          if-no-files-found: error
+          retention-days: 7
+
+  notify-operations:
+    needs:
+      - resolve-and-finalize
+      - publish-notification-history
+    if: >-
+      always() &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      (needs.resolve-and-finalize.result == 'failure' ||
+      needs.publish-notification-history.result == 'failure') &&
+      needs.resolve-and-finalize.outputs.public_boundary_violation != 'true' &&
+      needs.publish-notification-history.outputs.public_boundary_violation != 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: ソースコードを取得
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - name: 最新stateを取得
+        run: git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state
+      - name: Node.jsを準備
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+      - name: pnpmを準備
+        run: corepack enable
+      - name: 依存関係をインストール
+        run: pnpm install --frozen-lockfile
+      - name: CLIをビルド
+        run: pnpm build
+      - name: 公開失敗artifactを取得
+        id: download_failures
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: manual-failure-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: artifacts/workflow/failures
+          merge-multiple: true
+      - name: 以前の運用障害通知receiptを取得
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: operations-alert-receipt-${{ github.run_id }}-*
+          path: artifacts/workflow/previous-operations-alert-receipts
+      - name: 運用障害をDiscordへ通知
+        id: notify
+        env:
+          DISCORD_OPERATIONS_WEBHOOK_URL: ${{ secrets.DISCORD_OPERATIONS_WEBHOOK_URL }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          RESOLVE_RESULT: ${{ needs.resolve-and-finalize.result }}
+          RESOLVE_COMMAND_FAILED: ${{ needs.resolve-and-finalize.outputs.command_failed }}
+          RESOLVE_ACTION_FAILED: ${{ needs.resolve-and-finalize.outputs.action_failed }}
+          HISTORY_RESULT: ${{ needs.publish-notification-history.result }}
+          HISTORY_COMMAND_FAILED: ${{ needs.publish-notification-history.outputs.command_failed }}
+          HISTORY_ACTION_FAILED: ${{ needs.publish-notification-history.outputs.action_failed }}
+          FAILURE_DOWNLOAD_OUTCOME: ${{ steps.download_failures.outcome }}
+          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
+        run: |
+          occurred_at="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
+          arguments=(notify-operations --workflow-run-id "$WORKFLOW_RUN_ID" --occurred-at "$occurred_at")
+          if [[ "$RESOLVE_RESULT" == "failure" && ( "$RESOLVE_COMMAND_FAILED" != "true" || "$RESOLVE_ACTION_FAILED" == "true" || "$FAILURE_DOWNLOAD_OUTCOME" == "failure" ) ]]; then
+            arguments+=(--failed-job resolve-and-finalize)
+          fi
+          if [[ "$HISTORY_RESULT" == "failure" && ( "$HISTORY_COMMAND_FAILED" != "true" || "$HISTORY_ACTION_FAILED" == "true" || "$FAILURE_DOWNLOAD_OUTCOME" == "failure" ) ]]; then
+            arguments+=(--failed-job publish-notification-history)
+          fi
+          pnpm tracker:run "${arguments[@]}"
+      - name: 運用障害通知receiptを保存
+        if: always() && steps.notify.outcome != 'skipped'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: operations-alert-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/workflow/operations-alert-receipt.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: 公開失敗artifactを保存
+        if: always()
+        uses: ./.github/actions/upload-failure-artifact
+        with:
+          artifact-name: manual-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+      - name: 診断JSONLを暗号化
+        if: always() && (steps.notify.outcome == 'success' || steps.notify.outcome == 'failure')
+        env:
+          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 }}
+        run: .github/scripts/encrypt-diagnostics.sh dist/cli/tracker-run.js
+      - name: 暗号化済み診断artifactを保存
+        if: always() && (steps.notify.outcome == 'success' || steps.notify.outcome == 'failure')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: manual-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          path: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.bundle
           if-no-files-found: error
           retention-days: 7

@@ -170,7 +170,26 @@ async function previousReceipt(command: CliCommand | undefined): Promise<Receipt
 }
 
 function configPath(command: CliCommand | undefined): string | undefined {
+  if (command?.kind === "verify-runtime-recovery") {
+    return process.env["VOICEVOX_EXPECTED_RUN_ID"] == null ? undefined : "config.yml";
+  }
   return command != null && "configPath" in command ? command.configPath : undefined;
+}
+
+function expectedRunId(
+  command: CliCommand | undefined,
+  context: Partial<CliFailureContext>,
+): string | undefined {
+  if (command?.kind === "resolve-discord-delivery") {
+    return command.runId;
+  }
+  if (command?.kind === "inspect-run-state" && command.recoveryIntent.kind === "retry_run") {
+    return command.recoveryIntent.runId;
+  }
+  if (command?.kind === "verify-checkpoint" || command?.kind === "verify-runtime-recovery") {
+    return process.env["VOICEVOX_EXPECTED_RUN_ID"];
+  }
+  return context.runId;
 }
 
 /** commandの実結果、receipt、exact bootstrapから確認できた失敗文脈を作る。 */
@@ -303,14 +322,15 @@ export async function observeCliFailureContext(
     };
   }
   const path = configPath(command);
+  const runId = expectedRunId(command, context);
   if (
     path != null &&
     context.evidence?.bindingKind !== "run_pre_checkpoint_alert" &&
-    (context.runId != null || command?.kind === "inspect-run-state")
+    (runId != null || command?.kind === "inspect-run-state")
   ) {
     let bootstrap;
     try {
-      bootstrap = await observeBootstrap(path, context.runId);
+      bootstrap = await observeBootstrap(path, runId);
     } catch (bootstrapError: unknown) {
       context = { ...context, bootstrapError };
     }
