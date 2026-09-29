@@ -407,6 +407,7 @@ export async function observeCliFailureContext(
   const runId = expectedRunId(command, context);
   if (
     path != null &&
+    command?.kind !== "dry-run" &&
     context.evidence?.bindingKind !== "run_pre_checkpoint_alert" &&
     (runId != null || command?.kind === "inspect-run-state")
   ) {

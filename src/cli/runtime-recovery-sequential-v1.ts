@@ -20,7 +20,7 @@ import {
   type RunStateDecision,
 } from "../infrastructure/tracking-run/inspect-run-state.js";
 import { createDefaultProductionRuntimeAdapters } from "./composition-root.js";
-import { createProductionCliApplication } from "./production-runtime.js";
+import { createProductionCliApplication } from "./production-runtime/create-application.js";
 import type { ProductionRuntimeAdapters } from "./production-runtime/adapters.js";
 import { readSequentialReceipts } from "./production-runtime/daily-startup/launch.js";
 import { restoreSplitReceipts } from "./split-stage-recovery.js";

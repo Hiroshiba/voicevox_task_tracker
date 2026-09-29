@@ -76,7 +76,10 @@ export function verifyRunTransactionFiles(
   }
   const marker = decodeRunTransactionMarker(markerBytes);
   const record = decodeDurablePublicationRecord(recordBytes, nodeContentDigestPort);
-  if (record.runtimeRecoveryPlan.kind === "not_reproducible") {
+  if (
+    record.runtimeRecoveryPlan.kind === "not_reproducible" &&
+    record.executionPolicy.effectTarget !== "recording"
+  ) {
     throw new StateFormatError("run transaction", {
       cause: new TypeError("永続stateに回復不能なruntimeを保存できません"),
     });

@@ -51,7 +51,10 @@ export async function commitInitialState(
 ): Promise<InitialStateCommitResult> {
   assertBoundPublicationCheckpoint(bound);
   const record = materializeDurablePublicationRecord(bound, digest);
-  if (record.runtimeRecoveryPlan.kind === "not_reproducible") {
+  if (
+    record.runtimeRecoveryPlan.kind === "not_reproducible" &&
+    record.executionPolicy.effectTarget !== "recording"
+  ) {
     throw new TypeError("回復不能なruntimeで永続stateへ初回commitできません");
   }
   const template = bound.publicationPlan.initialStateWriteSet.markerTemplate;

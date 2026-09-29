@@ -4,7 +4,28 @@ import type { CompletedRun } from "../application/tracking-run/complete-run.js";
 import type { StateRunReport } from "../persistence/state-run-report.js";
 import { createRunReport, type RunMetrics, type RunReport, type RunStage } from "./run-report.js";
 import { VerifiedPendingRuntimeFailureError } from "./failure-context-error.js";
-import type { DailyRunInvocation, DailyRunRuntime, DryRunArtifact } from "./daily-transaction.js";
+import type { DailyRunInvocation, DailyRunRuntime } from "./daily-transaction.js";
+
+/** dry-runの共通完了receiptと本番効果ゼロを示す成果物。 */
+export type DryRunArtifact<Value> = Readonly<{
+  schemaVersion: "3";
+  runId: string;
+  command: "dry-run";
+  status: "success" | "fallback";
+  complete: true;
+  result: Value;
+  effectReport: Readonly<{
+    effectTarget: "recording";
+    stateStorage: "isolated_local_git";
+    finalStateRevision: string;
+    completionReceiptDigest: string;
+    productionStateCommits: 0;
+    productionPagesDeployments: 0;
+    productionDiscordSends: 0;
+  }>;
+  metrics: RunMetrics;
+  diagnostics: readonly string[];
+}>;
 
 /** run runtimeの現在時刻をUTC日時へ変換する。 */
 export function currentTime(runtime: DailyRunRuntime): UtcIsoDateTime {
@@ -37,17 +58,27 @@ export function createDryRunArtifact<Value>(
   metrics: RunMetrics,
   diagnostics: readonly string[],
   finishedAt: UtcIsoDateTime,
+  completed: CompletedRun,
 ): DryRunArtifact<Value> {
   const completedMetrics = updateMetrics(metrics, {
     durationMilliseconds: Date.parse(finishedAt) - Date.parse(invocation.startedAt),
   });
   return Object.freeze({
-    schemaVersion: "2",
+    schemaVersion: "3",
     runId: invocation.runId,
     command: "dry-run",
     status,
     complete: true,
     result: planned,
+    effectReport: Object.freeze({
+      effectTarget: "recording",
+      stateStorage: "isolated_local_git",
+      finalStateRevision: completed.finalStateRevision,
+      completionReceiptDigest: completed.receipt.receiptDigest,
+      productionStateCommits: 0,
+      productionPagesDeployments: 0,
+      productionDiscordSends: 0,
+    }),
     metrics: completedMetrics,
     diagnostics: Object.freeze([...diagnostics]),
   });

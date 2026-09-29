@@ -56,6 +56,10 @@ export type RuntimeExecutionTarget =
       state: StatePersistenceConfiguration;
       manifest: SandboxManifest;
       context: SandboxRunContext;
+    }>
+  | Readonly<{
+      kind: "recording";
+      state: StatePersistenceConfiguration;
     }>;
 
 export type RuntimeTargetDependencies = Readonly<{
@@ -210,6 +214,12 @@ export async function resolveRuntimeTarget(
   config: Config,
   request: RunRequest,
 ): Promise<RuntimeExecutionTarget> {
+  if (request.executionPolicy.effectTarget === "recording") {
+    if (request.requestKind !== "dry_run") {
+      throw new TypeError("記録用runの入力形式が不正です");
+    }
+    return Object.freeze({ kind: "recording", state: config.state });
+  }
   if (request.executionPolicy.effectTarget !== "sandbox") {
     return Object.freeze({
       kind: "production",

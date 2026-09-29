@@ -7,6 +7,8 @@ import {
 import { StateVerificationRunner } from "./state-verification.js";
 import { WorkflowStageRunner } from "./workflow-stage.js";
 import { SplitStageRunner } from "./split-stage-runner.js";
+import type { DryRunCliCommand } from "./command.js";
+import type { CoordinatedRunResult } from "./run-coordinator.js";
 
 /** CLI実行後の終了codeとreport種別。 */
 export type CliExecutionResult =
@@ -53,6 +55,10 @@ export type CliExecutionResult =
 /** CLI applicationへ注入するonline、標準出力境界。 */
 export type CliApplicationDependencies<Types extends DailyTransactionTypeMap> = Readonly<{
   dailyRunner: DailyTransactionRunner<Types>;
+  runDryRun: (
+    command: DryRunCliCommand,
+    invocationId: string,
+  ) => Promise<CoordinatedRunResult<DailyRunExecutionResult>>;
   splitStageRunner: SplitStageRunner;
   workflowStageRunner: WorkflowStageRunner;
   stateVerificationRunner: StateVerificationRunner;
@@ -80,11 +86,19 @@ export class CliApplication<Types extends DailyTransactionTypeMap> {
           exitCode: 0,
         });
       case "daily":
-      case "dry-run":
       case "backfill":
       case "run-sequential":
       case "collect-analyze": {
         const coordinated = await this.#dependencies.dailyRunner.run(command, invocationId);
+        return Object.freeze({
+          command: command.kind,
+          exitCode: exitCodeForStatus(coordinated.value.report.status),
+          execution: coordinated.execution,
+          result: coordinated.value,
+        });
+      }
+      case "dry-run": {
+        const coordinated = await this.#dependencies.runDryRun(command, invocationId);
         return Object.freeze({
           command: command.kind,
           exitCode: exitCodeForStatus(coordinated.value.report.status),

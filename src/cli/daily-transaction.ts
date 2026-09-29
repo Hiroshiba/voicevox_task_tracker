@@ -35,6 +35,7 @@ import {
   currentTime,
   updateMetrics,
   createDryRunArtifact,
+  type DryRunArtifact,
   completedReport,
   completedReportFromState,
   failureReport,
@@ -91,6 +92,8 @@ import {
   type RunReport,
   type RunStage,
 } from "./run-report.js";
+
+export type { DryRunArtifact } from "./daily-transaction-report.js";
 
 /** ネットワークを利用する日次transaction系のサブコマンド。 */
 export type OnlineCliCommand =
@@ -420,18 +423,6 @@ export type DailyRunExecutionResult = Readonly<{
   failedRun?: FailedRun;
   failureDiagnosticRecordId?: string;
   failureEvidence?: FailedRun["evidence"];
-}>;
-
-/** dry-runが公開副作用の代わりに保存する検証済み成果物。 */
-export type DryRunArtifact<Value> = Readonly<{
-  schemaVersion: "2";
-  runId: string;
-  command: "dry-run";
-  status: "success" | "fallback";
-  complete: true;
-  result: Value;
-  metrics: RunMetrics;
-  diagnostics: readonly string[];
 }>;
 
 /** 日次transactionの時刻を注入する境界。 */
@@ -873,7 +864,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
       DailyEngineStageValues<Types>,
       Awaited<ReturnType<typeof publicationStages.encodeCheckpoint>>
     >;
-    if (request.output.kind === "publication") {
+    if (request.output.kind !== "analysis_artifact") {
       let pendingRunId: string | undefined;
       const outcome = await runTrackingRunSequentially<
         DailyEngineStageValues<Types>,
@@ -915,6 +906,21 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
       }
       try {
         const stateReport = await this.#dependencies.readCompletedReport(request, outcome);
+        if (request.output.kind === "dry_run_artifact") {
+          await this.#dependencies.writeDryRunArtifact(
+            request.output.path,
+            createDryRunArtifact(
+              invocation,
+              stateReport.status,
+              required(publicationInput, "dry-runの公開計画がありません").planned,
+              stateReport.metrics,
+              stateReport.diagnostics,
+              currentTime(this.#runtime),
+              outcome,
+            ),
+          );
+          effects.artifactWritten = true;
+        }
         const report = completedReportFromState(invocation, stateReport, outcome);
         await this.#dependencies.writeReport(request.reportPath, report);
         return Object.freeze({
@@ -943,26 +949,9 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
     }
     try {
       const input = analysis.value;
-      if (request.output.kind === "dry_run_artifact") {
-        stage = "artifact";
-        await this.#dependencies.writeDryRunArtifact(
-          request.output.path,
-          createDryRunArtifact(
-            invocation,
-            runStatus,
-            input.planned,
-            metrics,
-            diagnostics,
-            currentTime(this.#runtime),
-          ),
-        );
-        effects.artifactWritten = true;
-      }
-      if (request.output.kind === "analysis_artifact") {
-        stage = "artifact";
-        await this.#dependencies.writeCollectAnalyzeArtifact(request.output.path, input);
-        effects.artifactWritten = true;
-      }
+      stage = "artifact";
+      await this.#dependencies.writeCollectAnalyzeArtifact(request.output.path, input);
+      effects.artifactWritten = true;
       const report = completedReport(
         invocation,
         runStatus,
