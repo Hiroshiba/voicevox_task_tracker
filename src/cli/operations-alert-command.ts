@@ -75,13 +75,18 @@ export function parseNotifyOperations(args: readonly string[]): NotifyOperations
   }
   const failedJobs = options.get("--failed-job") ?? [];
   const allowedJobs = new Set([
-    "collect-analyze",
-    "persist-state",
-    "build-pages",
-    "deploy-pages",
-    "notify-discord",
-    "resolve-and-finalize",
-    "publish-notification-history",
+    "quality",
+    "bootstrap",
+    "prepare-runtime",
+    "analyze",
+    "commit-initial-state",
+    "initial-pages",
+    "settle-notifications",
+    "finalize-run",
+    "notification-history-pages",
+    "complete",
+    "recovery-router",
+    "resolve-delivery",
   ]);
   if (failedJobs.some((job) => !allowedJobs.has(job))) {
     throw usageError("--failed-jobには既知のworkflow job名を指定してください");

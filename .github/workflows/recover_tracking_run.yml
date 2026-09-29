@@ -1,0 +1,35 @@
+name: 追跡runの手動復旧
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 再開するtracking run ID。Pages失敗の再試行にも使用する
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: voicevox-task-tracker-daily
+  cancel-in-progress: false
+
+jobs:
+  tracking:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    permissions:
+      contents: write
+      actions: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/_tracking-run.yml
+    with:
+      state_ref: tracker-state
+      pages_environment: github-pages
+      effect_concurrency_key: voicevox-task-tracker-daily
+      effect_target: production
+      config_path: config.yml
+      backfill: none
+      notification_action: send
+      expected_run_id: ${{ inputs.run_id }}
+    secrets: inherit

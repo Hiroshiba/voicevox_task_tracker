@@ -112,13 +112,13 @@ async function runExactCli(
 }
 
 async function selectRuntime(
-  entrypoint: string,
+  controlEntrypoint: string,
   runId: string,
   codeRevision: string,
   stateRevision: string,
 ): Promise<void> {
   const source = await runExactCli(
-    entrypoint,
+    controlEntrypoint,
     ["inspect-run-state", "--run-id", runId, "--state-revision", stateRevision],
     true,
   );
@@ -143,7 +143,7 @@ async function selectRuntime(
     serializeCanonicalJsonLine(input),
   );
   const verification = await runExactCli(
-    entrypoint,
+    controlEntrypoint,
     [
       "verify-runtime-recovery",
       "--input",
@@ -183,6 +183,7 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
     input = environmentSchema.parse(environment);
     inputValidated = true;
     const checkout = resolve(input.checkout);
+    const controlEntrypoint = resolve("dist/cli/tracker-run.js");
     const entrypoint = resolve(checkout, "artifacts/workflow/runtime/tracker-run.mjs");
     const failureDirectory = resolve(input.failureDirectory);
     const priorFailures = new Set(await failureNames(failureDirectory));
@@ -203,7 +204,7 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
         throw new TypeError("旧runtime選択に必要なstate revisionがありません");
       }
       childStarted = true;
-      await selectRuntime(entrypoint, input.runId, input.codeRevision, stateRevision);
+      await selectRuntime(controlEntrypoint, input.runId, input.codeRevision, stateRevision);
     } else {
       if (command === "preflight-notification-history-deployment") {
         await readPreviousNotificationHistoryOutcome(

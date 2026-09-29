@@ -21,7 +21,7 @@ export function formatCliUsage(): string {
     "  voicevox-task-tracker finalize-run [--receipt PATH] [--settlement-receipt PATH] [--finalization-receipt PATH]",
     "  voicevox-task-tracker resolve-discord-delivery --run-id ID --checkpoint-digest DIGEST --delivery-id ID --attempt-id ID --notification-key KEY --resolution retry|acknowledge [--receipt PATH]",
     "  voicevox-task-tracker notify-operations --workflow-run-id ID --workflow-run-attempt NUMBER --workflow-kind daily|manual --occurred-at ISO --failed-job JOB [--failure-directory PATH] [--output-failure-directory PATH] [--previous-failures-directory PATH] [--previous-receipts-directory PATH]",
-    "  voicevox-task-tracker report-workflow --run-id ID --run-attempt NUMBER --quality-result RESULT --collect-analyze-result RESULT --persist-state-result RESULT --build-pages-result RESULT --deploy-pages-result RESULT --notify-discord-result RESULT --publish-notification-history-result RESULT --notify-operations-result RESULT",
+    "  voicevox-task-tracker report-workflow --run-id ID --run-attempt NUMBER --effect-target production|sandbox|recording --actions-jobs PATH [--tracking-run-id ID] [--completion-directory PATH] [--failure-directory PATH]",
     "  voicevox-task-tracker verify-state --state-directory PATH [--config PATH]",
     "  voicevox-task-tracker verify-checkpoint [--artifact PATH] [--config PATH]",
     "  voicevox-task-tracker verify-runtime-recovery --input PATH [--bundle-root PATH]",

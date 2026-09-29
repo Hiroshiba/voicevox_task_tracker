@@ -14,20 +14,21 @@ import {
 } from "./operations-alert-receipt.js";
 
 const dailyFailureJobs = new Set([
-  "collect-analyze",
-  "persist-state",
-  "build-pages",
-  "deploy-pages",
-  "notify-discord",
-  "publish-notification-history",
+  "quality",
+  "bootstrap",
+  "prepare-runtime",
+  "analyze",
+  "commit-initial-state",
+  "initial-pages",
+  "settle-notifications",
+  "finalize-run",
+  "notification-history-pages",
+  "complete",
+  "recovery-router",
   "notify-operations",
   "report-workflow",
 ]);
-const manualFailureJobs = new Set([
-  "resolve-and-finalize",
-  "publish-notification-history",
-  "notify-operations",
-]);
+const manualFailureJobs = new Set(["resolve-delivery", "notify-operations", "report-workflow"]);
 
 function isMissingFile(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
@@ -88,7 +89,11 @@ async function readPreviousFailure(
       throw new TypeError("以前の公開失敗artifactが空です");
     }
     for (const file of files) {
-      if (!file.isFile() || !/^[0-9a-f-]{36}\.json$/u.test(file.name)) {
+      if (
+        !file.isFile() ||
+        (!/^[0-9a-f-]{36}\.json$/u.test(file.name) &&
+          !/^(?:[0-9a-f]{64}|analyze)-[a-z-]+-attempt-[1-9][0-9]*\.json$/u.test(file.name))
+      ) {
         throw new TypeError("以前の公開失敗artifactのファイル名が不正です");
       }
       if (filenames.has(file.name)) {
@@ -99,7 +104,12 @@ async function readPreviousFailure(
         await readFile(join(directory, entry.name, file.name)),
         nodeContentDigestPort,
       );
-      if (file.name !== `${artifact.failure.invocationId}.json`) {
+      if (
+        file.name !== `${artifact.failure.invocationId}.json` &&
+        !file.name.startsWith(
+          `${artifact.failure.runId?.slice("tracker-run:".length) ?? "analyze"}-`,
+        )
+      ) {
         throw new TypeError("以前の公開失敗artifactのファイル名とinvocationが一致しません");
       }
       failures.push(artifact);

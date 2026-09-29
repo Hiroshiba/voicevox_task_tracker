@@ -71,10 +71,9 @@ function precedingReceiptPath(command: ManualExactCommand | undefined): string |
     case undefined:
     case "verify-checkpoint":
     case "select-runtime":
+    case "resolve-discord-delivery":
     case "encrypt-diagnostics":
       return undefined;
-    case "resolve-discord-delivery":
-      return "artifacts/workflow/initial-state-commit-receipt.json";
     case "settle-notifications":
       return "artifacts/workflow/manual-resolution-receipt.json";
     case "finalize-run":

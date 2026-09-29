@@ -107,8 +107,9 @@ export {
 } from "./workflow-stage.js";
 export {
   createWorkflowRunReport,
+  readOptionalCompletionReceipt,
   readOptionalRunReportFile,
-  type WorkflowJobResult,
-  type WorkflowJobResults,
+  readWorkflowActionJobs,
+  type WorkflowActionJob,
   type WorkflowRunReport,
 } from "./workflow-run-report.js";

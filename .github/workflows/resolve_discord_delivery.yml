@@ -46,16 +46,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  resolve-and-finalize:
+  resolve-delivery:
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-24.04
     permissions:
       contents: write
       actions: read
-    outputs:
-      public_boundary_violation: ${{ steps.verify_checkpoint.outputs.public_boundary_violation || steps.verify_runtime.outputs.public_boundary_violation || steps.resolve_delivery.outputs.public_boundary_violation || steps.settle_notifications.outputs.public_boundary_violation || steps.finalize_run.outputs.public_boundary_violation }}
-      command_failed: ${{ steps.verify_checkpoint.outcome == 'failure' || steps.verify_runtime.outcome == 'failure' || steps.resolve_delivery.outcome == 'failure' || steps.settle_notifications.outcome == 'failure' || steps.finalize_run.outcome == 'failure' || steps.encrypt_diagnostics.outcome == 'failure' }}
-      action_failed: ${{ steps.failure_upload.outcome == 'failure' }}
     env:
       VOICEVOX_EXPECTED_RUN_ID: ${{ inputs.run_id }}
       VOICEVOX_MANUAL_CHECKPOINT_DIGEST: ${{ inputs.checkpoint_digest }}
@@ -69,46 +65,64 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
+      - name: Node.jsを準備
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+      - name: 現行制御CLIを準備
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: 保留runの固定runtimeを選ぶ
+        id: inspect
+        env:
+          MANUAL_SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          MANUAL_CODE_REVISION: ${{ inputs.code_revision }}
+          MANUAL_RUN_ID: ${{ inputs.run_id }}
+        run: |
+          node --enable-source-maps dist/cli/tracker-run.js inspect-run-state --config config.yml --state-ref tracker-state > "$RUNNER_TEMP/manual-bootstrap.json"
+          jq -e --arg source "$MANUAL_SOURCE_RUN_ID" --arg revision "$MANUAL_CODE_REVISION" --arg run_id "$MANUAL_RUN_ID" '
+            .kind == "resume_with_exact_runtime" and
+            .recoveryInput.runId == $run_id and
+            .recoveryInput.runtimeRecoveryPlan.kind == "workflow_bundle" and
+            .recoveryInput.runtimeRecoveryPlan.workflowRunId == $source and
+            .recoveryInput.runtimeRecoveryPlan.codeRevision == $revision
+          ' "$RUNNER_TEMP/manual-bootstrap.json" > /dev/null
+          echo "node_version=$(jq -r '.recoveryInput.runtimeRecoveryPlan.toolchain.nodeVersion | ltrimstr("v")' "$RUNNER_TEMP/manual-bootstrap.json")" >> "$GITHUB_OUTPUT"
       - name: 元runのコードを隔離して取得
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.code_revision }}
           path: artifacts/exact-runtime
           fetch-depth: 0
-      - name: 最新stateを取得
-        working-directory: artifacts/exact-runtime
-        run: git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state
-      - name: Node.jsを準備
+      - name: 記録されたNode.jsを準備
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version-file: artifacts/exact-runtime/.node-version
-      - name: pnpmを準備
-        run: corepack enable
-      - name: 現行制御CLIの依存関係をインストール
-        run: pnpm install --frozen-lockfile
-      - name: 現行制御CLIをビルド
-        run: pnpm build
-      - name: 元runの依存関係をインストール
+          node-version: ${{ steps.inspect.outputs.node_version }}
+      - name: 元runの固定bundleを取得
+        id: source_runtime
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: workflow-cli-runtime
+          path: artifacts/exact-runtime/artifacts/workflow/runtime
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+      - name: 消失した固定bundleを同じsourceから再生成
+        if: steps.source_runtime.outcome == 'failure'
         working-directory: artifacts/exact-runtime
-        run: pnpm install --frozen-lockfile
-      - name: 元runのruntimeと公開artifactを取得
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: validated-public-run
-          path: artifacts/exact-runtime/artifacts/workflow
-          run-id: ${{ inputs.source_run_id }}
-          github-token: ${{ github.token }}
-      - name: 元runの初回commit receiptを取得
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: initial-state-commit-receipt
-          path: artifacts/exact-runtime/artifacts/workflow
-          run-id: ${{ inputs.source_run_id }}
-          github-token: ${{ github.token }}
-      - name: 元runのcheckpointを検証
-        id: verify_checkpoint
-        run: node --enable-source-maps dist/cli/manual-exact-runtime.js verify-checkpoint
-      - name: 元runのexact runtimeを検証
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm build
+          pnpm build:workflow-cli
+          node --input-type=module -e "import { writeWorkflowRuntimeManifest } from './dist/cli/publication-runtime.js'; await writeWorkflowRuntimeManifest(process.cwd());"
+      - name: 元runのstateを取得
+        working-directory: artifacts/exact-runtime
+        run: git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state
+      - name: 固定bundleとcheckpointを検証
         id: verify_runtime
         run: node --enable-source-maps dist/cli/manual-exact-runtime.js select-runtime
       - name: 曖昧な送達を手動解決
@@ -133,200 +147,22 @@ jobs:
             arguments+=(--notification-key "$notification_key")
           done
           node --enable-source-maps dist/cli/manual-exact-runtime.js resolve-discord-delivery "${arguments[@]}"
-      - name: 手動解決receiptを保存
+      - name: 同じrunの手動解決receiptを保存
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: manual-resolution-record
           path: artifacts/exact-runtime/artifacts/workflow/manual-resolution-receipt.json
-          overwrite: true
-          if-no-files-found: error
-          retention-days: 7
-      - name: 同じrunの残り通知をsettleする
-        id: settle_notifications
-        env:
-          DISCORD_OPERATIONS_WEBHOOK_URL: ${{ secrets.DISCORD_OPERATIONS_WEBHOOK_URL }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: node --enable-source-maps dist/cli/manual-exact-runtime.js settle-notifications --manual-resolution-receipt artifacts/workflow/manual-resolution-receipt.json
-      - name: settlement receiptを保存
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: notification-settlement-record
-          path: artifacts/exact-runtime/artifacts/workflow/notification-settlement-receipt.json
-          overwrite: true
-          if-no-files-found: error
-          retention-days: 7
-      - name: 同じrunをfinalizeする
-        id: finalize_run
-        run: node --enable-source-maps dist/cli/manual-exact-runtime.js finalize-run
-      - name: finalization receiptを保存
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: run-finalization-record
-          path: artifacts/exact-runtime/artifacts/workflow/run-finalization-receipt.json
-          overwrite: true
           if-no-files-found: error
           retention-days: 7
       - name: 診断JSONLを暗号化
-        id: encrypt_diagnostics
-        if: always() && (steps.verify_checkpoint.outcome == 'success' || steps.verify_checkpoint.outcome == 'failure')
+        if: always() && (steps.inspect.outcome == 'success' || steps.inspect.outcome == 'failure')
         env:
           VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 }}
-        run: node --enable-source-maps dist/cli/manual-exact-runtime.js encrypt-diagnostics
-      - name: 公開失敗artifactを保存
-        id: failure_upload
-        if: always()
-        uses: ./.github/actions/upload-failure-artifact
-        with:
-          artifact-name: manual-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-      - name: 暗号化済み診断artifactを保存
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: manual-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-          path: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.bundle
-          if-no-files-found: ignore
-          retention-days: 7
-
-  publish-notification-history:
-    needs: resolve-and-finalize
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      actions: read
-      pages: write
-      id-token: write
-    outputs:
-      public_boundary_violation: ${{ steps.prepare_history_pages.outputs.public_boundary_violation || steps.preflight.outputs.public_boundary_violation || steps.record.outputs.public_boundary_violation }}
-      command_failed: ${{ steps.prepare_history_pages.outcome == 'failure' || steps.preflight.outcome == 'failure' || steps.record.outcome == 'failure' || steps.encrypt_diagnostics.outcome == 'failure' }}
-      action_failed: ${{ steps.configure.outcome == 'failure' || steps.upload.outcome == 'failure' || steps.deployment.outcome == 'failure' || steps.failure_upload.outcome == 'failure' }}
-    env:
-      VOICEVOX_EXPECTED_RUN_ID: ${{ inputs.run_id }}
-      VOICEVOX_MANUAL_CHECKPOINT_DIGEST: ${{ inputs.checkpoint_digest }}
-      VOICEVOX_MANUAL_CODE_REVISION: ${{ inputs.code_revision }}
-      VOICEVOX_MANUAL_EXACT_CHECKOUT: ${{ github.workspace }}/artifacts/exact-runtime
-      VOICEVOX_TASK_TRACKER_FAILURE_DIRECTORY: ${{ github.workspace }}/artifacts/workflow/failures
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: 診断先を設定
-        run: echo "VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH=$RUNNER_TEMP/voicevox-task-tracker-diagnostics-$GITHUB_JOB.jsonl" >> "$GITHUB_ENV"
-      - name: 現行制御コードを取得
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: 元runのコードを隔離して取得
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          ref: ${{ inputs.code_revision }}
-          path: artifacts/exact-runtime
-          fetch-depth: 0
-          persist-credentials: false
-      - name: 最新stateを取得
-        working-directory: artifacts/exact-runtime
-        run: git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state
-      - name: Node.jsを準備
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: artifacts/exact-runtime/.node-version
-      - name: pnpmを準備
-        run: corepack enable
-      - name: 現行制御CLIの依存関係をインストール
-        run: pnpm install --frozen-lockfile
-      - name: 現行制御CLIをビルド
-        run: pnpm build
-      - name: 元runの依存関係をインストール
-        working-directory: artifacts/exact-runtime
-        run: pnpm install --frozen-lockfile
-      - name: 元runのruntimeと公開artifactを取得
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: validated-public-run
-          path: artifacts/exact-runtime/artifacts/workflow
-          run-id: ${{ inputs.source_run_id }}
-          github-token: ${{ github.token }}
-      - name: settlement receiptを取得
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: notification-settlement-record
-          path: artifacts/exact-runtime/artifacts/workflow
-      - name: finalization receiptを取得
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: run-finalization-record
-          path: artifacts/exact-runtime/artifacts/workflow
-      - name: 保存済み通知履歴Pages公開結果を取得
-        uses: ./.github/actions/download-prior-notification-history-outcome
-        with:
-          run-id: ${{ github.run_id }}
-          github-token: ${{ github.token }}
-          output-path: artifacts/exact-runtime/artifacts/workflow/previous/notification-history-pages-deployment.json
-      - name: 通知履歴Pagesを準備
-        id: prepare_history_pages
-        run: node --enable-source-maps dist/cli/manual-exact-runtime.js prepare-notification-history-pages
-      - name: 通知履歴Pages build receiptを保存
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: notification-history-pages-build-record
-          path: artifacts/exact-runtime/artifacts/workflow/notification-history-pages-build.json
-          overwrite: true
-          if-no-files-found: error
-          retention-days: 7
-      - name: deploy直前のfinal stateと出力を検証
-        id: preflight
         run: |
-          node --enable-source-maps dist/cli/manual-exact-runtime.js preflight-notification-history-deployment --run-attempt "${{ github.run_attempt }}"
-          echo "kind=$(jq -r .kind artifacts/exact-runtime/artifacts/workflow/notification-history-pages-preflight.json)" >> "$GITHUB_OUTPUT"
-          echo "intent_digest=$(jq -r '.deploymentIntentDigest // ""' artifacts/exact-runtime/artifacts/workflow/notification-history-pages-preflight.json)" >> "$GITHUB_OUTPUT"
-      - name: Pagesを構成
-        id: configure
-        if: steps.preflight.outputs.kind == 'ready'
-        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
-      - name: 通知履歴Pages artifactを保存
-        id: upload
-        if: steps.preflight.outputs.kind == 'ready'
-        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
-        with:
-          name: manual-pages-${{ github.run_id }}-${{ github.run_attempt }}-notification-history
-          path: artifacts/exact-runtime/dist/web
-      - name: Pagesへdeploy
-        id: deployment
-        if: steps.upload.outcome == 'success'
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
-        with:
-          artifact_name: manual-pages-${{ github.run_id }}-${{ github.run_attempt }}-notification-history
-          timeout: 1200000
-      - name: 通知履歴Pages actionの結果を記録
-        id: record
-        if: always() && steps.preflight.outcome == 'success'
-        env:
-          PAGES_UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
-          PAGES_DEPLOYMENT_OUTCOME: ${{ steps.deployment.outcome }}
-          PAGES_DEPLOYMENT_INTENT_DIGEST: ${{ steps.preflight.outputs.intent_digest }}
-          PAGES_ARTIFACT_NAME: manual-pages-${{ github.run_id }}-${{ github.run_attempt }}-notification-history
-          PAGES_ARTIFACT_ID: ${{ steps.upload.outputs.artifact_id }}
-          PAGES_ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact_digest }}
-          PAGES_DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
-          PAGES_URL: ${{ steps.deployment.outputs.page_url }}
-        run: node --enable-source-maps dist/cli/manual-exact-runtime.js record-notification-history-deployment
-      - name: 通知履歴Pages receiptまたは失敗を保存
-        if: always() && steps.record.outcome != 'skipped'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: notification-history-pages-deployment-record
-          path: artifacts/exact-runtime/artifacts/workflow/notification-history-pages-deployment.json
-          overwrite: true
-          if-no-files-found: error
-          retention-days: 7
-      - name: 診断JSONLを暗号化
-        id: encrypt_diagnostics
-        if: always() && (steps.prepare_history_pages.outcome == 'success' || steps.prepare_history_pages.outcome == 'failure')
-        env:
-          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 }}
-        run: node --enable-source-maps dist/cli/manual-exact-runtime.js encrypt-diagnostics
+          if [[ -f "$RUNNER_TEMP/voicevox-task-tracker-diagnostics-$GITHUB_JOB.jsonl" ]]; then
+            .github/scripts/encrypt-diagnostics.sh dist/cli/tracker-run.js
+          fi
       - name: 公開失敗artifactを保存
-        id: failure_upload
         if: always()
         uses: ./.github/actions/upload-failure-artifact
         with:
@@ -340,101 +176,41 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  notify-operations:
-    needs:
-      - resolve-and-finalize
-      - publish-notification-history
-    if: >-
-      always() &&
-      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
-      (needs.resolve-and-finalize.result == 'failure' ||
-      needs.publish-notification-history.result == 'failure') &&
-      needs.resolve-and-finalize.outputs.public_boundary_violation != 'true' &&
-      needs.publish-notification-history.outputs.public_boundary_violation != 'true'
-    runs-on: ubuntu-24.04
+  tracking:
+    needs: resolve-delivery
+    if: needs.resolve-delivery.result == 'success'
     permissions:
       contents: write
       actions: read
-    steps:
-      - name: ソースコードを取得
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-depth: 0
-      - name: 最新stateを取得
-        run: git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state
-      - name: Node.jsを準備
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: .node-version
-      - name: pnpmを準備
-        run: corepack enable
-      - name: 依存関係をインストール
-        run: pnpm install --frozen-lockfile
-      - name: CLIをビルド
-        run: pnpm build
-      - name: 公開失敗artifactを取得
-        id: download_failures
-        continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          pattern: manual-failure-${{ github.run_id }}-${{ github.run_attempt }}-*
-          path: artifacts/workflow/failures
-          merge-multiple: true
-      - name: 以前の運用障害通知の証拠を取得
-        uses: ./.github/actions/download-prior-operations-artifacts
-        with:
-          workflow-kind: manual
-          run-id: ${{ github.run_id }}
-          github-token: ${{ github.token }}
-      - name: 運用障害をDiscordへ通知
-        id: notify
-        env:
-          DISCORD_OPERATIONS_WEBHOOK_URL: ${{ secrets.DISCORD_OPERATIONS_WEBHOOK_URL }}
-          WORKFLOW_RUN_ID: ${{ github.run_id }}
-          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
-          RESOLVE_RESULT: ${{ needs.resolve-and-finalize.result }}
-          RESOLVE_COMMAND_FAILED: ${{ needs.resolve-and-finalize.outputs.command_failed }}
-          RESOLVE_ACTION_FAILED: ${{ needs.resolve-and-finalize.outputs.action_failed }}
-          HISTORY_RESULT: ${{ needs.publish-notification-history.result }}
-          HISTORY_COMMAND_FAILED: ${{ needs.publish-notification-history.outputs.command_failed }}
-          HISTORY_ACTION_FAILED: ${{ needs.publish-notification-history.outputs.action_failed }}
-          FAILURE_DOWNLOAD_OUTCOME: ${{ steps.download_failures.outcome }}
-          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
-          VOICEVOX_TASK_TRACKER_FAILURE_DIRECTORY: ${{ github.workspace }}/artifacts/workflow/notify-failures
-        run: |
-          occurred_at="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
-          arguments=(notify-operations --workflow-run-id "$WORKFLOW_RUN_ID" --workflow-run-attempt "$WORKFLOW_RUN_ATTEMPT" --workflow-kind manual --occurred-at "$occurred_at")
-          if [[ "$RESOLVE_RESULT" == "failure" && ( "$RESOLVE_COMMAND_FAILED" != "true" || "$RESOLVE_ACTION_FAILED" == "true" || "$FAILURE_DOWNLOAD_OUTCOME" == "failure" ) ]]; then
-            arguments+=(--failed-job resolve-and-finalize)
-          fi
-          if [[ "$HISTORY_RESULT" == "failure" && ( "$HISTORY_COMMAND_FAILED" != "true" || "$HISTORY_ACTION_FAILED" == "true" || "$FAILURE_DOWNLOAD_OUTCOME" == "failure" ) ]]; then
-            arguments+=(--failed-job publish-notification-history)
-          fi
-          pnpm tracker:run "${arguments[@]}"
-      - name: 運用障害通知receiptを保存
-        if: always() && steps.notify.outcome != 'skipped'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: operations-alert-receipt-${{ github.run_id }}-${{ github.run_attempt }}
-          path: artifacts/workflow/operations-alert-receipt.json
-          if-no-files-found: warn
-          retention-days: 7
-      - name: 公開失敗artifactを保存
-        if: always()
-        uses: ./.github/actions/upload-failure-artifact
-        with:
-          artifact-name: manual-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-          failure-directory: artifacts/workflow/notify-failures
-      - name: 診断JSONLを暗号化
-        if: always() && (steps.notify.outcome == 'success' || steps.notify.outcome == 'failure')
-        env:
-          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 }}
-        run: .github/scripts/encrypt-diagnostics.sh dist/cli/tracker-run.js
-      - name: 暗号化済み診断artifactを保存
-        if: always() && (steps.notify.outcome == 'success' || steps.notify.outcome == 'failure')
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: manual-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-          path: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.bundle
-          if-no-files-found: error
-          retention-days: 7
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/_tracking-run.yml
+    with:
+      state_ref: tracker-state
+      pages_environment: github-pages
+      effect_concurrency_key: voicevox-task-tracker-daily
+      effect_target: production
+      config_path: config.yml
+      backfill: none
+      notification_action: send
+      expected_run_id: ${{ inputs.run_id }}
+      manual_resolution_artifact: true
+    secrets: inherit
+
+  report-resolution-failure:
+    needs: [resolve-delivery, tracking]
+    if: always() && needs.resolve-delivery.result == 'failure'
+    permissions:
+      contents: write
+      actions: read
+    uses: ./.github/workflows/_tracking-observe.yml
+    with:
+      state_ref: tracker-state
+      effect_target: production
+      config_path: config.yml
+      quality_success: false
+      run_id: ${{ inputs.run_id }}
+      stage_results_json: ${{ toJSON(needs) }}
+      has_failed_stage: true
+      workflow_kind: manual
+    secrets: inherit

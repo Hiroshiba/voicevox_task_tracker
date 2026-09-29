@@ -4,7 +4,6 @@ import {
   notificationActionSchema,
   type NotificationAction,
 } from "../application/tracking-run/contracts/closed-values.js";
-import { type WorkflowJobResult, type WorkflowJobResults } from "./workflow-run-report.js";
 import {
   optionalSingleOption,
   parseOptions,
@@ -199,15 +198,15 @@ export type ResolveDiscordDeliveryCliCommand = Readonly<{
 /** workflow全体のjob結果をCLI reportへ統合する入力。 */
 export type ReportWorkflowCliCommand = Readonly<{
   kind: "report-workflow";
-  configPath: string;
+  actionsJobsPath: string;
   collectAnalyzeReportPath: string;
-  initialStateReceiptPath: string;
-  settlementReceiptPath: string;
-  finalizationReceiptPath: string;
+  completionDirectory: string;
+  failureDirectory: string;
   outputPath: string;
   workflowRunId: string;
   workflowRunAttempt: number;
-  jobResults: WorkflowJobResults;
+  trackingRunId: string | undefined;
+  effectTarget: "production" | "sandbox" | "recording";
 }>;
 
 /** 指定した永続stateディレクトリを検証するCLI入力。 */
@@ -640,21 +639,6 @@ function parseResolveDiscordDelivery(args: readonly string[]): ResolveDiscordDel
   });
 }
 
-function parseWorkflowJobResult(options: ParsedOptions, name: string): WorkflowJobResult {
-  const value = requiredSingleOption(options, name, "report-workflow");
-  switch (value) {
-    case "success":
-    case "failure":
-    case "cancelled":
-    case "skipped":
-      return value;
-    default:
-      throw usageError(
-        `${name}にはsuccess、failure、cancelled、skippedのいずれかを指定してください`,
-      );
-  }
-}
-
 function parseWorkflowRunAttempt(options: ParsedOptions): number {
   const source = requiredSingleOption(options, "--run-attempt", "report-workflow");
   const value = Number.parseInt(source, 10);
@@ -676,22 +660,15 @@ function parseReportWorkflow(args: readonly string[]): ReportWorkflowCliCommand 
   const options = parseOptions(
     args,
     new Set([
-      "--build-pages-result",
-      "--collect-analyze-result",
+      "--actions-jobs",
       "--collect-report",
-      "--config",
-      "--receipt",
-      "--settlement-receipt",
-      "--finalization-receipt",
-      "--deploy-pages-result",
-      "--notify-discord-result",
-      "--notify-operations-result",
+      "--completion-directory",
+      "--effect-target",
+      "--failure-directory",
       "--output",
-      "--persist-state-result",
-      "--publish-notification-history-result",
       "--run-attempt",
       "--run-id",
-      "--quality-result",
+      "--tracking-run-id",
     ]),
   );
   const collectAnalyzeReportPath = singleOption(
@@ -703,37 +680,25 @@ function parseReportWorkflow(args: readonly string[]): ReportWorkflowCliCommand 
   if (collectAnalyzeReportPath === outputPath) {
     throw usageError("--collect-reportと--outputには異なるパスを指定してください");
   }
+  const trackingRunId = optionalSingleOption(options, "--tracking-run-id");
+  if (trackingRunId != null && !/^tracker-run:[0-9a-f]{64}$/u.test(trackingRunId)) {
+    throw usageError("--tracking-run-idが不正です");
+  }
+  const effectTarget = requiredSingleOption(options, "--effect-target", "report-workflow");
+  if (effectTarget !== "production" && effectTarget !== "sandbox" && effectTarget !== "recording") {
+    throw usageError("--effect-targetが不正です");
+  }
   return Object.freeze({
     kind: "report-workflow",
-    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
+    actionsJobsPath: requiredSingleOption(options, "--actions-jobs", "report-workflow"),
     collectAnalyzeReportPath,
-    initialStateReceiptPath: singleOption(options, "--receipt", DEFAULT_INITIAL_STATE_RECEIPT_PATH),
-    settlementReceiptPath: singleOption(
-      options,
-      "--settlement-receipt",
-      DEFAULT_SETTLEMENT_RECEIPT_PATH,
-    ),
-    finalizationReceiptPath: singleOption(
-      options,
-      "--finalization-receipt",
-      DEFAULT_FINALIZATION_RECEIPT_PATH,
-    ),
+    completionDirectory: singleOption(options, "--completion-directory", "artifacts/workflow/runs"),
+    failureDirectory: singleOption(options, "--failure-directory", "artifacts/workflow/failures"),
     outputPath,
     workflowRunId: parseWorkflowRunId(options),
     workflowRunAttempt: parseWorkflowRunAttempt(options),
-    jobResults: Object.freeze({
-      quality: parseWorkflowJobResult(options, "--quality-result"),
-      "collect-analyze": parseWorkflowJobResult(options, "--collect-analyze-result"),
-      "persist-state": parseWorkflowJobResult(options, "--persist-state-result"),
-      "build-pages": parseWorkflowJobResult(options, "--build-pages-result"),
-      "deploy-pages": parseWorkflowJobResult(options, "--deploy-pages-result"),
-      "notify-discord": parseWorkflowJobResult(options, "--notify-discord-result"),
-      "publish-notification-history": parseWorkflowJobResult(
-        options,
-        "--publish-notification-history-result",
-      ),
-      "notify-operations": parseWorkflowJobResult(options, "--notify-operations-result"),
-    }),
+    trackingRunId,
+    effectTarget,
   });
 }
 

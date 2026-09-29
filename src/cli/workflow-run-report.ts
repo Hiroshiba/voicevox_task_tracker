@@ -1,124 +1,153 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
 
 import { z } from "zod";
 
-import { CliWorkflowArtifactError } from "./errors.js";
-import { createStateRunReport, type StateRunReport } from "../persistence/state-run-report.js";
-import {
-  createEmptyRunMetrics,
-  createRunReport,
-  type RunMetrics,
-  type RunReport,
-} from "./run-report.js";
+import type { PublicFailureArtifact } from "../application/tracking-run/failure-artifact.js";
+import { selectPrimaryFailureArtifact } from "../application/tracking-run/failure-primary.js";
+import { decodeReceipt } from "../application/tracking-run/receipt-codec.js";
+import type { CompletionReceipt } from "../application/tracking-run/receipt-schema.js";
+import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
+import { readWorkflowFailureArtifacts } from "./operations-failure-selection.js";
+import { createRunReport, type RunReport } from "./run-report.js";
 
-const workflowJobResultSchema = z.enum(["success", "failure", "cancelled", "skipped"]);
-const workflowJobResultsSchema = z.strictObject({
-  quality: workflowJobResultSchema,
-  "collect-analyze": workflowJobResultSchema,
-  "persist-state": workflowJobResultSchema,
-  "build-pages": workflowJobResultSchema,
-  "deploy-pages": workflowJobResultSchema,
-  "notify-discord": workflowJobResultSchema,
-  "publish-notification-history": workflowJobResultSchema,
-  "notify-operations": workflowJobResultSchema,
+const actionStepSchema = z.strictObject({
+  name: z.string().min(1),
+  status: z.string().min(1),
+  conclusion: z.string().min(1).nullable(),
 });
-const workflowRunReportInputSchema = z.strictObject({
-  workflowRunId: z
-    .string()
-    .regex(/^[1-9]\d*$/u, "workflow run IDには1以上の整数を指定してください")
-    .max(100, "workflow run IDは100文字以内にしてください"),
-  workflowRunAttempt: z.number().int().positive(),
-  jobs: workflowJobResultsSchema,
-  collectAnalyzeReport: z.union([z.record(z.string(), z.unknown()), z.null()]),
-  finalReport: z.union([z.record(z.string(), z.unknown()), z.null()]),
-});
-const fileNotFoundErrorSchema = z.object({
-  code: z.literal("ENOENT"),
+const actionJobSchema = z.strictObject({
+  name: z.string().min(1),
+  status: z.string().min(1),
+  conclusion: z.string().min(1).nullable(),
+  steps: z.array(actionStepSchema),
 });
 
-/** GitHub Actions jobが返す完了結果。 */
-export type WorkflowJobResult = z.output<typeof workflowJobResultSchema>;
+/** GitHub Actionsが観測したjobとstepの結果。 */
+export type WorkflowActionJob = z.output<typeof actionJobSchema>;
 
-/** 日次workflowで集約する全jobの完了結果。 */
-export type WorkflowJobResults = Readonly<z.output<typeof workflowJobResultsSchema>>;
-
-/** 最終state reportと全job結果をまとめたworkflow run report。 */
+/** engineのreceiptとActionsのjob/step結果を分けたworkflow report。 */
 export type WorkflowRunReport = Readonly<{
-  schemaVersion: "6";
+  schemaVersion: "7";
   workflowRunId: string;
   workflowRunAttempt: number;
-  status: "success" | "fallback" | "failure";
-  complete: boolean;
-  jobs: WorkflowJobResults;
-  metrics: RunMetrics;
-  collectAnalyzeReport: RunReport | null;
-  finalReport: StateRunReport | null;
+  trackingRunId: string | null;
+  effectTarget: "production" | "sandbox" | "recording";
+  engine: Readonly<{
+    completionReceipt: CompletionReceipt | null;
+    primaryFailure: PublicFailureArtifact | null;
+    collectAnalyzeReport: RunReport | null;
+  }>;
+  actions: Readonly<{ jobs: readonly WorkflowActionJob[] }>;
 }>;
 
-/** 最終state reportと全job結果を検証してworkflow run reportを作る。 */
-export function createWorkflowRunReport(value: unknown): WorkflowRunReport {
-  const parsed = workflowRunReportInputSchema.safeParse(value);
-  if (!parsed.success) {
-    throw new TypeError("workflow run reportの入力検証に失敗しました", {
-      cause: parsed.error,
-    });
-  }
-  const collectAnalyzeReport =
-    parsed.data.collectAnalyzeReport == null
-      ? null
-      : createRunReport(parsed.data.collectAnalyzeReport);
-  const finalReport =
-    parsed.data.finalReport == null ? null : createStateRunReport(parsed.data.finalReport);
-  if (collectAnalyzeReport != null && collectAnalyzeReport.command !== "collect-analyze") {
-    throw new TypeError("workflow run reportにはcollect-analyzeのCLI reportを指定してください");
-  }
-  if (
-    finalReport != null &&
-    collectAnalyzeReport != null &&
-    (collectAnalyzeReport.status === "failure" ||
-      collectAnalyzeReport.runId !== finalReport.runId ||
-      collectAnalyzeReport.status !== finalReport.status)
-  ) {
-    throw new TypeError("workflowの最終state reportと収集run reportが一致しません");
-  }
-  const status = finalReport?.status ?? "failure";
-  const metrics = finalReport?.metrics ?? collectAnalyzeReport?.metrics ?? createEmptyRunMetrics();
-  return Object.freeze({
-    schemaVersion: "6",
-    workflowRunId: parsed.data.workflowRunId,
-    workflowRunAttempt: parsed.data.workflowRunAttempt,
-    status,
-    complete: finalReport != null,
-    jobs: Object.freeze({
-      ...parsed.data.jobs,
-    }),
-    metrics: Object.freeze({
-      ...metrics,
-    }),
-    collectAnalyzeReport,
-    finalReport,
-  });
+function isMissingFile(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
-/** 存在するCLI run reportを検証して読み、未作成ならnullを返す。 */
+/** 完了artifactが存在すればreceiptを検証して読む。 */
+export async function readOptionalCompletionReceipt(
+  directory: string,
+): Promise<CompletionReceipt | null> {
+  let entries;
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch (error: unknown) {
+    if (isMissingFile(error)) {
+      return null;
+    }
+    throw error;
+  }
+  let completion: CompletionReceipt | null = null;
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^[0-9a-f]{64}$/u.test(entry.name)) {
+      throw new TypeError("完了artifactのrunディレクトリが不正です");
+    }
+    let bytes: Uint8Array;
+    try {
+      bytes = await readFile(join(directory, entry.name, "completion-receipt.json"));
+    } catch (error: unknown) {
+      if (isMissingFile(error)) {
+        continue;
+      }
+      throw error;
+    }
+    const receipt = decodeReceipt(bytes, nodeContentDigestPort);
+    if (receipt.receiptType !== "completion" || completion != null) {
+      throw new TypeError("workflowの完了receiptが一意ではありません");
+    }
+    completion = receipt;
+  }
+  return completion;
+}
+
+/** Actions APIから取得したjobとstepのJSON Linesを検証して読む。 */
+export async function readWorkflowActionJobs(path: string): Promise<readonly WorkflowActionJob[]> {
+  const lines = (await readFile(path, "utf8")).trim().split("\n");
+  if (lines.length === 0 || lines[0] === "") {
+    throw new TypeError("Actions job結果がありません");
+  }
+  return Object.freeze(
+    lines.map((line) => {
+      const value: unknown = JSON.parse(line);
+      return actionJobSchema.parse(value);
+    }),
+  );
+}
+
+/** 収集run reportがあれば検証して読む。 */
 export async function readOptionalRunReportFile(path: string): Promise<RunReport | null> {
   let source: string;
   try {
     source = await readFile(path, "utf8");
   } catch (error: unknown) {
-    if (fileNotFoundErrorSchema.safeParse(error).success) {
+    if (isMissingFile(error)) {
       return null;
     }
-    throw new CliWorkflowArtifactError(path, "invalid", {
-      cause: error,
-    });
+    throw error;
   }
-  try {
-    const parseJson: (input: string) => unknown = JSON.parse;
-    return createRunReport(parseJson(source));
-  } catch (error: unknown) {
-    throw new CliWorkflowArtifactError(path, "invalid", {
-      cause: error,
-    });
+  const value: unknown = JSON.parse(source);
+  return createRunReport(value);
+}
+
+/** engineとActionsの独立した観測値からworkflow reportを作る。 */
+export async function createWorkflowRunReport(
+  input: Readonly<{
+    workflowRunId: string;
+    workflowRunAttempt: number;
+    trackingRunId: string | undefined;
+    effectTarget: "production" | "sandbox" | "recording";
+    completionDirectory: string;
+    failureDirectory: string;
+    actionsJobsPath: string;
+    collectAnalyzeReportPath: string;
+  }>,
+): Promise<WorkflowRunReport> {
+  const [completionReceipt, failures, actionsJobs, collectAnalyzeReport] = await Promise.all([
+    readOptionalCompletionReceipt(input.completionDirectory),
+    readWorkflowFailureArtifacts(input.failureDirectory),
+    readWorkflowActionJobs(input.actionsJobsPath),
+    readOptionalRunReportFile(input.collectAnalyzeReportPath),
+  ]);
+  if (
+    input.trackingRunId != null &&
+    completionReceipt != null &&
+    (completionReceipt.binding.bindingKind !== "checkpoint" ||
+      completionReceipt.binding.runId !== input.trackingRunId)
+  ) {
+    throw new TypeError("workflowの完了receiptと対象run IDが一致しません");
   }
+  return Object.freeze({
+    schemaVersion: "7",
+    workflowRunId: input.workflowRunId,
+    workflowRunAttempt: input.workflowRunAttempt,
+    trackingRunId: input.trackingRunId ?? null,
+    effectTarget: input.effectTarget,
+    engine: Object.freeze({
+      completionReceipt,
+      primaryFailure: failures.length === 0 ? null : selectPrimaryFailureArtifact(failures),
+      collectAnalyzeReport,
+    }),
+    actions: Object.freeze({ jobs: actionsJobs }),
+  });
 }
