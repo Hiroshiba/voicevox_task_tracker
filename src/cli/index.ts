@@ -10,6 +10,8 @@ export {
   type BuildPagesCliCommand,
   type PreflightPagesDeploymentCliCommand,
   type RecordPagesDeploymentCliCommand,
+  type PreflightNotificationHistoryDeploymentCliCommand,
+  type RecordNotificationHistoryDeploymentCliCommand,
   type CliCommand,
   type CliSchedule,
   type CollectAnalyzeCliCommand,

@@ -3,6 +3,10 @@ import type { ProductionRuntimeAdapters } from "../adapters.js";
 import { createBuildWorkflowPagesStage } from "./build-pages.js";
 import { prepareWorkflowNotificationHistoryPages } from "../../run-publication/workflow-history-pages.js";
 import {
+  preflightWorkflowNotificationHistoryDeployment,
+  recordWorkflowNotificationHistoryDeployment,
+} from "../../run-publication/workflow-history-deployment.js";
+import {
   preflightWorkflowPagesDeployment,
   recordWorkflowPagesDeployment,
 } from "../../run-publication/deployment.js";
@@ -29,6 +33,10 @@ export function createWorkflowStageRunner(
     buildPages: createBuildWorkflowPagesStage(adapters),
     prepareNotificationHistoryPages: (command) =>
       prepareWorkflowNotificationHistoryPages(adapters, command),
+    preflightNotificationHistoryDeployment: (command) =>
+      preflightWorkflowNotificationHistoryDeployment(adapters, command),
+    recordNotificationHistoryDeployment: (command) =>
+      recordWorkflowNotificationHistoryDeployment(adapters, command),
     preflightPagesDeployment: (command) => preflightWorkflowPagesDeployment(adapters, command),
     recordPagesDeployment: (command) => recordWorkflowPagesDeployment(adapters, command),
     settleNotifications: createSettleWorkflowNotificationsStage(adapters),

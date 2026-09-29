@@ -1,6 +1,8 @@
 import {
   type BuildPagesCliCommand,
   type PrepareNotificationHistoryPagesCliCommand,
+  type PreflightNotificationHistoryDeploymentCliCommand,
+  type RecordNotificationHistoryDeploymentCliCommand,
   type PreflightPagesDeploymentCliCommand,
   type RecordPagesDeploymentCliCommand,
   type SettleNotificationsCliCommand,
@@ -21,6 +23,8 @@ export type WorkflowStageCliCommand =
   | PersistStateCliCommand
   | BuildPagesCliCommand
   | PrepareNotificationHistoryPagesCliCommand
+  | PreflightNotificationHistoryDeploymentCliCommand
+  | RecordNotificationHistoryDeploymentCliCommand
   | PreflightPagesDeploymentCliCommand
   | RecordPagesDeploymentCliCommand
   | SettleNotificationsCliCommand
@@ -40,6 +44,12 @@ export type WorkflowStageDependencies = Readonly<{
   buildPages: (command: BuildPagesCliCommand) => Promise<void>;
   prepareNotificationHistoryPages: (
     command: PrepareNotificationHistoryPagesCliCommand,
+  ) => Promise<void>;
+  preflightNotificationHistoryDeployment: (
+    command: PreflightNotificationHistoryDeploymentCliCommand,
+  ) => Promise<void>;
+  recordNotificationHistoryDeployment: (
+    command: RecordNotificationHistoryDeploymentCliCommand,
   ) => Promise<void>;
   preflightPagesDeployment: (command: PreflightPagesDeploymentCliCommand) => Promise<void>;
   recordPagesDeployment: (command: RecordPagesDeploymentCliCommand) => Promise<void>;
@@ -74,6 +84,12 @@ export class WorkflowStageRunner {
         return;
       case "prepare-notification-history-pages":
         await this.#dependencies.prepareNotificationHistoryPages(command);
+        return;
+      case "preflight-notification-history-deployment":
+        await this.#dependencies.preflightNotificationHistoryDeployment(command);
+        return;
+      case "record-notification-history-deployment":
+        await this.#dependencies.recordNotificationHistoryDeployment(command);
         return;
       case "preflight-pages-deployment":
         await this.#dependencies.preflightPagesDeployment(command);

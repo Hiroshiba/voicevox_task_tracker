@@ -5,8 +5,16 @@ import {
   type NotificationAction,
 } from "../application/tracking-run/contracts/closed-values.js";
 import { assertNonNullable } from "../util/index.js";
-import { CliUsageError } from "./errors.js";
 import { type WorkflowJobResult, type WorkflowJobResults } from "./workflow-run-report.js";
+import { parseOptions, singleOption, usageError, type ParsedOptions } from "./command-options.js";
+import {
+  parsePrepareNotificationHistoryPages,
+  parsePreflightNotificationHistoryDeployment,
+  parseRecordNotificationHistoryDeployment,
+  type PrepareNotificationHistoryPagesCliCommand,
+  type PreflightNotificationHistoryDeploymentCliCommand,
+  type RecordNotificationHistoryDeploymentCliCommand,
+} from "./notification-history-deployment-command.js";
 
 export { formatCliUsage } from "./command-usage.js";
 
@@ -17,12 +25,16 @@ const DEFAULT_WORKFLOW_ARTIFACT_PATH = "artifacts/workflow/validated-run.json";
 const DEFAULT_INITIAL_STATE_RECEIPT_PATH = "artifacts/workflow/initial-state-commit-receipt.json";
 const DEFAULT_SETTLEMENT_RECEIPT_PATH = "artifacts/workflow/notification-settlement-receipt.json";
 const DEFAULT_FINALIZATION_RECEIPT_PATH = "artifacts/workflow/run-finalization-receipt.json";
-const DEFAULT_HISTORY_BUILD_PATH = "artifacts/workflow/notification-history-pages-build.json";
 const DEFAULT_COLLECT_ANALYZE_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/collect-analyze.json`;
 const DEFAULT_WORKFLOW_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/workflow.json`;
 const REPOSITORY_FILTER_PATTERN = /^VOICEVOX\/[A-Za-z0-9._-]+$/u;
 const DELIVERY_ID_PATTERN = /^discord-digest:v1:[0-9a-f]{24}:message:[1-9][0-9]*$/u;
 export { notificationActionSchema, type NotificationAction };
+export type {
+  PrepareNotificationHistoryPagesCliCommand,
+  PreflightNotificationHistoryDeploymentCliCommand,
+  RecordNotificationHistoryDeploymentCliCommand,
+} from "./notification-history-deployment-command.js";
 const deliveryIdSchema = z.string().regex(DELIVERY_ID_PATTERN);
 const resolveDiscordDeliveryResolutionSchema = z.enum(["retry", "acknowledge"]);
 
@@ -93,16 +105,6 @@ export type BuildPagesCliCommand = Readonly<{
   kind: "build-pages";
   configPath: string;
   initialStateReceiptPath: string;
-  buildArtifactPath: string;
-  outputDirectory: string;
-}>;
-
-/** 最終stateから通知履歴Pagesの公開要否とbuild artifactを作る入力。 */
-export type PrepareNotificationHistoryPagesCliCommand = Readonly<{
-  kind: "prepare-notification-history-pages";
-  configPath: string;
-  settlementReceiptPath: string;
-  finalizationReceiptPath: string;
   buildArtifactPath: string;
   outputDirectory: string;
 }>;
@@ -243,6 +245,8 @@ export type CliCommand =
   | PersistStateCliCommand
   | BuildPagesCliCommand
   | PrepareNotificationHistoryPagesCliCommand
+  | PreflightNotificationHistoryDeploymentCliCommand
+  | RecordNotificationHistoryDeploymentCliCommand
   | PreflightPagesDeploymentCliCommand
   | RecordPagesDeploymentCliCommand
   | SettleNotificationsCliCommand
@@ -257,46 +261,6 @@ export type CliCommand =
   | VerifyReceiptChainCliCommand
   | ReportFailureCliCommand
   | HelpCliCommand;
-
-type ParsedOptions = ReadonlyMap<string, readonly string[]>;
-
-function usageError(message: string, cause?: unknown): CliUsageError {
-  return new CliUsageError(message, cause == null ? {} : { cause });
-}
-
-function parseOptions(args: readonly string[], allowedOptions: ReadonlySet<string>): ParsedOptions {
-  const values = new Map<string, string[]>();
-  for (let index = 0; index < args.length; index += 2) {
-    const name = args[index];
-    const value = args[index + 1];
-    assertNonNullable(name, "CLI option名を取得できませんでした");
-    if (!name.startsWith("--") || !allowedOptions.has(name)) {
-      throw usageError(`未対応のoptionです。対象: ${name}`);
-    }
-    if (value == null || value.startsWith("--")) {
-      throw usageError(`${name}には値が必要です`);
-    }
-    const existing = values.get(name) ?? [];
-    values.set(name, [...existing, value]);
-  }
-  return values;
-}
-
-function singleOption(options: ParsedOptions, name: string, fallback: string): string {
-  const values = options.get(name);
-  if (values == null) {
-    return fallback;
-  }
-  if (values.length !== 1) {
-    throw usageError(`${name}は1回だけ指定してください`);
-  }
-  const value = values[0];
-  assertNonNullable(value, `${name}の値を取得できませんでした`);
-  if (value.length === 0) {
-    throw usageError(`${name}に空文字は指定できません`);
-  }
-  return value;
-}
 
 function optionalSingleOption(options: ParsedOptions, name: string): string | undefined {
   const values = options.get(name);
@@ -519,37 +483,6 @@ function parseBuildPages(args: readonly string[]): BuildPagesCliCommand {
       "--build-artifact",
       "artifacts/workflow/initial-pages-build.json",
     ),
-    outputDirectory: singleOption(options, "--output", "web/public/data"),
-  });
-}
-
-function parsePrepareNotificationHistoryPages(
-  args: readonly string[],
-): PrepareNotificationHistoryPagesCliCommand {
-  const options = parseOptions(
-    args,
-    new Set([
-      "--config",
-      "--settlement-receipt",
-      "--finalization-receipt",
-      "--build-artifact",
-      "--output",
-    ]),
-  );
-  return Object.freeze({
-    kind: "prepare-notification-history-pages",
-    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
-    settlementReceiptPath: singleOption(
-      options,
-      "--settlement-receipt",
-      DEFAULT_SETTLEMENT_RECEIPT_PATH,
-    ),
-    finalizationReceiptPath: singleOption(
-      options,
-      "--finalization-receipt",
-      DEFAULT_FINALIZATION_RECEIPT_PATH,
-    ),
-    buildArtifactPath: singleOption(options, "--build-artifact", DEFAULT_HISTORY_BUILD_PATH),
     outputDirectory: singleOption(options, "--output", "web/public/data"),
   });
 }
@@ -967,6 +900,10 @@ export function parseCliArguments(args: readonly string[]): CliCommand {
       return parseBuildPages(options);
     case "prepare-notification-history-pages":
       return parsePrepareNotificationHistoryPages(options);
+    case "preflight-notification-history-deployment":
+      return parsePreflightNotificationHistoryDeployment(options);
+    case "record-notification-history-deployment":
+      return parseRecordNotificationHistoryDeployment(options);
     case "preflight-pages-deployment":
       return parsePreflightPagesDeployment(options);
     case "record-pages-deployment":

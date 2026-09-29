@@ -138,7 +138,11 @@ export async function workflowAdapterIdentity(
     [
       ".github/workflows/daily.yml",
       "src/cli/initial-pages-deployment.ts",
+      "src/cli/notification-history-pages-deployment.ts",
+      "src/cli/notification-history-pages-deployment-record.ts",
+      "src/cli/notification-history-pages-deployment-outcome.ts",
       "src/cli/run-publication/deployment.ts",
+      "src/cli/run-publication/workflow-history-deployment.ts",
       ...scripts,
       ...workflowAdapters,
     ],

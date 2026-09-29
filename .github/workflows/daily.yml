@@ -582,7 +582,6 @@ jobs:
     needs:
       - collect-analyze
       - notify-discord
-    if: false
     runs-on: ubuntu-24.04
     env:
       VOICEVOX_EXPECTED_RUN_ID: ${{ needs.collect-analyze.outputs.run_id }}
@@ -595,11 +594,12 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     outputs:
-      public_boundary_violation: ${{ steps.generate_history_pages.outputs.public_boundary_violation }}
+      public_boundary_violation: ${{ steps.prepare_history_pages.outputs.public_boundary_violation || steps.preflight.outputs.public_boundary_violation }}
     steps:
       - name: ソースコードを取得
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          fetch-depth: 0
           persist-credentials: false
       - name: 最新stateを取得
         run: git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state
@@ -607,35 +607,85 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .node-version
-      - name: pnpmを準備
-        run: corepack enable
-      - name: 依存関係をインストール
-        run: pnpm install --frozen-lockfile
       - name: 公開可能なrun artifactを取得
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: validated-public-run
           path: artifacts/workflow
-      - name: Pages用データを生成
-        id: generate_history_pages
+      - name: 通知settlement receiptを取得
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: notification-settlement-record
+          path: artifacts/workflow
+      - name: 最終state receiptを取得
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: run-finalization-record
+          path: artifacts/workflow
+      - name: 保存済み通知履歴Pages公開結果を取得
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: notification-history-pages-deployment-record
+          path: artifacts/workflow/previous
+      - name: 通知履歴Pagesを準備
+        id: prepare_history_pages
         env:
           VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
-        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs build-pages --output web/public/data
-      - name: Pagesをビルド
-        run: pnpm build:web
+        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs prepare-notification-history-pages
+      - name: 通知履歴Pages build receiptを保存
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: notification-history-pages-build-record
+          path: artifacts/workflow/notification-history-pages-build.json
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 7
+      - name: deploy直前のfinal stateと全fileを検証
+        id: preflight
+        run: |
+          node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs preflight-notification-history-deployment --run-attempt "${{ github.run_attempt }}"
+          echo "kind=$(jq -r .kind artifacts/workflow/notification-history-pages-preflight.json)" >> "$GITHUB_OUTPUT"
+          echo "intent_digest=$(jq -r '.deploymentIntentDigest // ""' artifacts/workflow/notification-history-pages-preflight.json)" >> "$GITHUB_OUTPUT"
       - name: Pagesを構成
+        if: steps.preflight.outputs.kind == 'ready'
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
       - name: 通知履歴反映済みPages artifactを保存
+        id: upload
+        if: steps.preflight.outputs.kind == 'ready'
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           name: daily-pages-${{ github.run_id }}-${{ github.run_attempt }}-notification-history
           path: dist/web
       - name: Pagesへdeploy
         id: deployment
+        if: steps.upload.outcome == 'success'
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
         with:
           artifact_name: daily-pages-${{ github.run_id }}-${{ github.run_attempt }}-notification-history
           timeout: 1200000
+      - name: 通知履歴Pages actionの結果を記録
+        id: record
+        if: always() && steps.preflight.outcome == 'success'
+        env:
+          PAGES_UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+          PAGES_DEPLOYMENT_OUTCOME: ${{ steps.deployment.outcome }}
+          PAGES_DEPLOYMENT_INTENT_DIGEST: ${{ steps.preflight.outputs.intent_digest }}
+          PAGES_ARTIFACT_NAME: daily-pages-${{ github.run_id }}-${{ github.run_attempt }}-notification-history
+          PAGES_ARTIFACT_ID: ${{ steps.upload.outputs.artifact_id }}
+          PAGES_ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact_digest }}
+          PAGES_DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
+          PAGES_URL: ${{ steps.deployment.outputs.page_url }}
+        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs record-notification-history-deployment
+      - name: 通知履歴Pages receiptまたは失敗を保存
+        if: always() && steps.record.outcome != 'skipped'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: notification-history-pages-deployment-record
+          path: artifacts/workflow/notification-history-pages-deployment.json
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 7
       - name: 診断JSONLを暗号化
         if: >-
           always() &&

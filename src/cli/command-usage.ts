@@ -9,6 +9,8 @@ export function formatCliUsage(): string {
     "  voicevox-task-tracker persist-state [--config PATH] [--artifact PATH] [--receipt PATH]",
     "  voicevox-task-tracker build-pages [--config PATH] [--receipt PATH] [--build-artifact PATH] [--output PATH]",
     "  voicevox-task-tracker prepare-notification-history-pages [--config PATH] [--settlement-receipt PATH] [--finalization-receipt PATH] [--build-artifact PATH] [--output PATH]",
+    "  voicevox-task-tracker preflight-notification-history-deployment [--config PATH] [--settlement-receipt PATH] [--finalization-receipt PATH] [--build-artifact PATH] [--previous-outcome PATH] [--preflight PATH] [--run-attempt NUMBER]",
+    "  voicevox-task-tracker record-notification-history-deployment [--build-artifact PATH] [--preflight PATH] [--outcome PATH]",
     "  voicevox-task-tracker preflight-pages-deployment [--config PATH] [--receipt PATH] [--build-artifact PATH] [--preflight PATH] [--run-attempt NUMBER]",
     "  voicevox-task-tracker record-pages-deployment [--build-artifact PATH] [--preflight PATH] [--outcome PATH]",
     "  voicevox-task-tracker settle-notifications [--receipt PATH] [--build-artifact PATH] [--pages-deployment PATH] [--settlement-receipt PATH]",

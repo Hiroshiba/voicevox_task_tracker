@@ -33,6 +33,7 @@ import type {
 } from "../../application/tracking-run/pages-build-contracts.js";
 import type { PagesBuildReceipt } from "../../application/tracking-run/receipt-schema.js";
 import type { NotificationHistoryPagesBuildArtifact } from "../notification-history-pages-build-artifact.js";
+import type { NotificationHistoryPagesDeploymentOutcome } from "../notification-history-pages-deployment-outcome.js";
 import type {
   InitialPagesDeploymentOutcome,
   SequentialPagesResult,
@@ -74,6 +75,19 @@ export type InitialPagesPreparedRun = Readonly<{
 
 /** 最終state revisionと公開要否を固定した通知履歴Pages結果。 */
 export type NotificationHistoryPagesPreparedRun = NotificationHistoryPagesBuildArtifact;
+
+/** 通知履歴Pagesを公開した結果または不要と証明した結果。 */
+export type NotificationHistoryPublishedRun =
+  | Readonly<{
+      kind: "deployed";
+      prepared: Extract<NotificationHistoryPagesPreparedRun, { status: "built" }>;
+      deployment: Extract<NotificationHistoryPagesDeploymentOutcome, { kind: "deployed" }>;
+    }>
+  | Readonly<{
+      kind: "not_required";
+      prepared: Extract<NotificationHistoryPagesPreparedRun, { status: "not_required" }>;
+      deployment: Extract<NotificationHistoryPagesDeploymentOutcome, { kind: "not_required" }>;
+    }>;
 
 /** deploy receiptと保存候補証拠を持つ初回Pages公開結果。 */
 export type InitialPagesPublishedRun = Readonly<{
