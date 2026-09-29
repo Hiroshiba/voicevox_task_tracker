@@ -8,7 +8,8 @@ import {
   readInitialPagesDeploymentPreflight,
   recordInitialPagesWorkflowDeployment,
 } from "../initial-pages-deployment.js";
-import { workflowAdapterIdentity } from "../publication-runtime.js";
+import { isWorkflowPublicationReplay, workflowAdapterIdentity } from "../publication-runtime.js";
+import { readNotificationMessageState } from "../notification-message-state.js";
 import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content-digest.js";
 import type { Config } from "../../config/index.js";
 import type {
@@ -45,13 +46,24 @@ export async function preflightWorkflowPagesDeployment(
   if (initialReceipt.receiptType !== "initial_state_commit") {
     throw new TypeError("Pages deploy直前の初回state commit receiptがありません");
   }
+  const adapter = adapters.createStateBranchAdapter();
+  const source = await readNotificationMessageState(
+    adapter,
+    config.state,
+    initialReceipt.result.resultingStateRevision,
+  );
   const preflight = await preflightInitialPagesDeployment({
-    adapter: adapters.createStateBranchAdapter(),
+    adapter,
     configuration: config.state,
     repositoryPath: adapters.repositoryPath,
     artifact,
     initialStateCommitReceipt: initialReceipt,
-    replay: command.runAttempt > 1,
+    replay:
+      initialReceipt.receiptKind === "observed" ||
+      isWorkflowPublicationReplay(
+        source.transaction.record.runtimeRecoveryPlan,
+        adapters.environment,
+      ),
     observedAt: adapters.now().toISOString(),
     effectTarget: "production",
     adapterIdentityDigest: await workflowAdapterIdentity(

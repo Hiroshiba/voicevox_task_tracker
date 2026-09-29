@@ -16,7 +16,8 @@ import {
 import { recordNotificationHistoryWorkflowDeployment } from "../notification-history-pages-deployment-record.js";
 import { decodeNotificationHistoryPagesDeploymentOutcome } from "../notification-history-pages-deployment-outcome.js";
 import { readPreviousNotificationHistoryOutcome } from "../previous-notification-history-outcome.js";
-import { workflowAdapterIdentity } from "../publication-runtime.js";
+import { isWorkflowPublicationReplay, workflowAdapterIdentity } from "../publication-runtime.js";
+import { readNotificationMessageState } from "../notification-message-state.js";
 import type { RunPublicationAdapters } from "./contracts.js";
 
 type WorkflowHistoryDeploymentAdapters = Pick<
@@ -64,8 +65,14 @@ export async function preflightWorkflowNotificationHistoryDeployment(
     adapters.environment["VOICEVOX_PREVIOUS_HISTORY_OUTCOME_STATUS"],
   );
   const config = await adapters.loadConfig(resolve(adapters.repositoryPath, command.configPath));
+  const adapter = adapters.createStateBranchAdapter();
+  const source = await readNotificationMessageState(
+    adapter,
+    config.state,
+    finalization.result.resultingStateRevision,
+  );
   const preflight = await preflightNotificationHistoryPagesDeployment({
-    adapter: adapters.createStateBranchAdapter(),
+    adapter,
     config,
     configuration: config.state,
     repositoryPath: adapters.repositoryPath,
@@ -77,7 +84,12 @@ export async function preflightWorkflowNotificationHistoryDeployment(
       : {
           previousOutcome: decodeNotificationHistoryPagesDeploymentOutcome(previousBytes, artifact),
         }),
-    replay: command.runAttempt > 1,
+    replay:
+      finalization.receiptKind === "observed" ||
+      isWorkflowPublicationReplay(
+        source.transaction.record.runtimeRecoveryPlan,
+        adapters.environment,
+      ),
     observedAt: adapters.now().toISOString(),
     effectTarget: "production",
     adapterIdentityDigest: await workflowAdapterIdentity(adapters.repositoryPath, digest),

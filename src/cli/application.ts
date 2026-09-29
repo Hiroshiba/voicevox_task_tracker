@@ -40,7 +40,8 @@ export type CliExecutionResult =
         | "inspect-run-state"
         | "verify-receipt-chain"
         | "report-failure"
-        | "run-stage";
+        | "run-stage"
+        | "route-stage";
       exitCode: 0;
     }>
   | Readonly<{
@@ -102,6 +103,9 @@ export class CliApplication<Types extends DailyTransactionTypeMap> {
         }
         return Object.freeze({ command: "run-stage", exitCode: 0 });
       }
+      case "route-stage":
+        await this.#dependencies.splitStageRunner.route(command, invocationId);
+        return Object.freeze({ command: "route-stage", exitCode: 0 });
       case "persist-state":
       case "build-pages":
       case "prepare-notification-history-pages":

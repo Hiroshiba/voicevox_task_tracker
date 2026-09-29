@@ -43,6 +43,30 @@ export type PublicationRuntimeContext = Readonly<{
   runtimeRecoveryPlan: z.output<typeof runtimeRecoveryPlanSchema>;
 }>;
 
+/** 永続workflow run identityと現在のActions起動を照合して再公開を判定する。 */
+export function isWorkflowPublicationReplay(
+  plan: PublicationRuntimeContext["runtimeRecoveryPlan"],
+  environment: Readonly<NodeJS.ProcessEnv>,
+): boolean {
+  if (plan.kind !== "workflow_bundle") {
+    throw new TypeError("Pages再公開判定にはworkflow bundle計画が必要です");
+  }
+  const workflowRunId = environment["GITHUB_RUN_ID"];
+  const workflowRunAttempt = environment["GITHUB_RUN_ATTEMPT"];
+  if (
+    workflowRunId == null ||
+    !/^\d+$/u.test(workflowRunId) ||
+    workflowRunAttempt == null ||
+    !/^[1-9]\d*$/u.test(workflowRunAttempt) ||
+    !Number.isSafeInteger(Number(workflowRunAttempt))
+  ) {
+    throw new TypeError("Pages再公開判定にActions run identityがありません");
+  }
+  return (
+    plan.workflowRunId !== workflowRunId || plan.workflowRunAttempt !== Number(workflowRunAttempt)
+  );
+}
+
 async function checkedFiles(
   root: string,
   directory: string,
@@ -393,7 +417,7 @@ export async function readPublicationRuntimeContext(
       kind: "workflow_bundle",
       workflowRunId: environment["GITHUB_RUN_ID"],
       workflowRunAttempt: Number(environment["GITHUB_RUN_ATTEMPT"]),
-      artifactName: "validated-public-run",
+      artifactName: "workflow-cli-runtime",
       bundleSha256: manifestDigest,
       codeRevision: manifest.codeRevision,
       lockfileSha256: manifest.lockfileSha256,

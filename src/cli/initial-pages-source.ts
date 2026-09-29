@@ -23,6 +23,7 @@ import {
 } from "./publication-resume-inputs.js";
 import { observeStateCommitAtRevision } from "../infrastructure/tracking-run/state-receipt-observation.js";
 import { nodeContentDigestPort as digest } from "../infrastructure/tracking-run/content-digest.js";
+import { projectPublicationSettings } from "./run-publication/settings.js";
 
 /** 初回state revisionから一度だけPagesへ投影する保存済み入力。 */
 export type InitialPagesSource = Readonly<{
@@ -133,7 +134,8 @@ export async function readInitialPagesSource(
     now().toISOString(),
   );
   if (
-    digest.sha256Utf8(serializeCanonicalJson(config)) !== record.configDigest ||
+    serializeCanonicalJson(projectPublicationSettings(config).pages) !==
+      serializeCanonicalJson(projection.settings) ||
     projection.snapshot.path !== stateConfiguration.snapshotPath ||
     projection.snapshot.digest !== transaction.snapshotDigest
   ) {

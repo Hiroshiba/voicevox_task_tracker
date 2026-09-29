@@ -5,6 +5,7 @@ export function formatCliUsage(): string {
     "  voicevox-task-tracker run-sequential [--config PATH] [--mode none|linked|all-open] [--notification-action send|hold|acknowledge-current] [--repository VOICEVOX/REPO] [--scheduled-for ISO] [--report PATH]",
     "  voicevox-task-tracker run-stage --stage analyze [--config PATH] [--mode none|linked|all-open] [--notification-action send|hold|acknowledge-current] [--repository VOICEVOX/REPO] [--scheduled-for ISO]",
     "  voicevox-task-tracker run-stage --stage STAGE --run-id ID [--config PATH] [--run-attempt NUMBER] [--manual-resolution-receipt PATH]",
+    "  voicevox-task-tracker route-stage --state-ref REF --effect-target production|sandbox|recording [--run-id ID] [--config PATH]",
     "  voicevox-task-tracker daily [--config PATH] [--notification-action send|hold|acknowledge-current] [--sandbox-context PATH] [--scheduled-for ISO] [--report PATH]",
     "  voicevox-task-tracker dry-run [--config PATH] [--artifact PATH] [--report PATH]",
     "  voicevox-task-tracker backfill [--mode none|linked|all-open] [--notification-action send|hold|acknowledge-current] [--repository VOICEVOX/REPO]",

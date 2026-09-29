@@ -85,6 +85,7 @@ export function stageFromCommand(command: CliCommand | undefined): FailedRun["fa
     case "record-notification-history-deployment":
       return "notification_history_pages_published";
     case "inspect-run-state":
+    case "route-stage":
     case "verify-runtime-recovery":
       return "runtime_bootstrap";
     case "verify-checkpoint":

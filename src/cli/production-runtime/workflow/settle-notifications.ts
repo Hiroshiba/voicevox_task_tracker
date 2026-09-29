@@ -6,6 +6,6 @@ export function createSettleWorkflowNotificationsStage(
   adapters: Parameters<typeof settleWorkflowNotifications>[0],
 ): WorkflowStageDependencies["settleNotifications"] {
   return async (command) => {
-    await settleWorkflowNotifications(adapters, command);
+    await settleWorkflowNotifications(adapters, command, undefined);
   };
 }

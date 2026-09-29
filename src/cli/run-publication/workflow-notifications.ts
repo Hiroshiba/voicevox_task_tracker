@@ -8,6 +8,7 @@ import { decodeReceipt } from "../../application/tracking-run/receipt-codec.js";
 import type {
   InitialStateCommitReceipt,
   ManualResolutionReceipt,
+  PagesDeploymentReceipt,
 } from "../../application/tracking-run/receipt-schema.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content-digest.js";
@@ -99,6 +100,7 @@ async function initialReceipt(
 export async function settleWorkflowNotifications(
   adapters: WorkflowNotificationAdapters,
   command: SettleNotificationsCliCommand,
+  priorPagesReceipt?: PagesDeploymentReceipt,
 ): Promise<Extract<NotificationSettlementOutcome, { kind: "settled" }>> {
   const config = await adapters.loadConfig(resolve(adapters.repositoryPath, command.configPath));
   let manualResolutionReceipt: ManualResolutionReceipt | undefined;
@@ -199,6 +201,26 @@ export async function settleWorkflowNotifications(
               "workflow通知の保存済みPages証拠が初回stateと一致しません",
               "no_effect",
             );
+          }
+          if (priorPagesReceipt != null) {
+            if (
+              priorPagesReceipt.result?.pagesContentDigest !== evidence.pagesContentDigest ||
+              priorPagesReceipt.result.deploymentIntentDigest !== evidence.deploymentIntentDigest ||
+              priorPagesReceipt.result.pageUrl !== evidence.pageUrl ||
+              (priorPagesReceipt.receiptKind === "observed"
+                ? priorPagesReceipt.result.observedSourceReceiptDigest !==
+                  evidence.deploymentReceiptDigest
+                : priorPagesReceipt.receiptDigest !== evidence.deploymentReceiptDigest)
+            ) {
+              throw new NotificationStructureError(
+                "workflow通知の先行Pages receiptが保存済み証拠と一致しません",
+                "no_effect",
+              );
+            }
+            return {
+              initialPages: { kind: "state" as const, evidence },
+              pagesReceipt: priorPagesReceipt,
+            };
           }
           try {
             const buildBytes = await optionalPagesArtifact(buildPath);

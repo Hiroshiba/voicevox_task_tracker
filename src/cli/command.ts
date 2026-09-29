@@ -18,7 +18,12 @@ import {
   parseRepositoryFilter,
   parseSchedule,
 } from "./command-online-options.js";
-import { parseRunStage, type RunStageCliCommand } from "./split-stage-command.js";
+import {
+  parseRouteStage,
+  parseRunStage,
+  type RouteStageCliCommand,
+  type RunStageCliCommand,
+} from "./split-stage-command.js";
 import {
   parseNotifyOperations,
   type NotifyOperationsCliCommand,
@@ -52,6 +57,7 @@ export type {
   RecordNotificationHistoryDeploymentCliCommand,
 } from "./notification-history-deployment-command.js";
 export type { RunStageCliCommand } from "./split-stage-command.js";
+export type { RouteStageCliCommand } from "./split-stage-command.js";
 export type { NotifyOperationsCliCommand } from "./operations-alert-command.js";
 const deliveryIdSchema = z.string().regex(DELIVERY_ID_PATTERN);
 const resolveDiscordDeliveryResolutionSchema = z.enum(["retry", "acknowledge"]);
@@ -260,6 +266,7 @@ export type CliCommand =
   | BackfillCliCommand
   | RunSequentialCliCommand
   | RunStageCliCommand
+  | RouteStageCliCommand
   | CollectAnalyzeCliCommand
   | PersistStateCliCommand
   | BuildPagesCliCommand
@@ -822,6 +829,8 @@ export function parseCliArguments(args: readonly string[]): CliCommand {
       return parseRunSequential(options);
     case "run-stage":
       return parseRunStage(options);
+    case "route-stage":
+      return parseRouteStage(options);
     case "daily":
       return parseDaily(options);
     case "dry-run":

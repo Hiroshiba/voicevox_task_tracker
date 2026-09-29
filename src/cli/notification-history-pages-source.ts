@@ -39,6 +39,7 @@ import {
 } from "./notification-message-state.js";
 import { restoreNotificationSelection } from "./notification-message-context.js";
 import { assertFinalRunValues } from "./run-finalization-state.js";
+import { projectPublicationSettings } from "./run-publication/settings.js";
 
 /** final stateで確定した通知履歴Pagesの公開要否。 */
 export type NotificationHistoryPagesRequirement =
@@ -230,7 +231,8 @@ export async function readNotificationHistoryPagesSource(
     record.checkpointFileDigest !== finalization.binding.checkpointFileDigest ||
     digest.sha256Utf8(serializeCanonicalJson(record.runtimeIdentity)) !==
       finalization.binding.runtimeIdentityDigest ||
-    digest.sha256Utf8(serializeCanonicalJson(config)) !== record.configDigest ||
+    serializeCanonicalJson(projectPublicationSettings(config).pages) !==
+      serializeCanonicalJson(record.initialPagesProjection.settings) ||
     record.notificationOutbox.action !== settlement.result.action ||
     finalized.transaction.notificationLedgerDigest !== settlement.result.notificationLedgerDigest ||
     finalized.transaction.initialPagesEvidence == null

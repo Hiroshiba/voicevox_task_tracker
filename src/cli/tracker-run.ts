@@ -114,6 +114,7 @@ export function createTrackerRunCliArguments(args: readonly string[]): readonly 
     args[0] === "collect-analyze" ||
     args[0] === "run-sequential" ||
     args[0] === "run-stage" ||
+    args[0] === "route-stage" ||
     args[0] === "persist-state" ||
     args[0] === "build-pages" ||
     args[0] === "prepare-notification-history-pages" ||
@@ -207,6 +208,7 @@ function topLevelDiagnosticStage(command: CliCommand): RunStage | "unknown" {
     case "collect-analyze":
     case "run-sequential":
     case "run-stage":
+    case "route-stage":
     case "verify-state":
     case "verify-checkpoint":
     case "verify-runtime-recovery":

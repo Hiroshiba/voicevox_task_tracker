@@ -38,6 +38,50 @@ export type RunStageCliCommand = Readonly<{
   manualResolutionReceiptPath: string | undefined;
 }>;
 
+/** remote stateから次の分割段階を選ぶCLI入力。 */
+export type RouteStageCliCommand = Readonly<{
+  kind: "route-stage";
+  configPath: string;
+  stateRef: string;
+  runId: string | undefined;
+  effectTarget: "production" | "sandbox" | "recording";
+}>;
+
+/** route-stageのstate ref、run、外部効果先を検証する。 */
+export function parseRouteStage(args: readonly string[]): RouteStageCliCommand {
+  const options = parseOptions(
+    args,
+    new Set(["--config", "--state-ref", "--run-id", "--effect-target"]),
+  );
+  const stateRef = z
+    .string()
+    .regex(/^(?:tracker-state|sandbox-state\/env-[1-9][0-9]*-[1-9][0-9]*)$/u)
+    .safeParse(optionalSingleOption(options, "--state-ref"));
+  if (!stateRef.success) {
+    throw usageError("route-stageには正しい--state-refが必要です", stateRef.error);
+  }
+  const runId = z
+    .string()
+    .regex(/^tracker-run:[0-9a-f]{64}$/u)
+    .optional()
+    .safeParse(optionalSingleOption(options, "--run-id"));
+  if (!runId.success) {
+    throw usageError("--run-idが不正です", runId.error);
+  }
+  const effectTarget = optionalSingleOption(options, "--effect-target");
+  const target = z.enum(["production", "sandbox", "recording"]).safeParse(effectTarget);
+  if (!target.success) {
+    throw usageError("route-stageには正しい--effect-targetが必要です", target.error);
+  }
+  return Object.freeze({
+    kind: "route-stage",
+    configPath: singleOption(options, "--config", "config.yml"),
+    stateRef: stateRef.data,
+    runId: runId.data,
+    effectTarget: target.data,
+  });
+}
+
 /** 一段の分割run入力を解析する。 */
 export function parseRunStage(args: readonly string[]): RunStageCliCommand {
   const options = parseOptions(

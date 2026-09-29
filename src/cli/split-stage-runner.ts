@@ -1,5 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../canonical-json/value.js";
@@ -10,11 +9,15 @@ import type { TrackingRunStageName } from "../application/tracking-run/contracts
 import type { ReceiptChainEntry } from "../application/tracking-run/receipt-chain-schema.js";
 import { inspectRunBootstrapState } from "../infrastructure/tracking-run/bootstrap-state.js";
 import { inspectRunState } from "../infrastructure/tracking-run/inspect-run-state.js";
+import type { RecoveryStageInput } from "../infrastructure/tracking-run/recovery-stage.js";
 import { nodeContentDigestPort as digest } from "../infrastructure/tracking-run/content-digest.js";
-import { observeStateCommitAtRevision } from "../infrastructure/tracking-run/state-receipt-observation.js";
 import { findInitialStateRevision } from "../persistence/state-orthogonal-advance.js";
 import { assertNonNullable } from "../util/index.js";
-import type { CollectAnalyzeCliCommand, RunStageCliCommand } from "./command.js";
+import type {
+  CollectAnalyzeCliCommand,
+  RouteStageCliCommand,
+  RunStageCliCommand,
+} from "./command.js";
 import { DailyTransactionRunner, type DailyRunExecutionResult } from "./daily-transaction.js";
 import { readCommittedInitialState } from "./run-publication/committed-state.js";
 import {
@@ -40,7 +43,12 @@ import { decodeNotificationHistoryPagesBuildArtifact } from "./notification-hist
 import { decodeNotificationHistoryPagesDeploymentOutcome } from "./notification-history-pages-deployment-outcome.js";
 import { readNotificationMessageState } from "./notification-message-state.js";
 import { readPublicationCheckpointHeader } from "./publication-checkpoint-file.js";
-import { readPublicationRuntimeContext } from "./publication-runtime.js";
+import {
+  assertRecoveryToolchain,
+  readPublicationRuntimeContext,
+  verifyRecoveryBundle,
+} from "./publication-runtime.js";
+import { projectPublicationSettings } from "./run-publication/settings.js";
 import { DURABLE_PUBLICATION_RECORD_SCHEMA_VERSION } from "./durable-record-schema.js";
 import type { ProductionRuntimeAdapters } from "./production-runtime/adapters.js";
 import type { ProductionTypes } from "./production-runtime/contracts.js";
@@ -51,6 +59,7 @@ import {
   stateCommitEvidenceForSplitReceipt,
   writeSplitReceiptChain,
 } from "./split-stage-receipts.js";
+import { restoreSplitReceipts } from "./split-stage-recovery.js";
 import { splitStagePaths, type SplitStagePaths } from "./split-stage-paths.js";
 
 type SplitState = Readonly<{
@@ -63,6 +72,7 @@ type SplitState = Readonly<{
     | "notifications_in_progress"
     | "notifications_settled"
     | "run_finalized";
+  effectTarget: "production" | "sandbox" | "recording";
   recordDigest: string;
   runtimeIdentityDigest: string;
   workflowEffectAdapterIdentityDigest: string;
@@ -81,12 +91,121 @@ function isMissingFile(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
+async function allFilesPresent(paths: readonly string[]): Promise<boolean> {
+  for (const path of paths) {
+    try {
+      if (!(await stat(path)).isFile()) {
+        throw new TypeError("分割runの必要artifactが通常fileではありません");
+      }
+    } catch (error: unknown) {
+      if (isMissingFile(error)) {
+        return false;
+      }
+      throw error;
+    }
+  }
+  return true;
+}
+
+async function needsReceiptRestoration(
+  entries: readonly ReceiptChainEntry[],
+  state: SplitState,
+  paths: SplitStagePaths,
+): Promise<boolean> {
+  const last = entries.at(-1)?.receipt;
+  if (last == null) {
+    throw new TypeError("分割runのreceipt chainが空です");
+  }
+  if (
+    (state.markerPhase === "notifications_in_progress" &&
+      last.stage !== "initial_pages_published") ||
+    (state.markerPhase === "notifications_settled" && last.stage !== "notifications_settled") ||
+    (state.markerPhase === "run_finalized" &&
+      last.stage !== "run_finalized" &&
+      last.stage !== "notification_history_pages_prepared" &&
+      last.stage !== "notification_history_pages_published" &&
+      last.stage !== "completed")
+  ) {
+    return true;
+  }
+  const required = [paths.initialReceipt];
+  if (last.stage !== "initial_state_committed") {
+    required.push(paths.initialBuild);
+  }
+  if (
+    last.stage === "initial_pages_published" ||
+    last.stage === "notifications_settled" ||
+    last.stage === "run_finalized" ||
+    last.stage === "notification_history_pages_prepared" ||
+    last.stage === "notification_history_pages_published" ||
+    last.stage === "completed"
+  ) {
+    const initialPages = entries.findLast(
+      (entry) =>
+        entry.receipt.receiptType === "pages_deployment" && entry.receipt.phase === "initial",
+    )?.receipt;
+    if (initialPages?.receiptType !== "pages_deployment") {
+      throw new TypeError("初回Pagesのreceiptがありません");
+    }
+    if (initialPages.receiptKind !== "observed") {
+      required.push(paths.initialDeployment);
+    }
+  }
+  if (
+    last.stage === "notifications_settled" ||
+    last.stage === "run_finalized" ||
+    last.stage === "notification_history_pages_prepared" ||
+    last.stage === "notification_history_pages_published" ||
+    last.stage === "completed"
+  ) {
+    required.push(paths.settlementReceipt);
+  }
+  if (
+    last.stage === "run_finalized" ||
+    last.stage === "notification_history_pages_prepared" ||
+    last.stage === "notification_history_pages_published" ||
+    last.stage === "completed"
+  ) {
+    required.push(paths.finalizationReceipt);
+  }
+  if (
+    last.stage === "notification_history_pages_prepared" ||
+    last.stage === "notification_history_pages_published" ||
+    last.stage === "completed"
+  ) {
+    required.push(paths.historyBuild);
+  }
+  if (last.stage === "notification_history_pages_published" || last.stage === "completed") {
+    required.push(paths.historyDeployment);
+  }
+  return !(await allFilesPresent(required));
+}
+
 function previousStage(entries: readonly ReceiptChainEntry[]): TrackingRunStageName {
   const last = entries.at(-1)?.receipt;
   if (last == null || last.stage === "operations_alert") {
     throw new TypeError("分割runの直前receiptがありません");
   }
   return last.stage;
+}
+
+function nextSplitStage(stage: RecoveryStageInput["stage"]): RunStageCliCommand["stage"] {
+  switch (stage) {
+    case "initial_pages_build":
+      return "prepare-initial-pages";
+    case "initial_pages_deploy":
+      return "preflight-initial-pages-deployment";
+    case "notifications":
+      return "settle-notifications";
+    case "run_finalization":
+      return "finalize-run";
+    case "notification_history_build":
+      return "prepare-history-pages";
+    case "notification_history_deploy":
+      return "preflight-history-pages-deployment";
+    case "completed":
+      return "complete";
+  }
 }
 
 function scopedAdapters(
@@ -105,10 +224,10 @@ function scopedAdapters(
 
 async function inspectSplitState(
   adapters: ProductionRuntimeAdapters,
-  command: RunStageCliCommand,
+  configPath: string,
   runId: string,
 ): Promise<SplitState> {
-  const config = await adapters.loadConfig(resolve(adapters.repositoryPath, command.configPath));
+  const config = await adapters.loadConfig(resolve(adapters.repositoryPath, configPath));
   const adapter = adapters.createStateBranchAdapter();
   const head = await adapter.resolveHead(config.state.branch);
   if (head.status !== "present") {
@@ -128,9 +247,11 @@ async function inspectSplitState(
     throw new TypeError("分割runの永続record schemaが現行形式ではありません");
   }
   const plan = bootstrap.record.runtimeRecoveryPlan;
-  if (plan.kind === "not_reproducible") {
+  if (plan.kind !== "workflow_bundle" || plan.artifactName !== "workflow-cli-runtime") {
     throw new TypeError("分割runのexact runtimeを再現できません");
   }
+  await verifyRecoveryBundle(resolve(adapters.repositoryPath, "artifacts/workflow/runtime"), plan);
+  await assertRecoveryToolchain(adapters.repositoryPath, plan);
   const state = await readNotificationMessageState(adapter, config.state, head.revision);
   const record = state.transaction.record;
   const runtime = await readPublicationRuntimeContext(
@@ -143,11 +264,10 @@ async function inspectSplitState(
     state.transaction.marker.runId !== runId ||
     record.runIdentity.runId !== runId ||
     record.recordDigest !== bootstrap.record.recordDigest ||
-    record.configDigest !== digest.sha256Utf8(serializeCanonicalJson(config)) ||
+    serializeCanonicalJson(projectPublicationSettings(config).pages) !==
+      serializeCanonicalJson(record.initialPagesProjection.settings) ||
     digest.sha256Utf8(serializeCanonicalJson(runtime.runtimeIdentity)) !==
-      bootstrap.record.runtimeIdentityDigest ||
-    serializeCanonicalJson(runtime.runtimeRecoveryPlan) !==
-      serializeCanonicalJson(record.runtimeRecoveryPlan)
+      bootstrap.record.runtimeIdentityDigest
   ) {
     throw new TypeError("分割runの永続recordと選択runtimeが一致しません");
   }
@@ -161,6 +281,7 @@ async function inspectSplitState(
     headRevision: head.revision,
     initialStateRevision,
     markerPhase: state.transaction.marker.phase,
+    effectTarget: record.executionPolicy.effectTarget,
     recordDigest: bootstrap.record.recordDigest,
     runtimeIdentityDigest: bootstrap.record.runtimeIdentityDigest,
     workflowEffectAdapterIdentityDigest: plan.recoveryProtocol.workflowEffectAdapterIdentityDigest,
@@ -174,7 +295,7 @@ async function verifySplitState(
   invocationId: string,
   observedAt: string,
   entries: readonly ReceiptChainEntry[],
-): Promise<void> {
+): Promise<RecoveryStageInput> {
   const decision = await inspectRunState(state.adapter, state.config.state, {
     kind: "resume_run",
     runtime: "exact",
@@ -195,6 +316,7 @@ async function verifySplitState(
   if (decision.kind !== "resume_pending") {
     throw new TypeError("分割runのexact stateを再開できません");
   }
+  return decision.stageInput;
 }
 
 async function priorReceipts(
@@ -202,35 +324,24 @@ async function priorReceipts(
   paths: SplitStagePaths,
   runId: string,
   state: SplitState,
+  configPath: string,
 ): Promise<readonly ReceiptChainEntry[]> {
   try {
-    return await readSplitReceiptChain(paths.receiptChain, runId);
+    const entries = await readSplitReceiptChain(paths.receiptChain, runId);
+    if (!(await needsReceiptRestoration(entries, state, paths))) {
+      return entries;
+    }
   } catch (error: unknown) {
     if (!isMissingFile(error)) {
       throw error;
     }
   }
-  if (state.markerPhase !== "initial_state_committed") {
-    throw new TypeError("後続receipt chainを失った分割runは自動再開できません");
-  }
-  const observed = await observeStateCommitAtRevision(
-    state.adapter,
-    state.config.state,
-    state.initialStateRevision,
-    state.initialStateRevision,
-    "initial_state_commit",
-    {
-      invocationId: randomUUID(),
-      observedAt: adapters.now().toISOString(),
-      position: { kind: "first" },
-    },
-  );
-  const entries: readonly ReceiptChainEntry[] = [
-    { receipt: observed.receipt, evidence: { kind: "state_commit", state: observed.evidence } },
-  ];
-  await adapters.writeJsonArtifact(paths.initialReceipt, observed.receipt);
-  await writeSplitReceiptChain(paths.receiptChain, entries, adapters.writeJsonArtifact);
-  return entries;
+  return restoreSplitReceipts(adapters, paths, runId, configPath, {
+    adapter: state.adapter,
+    configuration: state.config.state,
+    headRevision: state.headRevision,
+    initialStateRevision: state.initialStateRevision,
+  });
 }
 
 async function saveStageReceipts(
@@ -266,6 +377,117 @@ export class SplitStageRunner {
   ) {
     this.#adapters = adapters;
     this.#dailyRunner = dailyRunner;
+  }
+
+  /** remote exact stateと検証済みreceiptから次の分割段階を返す。 */
+  public async route(command: RouteStageCliCommand, invocationId: string): Promise<void> {
+    const config = await this.#adapters.loadConfig(
+      resolve(this.#adapters.repositoryPath, command.configPath),
+    );
+    if (command.stateRef !== config.state.branch) {
+      throw new TypeError("route-stageのstate refと設定の保存先が一致しません");
+    }
+    const adapter = this.#adapters.createStateBranchAdapter();
+    const head = await adapter.resolveHead(command.stateRef);
+    if (head.status === "missing") {
+      if (command.runId != null) {
+        throw new TypeError("指定runのremote stateがありません");
+      }
+      await this.#adapters.writeStandardOutput(
+        serializeCanonicalJsonLine({
+          schemaVersion: 1,
+          runId: null,
+          stateRevision: "unborn",
+          effectTarget: command.effectTarget,
+          nextStage: "analyze",
+        }),
+      );
+      return;
+    }
+    const bootstrap = await inspectRunBootstrapState(
+      adapter,
+      command.stateRef,
+      command.runId == null
+        ? { kind: "start_new" }
+        : { kind: "retry_run", runId: command.runId, exactStateRevision: head.revision },
+    );
+    if (bootstrap.kind === "start_with_current_runtime") {
+      await this.#adapters.writeStandardOutput(
+        serializeCanonicalJsonLine({
+          schemaVersion: 1,
+          runId: null,
+          stateRevision: head.revision,
+          effectTarget: command.effectTarget,
+          nextStage: "analyze",
+        }),
+      );
+      return;
+    }
+    if (bootstrap.kind === "operator_conflict_resolution" && command.runId != null) {
+      const current = await inspectRunBootstrapState(adapter, command.stateRef, {
+        kind: "start_new",
+      });
+      if (current.kind === "start_with_current_runtime") {
+        const checkpoint = await readPublicationCheckpointHeader(
+          splitStagePaths(this.#adapters.repositoryPath, command.runId).checkpoint,
+        );
+        if (
+          checkpoint.runIdentity.runId === command.runId &&
+          checkpoint.executionPolicy.effectTarget === command.effectTarget &&
+          checkpoint.baseStateRevision.status === "present" &&
+          checkpoint.baseStateRevision.revision === head.revision
+        ) {
+          await this.#adapters.writeStandardOutput(
+            serializeCanonicalJsonLine({
+              schemaVersion: 1,
+              runId: command.runId,
+              stateRevision: head.revision,
+              effectTarget: command.effectTarget,
+              nextStage: "commit-initial-state",
+            }),
+          );
+          return;
+        }
+      }
+    }
+    if (bootstrap.kind !== "resume_with_exact_runtime") {
+      throw new TypeError("route-stageのremote runを安全に選べません", {
+        cause: bootstrap.kind === "manual_resolution_required" ? bootstrap.cause : undefined,
+      });
+    }
+    if (bootstrap.record.recordSchemaVersion !== DURABLE_PUBLICATION_RECORD_SCHEMA_VERSION) {
+      throw new TypeError("旧ready-only V1の副作用段階は手動解決が必要です");
+    }
+    const runId = bootstrap.record.runId;
+    const adapters = scopedAdapters(this.#adapters, runId);
+    const state = await inspectSplitState(adapters, command.configPath, runId);
+    if (state.effectTarget !== command.effectTarget) {
+      throw new TypeError("route-stageのeffect targetと永続recordが一致しません");
+    }
+    const paths = splitStagePaths(adapters.repositoryPath, runId);
+    const entries = await priorReceipts(adapters, paths, runId, state, command.configPath);
+    const stageInput = await verifySplitState(
+      state,
+      runId,
+      invocationId,
+      adapters.now().toISOString(),
+      entries,
+    );
+    const nextStage =
+      entries.at(-1)?.receipt.receiptType === "completion"
+        ? "done"
+        : nextSplitStage(stageInput.stage);
+    await adapters.writeStandardOutput(
+      serializeCanonicalJsonLine({
+        schemaVersion: 1,
+        runId,
+        stateRevision: state.headRevision,
+        recordDigest: state.recordDigest,
+        effectTarget: state.effectTarget,
+        nextStage,
+        receiptChainPath: paths.receiptChain,
+      }),
+    );
   }
 
   public async run(
@@ -306,10 +528,6 @@ export class SplitStageRunner {
     const paths = splitStagePaths(this.#adapters.repositoryPath, runId);
     const adapters = scopedAdapters(this.#adapters, runId);
     if (command.stage === "commit-initial-state") {
-      const header = await readPublicationCheckpointHeader(paths.checkpoint);
-      if (header.runIdentity.runId !== runId) {
-        throw new TypeError("初回commitのcheckpointと指定run IDが一致しません");
-      }
       let existing: readonly ReceiptChainEntry[] | undefined;
       try {
         existing = await readSplitReceiptChain(paths.receiptChain, runId);
@@ -318,29 +536,69 @@ export class SplitStageRunner {
           throw error;
         }
       }
-      if (existing != null) {
-        const first = existing[0]?.receipt;
-        if (
-          first?.receiptType !== "initial_state_commit" ||
-          first.binding.bindingKind !== "checkpoint" ||
-          first.binding.checkpointFileDigest !==
-            digest.sha256Bytes(await readFile(paths.checkpoint))
-        ) {
-          throw new TypeError("保存済みreceipt chainと初回checkpointが一致しません");
-        }
-        const state = await inspectSplitState(adapters, command, runId);
-        await verifySplitState(state, runId, invocationId, adapters.now().toISOString(), existing);
-        await adapters.writeJsonArtifact(paths.initialReceipt, first);
-        await adapters.writeStandardOutput(
-          serializeCanonicalJsonLine({
+      const config = await adapters.loadConfig(
+        resolve(adapters.repositoryPath, command.configPath),
+      );
+      const stateAdapter = adapters.createStateBranchAdapter();
+      const head = await stateAdapter.resolveHead(config.state.branch);
+      if (head.status === "present") {
+        const bootstrap = await inspectRunBootstrapState(stateAdapter, config.state.branch, {
+          kind: "retry_run",
+          runId,
+          exactStateRevision: head.revision,
+        });
+        if (bootstrap.kind === "resume_with_exact_runtime") {
+          const state = await inspectSplitState(adapters, command.configPath, runId);
+          const receipts = await priorReceipts(adapters, paths, runId, state, command.configPath);
+          await verifySplitState(
+            state,
             runId,
-            stage: first.stage,
-            receiptDigest: first.receiptDigest,
-            phaseSequence: first.phaseSequence,
-            receiptChainPath: paths.receiptChain,
-          }),
-        );
-        return {};
+            invocationId,
+            adapters.now().toISOString(),
+            receipts,
+          );
+          const first = receipts[0]?.receipt;
+          if (first?.receiptType !== "initial_state_commit") {
+            throw new TypeError("保存済みreceipt chainに初回state commitがありません");
+          }
+          await adapters.writeJsonArtifact(paths.initialReceipt, first);
+          await adapters.writeStandardOutput(
+            serializeCanonicalJsonLine({
+              runId,
+              stage: first.stage,
+              receiptDigest: first.receiptDigest,
+              phaseSequence: first.phaseSequence,
+              receiptChainPath: paths.receiptChain,
+            }),
+          );
+          return {};
+        }
+        if (bootstrap.kind !== "operator_conflict_resolution") {
+          throw new TypeError("初回commit前のstate bootstrapが不正です", {
+            cause: bootstrap.kind === "manual_resolution_required" ? bootstrap.cause : undefined,
+          });
+        }
+        const current = await inspectRunBootstrapState(stateAdapter, config.state.branch, {
+          kind: "start_new",
+        });
+        if (current.kind !== "start_with_current_runtime") {
+          throw new TypeError("別runの永続stateが初回commitを妨げています");
+        }
+      }
+      const header = await readPublicationCheckpointHeader(paths.checkpoint);
+      if (header.runIdentity.runId !== runId) {
+        throw new TypeError("初回commitのcheckpointと指定run IDが一致しません");
+      }
+      if (
+        (head.status === "missing" && header.baseStateRevision.status !== "missing") ||
+        (head.status === "present" &&
+          (header.baseStateRevision.status !== "present" ||
+            header.baseStateRevision.revision !== head.revision))
+      ) {
+        throw new TypeError("初回commitのcheckpoint baseがremote headと一致しません");
+      }
+      if (existing != null) {
+        throw new TypeError("初回receiptがあるのにremote stateに同じrunがありません");
       }
       await runTrackingStageOnce("publication_planned", "initial_state_committed", () =>
         persistWorkflowState(
@@ -352,9 +610,6 @@ export class SplitStageRunner {
             receiptPath: paths.initialReceipt,
           },
         ),
-      );
-      const config = await adapters.loadConfig(
-        resolve(adapters.repositoryPath, command.configPath),
       );
       const receipt = decodeReceipt(await readFile(paths.initialReceipt), digest);
       if (receipt.receiptType !== "initial_state_commit") {
@@ -379,8 +634,8 @@ export class SplitStageRunner {
       await saveStageReceipts(adapters, paths, runId, [], [{ receipt, evidence }]);
       return {};
     }
-    const state = await inspectSplitState(adapters, command, runId);
-    const prior = await priorReceipts(adapters, paths, runId, state);
+    const state = await inspectSplitState(adapters, command.configPath, runId);
+    const prior = await priorReceipts(adapters, paths, runId, state, command.configPath);
     await verifySplitState(state, runId, invocationId, adapters.now().toISOString(), prior);
     const current = previousStage(prior);
     const execute = <Value>(
@@ -458,18 +713,29 @@ export class SplitStageRunner {
         return {};
       }
       case "settle-notifications": {
+        const pagesReceipt = prior.findLast(
+          (entry) =>
+            entry.receipt.receiptType === "pages_deployment" && entry.receipt.phase === "initial",
+        )?.receipt;
+        if (pagesReceipt?.receiptType !== "pages_deployment") {
+          throw new TypeError("通知段階の先行Pages receiptがありません");
+        }
         const outcome = await execute("initial_pages_published", "notifications_settled", () =>
-          settleWorkflowNotifications(adapters, {
-            kind: "settle-notifications",
-            configPath: command.configPath,
-            initialStateReceiptPath: paths.initialReceipt,
-            buildArtifactPath: paths.initialBuild,
-            deploymentOutcomePath: paths.initialDeployment,
-            settlementReceiptPath: paths.settlementReceipt,
-            ...(command.manualResolutionReceiptPath == null
-              ? {}
-              : { manualResolutionReceiptPath: command.manualResolutionReceiptPath }),
-          }),
+          settleWorkflowNotifications(
+            adapters,
+            {
+              kind: "settle-notifications",
+              configPath: command.configPath,
+              initialStateReceiptPath: paths.initialReceipt,
+              buildArtifactPath: paths.initialBuild,
+              deploymentOutcomePath: paths.initialDeployment,
+              settlementReceiptPath: paths.settlementReceipt,
+              ...(command.manualResolutionReceiptPath == null
+                ? {}
+                : { manualResolutionReceiptPath: command.manualResolutionReceiptPath }),
+            },
+            pagesReceipt,
+          ),
         );
         await saveStageReceipts(adapters, paths, runId, prior, [
           ...outcome.messageReceipts,
