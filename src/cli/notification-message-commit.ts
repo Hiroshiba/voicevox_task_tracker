@@ -40,7 +40,7 @@ export async function commitMessageTransition(
       observed: boolean;
       advance: OrthogonalCommitAdvance;
     }>
-  | Readonly<{ kind: "state_unconfirmed" }>
+  | Readonly<{ kind: "no_effect" }>
   | Readonly<{ kind: "conflict"; revision: string }>
 > {
   const operationId = createStateCommitOperationId({
@@ -149,7 +149,7 @@ export async function commitMessageTransition(
     );
   }
   if (written.status === "no_effect") {
-    return { kind: "state_unconfirmed" };
+    return { kind: "no_effect" };
   }
   if (written.status === "conflict") {
     return {

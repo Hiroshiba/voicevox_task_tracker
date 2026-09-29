@@ -715,3 +715,39 @@ export async function readInitialPagesDeploymentOutcome(
   }
   return parseInitialPagesDeploymentOutcome(raw, artifact);
 }
+
+/** build artifactを失った後も保存済みstateとの照合に使えるdeploy結果を読む。 */
+export function decodeInitialPagesDeploymentEvidence(
+  bytes: Uint8Array,
+): Extract<InitialPagesDeploymentOutcome, { kind: "success" }> {
+  if (bytes.length > MAX_DEPLOYMENT_ARTIFACT_BYTES) {
+    throw new TypeError("Pages公開結果artifactが許容byte数を超えています");
+  }
+  const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  const raw: unknown = JSON.parse(source);
+  if (source !== serializeCanonicalJsonLine(raw)) {
+    throw new TypeError("Pages公開結果artifactがcanonical JSONではありません");
+  }
+  const outcome = deploymentOutcomeSchema.parse(raw);
+  if (outcome.kind !== "success") {
+    throw new TypeError("保存済みPages証拠と比較できる成功結果がありません");
+  }
+  const receipt = parseReceipt(outcome.receipt, digest);
+  const evidence = parseInitialPagesPublicationEvidence(outcome.evidence, digest);
+  if (
+    receipt.receiptType !== "pages_deployment" ||
+    receipt.phase !== "initial" ||
+    receipt.effectCertainty !== "committed" ||
+    receipt.receiptDigest !== evidence.deploymentReceiptDigest ||
+    receipt.operationId !== evidence.deploymentOperationId ||
+    receipt.result?.deploymentIntentDigest !== evidence.deploymentIntentDigest ||
+    receipt.result.pagesContentDigest !== evidence.pagesContentDigest ||
+    receipt.result.sourceStateRevision !== evidence.sourceStateRevision ||
+    receipt.result.pageUrl !== evidence.pageUrl ||
+    serializeCanonicalJson(receipt.result.externalReference) !==
+      serializeCanonicalJson(evidence.externalReference)
+  ) {
+    throw new TypeError("Pages公開結果artifactと保存候補証拠が一致しません");
+  }
+  return outcome;
+}

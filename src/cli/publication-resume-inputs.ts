@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { serializeCanonicalJson } from "../canonical-json/value.js";
 import { parseInitialPagesPublicationEvidence } from "../application/tracking-run/initial-pages-evidence.js";
+import type { InitialPagesPublicationEvidence } from "../application/tracking-run/initial-pages-evidence.js";
+import type { RunTransactionMarker } from "../application/tracking-run/run-transaction-marker.js";
 import {
   observeInitialPagesDeployment,
   parseReceipt,
@@ -73,6 +75,70 @@ export type NotificationHistoryPagesBuildInput = BoundResume<
 export type NotificationHistoryPagesDeployInput = BoundResume<
   z.output<typeof resumeNotificationHistoryDeployInputSchema>
 >;
+
+/** 保存済みPages証拠と同じexact markerからdeploy receiptを再観測する。 */
+export function observeInitialPagesFromState(
+  input: Readonly<{
+    record: z.output<typeof durablePublicationRecordSchema>;
+    marker: Readonly<{
+      phase: RunTransactionMarker["phase"];
+      runId: string;
+      checkpointDigest: string;
+      publicationRecordDigest: string;
+      initialStateRevision?: string | undefined;
+      initialPagesPublicationEvidenceDigest?: string | undefined;
+    }>;
+    exactStateRevision: string;
+    evidence: InitialPagesPublicationEvidence;
+    invocationId: string;
+    localAttemptIndex: number;
+    phaseSequence: number;
+    previousReceiptDigest: string;
+    observedAt: string;
+  }>,
+  digest: ContentDigestPort,
+): PagesDeploymentReceipt {
+  const record = parseDurablePublicationRecord(input.record, digest);
+  if (
+    input.marker.phase === "initial_state_committed" ||
+    input.marker.runId !== record.runIdentity.runId ||
+    input.marker.checkpointDigest !== record.checkpointDigest ||
+    input.marker.publicationRecordDigest !== record.recordDigest ||
+    input.marker.initialStateRevision == null ||
+    input.marker.initialPagesPublicationEvidenceDigest == null
+  ) {
+    throw new TypeError("初回Pages再観測のmarkerと永続recordが一致しません");
+  }
+  const evidence = parseInitialPagesPublicationEvidence(input.evidence, digest);
+  return observeInitialPagesDeployment(
+    {
+      state: {
+        exactStateRevision: input.exactStateRevision,
+        marker: {
+          runId: input.marker.runId,
+          checkpointDigest: input.marker.checkpointDigest,
+          phase: input.marker.phase,
+          initialPagesPublicationEvidenceDigest: input.marker.initialPagesPublicationEvidenceDigest,
+          initialStateRevision: input.marker.initialStateRevision,
+        },
+        evidence,
+      },
+      binding: {
+        bindingKind: "checkpoint",
+        runId: record.runIdentity.runId,
+        checkpointDigest: record.checkpointDigest,
+        checkpointFileDigest: record.checkpointFileDigest,
+        runtimeIdentityDigest: inputDigestRuntimeIdentity(record.runtimeIdentity, digest),
+      },
+      invocationId: input.invocationId,
+      localAttemptIndex: input.localAttemptIndex,
+      phaseSequence: input.phaseSequence,
+      previousReceiptDigest: input.previousReceiptDigest,
+      observedAt: input.observedAt,
+    },
+    digest,
+  );
+}
 
 function assertRecordState(
   input: Readonly<{
@@ -280,16 +346,12 @@ export function resumeNotifications(
       evidence,
     };
     chainEvidence = { kind: "initial_pages_state", state: stateEvidence };
-    initialPagesDeploymentReceipt = observeInitialPagesDeployment(
+    initialPagesDeploymentReceipt = observeInitialPagesFromState(
       {
-        state: stateEvidence,
-        binding: {
-          bindingKind: "checkpoint",
-          runId: parsed.record.runIdentity.runId,
-          checkpointDigest: parsed.record.checkpointDigest,
-          checkpointFileDigest: parsed.record.checkpointFileDigest,
-          runtimeIdentityDigest: inputDigestRuntimeIdentity(parsed.record.runtimeIdentity, digest),
-        },
+        record: parsed.record,
+        marker: parsed.state.marker,
+        exactStateRevision: parsed.state.revision,
+        evidence,
         invocationId: parsed.source.invocationId,
         localAttemptIndex: parsed.source.localAttemptIndex,
         phaseSequence: parsed.source.phaseSequence,

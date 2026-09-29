@@ -45,6 +45,7 @@ import {
 } from "./notification-message-state.js";
 import { createGitHubRepositoryId, type Repository } from "../domain/index.js";
 import { NotificationStructureError } from "./notification-structure-error.js";
+import type { NotificationCasOutcome, NotificationHttpOutcome } from "./notification-recovery.js";
 
 /** 初回Pages成功のreceipt列またはstateへ保存済みの証拠。 */
 export type NotificationInitialPagesSource =
@@ -104,6 +105,8 @@ export type NotificationMessageDeliveryOutcome =
       kind: "state_unconfirmed";
       stateRevision: string;
       effectCertainty: "committed" | "no_effect" | "ambiguous";
+      casOutcome: NotificationCasOutcome;
+      httpOutcome: NotificationHttpOutcome;
       discordMessageId?: string;
     }>
   | Readonly<{ kind: "conflict"; observedHeadRevision: string }>;
@@ -247,7 +250,7 @@ export async function deliverNotificationMessage(
     );
     return { kind: "conflict", observedHeadRevision: reserved.revision };
   }
-  if (reserved.kind === "state_unconfirmed" || reserved.observed) {
+  if (reserved.kind === "no_effect" || reserved.observed) {
     if (reserved.kind === "committed") {
       const observed = await observeNotificationMessageDelivery(
         input,
@@ -265,6 +268,8 @@ export async function deliverNotificationMessage(
       kind: "state_unconfirmed",
       stateRevision: reserved.kind === "committed" ? reserved.revision : head.observedHead.revision,
       effectCertainty: reserved.kind === "committed" ? "ambiguous" : "no_effect",
+      casOutcome: reserved.kind === "committed" ? "observed" : "no_effect",
+      httpOutcome: "not_started",
     };
   }
   let outcome: NotificationMessageSendOutcome;
@@ -338,7 +343,11 @@ export async function deliverNotificationMessage(
     throw new NotificationStructureError(
       "通知messageの結果をstateへ保存できません",
       outcome.status === "sent" ? "committed" : "no_effect",
-      { cause },
+      {
+        cause,
+        casOutcome: "no_effect",
+        httpOutcome: outcome.status === "sent" ? "committed" : "no_effect",
+      },
     );
   }
   if (result.kind !== "committed") {
@@ -364,6 +373,10 @@ export async function deliverNotificationMessage(
           throw new NotificationStructureError(
             "通知messageのHTTP結果と保存済み結果が一致しません",
             outcome.status === "sent" ? "committed" : "no_effect",
+            {
+              casOutcome: "observed",
+              httpOutcome: outcome.status === "sent" ? "committed" : "no_effect",
+            },
           );
         }
       }
@@ -373,6 +386,8 @@ export async function deliverNotificationMessage(
       kind: "state_unconfirmed",
       stateRevision: observedHead.status === "present" ? observedHead.revision : reserved.revision,
       effectCertainty: outcome.status === "sent" ? "committed" : "no_effect",
+      casOutcome: result.kind === "no_effect" ? "no_effect" : "unknown",
+      httpOutcome: outcome.status === "sent" ? "committed" : "no_effect",
       ...(outcome.status === "sent" ? { discordMessageId: outcome.discordMessageId } : {}),
     };
   }
@@ -394,6 +409,10 @@ export async function deliverNotificationMessage(
       throw new NotificationStructureError(
         "通知messageの再観測結果がHTTP結果と一致しません",
         outcome.status === "sent" ? "committed" : "no_effect",
+        {
+          casOutcome: "observed",
+          httpOutcome: outcome.status === "sent" ? "committed" : "no_effect",
+        },
       );
     }
     return observedOutcome(observed);

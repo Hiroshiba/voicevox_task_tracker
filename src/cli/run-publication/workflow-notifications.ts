@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -7,14 +8,17 @@ import { decodeReceipt } from "../../application/tracking-run/receipt-codec.js";
 import type { InitialStateCommitReceipt } from "../../application/tracking-run/receipt-schema.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content-digest.js";
+import { StateFormatError, StateHistoryError } from "../../persistence/errors.js";
 import {
   decodeInitialPagesBuildArtifact,
   type InitialPagesBuildArtifact,
 } from "../initial-pages-build-artifact.js";
 import {
+  decodeInitialPagesDeploymentEvidence,
   readInitialPagesDeploymentOutcome,
   type InitialPagesDeploymentOutcome,
 } from "../initial-pages-deployment.js";
+import { observeInitialPagesFromState } from "../publication-resume-inputs.js";
 import { readNotificationMessageState } from "../notification-message-state.js";
 import {
   NotificationSettlementFailureError,
@@ -51,6 +55,17 @@ function pagesArtifactFailure(cause: unknown): never {
     });
   }
   throw cause;
+}
+
+async function optionalPagesArtifact(path: string): Promise<Uint8Array | undefined> {
+  try {
+    return await readFile(path);
+  } catch (cause: unknown) {
+    if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") {
+      return undefined;
+    }
+    throw cause;
+  }
 }
 
 async function initialReceipt(
@@ -106,20 +121,113 @@ export async function settleWorkflowNotifications(
       record,
       initialStateReceipt,
       loadPages: async () => {
+        const head = await adapter.resolveHead(config.state.branch);
+        if (head.status !== "present") {
+          throw new TypeError("workflow通知のstate branchがありません");
+        }
+        let current: Awaited<ReturnType<typeof readNotificationMessageState>>;
+        try {
+          current = await readNotificationMessageState(adapter, config.state, head.revision);
+        } catch (cause: unknown) {
+          if (
+            cause instanceof TypeError ||
+            cause instanceof SyntaxError ||
+            cause instanceof ZodError ||
+            cause instanceof StateFormatError ||
+            cause instanceof StateHistoryError
+          ) {
+            throw new NotificationStructureError("workflow通知の現在stateが不正です", "no_effect", {
+              cause,
+            });
+          }
+          throw cause;
+        }
+        if (
+          current.transaction.record.recordDigest !== record.recordDigest ||
+          current.transaction.marker.runId !== record.runIdentity.runId ||
+          current.transaction.marker.checkpointDigest !== record.checkpointDigest
+        ) {
+          throw new NotificationStructureError(
+            "workflow通知の現在stateが永続runと一致しません",
+            "no_effect",
+          );
+        }
+        const buildPath = resolve(adapters.repositoryPath, command.buildArtifactPath);
+        const deploymentPath = resolve(adapters.repositoryPath, command.deploymentOutcomePath);
+        if (current.transaction.marker.phase !== "initial_state_committed") {
+          const evidence = current.transaction.initialPagesEvidence;
+          if (evidence == null) {
+            throw new NotificationStructureError(
+              "workflow通知の保存済みPages証拠がありません",
+              "no_effect",
+            );
+          }
+          if (
+            evidence.sourceStateRevision !== initialStateReceipt.result.resultingStateRevision ||
+            evidence.pageUrl !== record.initialPagesProjection.settings.url
+          ) {
+            throw new NotificationStructureError(
+              "workflow通知の保存済みPages証拠が初回stateと一致しません",
+              "no_effect",
+            );
+          }
+          try {
+            const buildBytes = await optionalPagesArtifact(buildPath);
+            const deploymentBytes = await optionalPagesArtifact(deploymentPath);
+            const build =
+              buildBytes == null ? undefined : decodeInitialPagesBuildArtifact(buildBytes);
+            if (
+              build != null &&
+              (build.intent.runId !== record.runIdentity.runId ||
+                build.intent.checkpointDigest !== record.checkpointDigest ||
+                build.intent.sourceStateRevision !== evidence.sourceStateRevision ||
+                build.intent.deploymentIntentDigest !== evidence.deploymentIntentDigest ||
+                build.intent.pagesContentDigest !== evidence.pagesContentDigest ||
+                serializeCanonicalJson(build.receipt.binding) !==
+                  serializeCanonicalJson(initialStateReceipt.binding))
+            ) {
+              throw new TypeError("workflow通知のPages build artifactと保存済み証拠が一致しません");
+            }
+            if (deploymentBytes != null) {
+              const deployment = decodeInitialPagesDeploymentEvidence(deploymentBytes);
+              if (
+                serializeCanonicalJson(deployment.evidence) !== serializeCanonicalJson(evidence) ||
+                (build != null &&
+                  deployment.receipt.previousReceiptDigest !== build.receipt.receiptDigest)
+              ) {
+                throw new TypeError(
+                  "workflow通知のPages deploy artifactと保存済み証拠が一致しません",
+                );
+              }
+            }
+          } catch (cause: unknown) {
+            pagesArtifactFailure(cause);
+          }
+          const pagesReceipt = observeInitialPagesFromState(
+            {
+              record,
+              marker: current.transaction.marker,
+              exactStateRevision: head.revision,
+              evidence,
+              invocationId: randomUUID(),
+              localAttemptIndex: 0,
+              phaseSequence: initialStateReceipt.phaseSequence + 1,
+              previousReceiptDigest: initialStateReceipt.receiptDigest,
+              observedAt: adapters.now().toISOString(),
+            },
+            nodeContentDigestPort,
+          );
+          return { initialPages: { kind: "state" as const, evidence }, pagesReceipt };
+        }
         let build: InitialPagesBuildArtifact;
         try {
-          build = decodeInitialPagesBuildArtifact(
-            await readFile(resolve(adapters.repositoryPath, command.buildArtifactPath)),
-          );
+          build = decodeInitialPagesBuildArtifact(await readFile(buildPath));
         } catch (cause: unknown) {
           pagesArtifactFailure(cause);
         }
         let deployment: InitialPagesDeploymentOutcome;
         try {
-          deployment = await readInitialPagesDeploymentOutcome(
-            resolve(adapters.repositoryPath, command.deploymentOutcomePath),
-            build,
-          );
+          deployment = await readInitialPagesDeploymentOutcome(deploymentPath, build);
         } catch (cause: unknown) {
           pagesArtifactFailure(cause);
         }

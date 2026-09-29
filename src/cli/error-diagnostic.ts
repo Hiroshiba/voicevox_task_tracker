@@ -285,6 +285,8 @@ function appendKnownErrorDiagnostics(fields: DiagnosticField[], error: Error): v
             : error.outcome.effectCertainty,
       });
       fields.push({ key: "recoveryDisposition", value: error.outcome.recoveryDisposition });
+      fields.push({ key: "notificationCasOutcome", value: error.outcome.casOutcome });
+      fields.push({ key: "notificationHttpOutcome", value: error.outcome.httpOutcome });
     }
   }
   if (error instanceof CodexNonZeroExitError) {

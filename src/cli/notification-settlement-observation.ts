@@ -48,7 +48,14 @@ export async function settledRevision(
     input.record.checkpointDigest,
     digest,
   );
+  const finalizationOperationId = stateCommitReceiptOperationId(
+    "run_finalization",
+    input.record.runIdentity.runId,
+    input.record.checkpointDigest,
+    digest,
+  );
   let revision = headRevision;
+  let passedFinalization = false;
   for (let count = 0; count < MAX_INTERVENING_COMMITS; count += 1) {
     const commit = await port.adapter.readCommit(revision);
     if (commit.metadata.commitScope === "operations_alert") {
@@ -66,9 +73,19 @@ export async function settledRevision(
     }
     if (
       commit.metadata.commitScope !== "tracking_run" ||
-      commit.metadata.runId !== input.record.runIdentity.runId ||
-      commit.metadata.operationId !== operationId
+      commit.metadata.runId !== input.record.runIdentity.runId
     ) {
+      throw new TypeError("通知settlementのGit祖先に対象commitがありません");
+    }
+    if (commit.metadata.operationId === finalizationOperationId && !passedFinalization) {
+      if (commit.parent.status !== "present") {
+        throw new TypeError("run finalization commitに親がありません");
+      }
+      passedFinalization = true;
+      revision = commit.parent.revision;
+      continue;
+    }
+    if (commit.metadata.operationId !== operationId) {
       throw new TypeError("通知settlementのGit祖先に対象commitがありません");
     }
     return revision;

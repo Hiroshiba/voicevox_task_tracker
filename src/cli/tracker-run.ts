@@ -361,6 +361,8 @@ export async function runTrackerCliMain(args: readonly string[]): Promise<number
             ? [
                 `notification_marker_phase=${outcome.markerPhase}`,
                 `notification_failed_operation_effect_certainty=${outcome.kind === "structural_failure" ? outcome.failedOperationEffectCertainty : outcome.effectCertainty}`,
+                `notification_cas_outcome=${outcome.casOutcome}`,
+                `notification_http_outcome=${outcome.httpOutcome}`,
                 `notification_recovery_disposition=${outcome.recoveryDisposition}`,
                 `notification_state_revision=${outcome.stateRevision}`,
                 ...(outcome.lastReceipt == null

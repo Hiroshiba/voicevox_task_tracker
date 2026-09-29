@@ -41,7 +41,7 @@ export async function commitNotificationSettlement(
   expectedStateRevision: string,
 ): Promise<
   | Readonly<{ kind: "committed"; revision: string; observed: boolean }>
-  | Readonly<{ kind: "state_unconfirmed" }>
+  | Readonly<{ kind: "no_effect" }>
   | Readonly<{ kind: "conflict"; observedHeadRevision: string }>
 > {
   const operationId = stateCommitReceiptOperationId(
@@ -163,7 +163,7 @@ export async function commitNotificationSettlement(
     );
   }
   if (written.status === "no_effect") {
-    return { kind: "state_unconfirmed" };
+    return { kind: "no_effect" };
   }
   if (written.status === "conflict") {
     return {

@@ -490,6 +490,8 @@ jobs:
       notification_settlement_kind: ${{ steps.settle_notifications.outputs.notification_settlement_kind }}
       notification_marker_phase: ${{ steps.settle_notifications.outputs.notification_marker_phase }}
       notification_failed_operation_effect_certainty: ${{ steps.settle_notifications.outputs.notification_failed_operation_effect_certainty }}
+      notification_cas_outcome: ${{ steps.settle_notifications.outputs.notification_cas_outcome }}
+      notification_http_outcome: ${{ steps.settle_notifications.outputs.notification_http_outcome }}
       notification_recovery_disposition: ${{ steps.settle_notifications.outputs.notification_recovery_disposition }}
       notification_state_revision: ${{ steps.settle_notifications.outputs.notification_state_revision }}
       notification_last_receipt_digest: ${{ steps.settle_notifications.outputs.notification_last_receipt_digest }}
@@ -515,11 +517,13 @@ jobs:
           name: initial-state-commit-receipt
           path: artifacts/workflow
       - name: Pages build recordを取得
+        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: initial-pages-build-record
           path: artifacts/workflow
       - name: Pages deployment receiptを取得
+        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: initial-pages-deployment-record
