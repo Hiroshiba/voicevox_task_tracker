@@ -15,7 +15,6 @@ import {
   type PersonalReminderAiCacheStore,
 } from "../codex/personal-reminder-cache.js";
 import type { AiCacheMigrationPlan } from "./ai-cache-migration.js";
-import { createStateCommitIdentity } from "./state-commit-metadata.js";
 import { migrateStateSnapshot } from "./snapshot-v21-migration.js";
 import {
   joinStatePath,
@@ -24,7 +23,6 @@ import {
   type StateBranchCommitResult,
   type StateBranchHead,
   type StateFileReadResult,
-  type StateFileUpdate,
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
 import { StateBranchConflictError, StateFormatError, StateHistoryError } from "./errors.js";
@@ -34,16 +32,14 @@ import {
   type StateHistoryDiff,
   type StateHistoryRecord,
 } from "./history.js";
-import { assertExistingStatePublicSafety, assertStateValuesPublicSafety } from "./public-safety.js";
-import { serializeStateSnapshot, type StateSnapshot } from "./snapshot-v21.js";
+import type { StateSnapshot } from "./snapshot-v21.js";
 import { readAiCacheMigrationPlan } from "./state-ai-cache-migration-plan.js";
 import { cachePath, personalReminderAiCachePath } from "./state-cache-paths.js";
 import { compareStateKeys as compareStrings } from "./state-key-order.js";
-import { createStateLedgerUpdates, loadStateNotificationLedgers } from "./state-ledger-files.js";
-import { decodeStateFile, encodeStateFile } from "./state-file-codec.js";
+import { loadStateNotificationLedgers } from "./state-ledger-files.js";
+import { decodeStateFile } from "./state-file-codec.js";
 import { OPERATIONS_ALERT_LEDGER_STATE_PATH_V1 } from "./operations-alert-ledger.js";
-import { createStateNotificationLedger, type StateNotificationLedger } from "./state-documents.js";
-import type { UtcIsoDateTime } from "../domain/index.js";
+import type { StateNotificationLedger } from "./state-documents.js";
 import { INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1 } from "../application/tracking-run/contracts/recovery-paths.js";
 import {
   createInitialPublicationBaseState,
@@ -71,14 +67,6 @@ export type PersistStateTransactionResult = StateBranchCommitResult &
   Readonly<{
     updatedPaths: readonly string[];
   }>;
-
-/** 通知送信直後にledgerだけを更新する入力。 */
-export type PersistNotificationLedgerInput = Readonly<{
-  notificationLedger: StateNotificationLedger;
-  committedAt: UtcIsoDateTime;
-  knownSecrets: readonly string[];
-  commitScope: "operations_alert" | "manual_resolution";
-}>;
 
 function createAiCacheStateFormatError(error: unknown): StateFormatError {
   if (error instanceof z.ZodError) {
@@ -113,7 +101,7 @@ export class StatePersistenceSession {
     PersonalReminderAiCacheKey,
     PersonalReminderAiCacheEntry
   >();
-  #pendingAiCacheDeletionPaths: readonly string[];
+  readonly #pendingAiCacheDeletionPaths: readonly string[];
   #head: StateBranchHead;
 
   public readonly aiCache: AiCacheStore;
@@ -185,17 +173,6 @@ export class StatePersistenceSession {
       head,
       aiCacheMigrationPlan,
     );
-  }
-
-  #consumeAiCacheMigration(): void {
-    this.#pendingAiCacheDeletionPaths = Object.freeze([]);
-  }
-
-  #snapshotUpdate(snapshot: StateSnapshot): StateFileUpdate {
-    return Object.freeze({
-      path: this.#configuration.snapshotPath,
-      bytes: encodeStateFile(serializeStateSnapshot(snapshot)),
-    });
   }
 
   /** 現在のsession headをリモートへ公開する。 */
@@ -371,13 +348,6 @@ export class StatePersistenceSession {
     return loadStateNotificationLedgers(this.#adapter, this.#configuration, this.#head);
   }
 
-  async #ledgerUpdates(
-    ledger: StateNotificationLedger,
-    scope: "tracking_run" | "operations_alert" | "manual_resolution",
-  ): Promise<readonly StateFileUpdate[]> {
-    return createStateLedgerUpdates(this.#adapter, this.#configuration, this.#head, ledger, scope);
-  }
-
   async #loadAllHistoryRecords(): Promise<readonly StateHistoryRecord[]> {
     if (this.#head.status === "missing") {
       return Object.freeze([]);
@@ -458,99 +428,5 @@ export class StatePersistenceSession {
         compareStrings(left.cacheKey, right.cacheKey),
       ),
     );
-  }
-
-  async #commitNotificationLedger(
-    input: PersistNotificationLedgerInput,
-  ): Promise<PersistStateTransactionResult> {
-    const notificationLedger = createStateNotificationLedger(input.notificationLedger);
-    const snapshotResult = this.#head.status === "present" ? await this.loadSnapshot() : undefined;
-    const snapshot = snapshotResult?.status === "available" ? snapshotResult.snapshot : undefined;
-    if (snapshot == null) {
-      assertStateValuesPublicSafety([notificationLedger], input.knownSecrets);
-    } else {
-      assertExistingStatePublicSafety(
-        snapshot,
-        await this.loadHistoryRecords(),
-        notificationLedger,
-        [],
-        input.knownSecrets,
-      );
-    }
-    const updates: StateFileUpdate[] = [];
-    if (snapshot != null && input.commitScope === "manual_resolution") {
-      updates.push(this.#snapshotUpdate(snapshot));
-    }
-    updates.push(...(await this.#ledgerUpdates(notificationLedger, input.commitScope)));
-    updates.sort((left, right) => compareStrings(left.path, right.path));
-    const commitScope =
-      input.commitScope === "operations_alert" &&
-      updates.some((update) => update.path === this.#configuration.notificationLedgerPath)
-        ? "tracking_run"
-        : input.commitScope;
-    const result = await this.#adapter.commit({
-      branch: this.#configuration.branch,
-      expectedHead: this.#head,
-      updates,
-      deletions: input.commitScope === "operations_alert" ? [] : this.#pendingAiCacheDeletionPaths,
-      message: `tracker notification ledger ${input.committedAt}`,
-      committedAt: input.committedAt,
-      commitIdentity: createStateCommitIdentity(
-        commitScope,
-        undefined,
-        this.#head,
-        `tracker notification ledger ${input.committedAt}`,
-        updates,
-        input.commitScope === "operations_alert" ? [] : this.#pendingAiCacheDeletionPaths,
-      ),
-    });
-    this.#head = Object.freeze({
-      status: "present",
-      revision: result.revision,
-    });
-    if (input.commitScope === "manual_resolution") {
-      this.#consumeAiCacheMigration();
-    }
-    return Object.freeze({
-      ...result,
-      updatedPaths: Object.freeze(updates.map((value) => value.path)),
-    });
-  }
-
-  /** 通知送信結果を既存state branchのledgerへatomic commitする。 */
-  public async persistNotificationLedger(
-    input: PersistNotificationLedgerInput,
-  ): Promise<PersistStateTransactionResult> {
-    if (this.#head.status === "missing") {
-      throw new StateFormatError("notification ledger", {
-        cause: new TypeError("state branch作成前にnotification ledgerだけを保存できません"),
-      });
-    }
-    return this.#commitNotificationLedger(input);
-  }
-
-  /** 初回運用障害の通知ledgerでstate branchを作成する。 */
-  public async persistInitialOperationsNotificationLedger(
-    input: PersistNotificationLedgerInput,
-  ): Promise<PersistStateTransactionResult> {
-    if (this.#head.status !== "missing") {
-      throw new StateFormatError("notification ledger", {
-        cause: new TypeError("既存state branchを初回運用障害通知で作成できません"),
-      });
-    }
-    const notificationLedger = createStateNotificationLedger(input.notificationLedger);
-    if (
-      notificationLedger.entries.length !== 0 ||
-      notificationLedger.operationsAlerts.length !== 1
-    ) {
-      throw new StateFormatError("notification ledger", {
-        cause: new TypeError("初回運用障害通知のledger内容が不正です"),
-      });
-    }
-    return this.#commitNotificationLedger({
-      ...input,
-      notificationLedger,
-      commitScope: "operations_alert",
-    });
   }
 }

@@ -78,7 +78,12 @@ export const NOTIFICATION_LEDGER_REASON_CODE_VALUES = [
   "automation_stuck",
 ] as const;
 const notificationReasonCodeSchema = z.enum(NOTIFICATION_LEDGER_REASON_CODE_VALUES);
-const operationsAlertKindSchema = z.enum(["collection", "pages", "discord"]);
+const operationsAlertKindSchema = z.enum([
+  "collection",
+  "pages",
+  "discord",
+  "workflow_infrastructure_failure",
+]);
 
 const ledgerEntryBaseSchema = z.strictObject({
   notificationKey: nonEmptyStringSchema,

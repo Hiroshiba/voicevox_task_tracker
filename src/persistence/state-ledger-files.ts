@@ -104,12 +104,17 @@ export async function createStateLedgerUpdates(
     ),
   });
   if (scope === "operations_alert") {
+    if (legacy) {
+      throw new StateFormatError("operations alert ledger", {
+        cause: new TypeError("旧形式の通常ledgerを運用障害通知commitで移行できません"),
+      });
+    }
     if (serializeStateNotificationLedger(current) !== serializeStateNotificationLedger(ledger)) {
       throw new StateFormatError("operations alert ledger", {
         cause: new TypeError("運用障害通知commitで通常ledgerを変更できません"),
       });
     }
-    return legacy ? Object.freeze([normal, operations]) : Object.freeze([operations]);
+    return Object.freeze([operations]);
   }
   const currentOperations = serializeStateOperationsAlertLedger(
     createStateOperationsAlertLedger({

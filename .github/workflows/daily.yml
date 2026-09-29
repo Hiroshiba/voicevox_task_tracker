@@ -210,6 +210,11 @@ jobs:
         run: |
           rm -rf "${{ runner.temp }}/codex-home"
           rm -f "${{ runner.temp }}/codex-auth-fingerprint"
+      - name: 公開失敗artifactを保存
+        if: always()
+        uses: ./.github/actions/upload-failure-artifact
+        with:
+          artifact-name: daily-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
       - name: 診断JSONLを暗号化
         if: >-
           always() &&
@@ -274,6 +279,11 @@ jobs:
           overwrite: true
           if-no-files-found: error
           retention-days: 7
+      - name: 公開失敗artifactを保存
+        if: always()
+        uses: ./.github/actions/upload-failure-artifact
+        with:
+          artifact-name: daily-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
       - name: 診断JSONLを暗号化
         if: >-
           always() &&
@@ -361,6 +371,11 @@ jobs:
           overwrite: true
           if-no-files-found: error
           retention-days: 7
+      - name: 公開失敗artifactを保存
+        if: always()
+        uses: ./.github/actions/upload-failure-artifact
+        with:
+          artifact-name: daily-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
       - name: 診断JSONLを暗号化
         if: >-
           always() &&
@@ -428,6 +443,8 @@ jobs:
           path: dist/web
       - name: deploy直前のstateと全fileを検証
         id: preflight
+        env:
+          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
         run: |
           node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs preflight-pages-deployment --run-attempt "${{ github.run_attempt }}"
           echo "kind=$(jq -r .kind artifacts/workflow/initial-pages-preflight.json)" >> "$GITHUB_OUTPUT"
@@ -461,6 +478,7 @@ jobs:
           PAGES_ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact_digest }}
           PAGES_DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
           PAGES_URL: ${{ steps.deployment.outputs.page_url }}
+          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
         run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs record-pages-deployment
       - name: Pages deployment receiptまたは失敗を保存
         if: always() && steps.record.outcome != 'skipped'
@@ -469,6 +487,24 @@ jobs:
           name: initial-pages-deployment-record
           path: artifacts/workflow/initial-pages-deployment.json
           overwrite: true
+          if-no-files-found: error
+          retention-days: 7
+      - name: 公開失敗artifactを保存
+        if: always()
+        uses: ./.github/actions/upload-failure-artifact
+        with:
+          artifact-name: daily-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+      - name: 診断JSONLを暗号化
+        if: always()
+        env:
+          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 }}
+        run: .github/scripts/encrypt-diagnostics.sh artifacts/workflow/runtime/tracker-run.mjs
+      - name: 暗号化済み診断artifactを保存
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: daily-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          path: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.bundle
           if-no-files-found: error
           retention-days: 7
 
@@ -529,6 +565,8 @@ jobs:
           name: initial-pages-deployment-record
           path: artifacts/workflow
       - name: checkpointとruntimeを検証
+        env:
+          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
         run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs verify-checkpoint
       - name: 通知をsettleする
         id: settle_notifications
@@ -558,6 +596,11 @@ jobs:
           overwrite: true
           if-no-files-found: error
           retention-days: 7
+      - name: 公開失敗artifactを保存
+        if: always()
+        uses: ./.github/actions/upload-failure-artifact
+        with:
+          artifact-name: daily-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
       - name: 診断JSONLを暗号化
         if: >-
           always() &&
@@ -643,6 +686,8 @@ jobs:
           retention-days: 7
       - name: deploy直前のfinal stateと全fileを検証
         id: preflight
+        env:
+          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
         run: |
           node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs preflight-notification-history-deployment --run-attempt "${{ github.run_attempt }}"
           echo "kind=$(jq -r .kind artifacts/workflow/notification-history-pages-preflight.json)" >> "$GITHUB_OUTPUT"
@@ -676,6 +721,7 @@ jobs:
           PAGES_ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact_digest }}
           PAGES_DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
           PAGES_URL: ${{ steps.deployment.outputs.page_url }}
+          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
         run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs record-notification-history-deployment
       - name: 通知履歴Pages receiptまたは失敗を保存
         if: always() && steps.record.outcome != 'skipped'
@@ -686,6 +732,11 @@ jobs:
           overwrite: true
           if-no-files-found: error
           retention-days: 7
+      - name: 公開失敗artifactを保存
+        if: always()
+        uses: ./.github/actions/upload-failure-artifact
+        with:
+          artifact-name: daily-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
       - name: 診断JSONLを暗号化
         if: >-
           always() &&
@@ -709,6 +760,7 @@ jobs:
   notify-operations:
     needs:
       - collect-analyze
+      - persist-state
       - build-pages
       - deploy-pages
       - notify-discord
@@ -719,6 +771,7 @@ jobs:
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
       (github.event_name != 'schedule' || vars.VOICEVOX_TASK_TRACKER_SCHEDULE_PAUSED != 'true') &&
       (needs.collect-analyze.result == 'failure' ||
+      needs.persist-state.result == 'failure' ||
       needs.build-pages.result == 'failure' ||
       needs.deploy-pages.result == 'failure' ||
       needs.publish-notification-history.result == 'failure' ||
@@ -756,42 +809,49 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: CLIをビルド
         run: pnpm build
-      - name: 収集run reportを取得
-        if: needs.collect-analyze.result == 'failure'
+      - name: 公開失敗artifactを取得
+        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          pattern: daily-run-report-${{ github.run_id }}-${{ github.run_attempt }}-collect-analyze
-          path: artifacts/run-reports
+          pattern: daily-failure-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: artifacts/workflow/failures
           merge-multiple: true
       - name: 運用障害をDiscordへ通知
+        id: notify
         env:
           DISCORD_OPERATIONS_WEBHOOK_URL: ${{ secrets.DISCORD_OPERATIONS_WEBHOOK_URL }}
-          INCIDENT_ID: ${{ github.run_id }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
           BUILD_PAGES_RESULT: ${{ needs.build-pages.result }}
           COLLECT_ANALYZE_RESULT: ${{ needs.collect-analyze.result }}
-          COLLECT_PUBLIC_BOUNDARY_STATUS: ${{ needs.collect-analyze.outputs.public_boundary_status || 'unclassified' }}
           DEPLOY_PAGES_RESULT: ${{ needs.deploy-pages.result }}
           NOTIFY_DISCORD_RESULT: ${{ needs.notify-discord.result }}
           PUBLISH_NOTIFICATION_HISTORY_RESULT: ${{ needs.publish-notification-history.result }}
+          PERSIST_STATE_RESULT: ${{ needs.persist-state.result }}
           VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
         run: |
-          if [[ "$COLLECT_ANALYZE_RESULT" == "failure" ]]; then
-            incident_kind=collection
-          elif [[ "$BUILD_PAGES_RESULT" == "failure" || "$DEPLOY_PAGES_RESULT" == "failure" || "$PUBLISH_NOTIFICATION_HISTORY_RESULT" == "failure" ]]; then
-            incident_kind=pages
-          elif [[ "$NOTIFY_DISCORD_RESULT" == "failure" ]]; then
-            incident_kind=discord
-          else
-            echo "監視対象jobに失敗がありません" >&2
-            exit 1
-          fi
           occurred_at="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
-          arguments=(notify-operations --kind "$incident_kind" --incident-id "$INCIDENT_ID:$incident_kind" --occurred-at "$occurred_at")
-          if [[ "$incident_kind" == "collection" ]]; then
-            arguments+=(--collect-analyze-report artifacts/run-reports/collect-analyze.json)
-            arguments+=(--public-boundary-status "$COLLECT_PUBLIC_BOUNDARY_STATUS")
-          fi
+          arguments=(notify-operations --workflow-run-id "$WORKFLOW_RUN_ID" --occurred-at "$occurred_at")
+          jobs=(collect-analyze persist-state build-pages deploy-pages notify-discord publish-notification-history)
+          results=("$COLLECT_ANALYZE_RESULT" "$PERSIST_STATE_RESULT" "$BUILD_PAGES_RESULT" "$DEPLOY_PAGES_RESULT" "$NOTIFY_DISCORD_RESULT" "$PUBLISH_NOTIFICATION_HISTORY_RESULT")
+          for index in "${!jobs[@]}"; do
+            if [[ "${results[$index]}" == "failure" ]]; then
+              arguments+=(--failed-job "${jobs[$index]}")
+            fi
+          done
           pnpm tracker:run "${arguments[@]}"
+      - name: 運用障害通知receiptを保存
+        if: always() && steps.notify.outcome != 'skipped'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: operations-alert-receipt
+          path: artifacts/workflow/operations-alert-receipt.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: 公開失敗artifactを保存
+        if: always()
+        uses: ./.github/actions/upload-failure-artifact
+        with:
+          artifact-name: daily-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
       - name: 診断JSONLを暗号化
         if: >-
           always() &&
@@ -906,6 +966,11 @@ jobs:
           path: artifacts/run-reports/workflow.json
           if-no-files-found: error
           retention-days: 30
+      - name: 公開失敗artifactを保存
+        if: always()
+        uses: ./.github/actions/upload-failure-artifact
+        with:
+          artifact-name: daily-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
       - name: 診断JSONLを暗号化
         if: >-
           always() &&

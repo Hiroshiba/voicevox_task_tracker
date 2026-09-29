@@ -1,12 +1,14 @@
+import { randomUUID } from "node:crypto";
+
 import type { DiagnosticsJsonlRecorder } from "../diagnostics/recorder.js";
 import { createUtcIsoDateTime, type UtcIsoDateTime } from "../domain/index.js";
-import { GitHubRetryExhaustedError } from "../github/index.js";
 import type {
   RunIdentity,
   RunRequest,
   RunExecutionPolicy,
 } from "../application/tracking-run/request.js";
 import type { PreparedRun } from "../application/tracking-run/prepare-run.js";
+import type { FailedRun } from "../application/tracking-run/failure-artifact.js";
 import type { InventoryCollectedRun } from "../application/tracking-run/stages/inventory.js";
 import type { CollectedRun } from "../application/tracking-run/stages/collection.js";
 import type { RunEvaluatedAt } from "../application/tracking-run/contracts/evaluation-time.js";
@@ -66,7 +68,6 @@ export type DailyTransactionTypeMap = Readonly<{
   pagesPrepared: unknown;
   pages: unknown;
   notifications: unknown;
-  operationsAlert: unknown;
 }>;
 
 /** run内の全段階へ渡す安定した識別情報。 */
@@ -114,9 +115,6 @@ export type NotificationStageResult<Value> = Readonly<{
   notificationCount: number;
   discordSentAt: UtcIsoDateTime | null;
 }>;
-
-/** 運用通知段階の値と送信指標。 */
-export type DiscordStageResult<Value> = NotificationStageResult<Value>;
 
 /** 日次transactionの外部接続と各モジュールの結合境界。 */
 export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> = Readonly<{
@@ -260,16 +258,6 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       notifications: Types["notifications"];
     }>,
   ) => Promise<void>;
-  sendOperationsAlert: (
-    input: Readonly<{
-      invocation: DailyRunInvocation;
-      configuration: Types["configuration"];
-      state: Types["state"];
-      persisted: Types["persisted"] | undefined;
-      kind: "collection" | "pages";
-      retryAttempts: number;
-    }>,
-  ) => Promise<DiscordStageResult<Types["operationsAlert"]>>;
   writeDryRunArtifact: (path: string, artifact: DryRunArtifact<Types["planned"]>) => Promise<void>;
   writeCollectAnalyzeArtifact: (
     path: string,
@@ -299,6 +287,8 @@ export type DailyRunEffects = Readonly<{
 export type DailyRunExecutionResult = Readonly<{
   report: RunReport;
   effects: DailyRunEffects;
+  failureDiagnosticRecordId?: string;
+  failureEvidence?: FailedRun["evidence"];
 }>;
 
 /** dry-runが公開副作用の代わりに保存する検証済み成果物。 */
@@ -437,18 +427,18 @@ function initialEffects(): MutableEffects {
   };
 }
 
-function operationsAlertKind(stage: RunStage): "collection" | "pages" | undefined {
-  if (stage === "repository_inventory" || stage === "incremental_collection") {
-    return "collection";
-  }
-  if (stage === "pages") {
-    return "pages";
-  }
-  return undefined;
-}
-
-function operationsAlertRetryAttempts(error: unknown): number {
-  return error instanceof GitHubRetryExhaustedError ? error.attempts : 1;
+function isPreCheckpointFailureStage(stage: RunStage): boolean {
+  return (
+    stage === "repository_inventory" ||
+    stage === "incremental_collection" ||
+    stage === "deterministic_analysis" ||
+    stage === "codex_analysis" ||
+    stage === "reducer" ||
+    stage === "graph_analysis" ||
+    stage === "personal_reminder_analysis" ||
+    stage === "completeness_validation" ||
+    stage === "artifact"
+  );
 }
 
 function personalReminderAiDependencyMismatchError(
@@ -527,11 +517,12 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
     stage: RunStage,
     event: string,
     error: unknown,
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const recorder = this.#dependencies.diagnosticsRecorder;
     if (recorder == null) {
-      return;
+      return undefined;
     }
+    const recordId = randomUUID();
     const mismatchError =
       event === "cli.stage.failed" ? personalReminderAiDependencyMismatchError(error) : undefined;
     try {
@@ -542,6 +533,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           invocationId: invocation.invocationId,
           command: invocation.command.kind,
           stage,
+          recordId,
           ...(mismatchError != null
             ? {
                 personalReminderAiDependencyMismatch: mismatchError.diagnosticDetails(),
@@ -550,6 +542,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         },
         error,
       });
+      return recordId;
     } catch (recordingError: unknown) {
       throw new AggregateError([error, recordingError], "CLI段階エラーの診断記録に失敗しました", {
         cause: error,
@@ -574,6 +567,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
     let configuration: Types["configuration"] | undefined;
     let state: Types["state"] | undefined;
     let persisted: Types["persisted"] | undefined;
+    let prepared: PreparedRun | undefined;
 
     try {
       configuration = await this.#dependencies.validateConfiguration({
@@ -583,7 +577,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         invocation,
         configuration,
       });
-      const prepared = this.#dependencies.prepareRun({ request, identity, configuration, state });
+      prepared = this.#dependencies.prepareRun({ request, identity, configuration, state });
       invocation = projectPreparedLegacyDailyInvocation(prepared);
 
       stage = "repository_inventory";
@@ -797,37 +791,15 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         effects: freezeEffects(effects),
       });
     } catch (error: unknown) {
-      await this.#recordError(invocation, stage, "cli.stage.failed", error);
+      const failureDiagnosticRecordId = await this.#recordError(
+        invocation,
+        stage,
+        "cli.stage.failed",
+        error,
+      );
       const failureKind = isPublicBoundaryViolation(error) ? "public_boundary" : "other";
-      const alertKind = failureKind === "public_boundary" ? undefined : operationsAlertKind(stage);
-      if (
-        alertKind != null &&
-        configuration != null &&
-        state != null &&
-        request.executionPolicy.effectTarget === "production" &&
-        request.output.kind === "publication"
-      ) {
-        effects.discordAttempted = true;
-        try {
-          const alert = await this.#dependencies.sendOperationsAlert({
-            invocation,
-            configuration,
-            state,
-            persisted,
-            kind: alertKind,
-            retryAttempts: operationsAlertRetryAttempts(error),
-          });
-          discordSentAt = alert.discordSentAt;
-          metrics = updateMetrics(metrics, {
-            notificationCount: alert.notificationCount,
-          });
-        } catch (alertError: unknown) {
-          await this.#recordError(invocation, "discord", "cli.operations_alert.failed", alertError);
-          diagnostics.push(safeErrorDiagnostic("discord", alertError));
-        }
-      }
       try {
-        return await this.#writeFailure(
+        const result = await this.#writeFailure(
           invocation,
           request.reportPath,
           stage,
@@ -838,6 +810,20 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           discordSentAt,
           effects,
         );
+        return Object.freeze({
+          ...result,
+          ...(failureDiagnosticRecordId == null ? {} : { failureDiagnosticRecordId }),
+          ...(prepared == null || !isPreCheckpointFailureStage(stage)
+            ? {}
+            : {
+                failureEvidence: {
+                  bindingKind: "run_pre_checkpoint_alert" as const,
+                  runId: prepared.core.identity.runId,
+                  baseStateRevision: prepared.core.baseState.revision,
+                  configDigest: prepared.core.configDigest,
+                },
+              }),
+        });
       } catch (reportError: unknown) {
         throw new AggregateError([error, reportError], "run reportの書込みにも失敗しました", {
           cause: error,

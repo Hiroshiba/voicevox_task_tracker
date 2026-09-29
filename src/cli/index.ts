@@ -37,7 +37,6 @@ export {
   type DailyRunRuntime,
   type DailyTransactionDependencies,
   type DailyTransactionTypeMap,
-  type DiscordStageResult,
   type NotificationStageResult,
   type DryRunArtifact,
   type OnlineCliCommand,

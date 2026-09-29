@@ -1,22 +1,35 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { assertNonNullable } from "../../util/assert-non-nullable.js";
 
 import { decodeReceipt } from "../../application/tracking-run/receipt-codec.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import type { Config } from "../../config/index.js";
+import {
+  DiscordOperationsPostSendError,
+  DiscordWebhookDeliveryUnknownError,
+} from "../../discord/index.js";
 import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content-digest.js";
 import { joinStatePath, readExactStateSnapshot } from "../../persistence/index.js";
 import type { StateBranchAdapter } from "../../persistence/index.js";
 import type { BaseStateRevision } from "../../application/tracking-run/contracts/run-core.js";
-import { CliWorkflowArtifactError } from "../errors.js";
-import { readOptionalRunReportFile } from "../workflow-run-report.js";
+import { operationsIncidentKindForFailure } from "../../application/tracking-run/failure-primary.js";
+import {
+  createWorkflowInfrastructureFailure,
+  primaryAlertFailure,
+  readWorkflowFailureArtifacts,
+} from "../operations-failure-selection.js";
+import { createOperationsAlertReceipt } from "../operations-alert-receipt.js";
 import type {
   BuildPagesCliCommand,
   NotifyOperationsCliCommand,
   PersistStateCliCommand,
   VerifyCheckpointCliCommand,
 } from "../command.js";
-import { deliverOperationsAlert } from "../notification-delivery-runtime.js";
+import {
+  deliverOperationsAlert,
+  OperationsAlertCommitFailureError,
+} from "../notification-delivery-runtime.js";
 import { requireEnvironmentValue } from "../production-runtime-setup.js";
 import {
   readPublicationCheckpointFile,
@@ -30,6 +43,10 @@ import {
 import type { RunPublicationAdapters, ValidatedRun } from "./contracts.js";
 import { buildPublicPages } from "./pages.js";
 import { commitInitialState } from "../initial-state-commit.js";
+import {
+  BoundPublicationFailureError,
+  OperationsAlertReceiptFailureError,
+} from "../failure-context-error.js";
 import { parseInitialPagesBuildArtifact } from "../initial-pages-build-artifact.js";
 import { discordDeliverySettings, projectPublicationSettings } from "./settings.js";
 
@@ -56,6 +73,8 @@ type WorkflowDeliveryAdapters = Pick<
   | "sleep"
   | "random"
   | "sendDiscord"
+  | "diagnosticsRecorder"
+  | "writeJsonArtifact"
 >;
 
 function assertWorkflowConfig(
@@ -177,17 +196,21 @@ export async function persistWorkflowState(
     adapter,
     header.baseStateRevision,
   );
-  const result = await commitInitialState(artifact, {
-    adapter,
-    configuration: config.state,
-    migrationTimezone: config.staleness.timezone,
-    knownSecrets: [],
-    now: dependencies.adapters.now,
-  });
-  await dependencies.adapters.writeJsonArtifact(
-    resolve(dependencies.adapters.repositoryPath, command.receiptPath),
-    result.receipt,
-  );
+  try {
+    const result = await commitInitialState(artifact, {
+      adapter,
+      configuration: config.state,
+      migrationTimezone: config.staleness.timezone,
+      knownSecrets: [],
+      now: dependencies.adapters.now,
+    });
+    await dependencies.adapters.writeJsonArtifact(
+      resolve(dependencies.adapters.repositoryPath, command.receiptPath),
+      result.receipt,
+    );
+  } catch (error: unknown) {
+    throw new BoundPublicationFailureError(artifact, error);
+  }
 }
 
 /** workflow artifactの検証済みrunからPagesを生成する。 */
@@ -244,24 +267,35 @@ export async function notifyWorkflowOperations(
   dependencies: Readonly<{ adapters: WorkflowDeliveryAdapters }>,
   command: NotifyOperationsCliCommand,
 ): Promise<void> {
-  if (command.incidentKind === "collection") {
-    const reportPath = resolve(
-      dependencies.adapters.repositoryPath,
-      command.collectAnalyzeReportPath,
-    );
-    const report = await readOptionalRunReportFile(reportPath);
-    if (report != null && report.command !== "collect-analyze") {
-      throw new CliWorkflowArtifactError(reportPath, "invalid", {
-        cause: new TypeError("収集run reportのcommandが一致しません"),
-      });
-    }
-    if (
-      command.publicBoundaryStatus === "confirmed" ||
-      (report?.status === "failure" && report.failureKind === "public_boundary")
-    ) {
-      return;
-    }
+  const failureDirectory = resolve(dependencies.adapters.repositoryPath, command.failureDirectory);
+  const artifacts = await readWorkflowFailureArtifacts(failureDirectory);
+  if (artifacts.some((artifact) => artifact.failure.failureKind === "public_boundary")) {
+    return;
   }
+  const recorder = dependencies.adapters.diagnosticsRecorder;
+  let primary;
+  if (artifacts.length === 0) {
+    assertNonNullable(recorder, "運用障害通知の暗号化診断recorderがありません");
+    primary = await createWorkflowInfrastructureFailure(
+      failureDirectory,
+      command.failedJobs,
+      recorder,
+    );
+  } else {
+    primary = primaryAlertFailure(artifacts);
+  }
+  if (primary == null) {
+    throw new TypeError("公開失敗artifactの主因を選べません");
+  }
+  const incidentKind = operationsIncidentKindForFailure(primary.failure);
+  const incidentId = `${command.workflowRunId}:${incidentKind}:${primary.failure.failedStage}`;
+  createOperationsAlertReceipt(
+    primary,
+    incidentId,
+    dependencies.adapters.now().toISOString(),
+    { status: "no_effect" },
+    undefined,
+  );
   const config = await dependencies.adapters.loadConfig(
     resolve(dependencies.adapters.repositoryPath, command.configPath),
   );
@@ -284,16 +318,91 @@ export async function notifyWorkflowOperations(
         ),
       ])
     : Object.freeze([]);
-  await deliverOperationsAlert(
-    dependencies.adapters,
-    discordDeliverySettings(config),
-    knownSecrets,
-    state,
-    {
-      incidentId: command.incidentId,
-      kind: command.incidentKind,
-      occurredAt: command.occurredAt,
-      retryAttempts: command.retryAttempts,
-    },
-  );
+  const isNotificationHistoryFailure =
+    primary.failure.failedStage === "notification_history_pages_prepared" ||
+    primary.failure.failedStage === "notification_history_pages_published";
+  let delivered: Awaited<ReturnType<typeof deliverOperationsAlert>>;
+  try {
+    delivered = await deliverOperationsAlert(
+      dependencies.adapters,
+      discordDeliverySettings(config),
+      knownSecrets,
+      state,
+      config.state,
+      {
+        incidentId,
+        kind: incidentKind,
+        occurredAt: command.occurredAt,
+        retryAttempts: command.retryAttempts,
+        context: {
+          failureKind: primary.failure.failureKind,
+          failedStage: primary.failure.failedStage,
+          ...(isNotificationHistoryFailure && primary.failure.finalStateRevision != null
+            ? { finalStateRevision: primary.failure.finalStateRevision }
+            : {}),
+          ...(isNotificationHistoryFailure && primary.failure.lastReceiptDigest != null
+            ? { lastReceiptDigest: primary.failure.lastReceiptDigest }
+            : {}),
+        },
+      },
+    );
+  } catch (error: unknown) {
+    if (
+      !(error instanceof OperationsAlertCommitFailureError) &&
+      !(error instanceof DiscordOperationsPostSendError) &&
+      !(error instanceof DiscordWebhookDeliveryUnknownError)
+    ) {
+      throw error;
+    }
+    const delivery =
+      error instanceof DiscordWebhookDeliveryUnknownError
+        ? { status: "ambiguous" as const }
+        : { status: "ambiguous" as const, discordMessageId: error.discordMessageId };
+    try {
+      const receipt = createOperationsAlertReceipt(
+        primary,
+        incidentId,
+        dependencies.adapters.now().toISOString(),
+        delivery,
+        undefined,
+      );
+      await dependencies.adapters.writeJsonArtifact(
+        resolve(dependencies.adapters.repositoryPath, command.receiptPath),
+        receipt,
+      );
+    } catch (receiptError: unknown) {
+      throw new OperationsAlertReceiptFailureError(
+        "ambiguous",
+        new AggregateError(
+          [error, receiptError],
+          "運用障害通知の失敗receiptを保存できませんでした",
+          {
+            cause: error,
+          },
+        ),
+      );
+    }
+    throw error;
+  }
+  const operationsDelivery = delivered.delivery;
+  try {
+    const receipt = createOperationsAlertReceipt(
+      primary,
+      incidentId,
+      dependencies.adapters.now().toISOString(),
+      operationsDelivery.status === "sent"
+        ? { status: "sent", discordMessageId: operationsDelivery.discordMessageId }
+        : { status: "no_effect" },
+      delivered.operationsCommit,
+    );
+    await dependencies.adapters.writeJsonArtifact(
+      resolve(dependencies.adapters.repositoryPath, command.receiptPath),
+      receipt,
+    );
+  } catch (error: unknown) {
+    throw new OperationsAlertReceiptFailureError(
+      operationsDelivery.status === "sent" ? "committed" : "no_effect",
+      error,
+    );
+  }
 }

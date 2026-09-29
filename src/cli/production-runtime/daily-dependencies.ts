@@ -28,10 +28,7 @@ import {
   createWriteReportStage,
 } from "./publication/artifact.js";
 import { createFinalizeRunStage } from "./publication/completion.js";
-import {
-  createSettleNotificationsStage,
-  createSendOperationsAlertStage,
-} from "./publication/notification.js";
+import { createSettleNotificationsStage } from "./publication/notification.js";
 import { createBuildPagesStage, createDeployPagesStage } from "./publication/pages.js";
 import { createPersistStateStage } from "./publication/persistence.js";
 import { createValidateCompletenessStage } from "./validation/stage.js";
@@ -66,7 +63,6 @@ export function createDailyDependencies(
     deployPages: createDeployPagesStage(adapters),
     settleNotifications: createSettleNotificationsStage(adapters),
     finalizeRun: createFinalizeRunStage(adapters),
-    sendOperationsAlert: createSendOperationsAlertStage(adapters),
     writeDryRunArtifact: createWriteDryRunArtifactStage(adapters),
     writeCollectAnalyzeArtifact: createWriteCollectAnalyzeArtifactStage(adapters),
     writeReport: createWriteReportStage(adapters),

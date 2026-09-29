@@ -21,6 +21,7 @@ import type {
   GitHubNodeId,
   GraphNodeId,
   NotificationLedgerReasonCode,
+  OperationsAlertLedgerKind,
   PendingNotification,
   Relation,
   Severity,
@@ -117,7 +118,7 @@ export type PreviousNotificationLedger = Readonly<{
   operationsAlerts: readonly Readonly<{
     alertKey: string;
     incidentId: string;
-    kind: "collection" | "pages" | "discord";
+    kind: OperationsAlertLedgerKind;
     occurredAt: string;
     sentAt: string;
     discordMessageId: string;

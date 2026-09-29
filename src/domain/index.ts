@@ -343,6 +343,7 @@ export {
   type NotificationLedgerReasonCode,
   type NotificationReasonCode,
   type OperationsAlertKind,
+  type OperationsAlertLedgerKind,
   type OperationsAlertLedgerEntry,
   type PendingNotification,
   type PendingPersonalReminderTarget,

@@ -11,7 +11,7 @@ const dateTimeSchema = z.iso
 const operationsAlertEntrySchema = z.strictObject({
   alertKey: nonEmptyStringSchema,
   incidentId: nonEmptyStringSchema,
-  kind: z.enum(["collection", "pages", "discord"]),
+  kind: z.enum(["collection", "pages", "discord", "workflow_infrastructure_failure"]),
   occurredAt: dateTimeSchema,
   sentAt: dateTimeSchema,
   discordMessageId: nonEmptyStringSchema,

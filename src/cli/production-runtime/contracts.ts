@@ -95,7 +95,6 @@ import type { EffectiveAssigneeCandidateContext } from "../../application/tracki
 import type { PersonalReminderAnalysisResult } from "../personal-reminder/index.js";
 import type { RuntimeCredentials, RuntimeExecutionTarget } from "../production-runtime-setup.js";
 import type {
-  DiscordResult,
   InitialPagesPreparedRun,
   InitialPagesPublishedRun,
   PersistedRun,
@@ -276,7 +275,6 @@ export type ProductionTypes = DailyTransactionTypeMap &
     pagesPrepared: InitialPagesPreparedRun;
     pages: InitialPagesPublishedRun;
     notifications: Extract<NotificationSettlementOutcome, { kind: "settled" }>;
-    operationsAlert: DiscordResult;
   }>;
 
 export type BlockerValueAiDependencies = Readonly<{

@@ -1,15 +1,18 @@
 import {
   DiscordDigestDeliveryError,
   DiscordLedgerError,
+  DiscordOperationsPostSendError,
   DiscordWebhookDeliveryUnknownError,
   DiscordWebhookRequestError,
   DiscordWebhookRetryExhaustedError,
 } from "./errors.js";
 import {
+  assertDiscordWebhookPayloadWithinLimits,
   buildDiscordDigestPlan,
   buildDiscordOperationsAlertPlan,
   type DiscordMentionSettings,
   type DiscordOperationsIncident,
+  type DiscordWebhookPayload,
 } from "./payload.js";
 import { type DiscordNotificationCandidate } from "./notification-selection.js";
 import {
@@ -73,10 +76,49 @@ export type SendDiscordDigestInput = Readonly<{
 }>;
 
 export type SendDiscordOperationsAlertInput = Readonly<{
-  incident: DiscordOperationsIncident;
+  incident: DiscordOperationsIncident &
+    Readonly<{
+      context?: Readonly<{
+        failureKind: string;
+        failedStage: string;
+        finalStateRevision?: string;
+        lastReceiptDigest?: string;
+      }>;
+    }>;
   settings: DiscordDeliverySettings;
   dependencies: DiscordDeliveryDependencies;
 }>;
+
+function operationsAlertPayload(
+  base: DiscordWebhookPayload,
+  context: SendDiscordOperationsAlertInput["incident"]["context"],
+): DiscordWebhookPayload {
+  if (context == null) {
+    return base;
+  }
+  const firstEmbed = base.embeds[0];
+  assertNonNullable(firstEmbed, "運用障害通知のembedがありません");
+  const fields = [
+    ...firstEmbed.fields,
+    { name: "失敗分類", value: context.failureKind, inline: false },
+    { name: "失敗段階", value: context.failedStage, inline: false },
+    ...(context.finalStateRevision == null
+      ? []
+      : [{ name: "確定state revision", value: context.finalStateRevision, inline: false }]),
+    ...(context.lastReceiptDigest == null
+      ? []
+      : [{ name: "最終receipt digest", value: context.lastReceiptDigest, inline: false }]),
+  ];
+  const payload = Object.freeze({
+    ...base,
+    embeds: Object.freeze([
+      Object.freeze({ ...firstEmbed, fields: Object.freeze(fields) }),
+      ...base.embeds.slice(1),
+    ]),
+  });
+  assertDiscordWebhookPayloadWithinLimits(payload);
+  return payload;
+}
 
 export type DiscordOperationsAlertDelivery =
   | Readonly<{
@@ -302,34 +344,38 @@ export async function sendDiscordOperationsAlert(
   }
   const execution = await executeDiscordWebhook({
     secretName: input.settings.operationsWebhookSecretName,
-    payload: plan.payload,
+    payload: operationsAlertPayload(plan.payload, input.incident.context),
     retry: input.settings.retry,
     secretProvider: input.dependencies.secretProvider,
     httpClient: input.dependencies.httpClient,
     runtime: input.dependencies.runtime,
     beforeFirstAttempt: noopBeforeFirstAttempt,
   });
-  const sentAt = currentUtcDateTime(input.dependencies.runtime);
-  if (sentAt < input.incident.occurredAt) {
-    throw new DiscordLedgerError("write", {
-      cause: new RangeError("運用障害通知の送信時刻が障害発生時刻より前です"),
+  try {
+    const sentAt = currentUtcDateTime(input.dependencies.runtime);
+    if (sentAt < input.incident.occurredAt) {
+      throw new DiscordLedgerError("write", {
+        cause: new RangeError("運用障害通知の送信時刻が障害発生時刻より前です"),
+      });
+    }
+    const ledgerEntry = Object.freeze({
+      alertKey: plan.alertKey,
+      incidentId: input.incident.incidentId,
+      kind: input.incident.kind,
+      occurredAt: input.incident.occurredAt,
+      sentAt,
+      discordMessageId: execution.discordMessageId,
+    } satisfies OperationsAlertLedgerEntry);
+    await recordOperationsAlert(input.dependencies.ledger, ledgerEntry);
+    return Object.freeze({
+      status: "sent",
+      alertKey: plan.alertKey,
+      discordMessageId: execution.discordMessageId,
+      ledgerEntry,
     });
+  } catch (error: unknown) {
+    throw new DiscordOperationsPostSendError(execution.discordMessageId, error);
   }
-  const ledgerEntry = Object.freeze({
-    alertKey: plan.alertKey,
-    incidentId: input.incident.incidentId,
-    kind: input.incident.kind,
-    occurredAt: input.incident.occurredAt,
-    sentAt,
-    discordMessageId: execution.discordMessageId,
-  } satisfies OperationsAlertLedgerEntry);
-  await recordOperationsAlert(input.dependencies.ledger, ledgerEntry);
-  return Object.freeze({
-    status: "sent",
-    alertKey: plan.alertKey,
-    discordMessageId: execution.discordMessageId,
-    ledgerEntry,
-  });
 }
 
 /** Pages成功後にだけ通常digestを送り、送信前後のledger状態を記録する。 */

@@ -1,50 +1,38 @@
-import { type loadConfig } from "../config/index.js";
+import { type OperationsAlertLedgerEntry } from "../domain/index.js";
 import {
-  type NotificationLedgerEntry,
-  type OperationsAlertLedgerEntry,
-  type UtcIsoDateTime,
-} from "../domain/index.js";
-import {
-  type sendDiscordDigest,
-  type DiscordDigestDelivery,
+  sendDiscordOperationsAlert,
+  type DiscordDeliveryDependencies,
   type DiscordDeliverySettings,
+  type DiscordOperationsAlertDelivery,
   type DiscordOperationsIncident,
   type DiscordSecretProvider,
   type DiscordWebhookHttpClient,
 } from "../discord/index.js";
 import {
+  sendDiscordInfrastructureAlert,
+  type WorkflowInfrastructureIncident,
+} from "../discord/infrastructure-alert.js";
+import {
+  assertOperationsAlertLedgerWritable,
   assertExistingStatePublicSafety,
-  createStateNotificationLedger,
-  NOTIFICATION_LEDGER_SCHEMA_VERSION_10,
+  commitOperationsAlertLedger,
   type StateBranchAdapter,
-  type StateHistoryNotificationEvent,
-  type StateNotificationLedger,
+  type StateBranchCommitResult,
   type StatePersistenceConfiguration,
   type StatePersistenceSession,
   type StateSnapshot,
   type StateSnapshotReadResult,
 } from "../persistence/index.js";
-import {
-  operationsAlertLedgerEntry,
-  notificationLedgerEntry,
-} from "./notification-ledger-normalization.js";
+import { operationsAlertLedgerEntry } from "./notification-ledger-normalization.js";
 import { requireEnvironmentValue } from "./production-runtime-setup.js";
 
 type NotificationDeliveryRuntimeAdapters = Readonly<{
   environment: Readonly<NodeJS.ProcessEnv>;
-  repositoryPath: string;
-  loadConfig: typeof loadConfig;
-  openStateSession: (
-    adapter: StateBranchAdapter,
-    configuration: StatePersistenceConfiguration,
-    migrationTimezone: string,
-  ) => Promise<StatePersistenceSession>;
   createStateBranchAdapter: () => StateBranchAdapter;
   discordHttpClient: DiscordWebhookHttpClient;
   now: () => Date;
   sleep: (delayMilliseconds: number) => Promise<void>;
   random: () => number;
-  sendDiscord: typeof sendDiscordDigest;
 }>;
 
 type NotificationDeliveryRuntimeState = Readonly<{
@@ -52,15 +40,27 @@ type NotificationDeliveryRuntimeState = Readonly<{
   snapshot: StateSnapshotReadResult;
 }>;
 
-type DiscordDeliveryResult = Readonly<{
-  delivery: DiscordDigestDelivery;
-  notificationEvents: readonly StateHistoryNotificationEvent[];
-}>;
+type OperationsIncident =
+  | (DiscordOperationsIncident &
+      Readonly<{
+        context?: Readonly<{
+          failureKind: string;
+          failedStage: string;
+          finalStateRevision?: string;
+          lastReceiptDigest?: string;
+        }>;
+      }>)
+  | WorkflowInfrastructureIncident;
 
-type DiscordResult = DiscordDeliveryResult &
-  Readonly<{
-    notificationLedger: StateNotificationLedger;
-  }>;
+/** Discord送信後に専用ledgerへの確定記録が失敗したことを表す。 */
+export class OperationsAlertCommitFailureError extends Error {
+  public readonly discordMessageId: string;
+
+  public constructor(discordMessageId: string, cause: unknown) {
+    super("運用障害通知の送信後にledgerを確定できませんでした", { cause });
+    this.discordMessageId = discordMessageId;
+  }
+}
 
 function previousSnapshot(state: NotificationDeliveryRuntimeState): StateSnapshot | undefined {
   return state.snapshot.status === "available" ? state.snapshot.snapshot : undefined;
@@ -80,12 +80,12 @@ export async function deliverOperationsAlert(
   settings: DiscordDeliverySettings,
   knownSecrets: readonly string[],
   state: NotificationDeliveryRuntimeState,
-  incident: DiscordOperationsIncident,
+  configuration: StatePersistenceConfiguration,
+  incident: OperationsIncident,
 ): Promise<
   Readonly<{
-    value: DiscordResult;
-    notificationCount: number;
-    discordSentAt: UtcIsoDateTime | null;
+    delivery: DiscordOperationsAlertDelivery;
+    operationsCommit?: StateBranchCommitResult;
   }>
 > {
   const currentNotificationLedger = await state.session.loadNotificationLedger();
@@ -96,11 +96,10 @@ export async function deliverOperationsAlert(
     [incident],
     knownSecrets,
   );
-  const notificationEntriesByKey = new Map<string, NotificationLedgerEntry>(
-    currentNotificationLedger.entries.map((entry): readonly [string, NotificationLedgerEntry] => {
-      const normalizedEntry = notificationLedgerEntry(entry);
-      return [normalizedEntry.notificationKey, normalizedEntry];
-    }),
+  await assertOperationsAlertLedgerWritable(
+    adapters.createStateBranchAdapter(),
+    configuration,
+    state.session.baseRevision,
   );
   const operationsAlertsByKey = new Map<string, OperationsAlertLedgerEntry>(
     currentNotificationLedger.operationsAlerts.map((entry) => [
@@ -108,90 +107,51 @@ export async function deliverOperationsAlert(
       operationsAlertLedgerEntry(entry),
     ]),
   );
-  const delivery = await adapters.sendDiscord({
-    candidates: [],
-    ledgerReservations: [],
-    items: previousSnapshot(state)?.items ?? [],
-    generatedAt: incident.occurredAt,
-    pagesDeployment: {
-      status: "failed",
-      incidentId: incident.incidentId,
-      kind: incident.kind,
-      failedAt: incident.occurredAt,
-      retryAttempts: incident.retryAttempts,
+  const deliveryDependencies: DiscordDeliveryDependencies = {
+    secretProvider: environmentSecretProvider(adapters.environment),
+    httpClient: adapters.discordHttpClient,
+    runtime: {
+      now: adapters.now,
+      sleep: adapters.sleep,
+      random: adapters.random,
     },
-    settings,
-    dependencies: {
-      secretProvider: environmentSecretProvider(adapters.environment),
-      httpClient: adapters.discordHttpClient,
-      runtime: {
-        now: adapters.now,
-        sleep: adapters.sleep,
-        random: adapters.random,
-      },
-      ledger: {
-        hasOperationsAlert: (alertKey) => Promise.resolve(operationsAlertsByKey.has(alertKey)),
-        recordNotifications: (entries) => {
-          for (const entry of entries) {
-            notificationEntriesByKey.set(entry.notificationKey, entry);
-          }
-          return Promise.resolve();
-        },
-        recordOperationsAlert: (entry) => {
-          operationsAlertsByKey.set(entry.alertKey, entry);
-          return Promise.resolve();
-        },
+    ledger: {
+      hasOperationsAlert: (alertKey) => Promise.resolve(operationsAlertsByKey.has(alertKey)),
+      recordNotifications: () =>
+        Promise.reject(new TypeError("運用通知から通常ledgerを更新できません")),
+      recordOperationsAlert: (entry) => {
+        operationsAlertsByKey.set(entry.alertKey, entry);
+        return Promise.resolve();
       },
     },
-  });
-  if (delivery.status !== "skipped" || delivery.reason !== "pages_deployment_failed") {
-    return Object.freeze({
-      value: Object.freeze({
-        delivery,
-        notificationEvents: Object.freeze([]),
-        notificationLedger: currentNotificationLedger,
-      }),
-      notificationCount: 0,
-      discordSentAt: null,
-    });
-  }
-  const operationsDelivery = delivery.operationsAlert;
+  };
+  const operationsAlert =
+    incident.kind === "workflow_infrastructure_failure"
+      ? await sendDiscordInfrastructureAlert(incident, settings, deliveryDependencies)
+      : await sendDiscordOperationsAlert({
+          incident,
+          settings,
+          dependencies: deliveryDependencies,
+        });
+  const operationsDelivery = operationsAlert;
   if (operationsDelivery.status !== "sent") {
     return Object.freeze({
-      value: Object.freeze({
-        delivery,
-        notificationEvents: Object.freeze([]),
-        notificationLedger: currentNotificationLedger,
-      }),
-      notificationCount: 0,
-      discordSentAt: null,
+      delivery: operationsDelivery,
     });
   }
-  const notificationLedger = createStateNotificationLedger({
-    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_10,
-    entries: [...notificationEntriesByKey.values()],
-    operationsAlerts: [...operationsAlertsByKey.values()],
-    pendingNotifications: currentNotificationLedger.pendingNotifications,
-  });
-  const persistenceInput = Object.freeze({
-    notificationLedger,
-    committedAt: operationsDelivery.ledgerEntry.sentAt,
-    knownSecrets,
-    commitScope: "operations_alert" satisfies "operations_alert",
-  });
-  if (state.snapshot.status === "missing_branch") {
-    await state.session.persistInitialOperationsNotificationLedger(persistenceInput);
-  } else {
-    await state.session.persistNotificationLedger(persistenceInput);
+  let operationsCommit: StateBranchCommitResult;
+  try {
+    operationsCommit = await commitOperationsAlertLedger(
+      adapters.createStateBranchAdapter(),
+      configuration,
+      state.session.baseRevision,
+      operationsDelivery.ledgerEntry,
+    );
+  } catch (error: unknown) {
+    throw new OperationsAlertCommitFailureError(operationsDelivery.discordMessageId, error);
   }
-  await state.session.publish();
   return Object.freeze({
-    value: Object.freeze({
-      delivery,
-      notificationEvents: Object.freeze([]),
-      notificationLedger,
-    }),
-    notificationCount: 1,
-    discordSentAt: operationsDelivery.ledgerEntry.sentAt,
+    delivery: operationsDelivery,
+    operationsCommit,
   });
 }

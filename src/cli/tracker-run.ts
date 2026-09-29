@@ -12,7 +12,7 @@ import { type CliExecutionResult } from "./application.js";
 import { notificationActionSchema, parseCliArguments, type CliCommand } from "./command.js";
 import { createDefaultCliApplication } from "./composition-root.js";
 import { safeErrorDiagnostic } from "./error-diagnostic.js";
-import { RecordedFailureError } from "./failure-diagnostic.js";
+import { reportCliFailure } from "./public-failure-boundary.js";
 import { NotificationSettlementFailureError } from "./notification-settlement.js";
 import { isPublicBoundaryViolation } from "./public-boundary-error.js";
 import {
@@ -251,41 +251,6 @@ function writeDiagnosticsTopLevelError(error: unknown): void {
   process.stderr.write("diagnostics CLIの実行に失敗しました\n");
 }
 
-async function recordTopLevelError(
-  recorder: DiagnosticsJsonlRecorder | undefined,
-  stage: RunStage | "unknown",
-  command: string,
-  invocationId: string,
-  error: unknown,
-): Promise<unknown> {
-  if (error instanceof RecordedFailureError) {
-    return error;
-  }
-  if (recorder == null) {
-    return error;
-  }
-  try {
-    await recorder.append({
-      event: "cli.unhandled_error",
-      details: {
-        command,
-        stage,
-        invocationId,
-      },
-      error,
-    });
-  } catch (diagnosticsError: unknown) {
-    return new AggregateError(
-      [error, diagnosticsError],
-      "CLI未処理エラーと診断記録に失敗しました",
-      {
-        cause: error,
-      },
-    );
-  }
-  return error;
-}
-
 /** tracker-run共通entryからCLIを実行する。 */
 export async function runTrackerCliMain(args: readonly string[]): Promise<number> {
   if (process.env["VOICEVOX_RUNTIME_RECOVERY_PROTOCOL_V1"] === "1") {
@@ -306,6 +271,7 @@ export async function runTrackerCliMain(args: readonly string[]): Promise<number
   const invocationId = randomUUID();
   let stage: RunStage | "unknown" = "unknown";
   let command = args[0] ?? "unknown";
+  let parsedCommand: CliCommand | undefined;
   let recorder: DiagnosticsJsonlRecorder | undefined;
   let result: CliExecutionResult | undefined;
   let failure: unknown;
@@ -315,15 +281,24 @@ export async function runTrackerCliMain(args: readonly string[]): Promise<number
       recorder = await createDiagnosticsRecorder({ path: diagnosticsPath });
     }
     const executionResult = await runTrackerCommand(args, (commandArgs) => {
-      const parsedCommand = parseCliArguments(commandArgs);
+      parsedCommand = parseCliArguments(commandArgs);
       command = parsedCommand.kind;
       stage = topLevelDiagnosticStage(parsedCommand);
       return createDefaultCliApplication(recorder).run(commandArgs, invocationId);
     });
     result = executionResult;
     writeFailureDiagnostics(executionResult);
+    if (executionResult.exitCode !== 0) {
+      failure = await reportCliFailure(
+        parsedCommand,
+        invocationId,
+        new Error("追跡runが失敗結果を返しました"),
+        executionResult,
+        recorder,
+      );
+    }
   } catch (error: unknown) {
-    failure = await recordTopLevelError(recorder, stage, command, invocationId, error);
+    failure = await reportCliFailure(parsedCommand, invocationId, error, result, recorder);
   } finally {
     if (recorder != null) {
       try {

@@ -1,4 +1,3 @@
-import { deliverOperationsAlert } from "../notification-delivery-runtime.js";
 import { basename, resolve } from "node:path";
 
 import { encodePublicationCheckpoint } from "../publication-checkpoint-codec.js";
@@ -19,21 +18,6 @@ import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import type { DailyPublicationStageHandlers, RunPublicationAdapters } from "./contracts.js";
 import { buildPublicPages } from "./pages.js";
 import { persistValidatedRun } from "./persistence.js";
-import { discordDeliverySettings } from "./settings.js";
-
-type DailyNotificationAdapters = Pick<
-  RunPublicationAdapters,
-  | "environment"
-  | "repositoryPath"
-  | "loadConfig"
-  | "openStateSession"
-  | "createStateBranchAdapter"
-  | "discordHttpClient"
-  | "now"
-  | "sleep"
-  | "random"
-  | "sendDiscord"
->;
 
 /** 完全性検証済みrunを初期保存へ渡す。 */
 export async function persistDailyState(
@@ -200,50 +184,6 @@ export async function deployDailyPages(
     deployment,
     pagesUrl: deployment.receipt.result.pageUrl,
   });
-}
-
-/** 日次runの障害通知またはsandboxでの省略を実行する。 */
-export async function sendDailyOperationsAlert(
-  dependencies: Readonly<{
-    adapters: DailyNotificationAdapters;
-  }>,
-  input: Parameters<DailyPublicationStageHandlers["sendOperationsAlert"]>[0],
-): ReturnType<DailyPublicationStageHandlers["sendOperationsAlert"]> {
-  const { invocation, configuration, state, persisted, kind, retryAttempts } = input;
-  if (configuration.target.kind === "sandbox") {
-    return Object.freeze({
-      value: Object.freeze({
-        delivery: Object.freeze({
-          status: "disabled",
-        }),
-        notificationEvents: Object.freeze([]),
-        notificationLedger:
-          persisted == null ? state.notificationLedger : persisted.notificationLedger,
-      }),
-      notificationCount: 0,
-      discordSentAt: null,
-    });
-  }
-  let persistedState = state;
-  if (persisted != null) {
-    persistedState = Object.freeze({
-      ...state,
-      session: persisted.session,
-      notificationLedger: persisted.notificationLedger,
-    });
-  }
-  return deliverOperationsAlert(
-    dependencies.adapters,
-    discordDeliverySettings(configuration.config),
-    configuration.credentials.knownSecrets,
-    persistedState,
-    {
-      incidentId: `${invocation.runId}:${kind}`,
-      kind,
-      occurredAt: invocation.startedAt,
-      retryAttempts,
-    },
-  );
 }
 
 /** 日次runの解析結果からworkflow artifactを書き出す。 */

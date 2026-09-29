@@ -7,7 +7,6 @@ import type { BoundPublicationCheckpoint } from "../publication-checkpoint-bindi
 import type { Sha256Hash } from "../../canonical-json/sha256.js";
 import type { Repository } from "../../domain/index.js";
 import type {
-  DiscordDigestDelivery,
   DiscordNotificationSelection,
   DiscordWebhookHttpClient,
   sendDiscordDigest,
@@ -19,7 +18,6 @@ import type { NotificationSettlementOutcome } from "../notification-settlement.j
 import type {
   StateBranchAdapter,
   StateHistoryInputEvent,
-  StateHistoryNotificationEvent,
   StateNotificationLedger,
   StatePersistenceConfiguration,
   StatePersistenceSession,
@@ -96,18 +94,6 @@ export type InitialPagesPublishedRun = Readonly<{
   pagesUrl: string;
 }>;
 
-/** Discord配送本体と履歴event。 */
-export type DiscordDeliveryResult = Readonly<{
-  delivery: DiscordDigestDelivery;
-  notificationEvents: readonly StateHistoryNotificationEvent[];
-}>;
-
-/** daily transactionが完了保存へ渡すDiscord結果。 */
-export type DiscordResult = DiscordDeliveryResult &
-  Readonly<{
-    notificationLedger: StateNotificationLedger;
-  }>;
-
 /** 公開処理が参照してよい設定とcredential。 */
 export type PublicationConfiguration = Readonly<{
   config: Config;
@@ -168,7 +154,6 @@ export type PublicationDailyTypes = DailyTransactionTypeMap &
     pagesPrepared: InitialPagesPreparedRun;
     pages: InitialPagesPublishedRun;
     notifications: Extract<NotificationSettlementOutcome, { kind: "settled" }>;
-    operationsAlert: DiscordResult;
   }>;
 
 /** 完全性検証後の出力・永続化stageだけを受け持つ依存。 */
@@ -179,6 +164,5 @@ export type DailyPublicationStageHandlers = Pick<
   | "deployPages"
   | "settleNotifications"
   | "finalizeRun"
-  | "sendOperationsAlert"
   | "writeCollectAnalyzeArtifact"
 >;

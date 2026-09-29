@@ -45,6 +45,7 @@ export {
   DiscordDigestDeliveryError,
   DiscordError,
   DiscordLedgerError,
+  DiscordOperationsPostSendError,
   DiscordPayloadError,
   DiscordWebhookDeliveryUnknownError,
   DiscordWebhookRequestError,

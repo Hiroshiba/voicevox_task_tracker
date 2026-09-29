@@ -167,21 +167,16 @@ export type ResolveDiscordDeliveryCliCommand = Readonly<{
 type NotifyOperationsCommandFields = Readonly<{
   kind: "notify-operations";
   configPath: string;
-  incidentId: string;
+  workflowRunId: string;
+  failureDirectory: string;
+  failedJobs: readonly string[];
+  receiptPath: string;
   occurredAt: UtcIsoDateTime;
   retryAttempts: number;
 }>;
 
 /** workflow障害時に運用障害通知だけを送るCLI入力。 */
-export type NotifyOperationsCliCommand = NotifyOperationsCommandFields &
-  (
-    | Readonly<{
-        incidentKind: "collection";
-        collectAnalyzeReportPath: string;
-        publicBoundaryStatus: "confirmed" | "not_confirmed" | "unclassified";
-      }>
-    | Readonly<{ incidentKind: "pages" | "discord" }>
-  );
+export type NotifyOperationsCliCommand = NotifyOperationsCommandFields;
 
 /** workflow全体のjob結果をCLI reportへ統合する入力。 */
 export type ReportWorkflowCliCommand = Readonly<{
@@ -687,21 +682,17 @@ function parseNotifyOperations(args: readonly string[]): NotifyOperationsCliComm
     args,
     new Set([
       "--config",
-      "--incident-id",
-      "--kind",
+      "--workflow-run-id",
+      "--failure-directory",
+      "--failed-job",
+      "--receipt",
       "--occurred-at",
       "--retry-attempts",
-      "--collect-analyze-report",
-      "--public-boundary-status",
     ]),
   );
-  const incidentKind = optionalSingleOption(options, "--kind");
-  if (incidentKind !== "collection" && incidentKind !== "pages" && incidentKind !== "discord") {
-    throw usageError("--kindにはcollection、pages、discordのいずれかを指定してください");
-  }
-  const incidentId = optionalSingleOption(options, "--incident-id");
-  if (incidentId == null) {
-    throw usageError("notify-operationsには--incident-idが必要です");
+  const workflowRunId = optionalSingleOption(options, "--workflow-run-id");
+  if (workflowRunId == null || !/^[1-9][0-9]*$/u.test(workflowRunId)) {
+    throw usageError("notify-operationsには数値の--workflow-run-idが必要です");
   }
   const occurredAtSource = optionalSingleOption(options, "--occurred-at");
   if (occurredAtSource == null) {
@@ -722,41 +713,32 @@ function parseNotifyOperations(args: readonly string[]): NotifyOperationsCliComm
   ) {
     throw usageError("--retry-attemptsには1以上の整数を指定してください");
   }
-  const common = {
+  const failedJobs = options.get("--failed-job") ?? [];
+  const allowedJobs = new Set([
+    "collect-analyze",
+    "persist-state",
+    "build-pages",
+    "deploy-pages",
+    "notify-discord",
+    "publish-notification-history",
+  ]);
+  if (failedJobs.some((job) => !allowedJobs.has(job))) {
+    throw usageError("--failed-jobには既知の日次job名を指定してください");
+  }
+  return Object.freeze({
     kind: "notify-operations",
     configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
-    incidentId,
+    workflowRunId,
+    failureDirectory: singleOption(options, "--failure-directory", "artifacts/workflow/failures"),
+    failedJobs: Object.freeze([...new Set(failedJobs)]),
+    receiptPath: singleOption(
+      options,
+      "--receipt",
+      "artifacts/workflow/operations-alert-receipt.json",
+    ),
     occurredAt,
     retryAttempts,
-  } satisfies NotifyOperationsCommandFields;
-  if (incidentKind === "collection") {
-    const publicBoundaryStatus =
-      optionalSingleOption(options, "--public-boundary-status") ?? "unclassified";
-    if (
-      publicBoundaryStatus !== "confirmed" &&
-      publicBoundaryStatus !== "not_confirmed" &&
-      publicBoundaryStatus !== "unclassified"
-    ) {
-      throw usageError("--public-boundary-statusが不正です");
-    }
-    return Object.freeze({
-      ...common,
-      incidentKind,
-      publicBoundaryStatus,
-      collectAnalyzeReportPath: requiredSingleOption(
-        options,
-        "--collect-analyze-report",
-        "notify-operations",
-      ),
-    });
-  }
-  if (optionalSingleOption(options, "--collect-analyze-report") != null) {
-    throw usageError("--collect-analyze-reportはcollection障害だけに指定してください");
-  }
-  if (optionalSingleOption(options, "--public-boundary-status") != null) {
-    throw usageError("--public-boundary-statusはcollection障害だけに指定してください");
-  }
-  return Object.freeze({ ...common, incidentKind });
+  } satisfies NotifyOperationsCommandFields);
 }
 
 function parseWorkflowJobResult(options: ParsedOptions, name: string): WorkflowJobResult {

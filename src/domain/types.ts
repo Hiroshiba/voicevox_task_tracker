@@ -911,11 +911,14 @@ export type NotificationLedgerEntry =
 /** 運用障害として通知する処理の分類。 */
 export type OperationsAlertKind = "collection" | "pages" | "discord";
 
+/** 専用台帳へ保存する運用障害の分類。 */
+export type OperationsAlertLedgerKind = OperationsAlertKind | "workflow_infrastructure_failure";
+
 /** 送信済みの運用障害通知を重複抑制するledger entry。 */
 export type OperationsAlertLedgerEntry = Readonly<{
   alertKey: string;
   incidentId: string;
-  kind: OperationsAlertKind;
+  kind: OperationsAlertLedgerKind;
   occurredAt: UtcIsoDateTime;
   sentAt: UtcIsoDateTime;
   discordMessageId: string;

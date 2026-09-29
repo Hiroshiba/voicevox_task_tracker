@@ -213,7 +213,9 @@ function assertReceiptSemantics(receipt: Receipt): void {
     if (
       (receipt.status === "sent") !== (receipt.effectCertainty === "committed") ||
       (receipt.status === "ambiguous") !== (receipt.effectCertainty === "ambiguous") ||
-      (receipt.status === "sent") !== (receipt.result.discordMessageId != null) ||
+      (receipt.status === "no_effect") !== (receipt.receiptKind === "not_required") ||
+      (receipt.status === "sent" && receipt.result.discordMessageId == null) ||
+      (receipt.status === "no_effect" && receipt.result.discordMessageId != null) ||
       (receipt.result.operationsLedgerRevision != null) !==
         (receipt.result.operationsLedgerCommitMetadata != null)
     ) {
@@ -283,7 +285,8 @@ function assertReceiptSemantics(receipt: Receipt): void {
   if (
     receipt.receiptKind === "not_required" &&
     receipt.receiptType !== "pages_build" &&
-    receipt.receiptType !== "pages_deployment"
+    receipt.receiptType !== "pages_deployment" &&
+    receipt.receiptType !== "operations_alert"
   ) {
     throw new TypeError("このreceiptは不要判定を持てません");
   }

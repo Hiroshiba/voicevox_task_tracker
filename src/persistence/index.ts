@@ -66,6 +66,10 @@ export {
 } from "./history.js";
 export { MemoryStateBranchAdapter } from "./memory-state-branch-adapter.js";
 export {
+  assertOperationsAlertLedgerWritable,
+  commitOperationsAlertLedger,
+} from "./operations-alert-cas.js";
+export {
   assertExistingStatePublicSafety,
   assertStatePublicSafety,
   assertStateValuesPublicSafety,
@@ -95,7 +99,6 @@ export {
 export { migrateStateSnapshot } from "./snapshot-v21-migration.js";
 export {
   StatePersistenceSession,
-  type PersistNotificationLedgerInput,
   type PersistStateTransactionResult,
   type StateSnapshotReadResult,
 } from "./state-persistence-session.js";

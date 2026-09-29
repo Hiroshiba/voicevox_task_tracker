@@ -3,7 +3,8 @@ import { z } from "zod";
 import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../../canonical-json/value.js";
 import type { ContentDigestPort } from "./ports.js";
 import { trackingRunStageNames } from "./contracts/closed-values.js";
-import type { Receipt } from "./receipt-schema.js";
+import { baseStateRevisionSchema } from "./contracts/run-core.js";
+import { preCheckpointFailureStageSchema, type Receipt } from "./receipt-schema.js";
 
 const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const runIdSchema = z.string().regex(/^tracker-run:[0-9a-f]{64}$/u);
@@ -29,8 +30,38 @@ export const runFailureKindSchema = z.enum([
   "external_effect",
   "runtime_unavailable",
   "public_boundary",
-  "workflow_infrastructure",
+  "workflow_infrastructure_failure",
+  "superseded_by_newer_run",
   "unexpected",
+]);
+
+const observedFileSchema = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("missing") }),
+  z.strictObject({ kind: z.literal("present"), fileDigest: sha256Schema }),
+]);
+
+export const failureEvidenceSchema = z.discriminatedUnion("bindingKind", [
+  z.strictObject({ bindingKind: z.literal("invocation_pre_run_alert") }),
+  z.strictObject({
+    bindingKind: z.literal("state_bootstrap_alert"),
+    observedStateRevision: z.string().regex(/^[0-9a-f]{40}$/u),
+    observedMarkerFile: observedFileSchema,
+    observedRecordFile: observedFileSchema,
+  }),
+  z.strictObject({
+    bindingKind: z.literal("run_pre_checkpoint_alert"),
+    runId: runIdSchema,
+    baseStateRevision: baseStateRevisionSchema,
+    configDigest: sha256Schema,
+  }),
+  z.strictObject({
+    bindingKind: z.literal("checkpoint"),
+    runId: runIdSchema,
+    checkpointDigest: sha256Schema,
+    checkpointFileDigest: sha256Schema,
+    runtimeIdentityDigest: sha256Schema,
+    baseStateRevision: baseStateRevisionSchema.optional(),
+  }),
 ]);
 
 export const failedRunSchema = z.strictObject({
@@ -40,9 +71,15 @@ export const failedRunSchema = z.strictObject({
   failedStage: runFailureStageSchema,
   failureKind: runFailureKindSchema,
   failedOperationEffectCertainty: z.enum(["no_effect", "committed", "ambiguous"]),
+  evidence: failureEvidenceSchema,
+  causedByFailureArtifactDigest: sha256Schema.optional(),
   checkpointDigest: sha256Schema.optional(),
   checkpointFileDigest: sha256Schema.optional(),
   lastKnownStateRevision: z
+    .string()
+    .regex(/^[0-9a-f]{40}$/u)
+    .optional(),
+  finalStateRevision: z
     .string()
     .regex(/^[0-9a-f]{40}$/u)
     .optional(),
@@ -64,7 +101,7 @@ export const failedRunSchema = z.strictObject({
       "external_effect_unconfirmed",
       "runtime_unavailable",
       "public_boundary",
-      "workflow_infrastructure",
+      "workflow_infrastructure_failure",
       "unexpected_failure",
     ]),
     incidentId: publicIdentifierSchema.optional(),
@@ -94,6 +131,7 @@ export type FailureDiagnosticState =
 /** 失敗判定時に確認できたstate headとmarkerの状態。 */
 export type FailureStateObservation =
   | Readonly<{ kind: "not_observed" }>
+  | Readonly<{ kind: "observed_head"; revision: string }>
   | Readonly<{ kind: "same_head_no_marker"; revision: string }>
   | Readonly<{
       kind: "consistent_pending";
@@ -114,6 +152,24 @@ function assertFailedRunSemantics(value: FailedRun): void {
     (value.lastReceiptDigest == null) !== (value.completedPhaseSequence == null) ||
     (value.checkpointDigest != null && value.runId == null) ||
     (value.failedStage === "prepare" && (value.runId != null || value.checkpointDigest != null)) ||
+    (value.evidence.bindingKind === "checkpoint" &&
+      (value.runId !== value.evidence.runId ||
+        value.checkpointDigest !== value.evidence.checkpointDigest ||
+        value.checkpointFileDigest !== value.evidence.checkpointFileDigest)) ||
+    (value.evidence.bindingKind === "run_pre_checkpoint_alert" &&
+      (value.runId !== value.evidence.runId ||
+        value.checkpointDigest != null ||
+        !preCheckpointFailureStageSchema.safeParse(value.failedStage).success)) ||
+    (value.evidence.bindingKind === "state_bootstrap_alert" &&
+      (value.runId != null ||
+        value.checkpointDigest != null ||
+        value.failedStage !== "runtime_bootstrap" ||
+        value.lastKnownStateRevision !== value.evidence.observedStateRevision)) ||
+    (value.evidence.bindingKind === "invocation_pre_run_alert" && value.checkpointDigest != null) ||
+    (value.finalStateRevision != null &&
+      (value.evidence.bindingKind !== "checkpoint" ||
+        (value.failedStage !== "notification_history_pages_prepared" &&
+          value.failedStage !== "notification_history_pages_published"))) ||
     (value.recoveryDisposition === "safe_to_retry_same_input" &&
       value.failedOperationEffectCertainty !== "no_effect") ||
     (value.failedOperationEffectCertainty === "ambiguous" &&
@@ -136,7 +192,11 @@ export function deriveRecoveryDisposition(
   if (input.stateObservation.kind === "conflict" || input.failureKind === "state_conflict") {
     return "operator_conflict_resolution";
   }
-  if (input.failureKind === "invalid_input" || input.failureKind === "public_boundary") {
+  if (
+    input.failureKind === "invalid_input" ||
+    input.failureKind === "public_boundary" ||
+    input.failureKind === "superseded_by_newer_run"
+  ) {
     return "not_retryable";
   }
   if (input.failedOperationEffectCertainty === "ambiguous") {
