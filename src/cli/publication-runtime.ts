@@ -18,6 +18,7 @@ import {
 import type { ContentDigestPort } from "../application/tracking-run/ports.js";
 import type { RunExecutionPolicy } from "../application/tracking-run/request.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
+import { workflowActionSources } from "./workflow-action-identity.js";
 
 const execFileAsync = promisify(execFile);
 const MANIFEST_FILE_NAME = "runtime-manifest.json";
@@ -96,34 +97,14 @@ export async function workflowAdapterIdentity(
   repositoryPath: string,
   digest: ContentDigestPort,
 ): Promise<ReturnType<ContentDigestPort["sha256Utf8"]>> {
-  const workflow = await readFile(resolve(repositoryPath, ".github/workflows/daily.yml"), "utf8");
-  const effectActionNames = [
-    "actions/configure-pages",
-    "actions/deploy-pages",
-    "actions/upload-artifact",
-    "actions/upload-pages-artifact",
+  const workflowPaths = [
+    ".github/workflows/daily.yml",
+    ".github/workflows/resolve_discord_delivery.yml",
   ];
-  const effectActions = new Map<string, string>();
-  for (const match of workflow.matchAll(/^\s*uses:\s*([^\s#]+)/gmu)) {
-    const reference = match[1];
-    if (reference == null) {
-      throw new TypeError("workflow actionの参照を取得できません");
-    }
-    const [action, revision] = reference.split("@");
-    if (revision == null || !/^[0-9a-f]{40}$/u.test(revision)) {
-      throw new TypeError("workflow actionは完全なcommit SHAで固定してください");
-    }
-    if (action != null && effectActionNames.includes(action)) {
-      const previous = effectActions.get(action);
-      if (previous != null && previous !== revision) {
-        throw new TypeError("workflow効果actionに異なるcommit SHAが混在しています");
-      }
-      effectActions.set(action, revision);
-    }
-  }
-  if (effectActionNames.some((name) => !effectActions.has(name))) {
-    throw new TypeError("workflowに必須の効果actionがありません");
-  }
+  const workflows = await Promise.all(
+    workflowPaths.map((path) => readFile(resolve(repositoryPath, path), "utf8")),
+  );
+  const actionSources = await workflowActionSources(repositoryPath, workflows, digest);
   const workflowAdapters = (
     await readdir(resolve(repositoryPath, "src/cli/production-runtime/workflow"))
   )
@@ -136,7 +117,7 @@ export async function workflowAdapterIdentity(
   const adapterSourcesDigest = await hashSources(
     repositoryPath,
     [
-      ".github/workflows/daily.yml",
+      ...workflowPaths,
       "src/cli/initial-pages-deployment.ts",
       "src/cli/notification-history-pages-deployment.ts",
       "src/cli/notification-history-pages-deployment-record.ts",
@@ -150,9 +131,8 @@ export async function workflowAdapterIdentity(
   );
   return digest.sha256Utf8(
     serializeCanonicalJson({
-      effectActions: [...effectActions].sort(([left], [right]) =>
-        left < right ? -1 : left > right ? 1 : 0,
-      ),
+      effectActions: actionSources.effectActions,
+      localActionFiles: actionSources.localActionFiles,
       adapterSourcesDigest,
     }),
   );
