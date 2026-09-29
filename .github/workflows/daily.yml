@@ -783,6 +783,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: read
     steps:
       - name: ソースコードを取得
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -816,17 +817,18 @@ jobs:
           pattern: daily-failure-${{ github.run_id }}-${{ github.run_attempt }}-*
           path: artifacts/workflow/failures
           merge-multiple: true
-      - name: 以前の運用障害通知receiptを取得
-        continue-on-error: true
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - name: 以前の運用障害通知の証拠を取得
+        uses: ./.github/actions/download-prior-operations-artifacts
         with:
-          pattern: operations-alert-receipt-${{ github.run_id }}-*
-          path: artifacts/workflow/previous-operations-alert-receipts
+          workflow-kind: daily
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
       - name: 運用障害をDiscordへ通知
         id: notify
         env:
           DISCORD_OPERATIONS_WEBHOOK_URL: ${{ secrets.DISCORD_OPERATIONS_WEBHOOK_URL }}
           WORKFLOW_RUN_ID: ${{ github.run_id }}
+          WORKFLOW_RUN_ATTEMPT: ${{ github.run_attempt }}
           BUILD_PAGES_RESULT: ${{ needs.build-pages.result }}
           COLLECT_ANALYZE_RESULT: ${{ needs.collect-analyze.result }}
           DEPLOY_PAGES_RESULT: ${{ needs.deploy-pages.result }}
@@ -836,7 +838,7 @@ jobs:
           VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
         run: |
           occurred_at="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
-          arguments=(notify-operations --workflow-run-id "$WORKFLOW_RUN_ID" --occurred-at "$occurred_at")
+          arguments=(notify-operations --workflow-run-id "$WORKFLOW_RUN_ID" --workflow-run-attempt "$WORKFLOW_RUN_ATTEMPT" --workflow-kind daily --occurred-at "$occurred_at")
           jobs=(collect-analyze persist-state build-pages deploy-pages notify-discord publish-notification-history)
           results=("$COLLECT_ANALYZE_RESULT" "$PERSIST_STATE_RESULT" "$BUILD_PAGES_RESULT" "$DEPLOY_PAGES_RESULT" "$NOTIFY_DISCORD_RESULT" "$PUBLISH_NOTIFICATION_HISTORY_RESULT")
           for index in "${!jobs[@]}"; do

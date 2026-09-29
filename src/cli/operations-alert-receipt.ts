@@ -11,6 +11,7 @@ import { serializeCanonicalJson } from "../canonical-json/value.js";
 import type { PublicFailureArtifact } from "../application/tracking-run/failure-artifact.js";
 import type { StateBranchCommitResult } from "../persistence/branch-adapter.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
+import { operationsIncidentKindForFailure } from "../application/tracking-run/failure-primary.js";
 
 function alertBinding(artifact: PublicFailureArtifact): ReceiptBinding {
   const evidence = artifact.failure.evidence;
@@ -151,8 +152,8 @@ export function createOperationsAlertReceipt(
   return receipt;
 }
 
-/** 以前の運用通知receiptが現在のincidentと失敗証拠に結合することを確かめる。 */
-export function decodeOperationsAlertReceiptForIncident(
+/** 運用通知receiptが同じattemptの失敗主因へ結合することを確かめる。 */
+export function decodeOperationsAlertReceiptForFailure(
   bytes: Uint8Array,
   artifact: PublicFailureArtifact,
   incidentId: string,
@@ -169,7 +170,29 @@ export function decodeOperationsAlertReceiptForIncident(
     serializeCanonicalJson(receipt.expectedStateRevision ?? null) !==
       serializeCanonicalJson(expectedAlertStateRevision(artifact, binding) ?? null)
   ) {
-    throw new TypeError("以前の運用障害通知receiptが現在のincidentと一致しません");
+    throw new TypeError("運用障害通知receiptが同じattemptの失敗主因と一致しません");
   }
   return receipt;
+}
+
+/** 前回と今回の失敗が同じincidentと実証済みcheckpointを指すことを確かめる。 */
+export function assertSameOperationsIncident(
+  previous: PublicFailureArtifact,
+  current: PublicFailureArtifact,
+  workflowRunId: string,
+  incidentId: string,
+): void {
+  const previousIncidentId = `${workflowRunId}:${operationsIncidentKindForFailure(previous.failure)}:${previous.failure.failedStage}`;
+  const currentIncidentId = `${workflowRunId}:${operationsIncidentKindForFailure(current.failure)}:${current.failure.failedStage}`;
+  if (previousIncidentId !== incidentId || currentIncidentId !== incidentId) {
+    throw new TypeError("前回と今回の運用障害通知incidentが一致しません");
+  }
+  const previousBinding = alertBinding(previous);
+  const currentBinding = alertBinding(current);
+  if (
+    (previousBinding.bindingKind === "checkpoint" || currentBinding.bindingKind === "checkpoint") &&
+    serializeCanonicalJson(previousBinding) !== serializeCanonicalJson(currentBinding)
+  ) {
+    throw new TypeError("前回と今回の運用障害通知checkpointが一致しません");
+  }
 }

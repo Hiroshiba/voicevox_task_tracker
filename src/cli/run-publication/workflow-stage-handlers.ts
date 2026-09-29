@@ -26,6 +26,7 @@ import {
 } from "../operations-failure-selection.js";
 import { createOperationsAlertReceipt } from "../operations-alert-receipt.js";
 import { readPriorOperationsAlertReceipts } from "../operations-alert-receipt-file.js";
+import { assertPriorOperationsAlertDeliveries } from "../operations-alert-receipt-state.js";
 import type {
   BuildPagesCliCommand,
   NotifyOperationsCliCommand,
@@ -326,7 +327,10 @@ export async function notifyWorkflowOperations(
   const priorReceipts = await readPriorOperationsAlertReceipts(
     resolve(dependencies.adapters.repositoryPath, command.receiptPath),
     resolve(dependencies.adapters.repositoryPath, command.previousReceiptsDirectory),
+    resolve(dependencies.adapters.repositoryPath, command.previousFailuresDirectory),
     command.workflowRunId,
+    command.workflowRunAttempt,
+    command.workflowKind,
     primary,
     incidentId,
   );
@@ -336,26 +340,16 @@ export async function notifyWorkflowOperations(
       dependencies.adapters.createStateBranchAdapter(),
       config.state,
     );
-    const recorded = [
-      ...state.notificationLedger.operationsAlerts,
-      ...dedicated.ledger.operationsAlerts,
-    ].find((entry) => entry.incidentId === incidentId && entry.kind === incidentKind);
-    if (recorded == null) {
-      throw new OperationsAlertPendingDeliveryError(
-        new TypeError("既存receiptの送信結果をexact stateで確認できません"),
-      );
-    }
-    if (
-      priorDeliveries.some(
-        (receipt) =>
-          receipt.result.discordMessageId != null &&
-          receipt.result.discordMessageId !== recorded.discordMessageId,
-      )
-    ) {
-      throw new OperationsAlertPendingDeliveryError(
-        new TypeError("既存receiptとexact stateのDiscord message IDが一致しません"),
-      );
-    }
+    await assertPriorOperationsAlertDeliveries(
+      dependencies.adapters.createStateBranchAdapter(),
+      dedicated.head,
+      dedicated.ledger.operationsAlerts,
+      session.baseRevision,
+      state.notificationLedger.operationsAlerts,
+      priorDeliveries,
+      incidentId,
+      incidentKind,
+    );
   }
   const knownSecrets = config.notifications.discord.enabled
     ? Object.freeze([

@@ -47,3 +47,20 @@ export function singleOption(options: ParsedOptions, name: string, fallback: str
   }
   return value;
 }
+
+/** 一度だけ指定されたoptionを得る。 */
+export function optionalSingleOption(options: ParsedOptions, name: string): string | undefined {
+  const values = options.get(name);
+  if (values == null) {
+    return undefined;
+  }
+  if (values.length !== 1) {
+    throw usageError(`${name}は1回だけ指定してください`);
+  }
+  const value = values[0];
+  assertNonNullable(value, `${name}の値を取得できませんでした`);
+  if (value.length === 0) {
+    throw usageError(`${name}に空文字は指定できません`);
+  }
+  return value;
+}

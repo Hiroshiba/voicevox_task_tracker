@@ -4,9 +4,18 @@ import {
   notificationActionSchema,
   type NotificationAction,
 } from "../application/tracking-run/contracts/closed-values.js";
-import { assertNonNullable } from "../util/index.js";
 import { type WorkflowJobResult, type WorkflowJobResults } from "./workflow-run-report.js";
-import { parseOptions, singleOption, usageError, type ParsedOptions } from "./command-options.js";
+import {
+  optionalSingleOption,
+  parseOptions,
+  singleOption,
+  usageError,
+  type ParsedOptions,
+} from "./command-options.js";
+import {
+  parseNotifyOperations,
+  type NotifyOperationsCliCommand,
+} from "./operations-alert-command.js";
 import {
   parsePrepareNotificationHistoryPages,
   parsePreflightNotificationHistoryDeployment,
@@ -36,6 +45,7 @@ export type {
   PreflightNotificationHistoryDeploymentCliCommand,
   RecordNotificationHistoryDeploymentCliCommand,
 } from "./notification-history-deployment-command.js";
+export type { NotifyOperationsCliCommand } from "./operations-alert-command.js";
 const deliveryIdSchema = z.string().regex(DELIVERY_ID_PATTERN);
 const resolveDiscordDeliveryResolutionSchema = z.enum(["retry", "acknowledge"]);
 const runIdSchema = z.string().regex(/^tracker-run:[0-9a-f]{64}$/u);
@@ -164,21 +174,6 @@ export type ResolveDiscordDeliveryCliCommand = Readonly<{
   receiptPath: string;
 }>;
 
-type NotifyOperationsCommandFields = Readonly<{
-  kind: "notify-operations";
-  configPath: string;
-  workflowRunId: string;
-  failureDirectory: string;
-  failedJobs: readonly string[];
-  receiptPath: string;
-  previousReceiptsDirectory: string;
-  occurredAt: UtcIsoDateTime;
-  retryAttempts: number;
-}>;
-
-/** workflow障害時に運用障害通知だけを送るCLI入力。 */
-export type NotifyOperationsCliCommand = NotifyOperationsCommandFields;
-
 /** workflow全体のjob結果をCLI reportへ統合する入力。 */
 export type ReportWorkflowCliCommand = Readonly<{
   kind: "report-workflow";
@@ -267,22 +262,6 @@ export type CliCommand =
   | VerifyReceiptChainCliCommand
   | ReportFailureCliCommand
   | HelpCliCommand;
-
-function optionalSingleOption(options: ParsedOptions, name: string): string | undefined {
-  const values = options.get(name);
-  if (values == null) {
-    return undefined;
-  }
-  if (values.length !== 1) {
-    throw usageError(`${name}は1回だけ指定してください`);
-  }
-  const value = values[0];
-  assertNonNullable(value, `${name}の値を取得できませんでした`);
-  if (value.length === 0) {
-    throw usageError(`${name}に空文字は指定できません`);
-  }
-  return value;
-}
 
 function requiredSingleOption(options: ParsedOptions, name: string, commandName: string): string {
   const value = optionalSingleOption(options, name);
@@ -676,77 +655,6 @@ function parseResolveDiscordDelivery(args: readonly string[]): ResolveDiscordDel
     resolution: resolutionResult.data,
     receiptPath: singleOption(options, "--receipt", DEFAULT_MANUAL_RESOLUTION_RECEIPT_PATH),
   });
-}
-
-function parseNotifyOperations(args: readonly string[]): NotifyOperationsCliCommand {
-  const options = parseOptions(
-    args,
-    new Set([
-      "--config",
-      "--workflow-run-id",
-      "--failure-directory",
-      "--failed-job",
-      "--receipt",
-      "--previous-receipts-directory",
-      "--occurred-at",
-      "--retry-attempts",
-    ]),
-  );
-  const workflowRunId = optionalSingleOption(options, "--workflow-run-id");
-  if (workflowRunId == null || !/^[1-9][0-9]*$/u.test(workflowRunId)) {
-    throw usageError("notify-operationsには数値の--workflow-run-idが必要です");
-  }
-  const occurredAtSource = optionalSingleOption(options, "--occurred-at");
-  if (occurredAtSource == null) {
-    throw usageError("notify-operationsには--occurred-atが必要です");
-  }
-  let occurredAt: UtcIsoDateTime;
-  try {
-    occurredAt = createUtcIsoDateTime(occurredAtSource);
-  } catch (error: unknown) {
-    throw usageError("--occurred-atにはタイムゾーン付きISO 8601日時を指定してください", error);
-  }
-  const retryAttemptsSource = singleOption(options, "--retry-attempts", "1");
-  const retryAttempts = Number.parseInt(retryAttemptsSource, 10);
-  if (
-    !/^\d+$/u.test(retryAttemptsSource) ||
-    !Number.isSafeInteger(retryAttempts) ||
-    retryAttempts < 1
-  ) {
-    throw usageError("--retry-attemptsには1以上の整数を指定してください");
-  }
-  const failedJobs = options.get("--failed-job") ?? [];
-  const allowedJobs = new Set([
-    "collect-analyze",
-    "persist-state",
-    "build-pages",
-    "deploy-pages",
-    "notify-discord",
-    "resolve-and-finalize",
-    "publish-notification-history",
-  ]);
-  if (failedJobs.some((job) => !allowedJobs.has(job))) {
-    throw usageError("--failed-jobには既知のworkflow job名を指定してください");
-  }
-  return Object.freeze({
-    kind: "notify-operations",
-    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
-    workflowRunId,
-    failureDirectory: singleOption(options, "--failure-directory", "artifacts/workflow/failures"),
-    failedJobs: Object.freeze([...new Set(failedJobs)]),
-    receiptPath: singleOption(
-      options,
-      "--receipt",
-      "artifacts/workflow/operations-alert-receipt.json",
-    ),
-    previousReceiptsDirectory: singleOption(
-      options,
-      "--previous-receipts-directory",
-      "artifacts/workflow/previous-operations-alert-receipts",
-    ),
-    occurredAt,
-    retryAttempts,
-  } satisfies NotifyOperationsCommandFields);
 }
 
 function parseWorkflowJobResult(options: ParsedOptions, name: string): WorkflowJobResult {
