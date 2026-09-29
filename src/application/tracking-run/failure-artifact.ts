@@ -31,6 +31,7 @@ export const runFailureKindSchema = z.enum([
   "runtime_unavailable",
   "public_boundary",
   "workflow_infrastructure_failure",
+  "diagnostics_encryption_failure",
   "superseded_by_newer_run",
   "unexpected",
 ]);
@@ -64,12 +65,11 @@ export const failureEvidenceSchema = z.discriminatedUnion("bindingKind", [
   }),
 ]);
 
-export const failedRunSchema = z.strictObject({
+const failedRunBaseSchema = z.strictObject({
   status: z.literal("failed"),
   invocationId: z.uuid(),
   runId: runIdSchema.optional(),
   failedStage: runFailureStageSchema,
-  failureKind: runFailureKindSchema,
   failedOperationEffectCertainty: z.enum(["no_effect", "committed", "ambiguous"]),
   evidence: failureEvidenceSchema,
   causedByFailureArtifactDigest: sha256Schema.optional(),
@@ -103,12 +103,24 @@ export const failedRunSchema = z.strictObject({
       "public_boundary",
       "workflow_infrastructure_failure",
       "unexpected_failure",
+      "diagnostics_encryption_failure",
     ]),
     incidentId: publicIdentifierSchema.optional(),
     externalActionId: publicIdentifierSchema.optional(),
   }),
-  encryptedDiagnosticsRecordIds: z.array(publicIdentifierSchema),
 });
+
+export const failedRunSchema = z.discriminatedUnion("failureKind", [
+  failedRunBaseSchema.extend({
+    failureKind: runFailureKindSchema.exclude(["diagnostics_encryption_failure"]),
+    encryptedDiagnosticsRecordIds: z.array(publicIdentifierSchema).nonempty(),
+  }),
+  failedRunBaseSchema.extend({
+    failureKind: z.literal("diagnostics_encryption_failure"),
+    failedOperationEffectCertainty: z.literal("no_effect"),
+    publicDiagnostics: z.strictObject({ code: z.literal("diagnostics_encryption_failure") }),
+  }),
+]);
 
 export const publicFailureArtifactSchema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -146,6 +158,17 @@ export type FailureStateObservation =
     }>
   | Readonly<{ kind: "conflict"; revision: string }>;
 
+type WithoutDerivedFailureFields<T extends FailedRun> = T extends FailedRun
+  ? Omit<
+      T,
+      | "status"
+      | "recoveryDisposition"
+      | "lastReceiptDigest"
+      | "completedPhaseSequence"
+      | "lastKnownStateRevision"
+    >
+  : never;
+
 function assertFailedRunSemantics(value: FailedRun): void {
   if (
     (value.checkpointDigest == null) !== (value.checkpointFileDigest == null) ||
@@ -174,7 +197,9 @@ function assertFailedRunSemantics(value: FailedRun): void {
       value.failedOperationEffectCertainty !== "no_effect") ||
     (value.failedOperationEffectCertainty === "ambiguous" &&
       value.recoveryDisposition !== "manual_resolution_required" &&
-      value.recoveryDisposition !== "operator_conflict_resolution")
+      value.recoveryDisposition !== "operator_conflict_resolution") ||
+    (value.failureKind !== "diagnostics_encryption_failure" &&
+      value.publicDiagnostics.code === "diagnostics_encryption_failure")
   ) {
     throw new TypeError("失敗runの識別、確度、復旧種別が一致しません");
   }
@@ -219,14 +244,7 @@ export function deriveRecoveryDisposition(
 
 /** 公開可能fieldだけから失敗runと復旧種別を確定する。 */
 export function createFailedRun(
-  input: Omit<
-    FailedRun,
-    | "status"
-    | "recoveryDisposition"
-    | "lastReceiptDigest"
-    | "completedPhaseSequence"
-    | "lastKnownStateRevision"
-  > &
+  input: WithoutDerivedFailureFields<FailedRun> &
     Readonly<{
       lastVerifiedReceipt: Receipt | undefined;
       stateObservation: FailureStateObservation;
@@ -279,9 +297,6 @@ export function createPublicFailureArtifact(
 ): PublicFailureArtifact {
   const checkedFailure = failedRunSchema.parse(failure);
   assertFailedRunSemantics(checkedFailure);
-  if (checkedFailure.encryptedDiagnosticsRecordIds.length === 0) {
-    throw new TypeError("公開失敗artifactに暗号化診断参照がありません");
-  }
   const payload = { schemaVersion: 1, kind: "tracking_run_failure", failure: checkedFailure };
   return publicFailureArtifactSchema.parse({
     ...payload,
@@ -300,9 +315,6 @@ export function parsePublicFailureArtifact(
     throw new TypeError("公開失敗artifactのdigestが一致しません");
   }
   assertFailedRunSemantics(artifact.failure);
-  if (artifact.failure.encryptedDiagnosticsRecordIds.length === 0) {
-    throw new TypeError("公開失敗artifactに暗号化診断参照がありません");
-  }
   return artifact;
 }
 

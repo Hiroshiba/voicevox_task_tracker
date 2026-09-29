@@ -42,7 +42,7 @@ import { CliUsageError, CliWorkflowArtifactError, CliCodexAuthenticationError } 
 
 export type CliFailureContext = Readonly<{
   failedStage: FailedRun["failedStage"];
-  failureKind: FailedRun["failureKind"];
+  failureKind: Exclude<FailedRun["failureKind"], "diagnostics_encryption_failure">;
   failedOperationEffectCertainty: FailedRun["failedOperationEffectCertainty"];
   evidence: FailedRun["evidence"];
   runId?: string;
@@ -55,7 +55,7 @@ export type CliFailureContext = Readonly<{
   bootstrapError?: unknown;
 }>;
 
-function failureKind(error: unknown): FailedRun["failureKind"] {
+function failureKind(error: unknown): CliFailureContext["failureKind"] {
   if (isPublicBoundaryViolation(error)) {
     return "public_boundary";
   }
@@ -206,7 +206,7 @@ export async function observeCliFailureContext(
           result != null && "result" in result && result.result.effects.stateCommitted,
         )
       : stageFromCommand(command);
-  let kind: FailedRun["failureKind"] = failureKind(error);
+  let kind: CliFailureContext["failureKind"] = failureKind(error);
   if (report?.status === "failure") {
     kind = report.failureKind === "public_boundary" ? "public_boundary" : "unexpected";
   }

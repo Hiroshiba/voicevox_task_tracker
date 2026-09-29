@@ -138,6 +138,7 @@ jobs:
         with:
           name: manual-resolution-record
           path: artifacts/exact-runtime/artifacts/workflow/manual-resolution-receipt.json
+          overwrite: true
           if-no-files-found: error
           retention-days: 7
       - name: 同じrunの残り通知をsettleする
@@ -151,6 +152,7 @@ jobs:
         with:
           name: notification-settlement-record
           path: artifacts/exact-runtime/artifacts/workflow/notification-settlement-receipt.json
+          overwrite: true
           if-no-files-found: error
           retention-days: 7
       - name: 同じrunをfinalizeする
@@ -161,27 +163,28 @@ jobs:
         with:
           name: run-finalization-record
           path: artifacts/exact-runtime/artifacts/workflow/run-finalization-receipt.json
+          overwrite: true
           if-no-files-found: error
           retention-days: 7
+      - name: 診断JSONLを暗号化
+        id: encrypt_diagnostics
+        if: always() && (steps.verify_checkpoint.outcome == 'success' || steps.verify_checkpoint.outcome == 'failure')
+        env:
+          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 }}
+        run: node --enable-source-maps dist/cli/manual-exact-runtime.js encrypt-diagnostics
       - name: 公開失敗artifactを保存
         id: failure_upload
         if: always()
         uses: ./.github/actions/upload-failure-artifact
         with:
           artifact-name: manual-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-      - name: 診断JSONLを暗号化
-        id: encrypt_diagnostics
-        if: always() && (steps.verify_checkpoint.outcome == 'success' || steps.verify_checkpoint.outcome == 'failure')
-        env:
-          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 }}
-        run: .github/scripts/encrypt-diagnostics.sh dist/cli/tracker-run.js
       - name: 暗号化済み診断artifactを保存
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: manual-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
           path: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.bundle
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 7
 
   publish-notification-history:
@@ -253,6 +256,12 @@ jobs:
         with:
           name: run-finalization-record
           path: artifacts/exact-runtime/artifacts/workflow
+      - name: 保存済み通知履歴Pages公開結果を取得
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: notification-history-pages-deployment-record
+          path: artifacts/exact-runtime/artifacts/workflow/previous
       - name: 通知履歴Pagesを準備
         id: prepare_history_pages
         run: node --enable-source-maps dist/cli/manual-exact-runtime.js prepare-notification-history-pages
@@ -261,6 +270,7 @@ jobs:
         with:
           name: notification-history-pages-build-record
           path: artifacts/exact-runtime/artifacts/workflow/notification-history-pages-build.json
+          overwrite: true
           if-no-files-found: error
           retention-days: 7
       - name: deploy直前のfinal stateと出力を検証
@@ -306,27 +316,28 @@ jobs:
         with:
           name: notification-history-pages-deployment-record
           path: artifacts/exact-runtime/artifacts/workflow/notification-history-pages-deployment.json
+          overwrite: true
           if-no-files-found: error
           retention-days: 7
+      - name: 診断JSONLを暗号化
+        id: encrypt_diagnostics
+        if: always() && (steps.prepare_history_pages.outcome == 'success' || steps.prepare_history_pages.outcome == 'failure')
+        env:
+          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 }}
+        run: node --enable-source-maps dist/cli/manual-exact-runtime.js encrypt-diagnostics
       - name: 公開失敗artifactを保存
         id: failure_upload
         if: always()
         uses: ./.github/actions/upload-failure-artifact
         with:
           artifact-name: manual-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-      - name: 診断JSONLを暗号化
-        id: encrypt_diagnostics
-        if: always() && (steps.prepare_history_pages.outcome == 'success' || steps.prepare_history_pages.outcome == 'failure')
-        env:
-          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 }}
-        run: .github/scripts/encrypt-diagnostics.sh dist/cli/tracker-run.js
       - name: 暗号化済み診断artifactを保存
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: manual-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
           path: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.bundle
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 7
 
   notify-operations:

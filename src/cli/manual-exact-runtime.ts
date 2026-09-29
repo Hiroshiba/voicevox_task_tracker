@@ -14,6 +14,7 @@ import {
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
 import { writeCliTextFile } from "./file-output.js";
 import { observeBootstrap, type BootstrapFailureObservation } from "./failure-context-state.js";
+import { encryptManualDiagnostics } from "./manual-diagnostics-encryption.js";
 import {
   isExpectedCheckpoint,
   reportManualExactFailure,
@@ -29,6 +30,7 @@ const commandSchema = z.enum([
   "prepare-notification-history-pages",
   "preflight-notification-history-deployment",
   "record-notification-history-deployment",
+  "encrypt-diagnostics",
 ]);
 const environmentSchema = z.strictObject({
   checkout: z.string().min(1),
@@ -37,6 +39,10 @@ const environmentSchema = z.strictObject({
   codeRevision: z.string().regex(/^[0-9a-f]{40}$/u),
   diagnosticsPath: z.string().min(1),
   failureDirectory: z.string().min(1),
+});
+const reportingEnvironmentSchema = environmentSchema.pick({
+  diagnosticsPath: true,
+  failureDirectory: true,
 });
 
 export type ManualExactCommand = z.output<typeof commandSchema>;
@@ -148,25 +154,38 @@ async function selectRuntime(
   }
 }
 
-/** 旧exact CLIを隔離checkoutで実行し、未報告の失敗だけを現行契約で記録する。 */
+/** 手動workflowの現行制御CLIを実行し、未報告の失敗を記録する。 */
 export async function runManualExactRuntime(args: readonly string[]): Promise<number> {
-  const command = commandSchema.parse(args[0]);
-  const input = environmentSchema.parse({
+  const environment = {
     checkout: process.env["VOICEVOX_MANUAL_EXACT_CHECKOUT"],
     runId: process.env["VOICEVOX_EXPECTED_RUN_ID"],
     checkpointDigest: process.env["VOICEVOX_MANUAL_CHECKPOINT_DIGEST"],
     codeRevision: process.env["VOICEVOX_MANUAL_CODE_REVISION"],
     diagnosticsPath: process.env["VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH"],
     failureDirectory: process.env["VOICEVOX_TASK_TRACKER_FAILURE_DIRECTORY"],
-  });
-  const checkout = resolve(input.checkout);
-  const entrypoint = resolve(checkout, "artifacts/workflow/runtime/tracker-run.mjs");
-  const existingFailures = new Set(await failureNames(input.failureDirectory));
-  process.chdir(checkout);
+  };
+  let command: ManualExactCommand | undefined;
+  let input: z.output<typeof environmentSchema> | undefined;
+  let existingFailures: Set<string> | undefined;
+  let inCheckout = false;
+  let inputValidated = false;
+  let childStarted = false;
   let before: BootstrapFailureObservation | undefined;
-  let after: BootstrapFailureObservation | undefined;
-  let failure: unknown;
   try {
+    command = commandSchema.parse(args[0]);
+    input = environmentSchema.parse(environment);
+    inputValidated = true;
+    const checkout = resolve(input.checkout);
+    const entrypoint = resolve(checkout, "artifacts/workflow/runtime/tracker-run.mjs");
+    const failureDirectory = resolve(input.failureDirectory);
+    const priorFailures = new Set(await failureNames(failureDirectory));
+    existingFailures = priorFailures;
+    process.chdir(checkout);
+    inCheckout = true;
+    if (command === "encrypt-diagnostics") {
+      await encryptManualDiagnostics(input.diagnosticsPath, priorFailures.size > 0);
+      return 0;
+    }
     before = await observeBootstrap("config.yml", input.runId);
     if (!isExpectedCheckpoint(before, input.runId, input.checkpointDigest)) {
       throw new TypeError("手動解決前のstateと指定したrun/checkpointが一致しません");
@@ -176,35 +195,83 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
       if (stateRevision == null) {
         throw new TypeError("旧runtime選択に必要なstate revisionがありません");
       }
+      childStarted = true;
       await selectRuntime(entrypoint, input.runId, input.codeRevision, stateRevision);
     } else {
+      childStarted = true;
       await runExactCli(entrypoint, [command, ...args.slice(1)], false);
     }
     return 0;
   } catch (error: unknown) {
-    failure = error;
-  }
-  try {
-    after = await observeBootstrap("config.yml", input.runId);
-  } catch (error: unknown) {
-    failure = new AggregateError([failure, error], "旧runtime失敗後のstate観測にも失敗しました", {
-      cause: failure,
-    });
-  }
-  const createdFailures = (await failureNames(input.failureDirectory)).filter(
-    (name) => !existingFailures.has(name),
-  );
-  if (createdFailures.length > 0) {
-    for (const name of createdFailures) {
-      decodePublicFailureArtifact(
-        await readFile(resolve(input.failureDirectory, name)),
-        nodeContentDigestPort,
+    let failure: unknown = error;
+    let after: BootstrapFailureObservation | undefined;
+    if (inCheckout && input != null) {
+      try {
+        after = await observeBootstrap("config.yml", input.runId);
+      } catch (observationError: unknown) {
+        failure = new AggregateError(
+          [failure, observationError],
+          "旧runtime失敗後のstate観測にも失敗しました",
+          { cause: failure },
+        );
+      }
+    }
+    const priorFailures = existingFailures;
+    if (priorFailures != null && input != null && command !== "encrypt-diagnostics") {
+      let createdFailures: readonly string[] = [];
+      try {
+        createdFailures = (await failureNames(resolve(input.failureDirectory))).filter(
+          (name) => !priorFailures.has(name),
+        );
+        for (const name of createdFailures) {
+          decodePublicFailureArtifact(
+            await readFile(resolve(input.failureDirectory, name)),
+            nodeContentDigestPort,
+          );
+        }
+      } catch (artifactError: unknown) {
+        failure = new AggregateError(
+          [failure, artifactError],
+          "旧runtime失敗後の公開artifact観測にも失敗しました",
+          { cause: failure },
+        );
+        createdFailures = [];
+      }
+      if (createdFailures.length > 0) {
+        throw failure;
+      }
+    }
+    let reporting;
+    try {
+      const paths = reportingEnvironmentSchema.parse({
+        diagnosticsPath: environment.diagnosticsPath,
+        failureDirectory: environment.failureDirectory,
+      });
+      reporting = {
+        ...(input == null ? {} : { runId: input.runId, checkpointDigest: input.checkpointDigest }),
+        diagnosticsPath: resolve(paths.diagnosticsPath),
+        failureDirectory: resolve(paths.failureDirectory),
+        inputInvalid: !inputValidated,
+        childStarted,
+      };
+    } catch (reportingError: unknown) {
+      throw new AggregateError(
+        [failure, reportingError],
+        "旧runtime失敗と公開失敗報告先の検証に失敗しました",
+        { cause: failure },
+      );
+    }
+    try {
+      await reportManualExactFailure(command, failure, before, after, reporting);
+    } catch (reportingError: unknown) {
+      throw new AggregateError(
+        [failure, reportingError],
+        "旧runtime失敗と公開失敗artifactの作成に失敗しました",
+        { cause: failure },
       );
     }
     throw failure;
   }
-  await reportManualExactFailure(command, failure, before, after, input);
-  throw failure;
 }
 
 if (process.argv[1] != null && pathToFileURL(process.argv[1]).href === import.meta.url) {

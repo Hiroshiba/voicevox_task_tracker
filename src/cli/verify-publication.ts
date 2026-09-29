@@ -114,9 +114,6 @@ export async function reportFailureCommand(
     throw new TypeError("失敗runがcanonical JSONではありません");
   }
   const failure = failedRunSchema.parse(raw);
-  if (failure.encryptedDiagnosticsRecordIds.length === 0) {
-    throw new TypeError("公開失敗artifactには記録済みの暗号化診断参照が必要です");
-  }
   const artifact = createPublicFailureArtifact(failure, nodeContentDigestPort);
   await writeCliJsonArtifact(resolve(adapters.repositoryPath, command.outputPath), artifact);
   await adapters.writeStandardOutput(

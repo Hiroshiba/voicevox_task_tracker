@@ -29,14 +29,18 @@ import type { ManualExactCommand } from "./manual-exact-runtime.js";
 const execFileAsync = promisify(execFile);
 
 type ManualExactFailureInput = Readonly<{
-  runId: string;
-  checkpointDigest: string;
+  runId?: string;
+  checkpointDigest?: string;
   diagnosticsPath: string;
   failureDirectory: string;
+  inputInvalid: boolean;
+  childStarted: boolean;
 }>;
 
-function failedStage(command: ManualExactCommand): FailedRun["failedStage"] {
+function failedStage(command: ManualExactCommand | undefined): FailedRun["failedStage"] {
   switch (command) {
+    case undefined:
+      return "prepare";
     case "verify-checkpoint":
       return "checkpoint_binding";
     case "select-runtime":
@@ -51,13 +55,17 @@ function failedStage(command: ManualExactCommand): FailedRun["failedStage"] {
     case "preflight-notification-history-deployment":
     case "record-notification-history-deployment":
       return "notification_history_pages_published";
+    case "encrypt-diagnostics":
+      return "workflow_effect_observation";
   }
 }
 
-function precedingReceiptPath(command: ManualExactCommand): string | undefined {
+function precedingReceiptPath(command: ManualExactCommand | undefined): string | undefined {
   switch (command) {
+    case undefined:
     case "verify-checkpoint":
     case "select-runtime":
+    case "encrypt-diagnostics":
       return undefined;
     case "resolve-discord-delivery":
       return "artifacts/workflow/initial-state-commit-receipt.json";
@@ -100,7 +108,7 @@ function receiptStateRevision(receipt: Receipt): string {
 }
 
 async function precedingReceipt(
-  command: ManualExactCommand,
+  command: ManualExactCommand | undefined,
   evidence: Extract<FailedRun["evidence"], { bindingKind: "checkpoint" }> | undefined,
   observedStateRevision: string,
 ): Promise<Receipt | undefined> {
@@ -161,25 +169,31 @@ async function precedingReceipt(
   return receipt;
 }
 
-/** 旧runtimeが公開artifactを作らなかった失敗を実証済みstateから記録する。 */
+/** 手動workflowの未報告失敗を実証済みstateから記録する。 */
 export async function reportManualExactFailure(
-  command: ManualExactCommand,
+  command: ManualExactCommand | undefined,
   error: unknown,
   before: BootstrapFailureObservation | undefined,
   after: BootstrapFailureObservation | undefined,
   input: ManualExactFailureInput,
 ): Promise<void> {
   const invocationId = randomUUID();
-  const recordId = randomUUID();
-  const matchingAfter = isExpectedCheckpoint(after, input.runId, input.checkpointDigest);
-  const matchingBefore = isExpectedCheckpoint(before, input.runId, input.checkpointDigest);
+  const matchingAfter =
+    input.runId != null &&
+    input.checkpointDigest != null &&
+    isExpectedCheckpoint(after, input.runId, input.checkpointDigest);
+  const matchingBefore =
+    input.runId != null &&
+    input.checkpointDigest != null &&
+    isExpectedCheckpoint(before, input.runId, input.checkpointDigest);
   const observed = matchingAfter ? after : matchingBefore ? before : undefined;
   const evidence = observed?.evidence?.bindingKind === "checkpoint" ? observed.evidence : undefined;
   const bootstrapAlert =
     after?.evidence?.bindingKind === "state_bootstrap_alert" ? after : undefined;
+  const encryptionFailed = command === "encrypt-diagnostics";
   let receipt: Receipt | undefined;
   let diagnosticError = error;
-  if (evidence != null && bootstrapAlert == null) {
+  if (!encryptionFailed && evidence != null && bootstrapAlert == null) {
     try {
       const observedRevision = revision(observed);
       if (observedRevision == null) {
@@ -194,21 +208,24 @@ export async function reportManualExactFailure(
       );
     }
   }
-  const recorder = await createDiagnosticsRecorder({ path: input.diagnosticsPath });
-  try {
-    await recorder.append({
-      event: "tracking_run.manual_exact_runtime_failed",
-      details: {
-        recordId,
-        invocationId,
-        command,
-        beforeStateRevision: revision(before) ?? null,
-        afterStateRevision: revision(after) ?? null,
-      },
-      error: diagnosticError,
-    });
-  } finally {
-    await recorder.close();
+  const recordId = encryptionFailed ? undefined : randomUUID();
+  if (recordId != null) {
+    const recorder = await createDiagnosticsRecorder({ path: input.diagnosticsPath });
+    try {
+      await recorder.append({
+        event: "tracking_run.manual_exact_runtime_failed",
+        details: {
+          recordId,
+          invocationId,
+          command: command ?? null,
+          beforeStateRevision: revision(before) ?? null,
+          afterStateRevision: revision(after) ?? null,
+        },
+        error: diagnosticError,
+      });
+    } finally {
+      await recorder.close();
+    }
   }
   const stateObservation = after?.stateObservation ??
     before?.stateObservation ?? { kind: "not_observed" as const };
@@ -217,15 +234,17 @@ export async function reportManualExactFailure(
     command === "verify-checkpoint" ||
     command === "select-runtime" ||
     command === "prepare-notification-history-pages" ||
-    command === "preflight-notification-history-deployment";
-  const effectCertainty =
-    readOnly || (command === "resolve-discord-delivery" && sameHead && matchingAfter)
+    command === "preflight-notification-history-deployment" ||
+    encryptionFailed;
+  const effectCertainty: FailedRun["failedOperationEffectCertainty"] =
+    !input.childStarted ||
+    readOnly ||
+    (command === "resolve-discord-delivery" && sameHead && matchingAfter)
       ? "no_effect"
       : "ambiguous";
-  const failure = createFailedRun({
+  const common = {
     invocationId,
     failedStage: bootstrapAlert == null ? failedStage(command) : "runtime_bootstrap",
-    failureKind: bootstrapAlert == null ? "unexpected" : "content_integrity",
     failedOperationEffectCertainty: effectCertainty,
     evidence: bootstrapAlert?.evidence ?? evidence ?? { bindingKind: "invocation_pre_run_alert" },
     ...(bootstrapAlert != null || evidence == null
@@ -235,13 +254,40 @@ export async function reportManualExactFailure(
           checkpointDigest: evidence.checkpointDigest,
           checkpointFileDigest: evidence.checkpointFileDigest,
         }),
-    publicDiagnostics: {
-      code: bootstrapAlert == null ? "unexpected_failure" : "invalid_record",
-    },
-    encryptedDiagnosticsRecordIds: [recordId],
     lastVerifiedReceipt: receipt,
     stateObservation: bootstrapAlert == null ? stateObservation : bootstrapAlert.stateObservation,
-  });
+  };
+  let failure: FailedRun;
+  if (encryptionFailed) {
+    failure = createFailedRun({
+      ...common,
+      failureKind: "diagnostics_encryption_failure",
+      failedOperationEffectCertainty: "no_effect",
+      publicDiagnostics: { code: "diagnostics_encryption_failure" },
+    });
+  } else {
+    if (recordId == null) {
+      throw new TypeError("暗号化診断の記録IDがありません");
+    }
+    let failureKind: "invalid_input" | "unexpected" | "content_integrity";
+    let publicCode: "invalid_input" | "unexpected_failure" | "invalid_record";
+    if (input.inputInvalid) {
+      failureKind = "invalid_input";
+      publicCode = "invalid_input";
+    } else if (bootstrapAlert != null) {
+      failureKind = "content_integrity";
+      publicCode = "invalid_record";
+    } else {
+      failureKind = "unexpected";
+      publicCode = "unexpected_failure";
+    }
+    failure = createFailedRun({
+      ...common,
+      failureKind,
+      publicDiagnostics: { code: publicCode },
+      encryptedDiagnosticsRecordIds: [recordId],
+    });
+  }
   const artifact = createPublicFailureArtifact(failure, nodeContentDigestPort);
   await writeCliJsonArtifact(resolve(input.failureDirectory, `${invocationId}.json`), artifact);
 }

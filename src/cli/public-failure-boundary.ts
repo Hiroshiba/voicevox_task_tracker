@@ -37,6 +37,8 @@ function publicDiagnosticCode(
       return "public_boundary";
     case "workflow_infrastructure_failure":
       return "workflow_infrastructure_failure";
+    case "diagnostics_encryption_failure":
+      return "diagnostics_encryption_failure";
     case "unexpected":
       return "unexpected_failure";
   }
