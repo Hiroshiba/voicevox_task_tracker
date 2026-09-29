@@ -455,8 +455,10 @@ export function resumeNotificationHistoryDeploy(
     parsed.state.marker.phase !== "run_finalized" ||
     parsed.runFinalizationReceipt.result.resultingStateRevision !== parsed.state.revision ||
     parsed.notificationHistoryPagesBuildReceipt.phase !== "notification_history" ||
-    parsed.notificationHistoryPagesBuildReceipt.result?.sourceStateRevision !==
-      parsed.state.revision ||
+    (parsed.notificationHistoryPagesBuildReceipt.status === "built"
+      ? parsed.notificationHistoryPagesBuildReceipt.result?.sourceStateRevision !==
+        parsed.state.revision
+      : parsed.notificationHistoryPagesBuildReceipt.logicalTarget !== parsed.state.revision) ||
     (parsed.notificationHistoryPagesBuildReceipt.expectedStateRevision != null &&
       parsed.notificationHistoryPagesBuildReceipt.expectedStateRevision !== parsed.state.revision)
   ) {

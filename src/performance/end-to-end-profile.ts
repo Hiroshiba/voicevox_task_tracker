@@ -776,6 +776,7 @@ function createPerformanceHarness(repositoryPath: string, config: Config): Perfo
     random: () => 0,
     writeStandardOutput: () => Promise.resolve(),
     writeJsonArtifact: () => Promise.resolve(),
+    readArtifactBytes: () => Promise.reject(new TypeError("性能profileではartifactを読込みません")),
     writeTextFile: () => Promise.resolve(),
     buildWebOutput: () => Promise.resolve(),
     deployProductionPages: () =>

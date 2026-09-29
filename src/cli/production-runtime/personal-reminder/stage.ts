@@ -30,18 +30,20 @@ import { forcedAiAnalysisTarget } from "../ai-analysis-target.js";
 import { CODEX_BACKEND_VERSION } from "../../../codex/backend-version.js";
 import type {
   PersonalReminderAnalysis,
+  PersonalReminderExecutedStage,
+  PersonalReminderPlannedStage,
   ProductionTypes,
   RuntimeConfiguration,
   RuntimeState,
 } from "../contracts.js";
 
-async function analyzePersonalReminders(
+async function planPersonalReminderStage(
   adapters: PersonalReminderRuntimeAdapters,
   invocation: DailyRunInvocation,
   configuration: RuntimeConfiguration,
   state: RuntimeState,
   graphReconciled: GraphReconciledRun,
-): Promise<PersonalReminderAnalysisStageResult<PersonalReminderAnalysis>> {
+): Promise<PersonalReminderPlannedStage> {
   const collection = graphReconciled.data.collection;
   const forcedTarget = forcedAiAnalysisTarget(configuration);
   const planned = planPersonalReminders(
@@ -142,7 +144,50 @@ async function analyzePersonalReminders(
       configuration.codexAttemptBudget.releaseInitialAttempt(Object.freeze({ id: reservation.id }));
     },
   });
-  const executed = await executePersonalReminders(planned, port, nodeContentDigestPort);
+  return Object.freeze({
+    planned,
+    port,
+    initialSummary,
+    initialUsage,
+    fallbackNodeIds: personalReminderFallbackNodeIds,
+    diagnostics,
+    configuration,
+  });
+}
+
+async function executePersonalReminderStage(
+  stage: PersonalReminderPlannedStage,
+): Promise<PersonalReminderExecutedStage> {
+  const executed = await executePersonalReminders(stage.planned, stage.port, nodeContentDigestPort);
+  return Object.freeze({
+    executed,
+    initialSummary: stage.initialSummary,
+    initialUsage: stage.initialUsage,
+    fallbackNodeIds: stage.fallbackNodeIds,
+    diagnostics: stage.diagnostics,
+    configuration: stage.configuration,
+    candidateCauseCount: stage.planned.data.plan.causes.filter(
+      (cause) => cause.choice === "execute",
+    ).length,
+    assessmentReuseCount: stage.planned.data.plan.causes.filter(
+      (cause) => cause.choice === "snapshot_reuse",
+    ).length,
+  });
+}
+
+async function finalizePersonalReminderStage(
+  stage: PersonalReminderExecutedStage,
+): Promise<PersonalReminderAnalysisStageResult<PersonalReminderAnalysis>> {
+  const {
+    executed,
+    initialSummary,
+    initialUsage,
+    fallbackNodeIds,
+    diagnostics,
+    configuration,
+    candidateCauseCount,
+    assessmentReuseCount,
+  } = stage;
   const finalized = finalizePersonalReminders(executed, nodeContentDigestPort);
   const result = projectLegacyPersonalReminderFinalization(finalized);
   const outcomesByCauseId = new Map(
@@ -175,7 +220,7 @@ async function analyzePersonalReminders(
   });
   const usageDelta = personalReminderUsageDelta(usage, initialUsage);
   const status =
-    personalReminderFallbackNodeIds.size > 0 ||
+    fallbackNodeIds.size > 0 ||
     counts.failed > 0 ||
     counts.deferred > 0 ||
     [...result.itemsByNodeId.values()].some((item) => item.planning.status === "pending")
@@ -183,8 +228,7 @@ async function analyzePersonalReminders(
       : "success";
   await recordCodexDiagnostic(diagnostics, "codex.personal_reminder.summary", {
     phase: "summary",
-    candidateCauseCount: planned.data.plan.causes.filter((cause) => cause.choice === "execute")
-      .length,
+    candidateCauseCount,
     aiCallCount: usageDelta.calls,
     cacheHitCauseCount: executed.data.outcomes.filter((outcome) => outcome.status === "cache_hit")
       .length,
@@ -211,9 +255,7 @@ async function analyzePersonalReminders(
     personalReminderAiCacheHitCount: executed.data.outcomes.filter(
       (outcome) => outcome.status === "cache_hit",
     ).length,
-    personalReminderAssessmentReuseCount: planned.data.plan.causes.filter(
-      (cause) => cause.choice === "snapshot_reuse",
-    ).length,
+    personalReminderAssessmentReuseCount: assessmentReuseCount,
     personalReminderUnknownCount: counts.unknown,
     personalReminderFailedCount: counts.failed,
     personalReminderDeferredCount: counts.deferred,
@@ -222,10 +264,10 @@ async function analyzePersonalReminders(
   });
 }
 
-/** 個人向けリマインダー解析段階を既存adapterへ接続する。 */
-export function createAnalyzePersonalRemindersStage(
+/** 個人向けリマインダー計画を既存adapterへ接続する。 */
+export function createPlanPersonalRemindersStage(
   adapters: PersonalReminderRuntimeAdapters,
-): DailyTransactionDependencies<ProductionTypes>["analyzePersonalReminders"] {
+): DailyTransactionDependencies<ProductionTypes>["planPersonalReminders"] {
   return ({ invocation, configuration, state, genericAiExecuted, graphReconciled }) => {
     const currentLedger = configuration.codexAttemptBudget.snapshot;
     if (
@@ -234,6 +276,16 @@ export function createAnalyzePersonalRemindersStage(
     ) {
       throw new TypeError("個人催促AIへ渡す共有予算が汎用AI実行結果と一致しません");
     }
-    return analyzePersonalReminders(adapters, invocation, configuration, state, graphReconciled);
+    return planPersonalReminderStage(adapters, invocation, configuration, state, graphReconciled);
   };
+}
+
+/** 個人向けリマインダーAI計画を実行する。 */
+export function createExecutePersonalRemindersStage(): DailyTransactionDependencies<ProductionTypes>["executePersonalReminders"] {
+  return executePersonalReminderStage;
+}
+
+/** 個人向けリマインダー結果を確定して利用側へ投影する。 */
+export function createFinalizePersonalRemindersStage(): DailyTransactionDependencies<ProductionTypes>["finalizePersonalReminders"] {
+  return finalizePersonalReminderStage;
 }

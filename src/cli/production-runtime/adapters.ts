@@ -69,6 +69,7 @@ export type ProductionRuntimeAdapters = Readonly<{
   random: () => number;
   writeStandardOutput: (source: string) => Promise<void>;
   writeJsonArtifact: (path: string, value: unknown) => Promise<void>;
+  readArtifactBytes: (path: string) => Promise<Uint8Array>;
   writeTextFile: (path: string, source: string) => Promise<void>;
   writePublicData: (
     outputDirectory: string,
@@ -87,6 +88,7 @@ export type ConfigurationRuntimeAdapters = Pick<
   | "readSandboxContext"
   | "createStateBranchAdapter"
   | "codexProcessRunner"
+  | "readArtifactBytes"
 >;
 
 export type StateRuntimeAdapters = Pick<

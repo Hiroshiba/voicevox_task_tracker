@@ -1,0 +1,167 @@
+import { createUtcIsoDateTime, type UtcIsoDateTime } from "../domain/index.js";
+import type { FailedRun } from "../application/tracking-run/failure-artifact.js";
+import { createRunReport, type RunMetrics, type RunReport, type RunStage } from "./run-report.js";
+import type { DailyRunInvocation, DailyRunRuntime, DryRunArtifact } from "./daily-transaction.js";
+
+/** run runtimeの現在時刻をUTC日時へ変換する。 */
+export function currentTime(runtime: DailyRunRuntime): UtcIsoDateTime {
+  const value = runtime.now();
+  if (!Number.isFinite(value.getTime())) {
+    throw new TypeError("run runtimeのnowは有効な日時を返してください");
+  }
+  return createUtcIsoDateTime(value.toISOString());
+}
+
+/** run指標を妥当性検証して更新する。 */
+export function updateMetrics(metrics: RunMetrics, values: Partial<RunMetrics>): RunMetrics {
+  const updated = {
+    ...metrics,
+    ...values,
+  };
+  for (const [name, value] of Object.entries(updated)) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new RangeError(`${name}は0以上の安全な整数にしてください`);
+    }
+  }
+  return Object.freeze(updated);
+}
+
+/** dry-runの検証済みartifactを作る。 */
+export function createDryRunArtifact<Value>(
+  invocation: DailyRunInvocation,
+  status: "success" | "fallback",
+  planned: Value,
+  metrics: RunMetrics,
+  diagnostics: readonly string[],
+  finishedAt: UtcIsoDateTime,
+): DryRunArtifact<Value> {
+  const completedMetrics = updateMetrics(metrics, {
+    durationMilliseconds: Date.parse(finishedAt) - Date.parse(invocation.startedAt),
+  });
+  return Object.freeze({
+    schemaVersion: "2",
+    runId: invocation.runId,
+    command: "dry-run",
+    status,
+    complete: true,
+    result: planned,
+    metrics: completedMetrics,
+    diagnostics: Object.freeze([...diagnostics]),
+  });
+}
+
+/** 完了runのreportを作る。 */
+export function completedReport(
+  invocation: DailyRunInvocation,
+  status: "success" | "fallback",
+  metrics: RunMetrics,
+  diagnostics: readonly string[],
+  discordSentAt: UtcIsoDateTime | null,
+  finishedAt: UtcIsoDateTime,
+): RunReport {
+  return createRunReport({
+    schemaVersion: "5",
+    runId: invocation.runId,
+    command: invocation.command.kind,
+    status,
+    complete: true,
+    scheduledFor: invocation.scheduledFor,
+    startedAt: invocation.startedAt,
+    finishedAt,
+    discordSentAt,
+    metrics: updateMetrics(metrics, {
+      durationMilliseconds: Date.parse(finishedAt) - Date.parse(invocation.startedAt),
+    }),
+    diagnostics,
+  });
+}
+
+/** 失敗runのreportを作る。 */
+export function failureReport(
+  invocation: DailyRunInvocation,
+  failedStage: RunStage,
+  failureKind: Extract<RunReport, { status: "failure" }>["failureKind"],
+  metrics: RunMetrics,
+  diagnostics: readonly string[],
+  discordSentAt: UtcIsoDateTime | null,
+  finishedAt: UtcIsoDateTime,
+): RunReport {
+  return createRunReport({
+    schemaVersion: "5",
+    runId: invocation.runId,
+    command: invocation.command.kind,
+    status: "failure",
+    complete: false,
+    failureKind,
+    failedStage,
+    scheduledFor: invocation.scheduledFor,
+    startedAt: invocation.startedAt,
+    finishedAt,
+    discordSentAt,
+    metrics: updateMetrics(metrics, {
+      durationMilliseconds: Date.parse(finishedAt) - Date.parse(invocation.startedAt),
+    }),
+    diagnostics,
+  });
+}
+
+/** engine stageをCLI report stageへ対応させる。 */
+export function reportStageForEngine(stage: FailedRun["failedStage"]): RunStage {
+  switch (stage) {
+    case "runtime_bootstrap":
+    case "runtime_selection":
+    case "runtime_launch":
+    case "prepare":
+    case "prepared":
+      return "configuration";
+    case "inventory_collected":
+      return "repository_inventory";
+    case "collected":
+      return "incremental_collection";
+    case "deterministically_analyzed":
+      return "deterministic_analysis";
+    case "generic_ai_planned":
+    case "generic_ai_executed":
+    case "generic_ai_adopted":
+      return "codex_analysis";
+    case "graph_reconciled":
+      return "graph_analysis";
+    case "personal_reminder_planned":
+    case "personal_reminder_executed":
+    case "personal_reminder_finalized":
+      return "personal_reminder_analysis";
+    case "validated":
+      return "completeness_validation";
+    case "publication_planned":
+    case "checkpoint_encoding":
+    case "checkpoint_binding":
+    case "completed":
+    case "workflow_effect_observation":
+      return "artifact";
+    case "initial_state_committed":
+    case "run_finalized":
+      return "state_persistence";
+    case "initial_pages_prepared":
+    case "initial_pages_published":
+    case "notification_history_pages_prepared":
+    case "notification_history_pages_published":
+      return "pages";
+    case "notifications_settled":
+      return "discord";
+  }
+}
+
+/** checkpoint前の失敗段階か判定する。 */
+export function isPreCheckpointFailureStage(stage: RunStage): boolean {
+  return (
+    stage === "repository_inventory" ||
+    stage === "incremental_collection" ||
+    stage === "deterministic_analysis" ||
+    stage === "codex_analysis" ||
+    stage === "reducer" ||
+    stage === "graph_analysis" ||
+    stage === "personal_reminder_analysis" ||
+    stage === "completeness_validation" ||
+    stage === "artifact"
+  );
+}

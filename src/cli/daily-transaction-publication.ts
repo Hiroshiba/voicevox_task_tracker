@@ -2,8 +2,9 @@ import {
   completeTrackingRun,
   type CompletedRun,
 } from "../application/tracking-run/complete-run.js";
-import { runPreparedTrackingRun } from "../application/tracking-run/engine.js";
+import type { InitialStateCommitReference } from "../application/tracking-run/engine.js";
 import type { ReceiptChainEntry } from "../application/tracking-run/receipt-chain-schema.js";
+import type { Receipt } from "../application/tracking-run/receipt-schema.js";
 import type { StateCommitReceiptEvidence } from "../application/tracking-run/observed-state-commit.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
 import type { BoundPublicationCheckpoint } from "./publication-checkpoint-binding.js";
@@ -15,7 +16,6 @@ import type {
   DailyTransactionTypeMap,
   NotificationStageResult,
 } from "./daily-transaction.js";
-import type { RunStage } from "./run-report.js";
 
 /** 公開境界へ渡す完全性検証済みの値。 */
 export type PublicationStageInput<Types extends DailyTransactionTypeMap> = Parameters<
@@ -28,6 +28,11 @@ type CommittedDailyState<Types extends DailyTransactionTypeMap> = Types["persist
     receiptEvidence: Extract<StateCommitReceiptEvidence, { receiptType: "initial_state_commit" }>;
   }>;
 
+type PreparedDailyPages<Types extends DailyTransactionTypeMap> = Readonly<{
+  committed: CommittedDailyState<Types>;
+  pagesPrepared: Types["pagesPrepared"];
+}>;
+
 type PublishedDailyState<Types extends DailyTransactionTypeMap> = Readonly<{
   committed: CommittedDailyState<Types>;
   pages: Types["pages"];
@@ -39,147 +44,200 @@ type SettledDailyState<Types extends DailyTransactionTypeMap> = PublishedDailySt
 type FinalizedDailyState<Types extends DailyTransactionTypeMap> = SettledDailyState<Types> &
   Readonly<{ finalization: Extract<FinalizeRunOutcome, { kind: "finalized" }> }>;
 
+type PreparedHistoryDailyState<Types extends DailyTransactionTypeMap> = FinalizedDailyState<Types> &
+  Readonly<{ historyPagesPrepared: Types["historyPagesPrepared"] }>;
+
 type HistoryPagesDailyState<Types extends DailyTransactionTypeMap> = FinalizedDailyState<Types> &
   Readonly<{ historyPages: NotificationHistoryPublishedRun }>;
 
-/** CLI runnerへ公開段階の進捗と通知実績を渡す。 */
+/** CLI runnerへ公開段階の副作用と通知実績を渡す。 */
 export type DailyPublicationProgress<Types extends DailyTransactionTypeMap> = Readonly<{
-  setStage: (stage: RunStage) => void;
   stateCommitted: () => void;
   pagesBuilt: () => void;
   notificationStarted: () => void;
   notificationsSettled: (result: NotificationStageResult<Types["notifications"]>) => void;
+  receiptRecorded: (receipt: Receipt) => void;
 }>;
 
-function completionEntries<Types extends DailyTransactionTypeMap>(
-  state: HistoryPagesDailyState<Types>,
-): readonly ReceiptChainEntry[] {
-  const initialReceipt = state.committed.result.receipt;
-  if (initialReceipt.receiptKind !== "observed") {
-    throw new TypeError("初回stateの再読込receiptがありません");
-  }
-  const pagesReceipt = state.pages.deployment.receipt;
-  const settlement = state.notifications.value;
-  const history = state.historyPages.deployment;
-  return Object.freeze([
-    {
-      receipt: initialReceipt,
-      evidence: { kind: "state_commit", state: state.committed.receiptEvidence },
-    },
-    { receipt: state.pages.prepared.receipt, evidence: { kind: "none" } },
-    { receipt: pagesReceipt, evidence: state.pages.receiptEvidence },
-    ...settlement.messageReceipts,
-    { receipt: settlement.receipt, evidence: settlement.receiptEvidence },
-    { receipt: state.finalization.receipt, evidence: state.finalization.receiptEvidence },
-    { receipt: state.historyPages.prepared.receipt, evidence: { kind: "none" } },
-    { receipt: history.receipt, evidence: { kind: "none" } },
-  ]);
-}
+/** 公開段階の成果物をcanonical engineの各段階へ対応させる。 */
+export type DailyPublicationStageValues<Types extends DailyTransactionTypeMap> = Readonly<{
+  publication_planned: PublicationStageInput<Types>;
+  initial_state_committed: CommittedDailyState<Types>;
+  initial_pages_prepared: PreparedDailyPages<Types>;
+  initial_pages_published: PublishedDailyState<Types>;
+  notifications_settled: SettledDailyState<Types>;
+  run_finalized: FinalizedDailyState<Types>;
+  notification_history_pages_prepared: PreparedHistoryDailyState<Types>;
+  notification_history_pages_published: HistoryPagesDailyState<Types>;
+}>;
 
-/** 新規runの公開段階を同じengineとreceipt chainで完了する。 */
-export async function runDailyPublication<Types extends DailyTransactionTypeMap>(
+/** 初回commit後はexact state再読込結果だけを公開段階へ渡す。 */
+export function createDailyPublicationStages<Types extends DailyTransactionTypeMap>(
   dependencies: DailyTransactionDependencies<Types>,
   runtime: DailyRunRuntime,
-  input: PublicationStageInput<Types>,
   progress: DailyPublicationProgress<Types>,
-): Promise<CompletedRun> {
-  const { invocation, configuration, repositoryInventory, planned } = input;
-  return runPreparedTrackingRun<
-    PublicationStageInput<Types>,
-    BoundPublicationCheckpoint,
-    CommittedDailyState<Types>,
-    PublishedDailyState<Types>,
-    SettledDailyState<Types>,
-    FinalizedDailyState<Types>,
-    HistoryPagesDailyState<Types>,
-    CompletedRun
-  >(input, {
-    checkpoint: async (prepared) => {
-      progress.setStage("artifact");
-      return dependencies.prepareCheckpoint(prepared);
-    },
-    commitInitialState: async (checkpoint) => {
-      progress.setStage("state_persistence");
-      const persisted = await dependencies.commitPreparedCheckpoint(input, checkpoint);
+  getInput: () => PublicationStageInput<Types>,
+): Readonly<{
+  encodeCheckpoint: (
+    input: PublicationStageInput<Types>,
+  ) => Promise<
+    Readonly<{ bound: BoundPublicationCheckpoint; input: PublicationStageInput<Types> }>
+  >;
+  commitInitialState: (
+    checkpoint: Readonly<{
+      bound: BoundPublicationCheckpoint;
+      input: PublicationStageInput<Types>;
+    }>,
+  ) => Promise<InitialStateCommitReference>;
+  readCommittedState: (
+    reference: InitialStateCommitReference,
+  ) => Promise<CommittedDailyState<Types>>;
+  initialPagesPrepared: (
+    committed: CommittedDailyState<Types>,
+  ) => Promise<PreparedDailyPages<Types>>;
+  initialPagesPublished: (
+    prepared: PreparedDailyPages<Types>,
+  ) => Promise<PublishedDailyState<Types>>;
+  notificationsSettled: (
+    published: PublishedDailyState<Types>,
+  ) => Promise<SettledDailyState<Types>>;
+  runFinalized: (settled: SettledDailyState<Types>) => Promise<FinalizedDailyState<Types>>;
+  notificationHistoryPagesPrepared: (
+    finalized: FinalizedDailyState<Types>,
+  ) => Promise<PreparedHistoryDailyState<Types>>;
+  notificationHistoryPagesPublished: (
+    prepared: PreparedHistoryDailyState<Types>,
+  ) => Promise<HistoryPagesDailyState<Types>>;
+  complete: (published: HistoryPagesDailyState<Types>) => Promise<CompletedRun>;
+}> {
+  const receiptChain: ReceiptChainEntry[] = [];
+  const appendReceipts = async (...entries: readonly ReceiptChainEntry[]): Promise<void> => {
+    receiptChain.push(...entries);
+    await dependencies.writeReceiptChain(getInput().invocation.runId, receiptChain);
+  };
+  return Object.freeze({
+    encodeCheckpoint: async (input) =>
+      Object.freeze({ bound: await dependencies.prepareCheckpoint(input), input }),
+    commitInitialState: async ({ bound, input }) => {
+      const persisted = await dependencies.commitPreparedCheckpoint(input, bound);
       progress.stateCommitted();
       return Object.freeze({
         stateRevision: persisted.result.revision,
         stateContentDigest: persisted.result.receipt.result.stateContentDigest,
       });
     },
-    readCommittedState: (reference) =>
-      dependencies.readCommittedState({ configuration, reference }),
-    publishInitialPages: async (committed) => {
-      progress.setStage("pages");
+    readCommittedState: async (reference) => {
+      const committed = await dependencies.readCommittedState({
+        configuration: getInput().configuration,
+        reference,
+      });
+      progress.receiptRecorded(committed.result.receipt);
+      await appendReceipts({
+        receipt: committed.result.receipt,
+        evidence: { kind: "state_commit", state: committed.receiptEvidence },
+      });
+      return committed;
+    },
+    initialPagesPrepared: async (committed) => {
+      const input = getInput();
       const pagesPrepared = await dependencies.buildPages({
-        invocation,
-        configuration,
-        repositoryInventory,
-        planned,
+        invocation: input.invocation,
+        configuration: input.configuration,
+        repositoryInventory: input.repositoryInventory,
+        planned: input.planned,
         persisted: committed,
       });
       progress.pagesBuilt();
-      const pages = await dependencies.deployPages({
-        invocation,
-        configuration,
-        persisted: committed,
-        pagesPrepared,
-      });
-      return Object.freeze({ committed, pages });
+      progress.receiptRecorded(pagesPrepared.receipt);
+      await appendReceipts({ receipt: pagesPrepared.receipt, evidence: { kind: "none" } });
+      return Object.freeze({ committed, pagesPrepared });
     },
-    settleNotifications: async (published) => {
-      progress.setStage("discord");
+    initialPagesPublished: async (prepared) => {
+      const input = getInput();
+      const pages = await dependencies.deployPages({
+        invocation: input.invocation,
+        configuration: input.configuration,
+        persisted: prepared.committed,
+        pagesPrepared: prepared.pagesPrepared,
+      });
+      progress.receiptRecorded(pages.deployment.receipt);
+      await appendReceipts({
+        receipt: pages.deployment.receipt,
+        evidence: pages.receiptEvidence,
+      });
+      return Object.freeze({ committed: prepared.committed, pages });
+    },
+    notificationsSettled: async (published) => {
+      const input = getInput();
       progress.notificationStarted();
       const notifications = await dependencies.settleNotifications({
-        invocation,
-        configuration,
-        repositoryInventory,
+        invocation: input.invocation,
+        configuration: input.configuration,
+        repositoryInventory: input.repositoryInventory,
         persisted: published.committed,
         pages: published.pages,
       });
       progress.notificationsSettled(notifications);
+      progress.receiptRecorded(notifications.value.receipt);
+      await appendReceipts(...notifications.value.messageReceipts, {
+        receipt: notifications.value.receipt,
+        evidence: notifications.value.receiptEvidence,
+      });
       return Object.freeze({ ...published, notifications });
     },
-    finalizeRun: async (settled) => {
-      progress.setStage("state_persistence");
+    runFinalized: async (settled) => {
+      const input = getInput();
       const finalization = await dependencies.finalizeRun({
-        invocation,
-        configuration,
-        repositoryInventory,
+        invocation: input.invocation,
+        configuration: input.configuration,
+        repositoryInventory: input.repositoryInventory,
         persisted: settled.committed,
         notifications: settled.notifications.value,
       });
+      progress.receiptRecorded(finalization.receipt);
+      await appendReceipts({
+        receipt: finalization.receipt,
+        evidence: finalization.receiptEvidence,
+      });
       return Object.freeze({ ...settled, finalization });
     },
-    publishNotificationHistoryPages: async (finalized) => {
-      progress.setStage("pages");
-      const pagesPrepared = await dependencies.buildNotificationHistoryPages({
-        configuration,
+    notificationHistoryPagesPrepared: async (finalized) => {
+      const historyPagesPrepared = await dependencies.buildNotificationHistoryPages({
+        configuration: getInput().configuration,
         settlementReceipt: finalized.notifications.value.receipt,
         finalizationReceipt: finalized.finalization.receipt,
       });
-      const historyPages = await dependencies.deployNotificationHistoryPages({
-        configuration,
-        prepared: pagesPrepared,
-        settlementReceipt: finalized.notifications.value.receipt,
-        finalizationReceipt: finalized.finalization.receipt,
-        runId: invocation.runId,
-      });
-      return Object.freeze({ ...finalized, historyPages });
+      progress.receiptRecorded(historyPagesPrepared.receipt);
+      await appendReceipts({ receipt: historyPagesPrepared.receipt, evidence: { kind: "none" } });
+      return Object.freeze({ ...finalized, historyPagesPrepared });
     },
-    complete: (history) => {
-      progress.setStage("artifact");
-      return Promise.resolve(
+    notificationHistoryPagesPublished: async (prepared) => {
+      const input = getInput();
+      const historyPages = await dependencies.deployNotificationHistoryPages({
+        configuration: input.configuration,
+        prepared: prepared.historyPagesPrepared,
+        settlementReceipt: prepared.notifications.value.receipt,
+        finalizationReceipt: prepared.finalization.receipt,
+        runId: input.invocation.runId,
+      });
+      progress.receiptRecorded(historyPages.deployment.receipt);
+      await appendReceipts({
+        receipt: historyPages.deployment.receipt,
+        evidence: { kind: "none" },
+      });
+      return Object.freeze({ ...prepared, historyPages });
+    },
+    complete: (published) =>
+      Promise.resolve(
         completeTrackingRun(
           {
-            entries: completionEntries(history),
-            finalStateRevision: history.finalization.stateRevision,
-            invocationId: invocation.invocationId,
+            entries: receiptChain,
+            finalStateRevision: published.finalization.stateRevision,
+            invocationId: getInput().invocation.invocationId,
             observedAt: runtime.now().toISOString(),
           },
           nodeContentDigestPort,
         ),
-      );
-    },
+      ),
   });
 }

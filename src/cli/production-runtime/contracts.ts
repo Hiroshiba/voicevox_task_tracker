@@ -88,6 +88,13 @@ import type {
 import type { StateBranchHead } from "../../persistence/branch-adapter.js";
 import type { StateHistoryRecord } from "../../persistence/history.js";
 import type { DailyTransactionTypeMap } from "../daily-transaction.js";
+import type { AiBudgetLedgerSummary } from "../../application/tracking-run/contracts/ai-budget-ledger.js";
+import type {
+  PersonalReminderExecutionPort,
+  PersonalReminderExecutedRun,
+} from "../../application/tracking-run/stages/personal-reminder-execution.js";
+import type { PersonalReminderPlannedRun } from "../../application/tracking-run/stages/personal-reminder-plan.js";
+import type { CodexDiagnosticsContext } from "../../codex/index.js";
 import type { RunMetrics } from "../run-report.js";
 import type { NotificationSettlementOutcome } from "../notification-settlement.js";
 import type { DeterministicItemAnalysis } from "../../application/tracking-run/stages/deterministic-item.js";
@@ -122,6 +129,29 @@ export type RuntimeState = Readonly<{
   personalReminderAiCache: readonly PersonalReminderAiCacheEntry[];
   notificationLedger: StateNotificationLedger;
   previousState: AnalysisPreviousState;
+}>;
+
+/** 個人催促の計画と実行portを保持する段階成果物。 */
+export type PersonalReminderPlannedStage = Readonly<{
+  planned: PersonalReminderPlannedRun;
+  port: PersonalReminderExecutionPort;
+  initialSummary: AiBudgetLedgerSummary;
+  initialUsage: AiBudgetUsage;
+  fallbackNodeIds: ReadonlySet<string>;
+  diagnostics: CodexDiagnosticsContext | undefined;
+  configuration: RuntimeConfiguration;
+}>;
+
+/** 個人催促の実行結果と最終化に必要な集計値。 */
+export type PersonalReminderExecutedStage = Readonly<{
+  executed: PersonalReminderExecutedRun;
+  initialSummary: AiBudgetLedgerSummary;
+  initialUsage: AiBudgetUsage;
+  fallbackNodeIds: ReadonlySet<string>;
+  diagnostics: CodexDiagnosticsContext | undefined;
+  configuration: RuntimeConfiguration;
+  candidateCauseCount: number;
+  assessmentReuseCount: number;
 }>;
 
 export type ValidatedRun = TrackingValidatedRun<
@@ -265,6 +295,8 @@ export type ProductionTypes = DailyTransactionTypeMap &
     genericAiExecuted: GenericAiExecutedRun;
     genericAiAdopted: GenericAiAdoptedRun;
     graphReconciled: GraphReconciledRun;
+    personalReminderPlanned: PersonalReminderPlannedStage;
+    personalReminderExecuted: PersonalReminderExecutedStage;
     repositoryInventory: RepositoryInventory;
     collection: CollectedItems;
     codexAnalysis: CodexAnalysis;

@@ -1,21 +1,44 @@
 import { randomUUID } from "node:crypto";
+import { assertNonNullable } from "../util/index.js";
 
 import type { DiagnosticsJsonlRecorder } from "../diagnostics/recorder.js";
-import { createUtcIsoDateTime, type UtcIsoDateTime } from "../domain/index.js";
+import type { UtcIsoDateTime } from "../domain/index.js";
 import type {
   RunIdentity,
   RunRequest,
   RunExecutionPolicy,
 } from "../application/tracking-run/request.js";
 import type { PreparedRun } from "../application/tracking-run/prepare-run.js";
+import type { BaseStateRevision } from "../application/tracking-run/contracts/run-core.js";
+import type { RecoveryStageInput } from "../infrastructure/tracking-run/recovery-stage.js";
 import type { FailedRun } from "../application/tracking-run/failure-artifact.js";
 import type { CompletedRun } from "../application/tracking-run/complete-run.js";
+import type { ReceiptChainEntry } from "../application/tracking-run/receipt-chain-schema.js";
 import type {
   NotificationSettlementReceipt,
+  Receipt,
   RunFinalizationReceipt,
 } from "../application/tracking-run/receipt-schema.js";
 import type { StateCommitReceiptEvidence } from "../application/tracking-run/observed-state-commit.js";
 import type { InitialStateCommitReference } from "../application/tracking-run/engine.js";
+import {
+  runTrackingAnalysis,
+  runTrackingRunSequentially,
+  type NewRunStagePorts,
+  type PendingRunPorts,
+  type TrackingRunLaunchDecision,
+  type TrackingRunFailurePort,
+} from "../application/tracking-run/engine.js";
+import { createFailedRun } from "../application/tracking-run/failure-artifact.js";
+import {
+  currentTime,
+  updateMetrics,
+  createDryRunArtifact,
+  completedReport,
+  failureReport,
+  reportStageForEngine,
+  isPreCheckpointFailureStage,
+} from "./daily-transaction-report.js";
 import type { BoundPublicationCheckpoint } from "./publication-checkpoint-binding.js";
 import type { InitialStateCommitResult } from "./initial-state-commit.js";
 import type { NotificationSettlementOutcome } from "./notification-settlement.js";
@@ -27,7 +50,8 @@ import type {
 } from "./run-publication/contracts.js";
 import type { FinalizeRunOutcome } from "./run-finalization.js";
 import {
-  runDailyPublication,
+  createDailyPublicationStages,
+  type DailyPublicationStageValues,
   type PublicationStageInput,
 } from "./daily-transaction-publication.js";
 import type { InventoryCollectedRun } from "../application/tracking-run/stages/inventory.js";
@@ -49,6 +73,8 @@ import {
   type DryRunCliCommand,
 } from "./command.js";
 import { safeErrorDiagnostic } from "./error-diagnostic.js";
+import { observeCliFailureContext } from "./failure-context.js";
+import { publicDiagnosticCode } from "./public-failure-boundary.js";
 import { isPublicBoundaryViolation } from "./public-boundary-error.js";
 import { RunCoordinator, type CoordinatedRunResult } from "./run-coordinator.js";
 import { createRunIdentity } from "./tracking-run/identity.js";
@@ -57,7 +83,6 @@ import { projectPreparedLegacyDailyInvocation } from "./tracking-run/migration-b
 import { parseRunRequest } from "./tracking-run/parse-request.js";
 import {
   createEmptyRunMetrics,
-  createRunReport,
   type RunMetrics,
   type RunReport,
   type RunStage,
@@ -79,17 +104,38 @@ export type DailyTransactionTypeMap = Readonly<{
   genericAiExecuted: GenericAiExecutedRun;
   genericAiAdopted: GenericAiAdoptedRun;
   graphReconciled: GraphReconciledRun;
+  personalReminderPlanned: object;
+  personalReminderExecuted: object;
   repositoryInventory: unknown;
   collection: unknown;
   codexAnalysis: unknown;
   personalReminderAnalysis: unknown;
-  validated: unknown;
-  planned: unknown;
+  validated: object;
+  planned: object;
   persisted: Readonly<{ result: InitialStateCommitResult }>;
   pagesPrepared: InitialPagesPreparedRun;
+  historyPagesPrepared: NotificationHistoryPagesPreparedRun;
   pages: InitialPagesPublishedRun;
   notifications: Extract<NotificationSettlementOutcome, { kind: "settled" }>;
 }>;
+
+type DailyEngineStageValues<Types extends DailyTransactionTypeMap> = Readonly<{
+  prepared: Types["prepared"];
+  inventory_collected: Types["inventoryCollected"];
+  collected: Types["collectedRun"];
+  deterministically_analyzed: Types["deterministicallyAnalyzed"];
+  generic_ai_planned: Types["genericAiPlanned"];
+  generic_ai_executed: CodexAnalysisStageResult<Types["codexAnalysis"]>;
+  generic_ai_adopted: Types["genericAiAdopted"];
+  graph_reconciled: Types["graphReconciled"];
+  personal_reminder_planned: Types["personalReminderPlanned"];
+  personal_reminder_executed: Types["personalReminderExecuted"];
+  personal_reminder_finalized: PersonalReminderAnalysisStageResult<
+    Types["personalReminderAnalysis"]
+  >;
+  validated: Types["validated"];
+}> &
+  DailyPublicationStageValues<Types>;
 
 /** run内の全段階へ渡す安定した識別情報。 */
 export type DailyRunInvocation = Readonly<{
@@ -141,9 +187,19 @@ export type NotificationStageResult<Value> = Readonly<{
 export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> = Readonly<{
   diagnosticsRecorder?: DiagnosticsJsonlRecorder;
   readAiProcessAttemptCount: (configuration: Types["configuration"]) => number;
+  inspectLaunch: (
+    request: RunRequest,
+    invocationId: string,
+  ) => Promise<TrackingRunLaunchDecision<RecoveryStageInput>>;
+  pendingRun: (
+    request: RunRequest,
+    invocationId: string,
+    getRunId: () => string,
+  ) => PendingRunPorts<RecoveryStageInput>;
   validateConfiguration: (
     input: Readonly<{
       request: RunRequest;
+      baseStateHead: BaseStateRevision;
     }>,
   ) => Promise<Types["configuration"]>;
   loadState: (
@@ -204,7 +260,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
     }>,
   ) => Types["genericAiAdopted"];
   reconcileAdoptedGraph: (adopted: Types["genericAiAdopted"]) => Types["graphReconciled"];
-  analyzePersonalReminders: (
+  planPersonalReminders: (
     input: Readonly<{
       invocation: DailyRunInvocation;
       configuration: Types["configuration"];
@@ -215,6 +271,12 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       codexAnalysis: Types["codexAnalysis"];
       graphReconciled: Types["graphReconciled"];
     }>,
+  ) => Promise<Types["personalReminderPlanned"]>;
+  executePersonalReminders: (
+    planned: Types["personalReminderPlanned"],
+  ) => Promise<Types["personalReminderExecuted"]>;
+  finalizePersonalReminders: (
+    executed: Types["personalReminderExecuted"],
   ) => Promise<PersonalReminderAnalysisStageResult<Types["personalReminderAnalysis"]>>;
   validateCompleteness: (
     input: Readonly<{
@@ -332,6 +394,7 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
     }>,
   ) => Promise<void>;
   writeReport: (path: string, report: RunReport) => Promise<void>;
+  writeReceiptChain: (runId: string, entries: readonly ReceiptChainEntry[]) => Promise<void>;
 }>;
 
 /** 日次transaction実行後に生じた副作用を表す。 */
@@ -347,6 +410,7 @@ export type DailyRunExecutionResult = Readonly<{
   report: RunReport;
   effects: DailyRunEffects;
   completedRun?: CompletedRun;
+  failedRun?: FailedRun;
   failureDiagnosticRecordId?: string;
   failureEvidence?: FailedRun["evidence"];
 }>;
@@ -375,106 +439,9 @@ interface MutableEffects {
   artifactWritten: boolean;
 }
 
-function currentTime(runtime: DailyRunRuntime): UtcIsoDateTime {
-  const value = runtime.now();
-  if (!Number.isFinite(value.getTime())) {
-    throw new TypeError("run runtimeのnowは有効な日時を返してください");
-  }
-  return createUtcIsoDateTime(value.toISOString());
-}
-
 function freezeEffects(effects: MutableEffects): DailyRunEffects {
   return Object.freeze({
     ...effects,
-  });
-}
-
-function updateMetrics(metrics: RunMetrics, values: Partial<RunMetrics>): RunMetrics {
-  const updated = {
-    ...metrics,
-    ...values,
-  };
-  for (const [name, value] of Object.entries(updated)) {
-    if (!Number.isSafeInteger(value) || value < 0) {
-      throw new RangeError(`${name}は0以上の安全な整数にしてください`);
-    }
-  }
-  return Object.freeze(updated);
-}
-
-function createDryRunArtifact<Value>(
-  invocation: DailyRunInvocation,
-  status: "success" | "fallback",
-  planned: Value,
-  metrics: RunMetrics,
-  diagnostics: readonly string[],
-  finishedAt: UtcIsoDateTime,
-): DryRunArtifact<Value> {
-  const completedMetrics = updateMetrics(metrics, {
-    durationMilliseconds: Date.parse(finishedAt) - Date.parse(invocation.startedAt),
-  });
-  return Object.freeze({
-    schemaVersion: "2",
-    runId: invocation.runId,
-    command: "dry-run",
-    status,
-    complete: true,
-    result: planned,
-    metrics: completedMetrics,
-    diagnostics: Object.freeze([...diagnostics]),
-  });
-}
-
-function completedReport(
-  invocation: DailyRunInvocation,
-  status: "success" | "fallback",
-  metrics: RunMetrics,
-  diagnostics: readonly string[],
-  discordSentAt: UtcIsoDateTime | null,
-  finishedAt: UtcIsoDateTime,
-): RunReport {
-  return createRunReport({
-    schemaVersion: "5",
-    runId: invocation.runId,
-    command: invocation.command.kind,
-    status,
-    complete: true,
-    scheduledFor: invocation.scheduledFor,
-    startedAt: invocation.startedAt,
-    finishedAt,
-    discordSentAt,
-    metrics: updateMetrics(metrics, {
-      durationMilliseconds: Date.parse(finishedAt) - Date.parse(invocation.startedAt),
-    }),
-    diagnostics,
-  });
-}
-
-function failureReport(
-  invocation: DailyRunInvocation,
-  failedStage: RunStage,
-  failureKind: Extract<RunReport, { status: "failure" }>["failureKind"],
-  metrics: RunMetrics,
-  diagnostics: readonly string[],
-  discordSentAt: UtcIsoDateTime | null,
-  finishedAt: UtcIsoDateTime,
-): RunReport {
-  return createRunReport({
-    schemaVersion: "5",
-    runId: invocation.runId,
-    command: invocation.command.kind,
-    status: "failure",
-    complete: false,
-    failureKind,
-    failedStage,
-    scheduledFor: invocation.scheduledFor,
-    startedAt: invocation.startedAt,
-    finishedAt,
-    discordSentAt,
-    metrics: updateMetrics(metrics, {
-      durationMilliseconds: Date.parse(finishedAt) - Date.parse(invocation.startedAt),
-    }),
-    diagnostics,
   });
 }
 
@@ -487,18 +454,9 @@ function initialEffects(): MutableEffects {
   };
 }
 
-function isPreCheckpointFailureStage(stage: RunStage): boolean {
-  return (
-    stage === "repository_inventory" ||
-    stage === "incremental_collection" ||
-    stage === "deterministic_analysis" ||
-    stage === "codex_analysis" ||
-    stage === "reducer" ||
-    stage === "graph_analysis" ||
-    stage === "personal_reminder_analysis" ||
-    stage === "completeness_validation" ||
-    stage === "artifact"
-  );
+function required<Value>(value: Value, message: string): NonNullable<Value> {
+  assertNonNullable(value, message);
+  return value;
 }
 
 function personalReminderAiDependencyMismatchError(
@@ -626,200 +584,308 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
     let discordSentAt: UtcIsoDateTime | null = null;
     let configuration: Types["configuration"] | undefined;
     let state: Types["state"] | undefined;
-    let prepared: PreparedRun | undefined;
-    let completedRun: CompletedRun | undefined;
-
-    try {
-      configuration = await this.#dependencies.validateConfiguration({
-        request,
-      });
-      state = await this.#dependencies.loadState({
-        invocation,
-        configuration,
-      });
-      prepared = this.#dependencies.prepareRun({ request, identity, configuration, state });
-      invocation = projectPreparedLegacyDailyInvocation(prepared);
-
-      stage = "repository_inventory";
-      const inventoryCollected = await this.#dependencies.collectInventory({
-        prepared,
-        configuration,
-      });
-      const repositoryInventory =
-        this.#dependencies.projectLegacyRepositoryInventory(inventoryCollected);
-      diagnostics.push(...inventoryCollected.data.diagnostics);
-      metrics = updateMetrics(metrics, {
-        repositoryCount: inventoryCollected.data.metrics.repositoryCount,
-        githubApiRemaining: inventoryCollected.data.metrics.githubApiRemaining,
-      });
-
-      stage = "incremental_collection";
-      const collectedRun = await this.#dependencies.collectIncrementalItems({
-        invocation,
-        configuration,
-        state,
-        inventoryCollected,
-        repositoryInventory,
-      });
-      const collection = this.#dependencies.projectLegacyCollection(collectedRun);
-      diagnostics.push(...collectedRun.data.diagnostics);
-      metrics = updateMetrics(metrics, {
-        itemCount: collectedRun.data.metrics.itemCount,
-        changedItemCount: collectedRun.data.metrics.changedItemCount,
-        githubApiRemaining: collectedRun.data.metrics.githubApiRemaining,
-        staleRepositoryCount: collectedRun.data.metrics.staleRepositoryCount,
-      });
-
-      stage = "deterministic_analysis";
-      const deterministicallyAnalyzed = this.#dependencies.applyDeterministicRules(collectedRun);
-      stage = "codex_analysis";
-      const genericAiPlanned = await this.#dependencies.planGenericAi({
-        invocation,
-        configuration,
-        state,
-        deterministicallyAnalyzed,
-      });
-      const codexAnalysis = await this.#dependencies.analyzeWithCodex({
-        invocation,
-        configuration,
-        state,
-        genericAiPlanned,
-      });
-      diagnostics.push(...codexAnalysis.diagnostics);
-      metrics = updateMetrics(metrics, {
-        aiCallCount: codexAnalysis.aiCallCount,
-        aiCacheHitCount: codexAnalysis.aiCacheHitCount,
-        aiRetainedResultCount: codexAnalysis.aiRetainedResultCount,
-        estimatedInputTokens: codexAnalysis.estimatedInputTokens,
-      });
-      let runStatus = codexAnalysis.status;
-
-      const genericAiAdopted = this.#dependencies.adoptGenericAi({
-        genericAiExecuted: codexAnalysis.executed,
-      });
-
-      stage = "graph_analysis";
-      const graphReconciled = this.#dependencies.reconcileAdoptedGraph(genericAiAdopted);
-      metrics = updateMetrics(metrics, {
-        activeEdgeCount: graphReconciled.data.graph.edges.filter((edge) => edge.active).length,
-      });
-
-      stage = "personal_reminder_analysis";
-      const personalReminderAnalysis = await this.#dependencies.analyzePersonalReminders({
-        invocation,
-        configuration,
-        state,
-        repositoryInventory,
-        deterministicallyAnalyzed,
-        genericAiExecuted: codexAnalysis.executed,
-        codexAnalysis: codexAnalysis.value,
-        graphReconciled,
-      });
-      diagnostics.push(...personalReminderAnalysis.diagnostics);
-      metrics = updateMetrics(metrics, {
-        aiCallCount: personalReminderAnalysis.aiCallCount,
-        estimatedInputTokens: personalReminderAnalysis.estimatedInputTokens,
-        personalReminderCauseCount: personalReminderAnalysis.personalReminderCauseCount,
-        personalReminderAiCallCount: personalReminderAnalysis.personalReminderAiCallCount,
-        personalReminderAiCacheHitCount: personalReminderAnalysis.personalReminderAiCacheHitCount,
-        personalReminderAssessmentReuseCount:
-          personalReminderAnalysis.personalReminderAssessmentReuseCount,
-        personalReminderUnknownCount: personalReminderAnalysis.personalReminderUnknownCount,
-        personalReminderFailedCount: personalReminderAnalysis.personalReminderFailedCount,
-        personalReminderDeferredCount: personalReminderAnalysis.personalReminderDeferredCount,
-        personalReminderNotEvaluatedCount:
-          personalReminderAnalysis.personalReminderNotEvaluatedCount,
-      });
-      if (personalReminderAnalysis.status === "fallback") {
-        runStatus = "fallback";
-      }
-
-      stage = "completeness_validation";
-      metrics = this.#metricsWithAiProcessAttemptCount(metrics, configuration);
-      const validated = await this.#dependencies.validateCompleteness({
-        invocation,
-        configuration,
-        state,
-        repositoryInventory,
-        collection,
-        codexAnalysis: codexAnalysis.value,
-        genericAiAdopted,
-        graphReconciled,
-        personalReminderAnalysis: personalReminderAnalysis.value,
-        metrics,
-        diagnostics,
-      });
-      const planned = this.#dependencies.planPublication(validated);
-
-      if (request.output.kind === "dry_run_artifact") {
-        stage = "artifact";
-        await this.#dependencies.writeDryRunArtifact(
-          request.output.path,
-          createDryRunArtifact(
-            invocation,
-            runStatus,
-            planned,
-            metrics,
-            diagnostics,
-            currentTime(this.#runtime),
-          ),
-        );
-        effects.artifactWritten = true;
-      }
-
-      if (request.output.kind === "analysis_artifact") {
-        stage = "artifact";
-        await this.#dependencies.writeCollectAnalyzeArtifact(request.output.path, {
+    let prepared: Types["prepared"] | undefined;
+    let repositoryInventory: Types["repositoryInventory"] | undefined;
+    let collection: Types["collection"] | undefined;
+    let analyzed: Types["deterministicallyAnalyzed"] | undefined;
+    let aiExecuted: Types["genericAiExecuted"] | undefined;
+    let codexAnalysis: Types["codexAnalysis"] | undefined;
+    let aiAdopted: Types["genericAiAdopted"] | undefined;
+    let graphReconciled: Types["graphReconciled"] | undefined;
+    let publicationInput: PublicationStageInput<Types> | undefined;
+    let runStatus: "success" | "fallback" = "success";
+    let lastReceipt: Receipt | undefined;
+    let failedResult: DailyRunExecutionResult | undefined;
+    let baseStateHead: BaseStateRevision | undefined;
+    const publicationStages = createDailyPublicationStages(
+      this.#dependencies,
+      this.#runtime,
+      {
+        stateCommitted: () => {
+          effects.stateCommitted = true;
+        },
+        pagesBuilt: () => {
+          effects.pagesBuilt = true;
+        },
+        notificationStarted: () => {
+          effects.discordAttempted = request.executionPolicy.notificationAction === "send";
+        },
+        notificationsSettled: (notifications) => {
+          discordSentAt = notifications.discordSentAt;
+          metrics = updateMetrics(metrics, {
+            notificationCount: notifications.notificationCount,
+          });
+        },
+        receiptRecorded: (receipt) => {
+          lastReceipt = receipt;
+        },
+      },
+      () => required(publicationInput, "公開段階の入力がありません"),
+    );
+    const boundary: TrackingRunFailurePort = {
+      beforeStage: (failedStage) => {
+        stage = reportStageForEngine(failedStage);
+        return Promise.resolve();
+      },
+      fail: async (failedStage, error) => {
+        const recordId = await this.#recordError(
           invocation,
-          configuration,
-          state,
-          repositoryInventory,
-          planned,
+          reportStageForEngine(failedStage),
+          "cli.stage.failed",
+          error,
+        );
+        if (recordId == null) {
+          throw new TypeError("失敗runに必要な暗号化診断recorderがありません", { cause: error });
+        }
+        const failureKind = isPublicBoundaryViolation(error) ? "public_boundary" : "other";
+        const reported = await this.#writeFailure(
+          invocation,
+          request.reportPath,
+          reportStageForEngine(failedStage),
+          failureKind,
           metrics,
-          status: runStatus,
+          configuration,
+          [...diagnostics, safeErrorDiagnostic(reportStageForEngine(failedStage), error)],
+          discordSentAt,
+          effects,
+        );
+        const failureEvidence =
+          prepared == null || !isPreCheckpointFailureStage(reportStageForEngine(failedStage))
+            ? undefined
+            : {
+                bindingKind: "run_pre_checkpoint_alert" as const,
+                runId: prepared.core.identity.runId,
+                baseStateRevision: prepared.core.baseState.revision,
+                configDigest: prepared.core.configDigest,
+              };
+        const context = await observeCliFailureContext(invocation.command, error, {
+          command: invocation.command.kind,
+          exitCode: 1,
+          execution: "executed",
+          result: {
+            ...reported,
+            failureDiagnosticRecordId: recordId,
+            ...(failureEvidence == null ? {} : { failureEvidence }),
+          },
+        });
+        const effectiveStage =
+          context.evidence.bindingKind === "state_bootstrap_alert"
+            ? "runtime_bootstrap"
+            : failedStage;
+        const failure = createFailedRun({
+          invocationId: invocation.invocationId,
+          failedStage: effectiveStage,
+          failureKind: context.failureKind,
+          failedOperationEffectCertainty: context.failedOperationEffectCertainty,
+          evidence: context.evidence,
+          ...(context.runId == null ? {} : { runId: context.runId }),
+          ...(context.checkpointDigest == null
+            ? {}
+            : { checkpointDigest: context.checkpointDigest }),
+          ...(context.checkpointFileDigest == null
+            ? {}
+            : { checkpointFileDigest: context.checkpointFileDigest }),
+          ...(context.finalStateRevision == null
+            ? {}
+            : { finalStateRevision: context.finalStateRevision }),
+          publicDiagnostics: { code: publicDiagnosticCode(context.failureKind) },
+          encryptedDiagnosticsRecordIds: [recordId],
+          lastVerifiedReceipt: lastReceipt ?? context.lastVerifiedReceipt,
+          stateObservation: context.stateObservation,
+        });
+        failedResult = Object.freeze({
+          ...reported,
+          failureDiagnosticRecordId: recordId,
+          failedRun: failure,
+          ...(failureEvidence == null ? {} : { failureEvidence }),
+        });
+        return failure;
+      },
+    };
+    const stages = {
+      prepare: async () => {
+        configuration = await this.#dependencies.validateConfiguration({
+          request,
+          baseStateHead: required(baseStateHead, "run開始時のstate headがありません"),
+        });
+        state = await this.#dependencies.loadState({ invocation, configuration });
+        prepared = this.#dependencies.prepareRun({ request, identity, configuration, state });
+        invocation = projectPreparedLegacyDailyInvocation(prepared);
+        return prepared;
+      },
+      inventoryCollected: async (value) => {
+        const inventory = await this.#dependencies.collectInventory({
+          prepared: value,
+          configuration: required(configuration, "実行設定がありません"),
+        });
+        repositoryInventory = this.#dependencies.projectLegacyRepositoryInventory(inventory);
+        diagnostics.push(...inventory.data.diagnostics);
+        metrics = updateMetrics(metrics, {
+          repositoryCount: inventory.data.metrics.repositoryCount,
+          githubApiRemaining: inventory.data.metrics.githubApiRemaining,
+        });
+        return inventory;
+      },
+      collected: async (inventory) => {
+        const collected = await this.#dependencies.collectIncrementalItems({
+          invocation,
+          configuration: required(configuration, "実行設定がありません"),
+          state: required(state, "前回stateがありません"),
+          inventoryCollected: inventory,
+          repositoryInventory: required(repositoryInventory, "repository一覧がありません"),
+        });
+        collection = this.#dependencies.projectLegacyCollection(collected);
+        diagnostics.push(...collected.data.diagnostics);
+        metrics = updateMetrics(metrics, {
+          itemCount: collected.data.metrics.itemCount,
+          changedItemCount: collected.data.metrics.changedItemCount,
+          githubApiRemaining: collected.data.metrics.githubApiRemaining,
+          staleRepositoryCount: collected.data.metrics.staleRepositoryCount,
+        });
+        return collected;
+      },
+      deterministicallyAnalyzed: (collected) => {
+        analyzed = this.#dependencies.applyDeterministicRules(collected);
+        return Promise.resolve(analyzed);
+      },
+      genericAiPlanned: (value) =>
+        this.#dependencies.planGenericAi({
+          invocation,
+          configuration: required(configuration, "実行設定がありません"),
+          state: required(state, "前回stateがありません"),
+          deterministicallyAnalyzed: value,
+        }),
+      genericAiExecuted: async (value) => {
+        const result = await this.#dependencies.analyzeWithCodex({
+          invocation,
+          configuration: required(configuration, "実行設定がありません"),
+          state: required(state, "前回stateがありません"),
+          genericAiPlanned: value,
+        });
+        aiExecuted = result.executed;
+        codexAnalysis = result.value;
+        runStatus = result.status;
+        diagnostics.push(...result.diagnostics);
+        metrics = updateMetrics(metrics, {
+          aiCallCount: result.aiCallCount,
+          aiCacheHitCount: result.aiCacheHitCount,
+          aiRetainedResultCount: result.aiRetainedResultCount,
+          estimatedInputTokens: result.estimatedInputTokens,
+        });
+        return result;
+      },
+      genericAiAdopted: (result) => {
+        aiAdopted = this.#dependencies.adoptGenericAi({ genericAiExecuted: result.executed });
+        return Promise.resolve(aiAdopted);
+      },
+      graphReconciled: (value) => {
+        const graph = this.#dependencies.reconcileAdoptedGraph(value);
+        graphReconciled = graph;
+        metrics = updateMetrics(metrics, {
+          activeEdgeCount: graph.data.graph.edges.filter((edge) => edge.active).length,
+        });
+        return Promise.resolve(graph);
+      },
+      personalReminderPlanned: (graph) =>
+        this.#dependencies.planPersonalReminders({
+          invocation,
+          configuration: required(configuration, "実行設定がありません"),
+          state: required(state, "前回stateがありません"),
+          repositoryInventory: required(repositoryInventory, "repository一覧がありません"),
+          deterministicallyAnalyzed: required(analyzed, "決定論的解析がありません"),
+          genericAiExecuted: required(aiExecuted, "汎用AI実行結果がありません"),
+          codexAnalysis: required(codexAnalysis, "汎用AI解析がありません"),
+          graphReconciled: graph,
+        }),
+      personalReminderExecuted: (value) => this.#dependencies.executePersonalReminders(value),
+      personalReminderFinalized: async (value) => {
+        const result = await this.#dependencies.finalizePersonalReminders(value);
+        diagnostics.push(...result.diagnostics);
+        metrics = updateMetrics(metrics, {
+          aiCallCount: result.aiCallCount,
+          estimatedInputTokens: result.estimatedInputTokens,
+          personalReminderCauseCount: result.personalReminderCauseCount,
+          personalReminderAiCallCount: result.personalReminderAiCallCount,
+          personalReminderAiCacheHitCount: result.personalReminderAiCacheHitCount,
+          personalReminderAssessmentReuseCount: result.personalReminderAssessmentReuseCount,
+          personalReminderUnknownCount: result.personalReminderUnknownCount,
+          personalReminderFailedCount: result.personalReminderFailedCount,
+          personalReminderDeferredCount: result.personalReminderDeferredCount,
+          personalReminderNotEvaluatedCount: result.personalReminderNotEvaluatedCount,
+        });
+        if (result.status === "fallback") {
+          runStatus = "fallback";
+        }
+        return result;
+      },
+      validated: async (reminder) => {
+        metrics = this.#metricsWithAiProcessAttemptCount(
+          metrics,
+          required(configuration, "実行設定がありません"),
+        );
+        return this.#dependencies.validateCompleteness({
+          invocation,
+          configuration: required(configuration, "実行設定がありません"),
+          state: required(state, "前回stateがありません"),
+          repositoryInventory: required(repositoryInventory, "repository一覧がありません"),
+          collection: required(collection, "収集結果がありません"),
+          codexAnalysis: required(codexAnalysis, "汎用AI解析がありません"),
+          genericAiAdopted: required(aiAdopted, "汎用AI採用結果がありません"),
+          graphReconciled: required(graphReconciled, "graph統合結果がありません"),
+          personalReminderAnalysis: reminder.value,
+          metrics,
           diagnostics,
         });
-        effects.artifactWritten = true;
-      }
-
-      if (request.output.kind === "publication") {
-        const publicationInput = {
+      },
+      publicationPlanned: (validated) => {
+        const planned = this.#dependencies.planPublication(validated);
+        publicationInput = {
           invocation,
-          configuration,
-          state,
-          repositoryInventory,
+          configuration: required(configuration, "実行設定がありません"),
+          state: required(state, "前回stateがありません"),
+          repositoryInventory: required(repositoryInventory, "repository一覧がありません"),
           planned,
           metrics,
           status: runStatus,
           diagnostics,
         } satisfies PublicationStageInput<Types>;
-        completedRun = await runDailyPublication(
-          this.#dependencies,
-          this.#runtime,
-          publicationInput,
-          {
-            setStage: (value) => {
-              stage = value;
-            },
-            stateCommitted: () => {
-              effects.stateCommitted = true;
-            },
-            pagesBuilt: () => {
-              effects.pagesBuilt = true;
-            },
-            notificationStarted: () => {
-              effects.discordAttempted = request.executionPolicy.notificationAction === "send";
-            },
-            notificationsSettled: (notifications) => {
-              discordSentAt = notifications.discordSentAt;
-              metrics = updateMetrics(metrics, {
-                notificationCount: notifications.notificationCount,
-              });
-            },
-          },
-        );
+        return Promise.resolve(publicationInput);
+      },
+      ...publicationStages,
+    } satisfies NewRunStagePorts<
+      DailyEngineStageValues<Types>,
+      Awaited<ReturnType<typeof publicationStages.encodeCheckpoint>>
+    >;
+    if (request.output.kind === "publication") {
+      let pendingRunId: string | undefined;
+      const outcome = await runTrackingRunSequentially<
+        DailyEngineStageValues<Types>,
+        Awaited<ReturnType<typeof publicationStages.encodeCheckpoint>>,
+        RecoveryStageInput
+      >(
+        async () => {
+          const launch = await this.#dependencies.inspectLaunch(request, invocation.invocationId);
+          if (launch.decision.kind === "start_new") {
+            baseStateHead = launch.decision.baseRevision;
+          } else if (launch.decision.kind === "resume_pending") {
+            pendingRunId = launch.decision.pending.record.runIdentity.runId;
+            invocation = Object.freeze({
+              ...invocation,
+              runId: pendingRunId,
+            });
+            lastReceipt = launch.decision.pending.receiptChain.at(-1);
+          }
+          return launch;
+        },
+        stages,
+        this.#dependencies.pendingRun(request, invocation.invocationId, () =>
+          required(pendingRunId, "再開run IDがありません"),
+        ),
+        boundary,
+      );
+      if (outcome.status === "failed") {
+        return required(failedResult, "失敗runの報告結果がありません");
       }
-
       const report = completedReport(
         invocation,
         runStatus,
@@ -832,47 +898,62 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
       return Object.freeze({
         report,
         effects: freezeEffects(effects),
-        ...(completedRun == null ? {} : { completedRun }),
+        completedRun: outcome,
+      });
+    }
+    const launch = await this.#dependencies.inspectLaunch(request, invocation.invocationId);
+    if (launch.decision.kind !== "start_new") {
+      throw new TypeError("解析artifactの起動時に未完了runがあります");
+    }
+    baseStateHead = launch.decision.baseRevision;
+    const analysis = await runTrackingAnalysis<
+      DailyEngineStageValues<Types>,
+      Awaited<ReturnType<typeof publicationStages.encodeCheckpoint>>
+    >(stages, boundary);
+    if (analysis.kind === "failed") {
+      return required(failedResult, "失敗runの報告結果がありません");
+    }
+    try {
+      const input = analysis.value;
+      if (request.output.kind === "dry_run_artifact") {
+        stage = "artifact";
+        await this.#dependencies.writeDryRunArtifact(
+          request.output.path,
+          createDryRunArtifact(
+            invocation,
+            runStatus,
+            input.planned,
+            metrics,
+            diagnostics,
+            currentTime(this.#runtime),
+          ),
+        );
+        effects.artifactWritten = true;
+      }
+      if (request.output.kind === "analysis_artifact") {
+        stage = "artifact";
+        await this.#dependencies.writeCollectAnalyzeArtifact(request.output.path, input);
+        effects.artifactWritten = true;
+      }
+      const report = completedReport(
+        invocation,
+        runStatus,
+        this.#metricsWithAiProcessAttemptCount(metrics, configuration),
+        diagnostics,
+        discordSentAt,
+        currentTime(this.#runtime),
+      );
+      await this.#dependencies.writeReport(request.reportPath, report);
+      return Object.freeze({
+        report,
+        effects: freezeEffects(effects),
       });
     } catch (error: unknown) {
-      const failureDiagnosticRecordId = await this.#recordError(
-        invocation,
-        stage,
-        "cli.stage.failed",
+      await boundary.fail(
+        stage === "artifact" ? "checkpoint_encoding" : "workflow_effect_observation",
         error,
       );
-      const failureKind = isPublicBoundaryViolation(error) ? "public_boundary" : "other";
-      try {
-        const result = await this.#writeFailure(
-          invocation,
-          request.reportPath,
-          stage,
-          failureKind,
-          metrics,
-          configuration,
-          [...diagnostics, safeErrorDiagnostic(stage, error)],
-          discordSentAt,
-          effects,
-        );
-        return Object.freeze({
-          ...result,
-          ...(failureDiagnosticRecordId == null ? {} : { failureDiagnosticRecordId }),
-          ...(prepared == null || !isPreCheckpointFailureStage(stage)
-            ? {}
-            : {
-                failureEvidence: {
-                  bindingKind: "run_pre_checkpoint_alert" as const,
-                  runId: prepared.core.identity.runId,
-                  baseStateRevision: prepared.core.baseState.revision,
-                  configDigest: prepared.core.configDigest,
-                },
-              }),
-        });
-      } catch (reportError: unknown) {
-        throw new AggregateError([error, reportError], "run reportの書込みにも失敗しました", {
-          cause: error,
-        });
-      }
+      return required(failedResult, "失敗runの報告結果がありません");
     }
   }
 

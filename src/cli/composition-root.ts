@@ -104,6 +104,7 @@ export function createDefaultCliCompositionAdapters(
       return Promise.resolve();
     },
     writeJsonArtifact: writeCliJsonArtifact,
+    readArtifactBytes: readFile,
     writeTextFile: writeCliTextFile,
     writePublicData: writePublicDataFiles,
     buildWebOutput,

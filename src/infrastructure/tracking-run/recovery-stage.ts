@@ -151,20 +151,6 @@ function assertHttpReceiptsUnambiguous(receipts: readonly Receipt[]): void {
   }
 }
 
-function selectedNotificationKeys(record: DurablePublicationRecord): ReadonlySet<string> {
-  if (
-    record.notificationOutbox.action !== "send" ||
-    record.notificationOutbox.selectedContext.action !== "create_digest"
-  ) {
-    return new Set<string>();
-  }
-  return new Set(
-    record.notificationOutbox.selectedContext.candidates.flatMap((candidate) =>
-      candidate.reasons.map((reason) => reason.notificationKey),
-    ),
-  );
-}
-
 /** 保存済みphaseと確定効果から次の一段階だけを選ぶ。 */
 export function selectRecoveryStage(
   base: RecoveryStageBase,
@@ -296,24 +282,23 @@ export function selectRecoveryStage(
   ) {
     throw new TypeError("run finalizationの観測結果が不正です");
   }
-  const selectedKeys = selectedNotificationKeys(record);
-  if (
-    record.notificationHistoryPagesPolicy.requirement === "not_required" ||
-    !notificationLedger.entries.some(
-      (entry) => selectedKeys.has(entry.notificationKey) && entry.status === "sent",
-    )
-  ) {
-    return Object.freeze({ ...base, stage: "completed" });
-  }
   const deployed = latestPagesDeploymentReceipt(receiptChain, "notification_history");
+  const built = latestPagesBuildReceipt(receiptChain, "notification_history");
   if (deployed?.receiptKind === "superseded") {
     throw new TypeError("新しいrunによって通知履歴Pages公開が無効化されています");
   }
-  if (deployed?.effectCertainty === "committed" && deployed.result != null) {
+  if (
+    (deployed?.effectCertainty === "committed" &&
+      deployed.result != null &&
+      built?.status === "built") ||
+    (deployed?.status === "not_required" && built?.status === "not_required")
+  ) {
     return Object.freeze({ ...base, stage: "completed" });
   }
-  const built = latestPagesBuildReceipt(receiptChain, "notification_history");
-  if (built?.status === "built" && built.result != null) {
+  if (
+    built != null &&
+    ((built.status === "built" && built.result != null) || built.status === "not_required")
+  ) {
     const resumeInput = resumeNotificationHistoryDeploy(
       {
         ...resumeBase,

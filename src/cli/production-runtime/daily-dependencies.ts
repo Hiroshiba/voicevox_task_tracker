@@ -15,17 +15,24 @@ import {
   createReadAiProcessAttemptCountStage,
   createValidateConfigurationStage,
 } from "./daily-startup/configuration.js";
+import { createInspectLaunchStage } from "./daily-startup/launch.js";
+import { createPendingRunStage } from "./daily-startup/pending.js";
 import { GitHubRunSessions } from "../../infrastructure/tracking-run/github-port.js";
 import { projectLegacyRepositoryInventory } from "../tracking-run/migration-bridge/inventory.js";
 import { projectLegacyCollection } from "../tracking-run/migration-bridge/collection.js";
 import { createCollectInventoryStage } from "./daily-startup/inventory.js";
 import { createLoadStateStage } from "./daily-startup/state.js";
 import { createPrepareRunStage } from "./daily-startup/preparation.js";
-import { createAnalyzePersonalRemindersStage } from "./personal-reminder/stage.js";
+import {
+  createExecutePersonalRemindersStage,
+  createFinalizePersonalRemindersStage,
+  createPlanPersonalRemindersStage,
+} from "./personal-reminder/stage.js";
 import {
   createWriteCollectAnalyzeArtifactStage,
   createWriteDryRunArtifactStage,
   createWriteReportStage,
+  createWriteReceiptChainStage,
 } from "./publication/artifact.js";
 import { createFinalizeRunStage } from "./publication/completion.js";
 import { createSettleNotificationsStage } from "./publication/notification.js";
@@ -47,11 +54,15 @@ export function createDailyDependencies(
   adapters: ProductionRuntimeAdapters,
 ): DailyTransactionDependencies<ProductionTypes> {
   const githubSessions = new GitHubRunSessions();
+  const inspectLaunch = createInspectLaunchStage(adapters, adapters.now);
   return Object.freeze({
     ...(adapters.diagnosticsRecorder == null
       ? {}
       : { diagnosticsRecorder: adapters.diagnosticsRecorder }),
     readAiProcessAttemptCount: createReadAiProcessAttemptCountStage(),
+    inspectLaunch,
+    pendingRun: (request, invocationId, getRunId) =>
+      createPendingRunStage(adapters, request, invocationId, inspectLaunch, getRunId),
     validateConfiguration: createValidateConfigurationStage(adapters),
     loadState: createLoadStateStage(adapters),
     prepareRun: createPrepareRunStage(),
@@ -64,7 +75,9 @@ export function createDailyDependencies(
     analyzeWithCodex: createAnalyzeWithCodexStage(adapters),
     adoptGenericAi: createAdoptGenericAiStage(),
     reconcileAdoptedGraph,
-    analyzePersonalReminders: createAnalyzePersonalRemindersStage(adapters),
+    planPersonalReminders: createPlanPersonalRemindersStage(adapters),
+    executePersonalReminders: createExecutePersonalRemindersStage(),
+    finalizePersonalReminders: createFinalizePersonalRemindersStage(),
     validateCompleteness: createValidateCompletenessStage(githubSessions),
     planPublication: (validated) => planPublication(validated, nodeContentDigestPort),
     prepareCheckpoint: createPrepareCheckpointStage(adapters),
@@ -80,5 +93,6 @@ export function createDailyDependencies(
     writeDryRunArtifact: createWriteDryRunArtifactStage(adapters),
     writeCollectAnalyzeArtifact: createWriteCollectAnalyzeArtifactStage(adapters),
     writeReport: createWriteReportStage(adapters),
+    writeReceiptChain: createWriteReceiptChainStage(adapters),
   } satisfies DailyTransactionDependencies<ProductionTypes>);
 }

@@ -221,6 +221,9 @@ export async function observeCliFailureContext(
   if (error instanceof StateBranchConflictError) {
     effectCertainty = "no_effect";
   }
+  if (error instanceof CliWorkflowArtifactError && command?.kind === "daily") {
+    effectCertainty = "no_effect";
+  }
   if (
     error instanceof OperationsAlertCommitFailureError ||
     error instanceof OperationsAlertPendingDeliveryError ||

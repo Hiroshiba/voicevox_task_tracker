@@ -17,7 +17,8 @@ import { isPublicBoundaryViolation } from "./public-boundary-error.js";
 
 const FAILURE_DIRECTORY_ENVIRONMENT_VARIABLE = "VOICEVOX_TASK_TRACKER_FAILURE_DIRECTORY";
 
-function publicDiagnosticCode(
+/** 失敗種別を公開可能な診断codeへ写す。 */
+export function publicDiagnosticCode(
   failureKind: FailedRun["failureKind"],
 ): FailedRun["publicDiagnostics"]["code"] {
   switch (failureKind) {
@@ -52,6 +53,19 @@ export async function reportCliFailure(
   result: CliExecutionResult | undefined,
   recorder: DiagnosticsJsonlRecorder | undefined,
 ): Promise<unknown> {
+  if (result != null && "result" in result && result.result.failedRun != null) {
+    try {
+      const artifact = createPublicFailureArtifact(result.result.failedRun, nodeContentDigestPort);
+      const directory =
+        process.env[FAILURE_DIRECTORY_ENVIRONMENT_VARIABLE] ?? "artifacts/workflow/failures";
+      await writeCliJsonArtifact(resolve(directory, `${invocationId}.json`), artifact);
+      return error;
+    } catch (artifactError: unknown) {
+      return new AggregateError([error, artifactError], "公開失敗artifactの作成に失敗しました", {
+        cause: error,
+      });
+    }
+  }
   if (recorder == null) {
     return new Error("公開失敗artifactに必要な暗号化診断recorderがありません", { cause: error });
   }
