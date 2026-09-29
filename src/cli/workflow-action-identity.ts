@@ -51,7 +51,9 @@ function workflowReferences(source: string): readonly string[] {
   const workflow = workflowSchema.parse(parseYaml(source));
   const references: string[] = [];
   for (const job of Object.values(workflow.jobs)) {
-    if (job.uses != null) references.push(job.uses);
+    if (job.uses != null && job.uses !== "./.github/workflows/_tracking-run.yml") {
+      references.push(job.uses);
+    }
     for (const step of job.steps ?? []) {
       if (step.uses != null) references.push(step.uses);
     }

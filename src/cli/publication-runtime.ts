@@ -122,6 +122,7 @@ export async function workflowAdapterIdentity(
   digest: ContentDigestPort,
 ): Promise<ReturnType<ContentDigestPort["sha256Utf8"]>> {
   const workflowPaths = [
+    ".github/workflows/_tracking-run.yml",
     ".github/workflows/daily.yml",
     ".github/workflows/resolve_discord_delivery.yml",
   ];

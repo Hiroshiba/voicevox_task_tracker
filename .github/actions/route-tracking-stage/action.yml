@@ -1,0 +1,70 @@
+name: 追跡runの次段階を判定
+description: 同一runtimeを取得しremote stateから次の段階を判定する
+inputs:
+  state-ref:
+    description: state branch
+    required: true
+  effect-target:
+    description: 副作用の対象
+    required: true
+  config-path:
+    description: 設定ファイル
+    required: true
+  run-id:
+    description: 解析済みrun ID
+    required: false
+outputs:
+  run_id:
+    description: remote stateで確認したrun ID
+    value: ${{ steps.route.outputs.run_id }}
+  next_stage:
+    description: 次に実行する段階
+    value: ${{ steps.route.outputs.next_stage }}
+  run_suffix:
+    description: run別artifactのディレクトリ名
+    value: ${{ steps.route.outputs.run_suffix }}
+runs:
+  using: composite
+  steps:
+    - name: Node.jsを準備
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      with:
+        node-version-file: .node-version
+    - name: pnpmと依存関係を準備
+      shell: bash
+      run: |
+        corepack enable
+        pnpm install --frozen-lockfile
+    - name: 固定runtimeを取得
+      id: runtime
+      continue-on-error: true
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      with:
+        name: workflow-cli-runtime
+        path: artifacts/workflow/runtime
+    - name: 消失したruntimeを同じsourceから再生成
+      if: steps.runtime.outcome == 'failure'
+      shell: bash
+      run: |
+        pnpm build
+        pnpm build:workflow-cli
+        node --input-type=module -e "import { writeWorkflowRuntimeManifest } from './dist/cli/publication-runtime.js'; await writeWorkflowRuntimeManifest(process.cwd());"
+    - name: remote stateから次段階を判定
+      id: route
+      shell: bash
+      env:
+        TRACKING_CONFIG_PATH: ${{ inputs.config-path }}
+        TRACKING_EFFECT_TARGET: ${{ inputs.effect-target }}
+        TRACKING_RUN_ID: ${{ inputs.run-id }}
+        TRACKING_STATE_REF: ${{ inputs.state-ref }}
+      run: |
+        arguments=(route-stage --config "$TRACKING_CONFIG_PATH" --state-ref "$TRACKING_STATE_REF" --effect-target "$TRACKING_EFFECT_TARGET")
+        if [[ -n "$TRACKING_RUN_ID" ]]; then
+          arguments+=(--run-id "$TRACKING_RUN_ID")
+        fi
+        node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs "${arguments[@]}" > "$RUNNER_TEMP/tracking-route.json"
+        jq -e '.schemaVersion == 1 and (.nextStage | IN("analyze", "commit-initial-state", "prepare-initial-pages", "preflight-initial-pages-deployment", "settle-notifications", "finalize-run", "prepare-history-pages", "preflight-history-pages-deployment", "complete", "done"))' "$RUNNER_TEMP/tracking-route.json" > /dev/null
+        run_id="$(jq -r '.runId // ""' "$RUNNER_TEMP/tracking-route.json")"
+        echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+        echo "run_suffix=${run_id#tracker-run:}" >> "$GITHUB_OUTPUT"
+        echo "next_stage=$(jq -r '.nextStage' "$RUNNER_TEMP/tracking-route.json")" >> "$GITHUB_OUTPUT"
