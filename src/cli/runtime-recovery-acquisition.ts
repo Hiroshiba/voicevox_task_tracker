@@ -314,17 +314,19 @@ export async function recoverSplitRuntimeV2(
         await verifyRuntimeRecoveryV2(checkoutPath, exactBundleRoot, input);
         return await launchRuntimeRecoveryV2(checkoutPath, exactBundleRoot, input);
       }
-      const downloadDirectory = await mkdtemp(join(tmpdir(), "voicevox-runtime-v2-download-"));
-      try {
-        const downloaded = await downloadWorkflowBundle(checkoutPath, plan, downloadDirectory);
-        if (downloaded != null) {
-          await mkdir(dirname(exactBundleRoot), { recursive: true });
-          await cp(downloaded, exactBundleRoot, { recursive: true, force: true });
-          await verifyRuntimeRecoveryV2(checkoutPath, exactBundleRoot, input);
-          return await launchRuntimeRecoveryV2(checkoutPath, exactBundleRoot, input);
+      if (bundleRoot == null) {
+        const downloadDirectory = await mkdtemp(join(tmpdir(), "voicevox-runtime-v2-download-"));
+        try {
+          const downloaded = await downloadWorkflowBundle(checkoutPath, plan, downloadDirectory);
+          if (downloaded != null) {
+            await mkdir(dirname(exactBundleRoot), { recursive: true });
+            await cp(downloaded, exactBundleRoot, { recursive: true, force: true });
+            await verifyRuntimeRecoveryV2(checkoutPath, exactBundleRoot, input);
+            return await launchRuntimeRecoveryV2(checkoutPath, exactBundleRoot, input);
+          }
+        } finally {
+          await rm(downloadDirectory, { recursive: true, force: true });
         }
-      } finally {
-        await rm(downloadDirectory, { recursive: true, force: true });
       }
       const rebuilt = await rebuildWorkflowBundle(checkoutPath, plan);
       await verifyRuntimeRecoveryV2(checkoutPath, rebuilt, input);
