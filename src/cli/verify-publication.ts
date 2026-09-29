@@ -68,6 +68,25 @@ export async function inspectRunStateCommand(
     command.recoveryIntent,
   );
   if (decision.kind === "resume_with_exact_runtime") {
+    if (decision.record.recordSchemaVersion === 2) {
+      const plan = decision.record.runtimeRecoveryPlan;
+      if (plan.kind !== "workflow_bundle" || plan.schemaVersion !== 2) {
+        throw new TypeError("V2 bootstrapの回復計画が不正です");
+      }
+      await adapters.writeStandardOutput(
+        serializeCanonicalJsonLine({
+          kind: decision.kind,
+          recoveryInput: {
+            protocolVersion: 2,
+            runId: decision.record.runId,
+            runtimeRecoveryPlan: plan,
+            expectedWorkflowEffectAdapterIdentityDigest:
+              plan.recoveryProtocol.workflowEffectAdapterIdentityDigest,
+          },
+        }),
+      );
+      return;
+    }
     await adapters.writeStandardOutput(
       serializeCanonicalJsonLine({
         kind: decision.kind,

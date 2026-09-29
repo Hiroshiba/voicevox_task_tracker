@@ -127,6 +127,7 @@ jobs:
       node_version: ${{ steps.inspect.outputs.node_version }}
       source_run_id: ${{ steps.inspect.outputs.source_run_id }}
       run_id: ${{ steps.inspect.outputs.run_id }}
+      protocol_version: ${{ steps.inspect.outputs.protocol_version }}
     steps:
       - name: 現行制御コードを取得
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -155,62 +156,7 @@ jobs:
           TRACKING_SOURCE_CODE_REVISION: ${{ inputs.source_code_revision }}
           TRACKING_STATE_REF: ${{ inputs.state_ref }}
           VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
-        run: |
-          case "$TRACKING_EFFECT_TARGET" in
-            production)
-              if [[ "$TRACKING_STATE_REF" != 'tracker-state' || "$TRACKING_EFFECT_CONCURRENCY_KEY" != 'voicevox-task-tracker-daily' || "$TRACKING_PAGES_ENVIRONMENT" != 'github-pages' || -n "$TRACKING_SANDBOX_CONTEXT_ARTIFACT" || -n "$TRACKING_SOURCE_CODE_REVISION" ]]; then
-                echo "productionのstate、Pages、排他keyが一致しません" >&2
-                exit 1
-              fi
-              ;;
-            sandbox)
-              if [[ "$GITHUB_REPOSITORY" != 'Hiroshiba/voicevox_task_tracker' || ! "$TRACKING_STATE_REF" =~ ^sandbox-state/env-[1-9][0-9]*-[1-9][0-9]*$ || "$TRACKING_EFFECT_CONCURRENCY_KEY" != "sandbox-$GITHUB_REPOSITORY-${TRACKING_STATE_REF#sandbox-state/}" || "$TRACKING_PAGES_ENVIRONMENT" != "sandbox-${TRACKING_STATE_REF#sandbox-state/}" || -z "$TRACKING_SANDBOX_CONTEXT_ARTIFACT" || ! "$TRACKING_SOURCE_CODE_REVISION" =~ ^[0-9a-f]{40}$ ]]; then
-                echo "sandboxのstate、Pages、排他key、sourceが一致しません" >&2
-                exit 1
-              fi
-              ;;
-            *)
-              echo "workflowのeffect targetが不正です" >&2
-              exit 1
-              ;;
-          esac
-          node --enable-source-maps dist/cli/tracker-run.js inspect-run-state --config "$TRACKING_CONFIG_PATH" --state-ref "$TRACKING_STATE_REF" > "$RUNNER_TEMP/tracking-bootstrap.json"
-          kind="$(jq -r '.kind' "$RUNNER_TEMP/tracking-bootstrap.json")"
-          case "$kind" in
-            start_with_current_runtime)
-              code_revision="${TRACKING_SOURCE_CODE_REVISION:-$GITHUB_SHA}"
-              node_version="$(cat .node-version)"
-              source_run_id=""
-              run_id=""
-              ;;
-            resume_with_exact_runtime)
-              jq -e '.recoveryInput.runtimeRecoveryPlan.kind == "workflow_bundle"' "$RUNNER_TEMP/tracking-bootstrap.json" > /dev/null
-              code_revision="$(jq -r '.recoveryInput.runtimeRecoveryPlan.codeRevision' "$RUNNER_TEMP/tracking-bootstrap.json")"
-              node_version="$(jq -r '.recoveryInput.runtimeRecoveryPlan.toolchain.nodeVersion | ltrimstr("v")' "$RUNNER_TEMP/tracking-bootstrap.json")"
-              source_run_id="$(jq -r '.recoveryInput.runtimeRecoveryPlan.workflowRunId' "$RUNNER_TEMP/tracking-bootstrap.json")"
-              run_id="$(jq -r '.recoveryInput.runId' "$RUNNER_TEMP/tracking-bootstrap.json")"
-              expected_identity="$(jq -r '.recoveryInput.expectedWorkflowEffectAdapterIdentityDigest' "$RUNNER_TEMP/tracking-bootstrap.json")"
-              current_identity="$(node --input-type=module -e "import { workflowAdapterIdentity } from './dist/cli/publication-runtime.js'; import { nodeContentDigestPort } from './dist/infrastructure/tracking-run/content-digest.js'; process.stdout.write(await workflowAdapterIdentity(process.cwd(), nodeContentDigestPort));")"
-              if [[ "$current_identity" != "$expected_identity" ]]; then
-                echo "実行中workflowの効果adapterが保留runの記録と一致しません" >&2
-                exit 1
-              fi
-              ;;
-            *)
-              echo "永続stateから安全なruntimeを選べません。種別: $kind" >&2
-              exit 1
-              ;;
-          esac
-          if [[ -n "$TRACKING_EXPECTED_RUN_ID" ]]; then
-            jq -e --arg run_id "$TRACKING_EXPECTED_RUN_ID" '.kind == "resume_with_exact_runtime" and .recoveryInput.runId == $run_id' "$RUNNER_TEMP/tracking-bootstrap.json" > /dev/null
-          fi
-          {
-            echo "kind=$kind"
-            echo "code_revision=$code_revision"
-            echo "node_version=$node_version"
-            echo "source_run_id=$source_run_id"
-            echo "run_id=$run_id"
-          } >> "$GITHUB_OUTPUT"
+        run: bash .github/scripts/inspect-tracking-bootstrap.sh
       - name: bootstrap結果を保存
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -252,11 +198,6 @@ jobs:
         run: |
           corepack enable
           pnpm install --frozen-lockfile
-      - name: bootstrap結果を取得
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: tracking-bootstrap
-          path: ${{ runner.temp }}
       - name: 保存済みexact runtimeを取得
         id: source_runtime
         if: needs.bootstrap.outputs.kind == 'resume_with_exact_runtime'
@@ -277,16 +218,22 @@ jobs:
         env:
           TRACKING_CONFIG_PATH: ${{ inputs.config_path }}
           TRACKING_EFFECT_TARGET: ${{ inputs.effect_target }}
+          TRACKING_PROTOCOL_VERSION: ${{ needs.bootstrap.outputs.protocol_version }}
           TRACKING_RUN_ID: ${{ needs.bootstrap.outputs.run_id }}
           TRACKING_STATE_REF: ${{ inputs.state_ref }}
           VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
         run: |
-          arguments=(route-stage --config "$TRACKING_CONFIG_PATH" --state-ref "$TRACKING_STATE_REF" --effect-target "$TRACKING_EFFECT_TARGET")
-          if [[ -n "$TRACKING_RUN_ID" ]]; then
-            arguments+=(--run-id "$TRACKING_RUN_ID")
+          if [[ "$TRACKING_PROTOCOL_VERSION" == '2' ]]; then
+            node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs runtime-recovery-v2 --operation inspect --config "$TRACKING_CONFIG_PATH" --state-ref "$TRACKING_STATE_REF" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --bundle-root artifacts/workflow/runtime > "$RUNNER_TEMP/tracking-v2-inspect.json"
+            jq -e '.protocolVersion == 2 and .status == "inspected" and (.nextStage | type == "string")' "$RUNNER_TEMP/tracking-v2-inspect.json" > /dev/null
+          else
+            arguments=(route-stage --config "$TRACKING_CONFIG_PATH" --state-ref "$TRACKING_STATE_REF" --effect-target "$TRACKING_EFFECT_TARGET")
+            if [[ -n "$TRACKING_RUN_ID" ]]; then
+              arguments+=(--run-id "$TRACKING_RUN_ID")
+            fi
+            node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs "${arguments[@]}" > "$RUNNER_TEMP/tracking-route.json"
+            jq -e '.schemaVersion == 1 and (.nextStage | type == "string")' "$RUNNER_TEMP/tracking-route.json" > /dev/null
           fi
-          node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs "${arguments[@]}" > "$RUNNER_TEMP/tracking-route.json"
-          jq -e '.schemaVersion == 1 and (.nextStage | type == "string")' "$RUNNER_TEMP/tracking-route.json" > /dev/null
       - name: 固定runtimeを保存
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -557,10 +504,15 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ inputs.effect_target == 'production' && secrets.DISCORD_WEBHOOK_URL || '' }}
           TRACKING_CONFIG_PATH: ${{ inputs.config_path }}
           TRACKING_MANUAL_RESOLUTION_ARTIFACT: ${{ inputs.manual_resolution_artifact }}
+          TRACKING_PROTOCOL_VERSION: ${{ steps.route.outputs.protocol_version }}
           TRACKING_RUN_ID: ${{ steps.route.outputs.run_id }}
           TRACKING_RUN_SUFFIX: ${{ steps.route.outputs.run_suffix }}
         run: |
-          arguments=(run-stage --stage settle-notifications --config "$TRACKING_CONFIG_PATH" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT")
+          if [[ "$TRACKING_PROTOCOL_VERSION" == '2' ]]; then
+            arguments=(runtime-recovery-v2 --operation execute_stage --stage settle-notifications --config "$TRACKING_CONFIG_PATH" --state-ref "$TRACKING_STATE_REF" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --bundle-root artifacts/workflow/runtime)
+          else
+            arguments=(run-stage --stage settle-notifications --config "$TRACKING_CONFIG_PATH" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT")
+          fi
           if [[ "$TRACKING_MANUAL_RESOLUTION_ARTIFACT" == 'true' ]]; then
             arguments+=(--manual-resolution-receipt "artifacts/workflow/runs/$TRACKING_RUN_SUFFIX/manual-resolution-receipt.json")
           fi
@@ -619,8 +571,14 @@ jobs:
         if: steps.route.outputs.next_stage == 'finalize-run'
         env:
           TRACKING_CONFIG_PATH: ${{ inputs.config_path }}
+          TRACKING_PROTOCOL_VERSION: ${{ steps.route.outputs.protocol_version }}
           TRACKING_RUN_ID: ${{ steps.route.outputs.run_id }}
-        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs run-stage --stage finalize-run --config "$TRACKING_CONFIG_PATH" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+        run: |
+          if [[ "$TRACKING_PROTOCOL_VERSION" == '2' ]]; then
+            node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs runtime-recovery-v2 --operation execute_stage --stage finalize-run --config "$TRACKING_CONFIG_PATH" --state-ref "$TRACKING_STATE_REF" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --bundle-root artifacts/workflow/runtime
+          else
+            node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs run-stage --stage finalize-run --config "$TRACKING_CONFIG_PATH" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          fi
       - name: 段階receiptを保存
         if: steps.execute.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -676,8 +634,14 @@ jobs:
         if: steps.route.outputs.next_stage == 'complete'
         env:
           TRACKING_CONFIG_PATH: ${{ inputs.config_path }}
+          TRACKING_PROTOCOL_VERSION: ${{ steps.route.outputs.protocol_version }}
           TRACKING_RUN_ID: ${{ steps.route.outputs.run_id }}
-        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs run-stage --stage complete --config "$TRACKING_CONFIG_PATH" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+        run: |
+          if [[ "$TRACKING_PROTOCOL_VERSION" == '2' ]]; then
+            node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs runtime-recovery-v2 --operation execute_stage --stage complete --config "$TRACKING_CONFIG_PATH" --state-ref "$TRACKING_STATE_REF" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --bundle-root artifacts/workflow/runtime
+          else
+            node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs run-stage --stage complete --config "$TRACKING_CONFIG_PATH" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          fi
       - name: 完了receiptのstate revisionを出力
         id: final_revision
         if: steps.execute.outcome == 'success'
@@ -747,17 +711,28 @@ jobs:
         if: steps.route.outputs.next_stage == 'prepare-initial-pages'
         env:
           TRACKING_CONFIG_PATH: ${{ inputs.config_path }}
+          TRACKING_PROTOCOL_VERSION: ${{ steps.route.outputs.protocol_version }}
           TRACKING_RUN_ID: ${{ steps.route.outputs.run_id }}
-        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs run-stage --stage prepare-initial-pages --config "$TRACKING_CONFIG_PATH" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+        run: |
+          if [[ "$TRACKING_PROTOCOL_VERSION" == '2' ]]; then
+            node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs runtime-recovery-v2 --operation execute_stage --stage prepare-initial-pages --config "$TRACKING_CONFIG_PATH" --state-ref "$TRACKING_STATE_REF" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --bundle-root artifacts/workflow/runtime
+          else
+            node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs run-stage --stage prepare-initial-pages --config "$TRACKING_CONFIG_PATH" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          fi
       - name: deploy直前のstateと出力全fileを検証
         id: preflight
         if: steps.route.outputs.next_stage == 'preflight-initial-pages-deployment' || steps.prepare.outcome == 'success'
         env:
           TRACKING_CONFIG_PATH: ${{ inputs.config_path }}
+          TRACKING_PROTOCOL_VERSION: ${{ steps.route.outputs.protocol_version }}
           TRACKING_RUN_ID: ${{ steps.route.outputs.run_id }}
           TRACKING_RUN_SUFFIX: ${{ steps.route.outputs.run_suffix }}
         run: |
-          node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs run-stage --stage preflight-initial-pages-deployment --config "$TRACKING_CONFIG_PATH" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          if [[ "$TRACKING_PROTOCOL_VERSION" == '2' ]]; then
+            node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs runtime-recovery-v2 --operation execute_stage --stage preflight-initial-pages-deployment --config "$TRACKING_CONFIG_PATH" --state-ref "$TRACKING_STATE_REF" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --bundle-root artifacts/workflow/runtime
+          else
+            node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs run-stage --stage preflight-initial-pages-deployment --config "$TRACKING_CONFIG_PATH" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          fi
           preflight="artifacts/workflow/runs/$TRACKING_RUN_SUFFIX/initial-pages-preflight.json"
           echo "kind=$(jq -r .kind "$preflight")" >> "$GITHUB_OUTPUT"
           echo "intent_digest=$(jq -r .deploymentIntentDigest "$preflight")" >> "$GITHUB_OUTPUT"
@@ -800,8 +775,18 @@ jobs:
           PAGES_DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
           PAGES_URL: ${{ steps.deployment.outputs.page_url }}
           TRACKING_CONFIG_PATH: ${{ inputs.config_path }}
+          TRACKING_PROTOCOL_VERSION: ${{ steps.route.outputs.protocol_version }}
           TRACKING_RUN_ID: ${{ steps.route.outputs.run_id }}
-        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs run-stage --stage record-initial-pages-deployment --config "$TRACKING_CONFIG_PATH" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          TRACKING_RUN_SUFFIX: ${{ steps.route.outputs.run_suffix }}
+        run: |
+          if [[ "$TRACKING_PROTOCOL_VERSION" == '2' ]]; then
+            observation="artifacts/workflow/runs/$TRACKING_RUN_SUFFIX/initial-pages-observation-v2.json"
+            adapter_identity="$(jq -r '.recoveryProtocol.workflowEffectAdapterIdentityDigest' artifacts/workflow/runtime/runtime-manifest.json)"
+            jq -ncS --arg adapter_identity "$adapter_identity" --arg intent "$PAGES_DEPLOYMENT_INTENT_DIGEST" --arg upload "$PAGES_UPLOAD_OUTCOME" --arg deployment "$PAGES_DEPLOYMENT_OUTCOME" --arg artifact_name "$PAGES_ARTIFACT_NAME" --arg artifact_id "$PAGES_ARTIFACT_ID" --arg artifact_digest "$PAGES_ARTIFACT_DIGEST" --arg deployment_id "$PAGES_DEPLOYMENT_ID" --arg page_url "$PAGES_URL" '{observationContract:"tracking-run-workflow-effect-observation-v2",adapterVersion:"tracking-run-pages-actions-v2",adapterIdentityDigest:$adapter_identity,phase:"initial",deploymentIntentDigest:$intent,uploadOutcome:$upload,deploymentOutcome:$deployment,artifactName:$artifact_name,artifactId:$artifact_id,artifactDigest:$artifact_digest,deploymentId:$deployment_id,pageUrl:$page_url} | with_entries(select(.value != ""))' > "$observation"
+            node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs runtime-recovery-v2 --operation record_pages --phase initial --observation "$observation" --config "$TRACKING_CONFIG_PATH" --state-ref "$TRACKING_STATE_REF" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --bundle-root artifacts/workflow/runtime
+          else
+            node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs run-stage --stage record-initial-pages-deployment --config "$TRACKING_CONFIG_PATH" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          fi
       - name: 初回Pagesのreceiptと結果を保存
         if: always() && (steps.prepare.outcome == 'success' || steps.record.outcome != 'skipped')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -863,8 +848,14 @@ jobs:
         if: steps.route.outputs.next_stage == 'prepare-history-pages'
         env:
           TRACKING_CONFIG_PATH: ${{ inputs.config_path }}
+          TRACKING_PROTOCOL_VERSION: ${{ steps.route.outputs.protocol_version }}
           TRACKING_RUN_ID: ${{ steps.route.outputs.run_id }}
-        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs run-stage --stage prepare-history-pages --config "$TRACKING_CONFIG_PATH" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+        run: |
+          if [[ "$TRACKING_PROTOCOL_VERSION" == '2' ]]; then
+            node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs runtime-recovery-v2 --operation execute_stage --stage prepare-history-pages --config "$TRACKING_CONFIG_PATH" --state-ref "$TRACKING_STATE_REF" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --bundle-root artifacts/workflow/runtime
+          else
+            node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs run-stage --stage prepare-history-pages --config "$TRACKING_CONFIG_PATH" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          fi
       - name: 同じActions runの通知履歴Pages公開結果を取得
         id: prior_history
         if: steps.route.outputs.next_stage == 'preflight-history-pages-deployment' || steps.prepare.outcome == 'success'
@@ -878,11 +869,16 @@ jobs:
         if: steps.prior_history.outcome == 'success'
         env:
           TRACKING_CONFIG_PATH: ${{ inputs.config_path }}
+          TRACKING_PROTOCOL_VERSION: ${{ steps.route.outputs.protocol_version }}
           TRACKING_RUN_ID: ${{ steps.route.outputs.run_id }}
           TRACKING_RUN_SUFFIX: ${{ steps.route.outputs.run_suffix }}
           VOICEVOX_PREVIOUS_HISTORY_OUTCOME_STATUS: ${{ steps.prior_history.outputs.status }}
         run: |
-          node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs run-stage --stage preflight-history-pages-deployment --config "$TRACKING_CONFIG_PATH" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          if [[ "$TRACKING_PROTOCOL_VERSION" == '2' ]]; then
+            node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs runtime-recovery-v2 --operation execute_stage --stage preflight-history-pages-deployment --config "$TRACKING_CONFIG_PATH" --state-ref "$TRACKING_STATE_REF" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --bundle-root artifacts/workflow/runtime
+          else
+            node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs run-stage --stage preflight-history-pages-deployment --config "$TRACKING_CONFIG_PATH" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          fi
           preflight="artifacts/workflow/runs/$TRACKING_RUN_SUFFIX/notification-history-pages-preflight.json"
           echo "kind=$(jq -r .kind "$preflight")" >> "$GITHUB_OUTPUT"
           echo "intent_digest=$(jq -r '.deploymentIntentDigest // ""' "$preflight")" >> "$GITHUB_OUTPUT"
@@ -925,8 +921,18 @@ jobs:
           PAGES_DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
           PAGES_URL: ${{ steps.deployment.outputs.page_url }}
           TRACKING_CONFIG_PATH: ${{ inputs.config_path }}
+          TRACKING_PROTOCOL_VERSION: ${{ steps.route.outputs.protocol_version }}
           TRACKING_RUN_ID: ${{ steps.route.outputs.run_id }}
-        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs run-stage --stage record-history-pages-deployment --config "$TRACKING_CONFIG_PATH" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          TRACKING_RUN_SUFFIX: ${{ steps.route.outputs.run_suffix }}
+        run: |
+          if [[ "$TRACKING_PROTOCOL_VERSION" == '2' ]]; then
+            observation="artifacts/workflow/runs/$TRACKING_RUN_SUFFIX/notification-history-pages-observation-v2.json"
+            adapter_identity="$(jq -r '.recoveryProtocol.workflowEffectAdapterIdentityDigest' artifacts/workflow/runtime/runtime-manifest.json)"
+            jq -ncS --arg adapter_identity "$adapter_identity" --arg intent "$PAGES_DEPLOYMENT_INTENT_DIGEST" --arg upload "$PAGES_UPLOAD_OUTCOME" --arg deployment "$PAGES_DEPLOYMENT_OUTCOME" --arg artifact_name "$PAGES_ARTIFACT_NAME" --arg artifact_id "$PAGES_ARTIFACT_ID" --arg artifact_digest "$PAGES_ARTIFACT_DIGEST" --arg deployment_id "$PAGES_DEPLOYMENT_ID" --arg page_url "$PAGES_URL" '{observationContract:"tracking-run-workflow-effect-observation-v2",adapterVersion:"tracking-run-pages-actions-v2",adapterIdentityDigest:$adapter_identity,phase:"notification_history",deploymentIntentDigest:$intent,uploadOutcome:$upload,deploymentOutcome:$deployment,artifactName:$artifact_name,artifactId:$artifact_id,artifactDigest:$artifact_digest,deploymentId:$deployment_id,pageUrl:$page_url} | with_entries(select(.value != ""))' > "$observation"
+            node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs runtime-recovery-v2 --operation record_pages --phase notification_history --observation "$observation" --config "$TRACKING_CONFIG_PATH" --state-ref "$TRACKING_STATE_REF" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT" --bundle-root artifacts/workflow/runtime
+          else
+            node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs run-stage --stage record-history-pages-deployment --config "$TRACKING_CONFIG_PATH" --run-id "$TRACKING_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          fi
       - name: 通知履歴Pagesのreceiptと結果を保存
         if: always() && (steps.prepare.outcome == 'success' || steps.record.outcome != 'skipped')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
