@@ -20,7 +20,7 @@ import type { ContentDigestPort } from "../application/tracking-run/ports.js";
 import type { RunExecutionPolicy } from "../application/tracking-run/request.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
 import { workflowActionSources } from "./workflow-action-identity.js";
-import { assertWorkflowV2Adapter } from "./workflow-v2-adapter.js";
+import { assertWorkflowV2Adapter, readWorkflowV2Adapter } from "./workflow-v2-adapter.js";
 
 const execFileAsync = promisify(execFile);
 const MANIFEST_FILE_NAME = "runtime-manifest.json";
@@ -176,6 +176,14 @@ export async function workflowAdapterIdentity(
   );
 }
 
+/** V2 Pages adapterの実stepと固定actionから静的identityを計算する。 */
+export async function workflowAdapterIdentityV2(
+  repositoryPath: string,
+  digest: ContentDigestPort,
+): Promise<ReturnType<ContentDigestPort["sha256Utf8"]>> {
+  return digest.sha256Utf8(serializeCanonicalJson(await readWorkflowV2Adapter(repositoryPath)));
+}
+
 async function codeRevision(repositoryPath: string, filesDigest: string): Promise<string> {
   const [head, status] = await Promise.all([
     execFileAsync("git", ["rev-parse", "HEAD"], { cwd: repositoryPath }),
@@ -302,7 +310,10 @@ async function createManifest(
     throw new TypeError("runtime entrypointがbuild outputにありません");
   }
   const filesDigest = digest.sha256Utf8(serializeCanonicalJson(files));
-  const adapterIdentity = await workflowAdapterIdentity(repositoryPath, digest);
+  const adapterIdentity =
+    shape === "split_workflow"
+      ? await workflowAdapterIdentityV2(repositoryPath, digest)
+      : await workflowAdapterIdentity(repositoryPath, digest);
   const recoveryProtocol =
     shape === "split_workflow"
       ? runtimeRecoveryProtocolV2Schema.parse({
@@ -386,7 +397,7 @@ async function readWorkflowRuntimeManifest(
       )) ||
     entrypoint?.digest !== manifest.recoveryProtocol.entrypointSha256 ||
     manifest.recoveryProtocol.workflowEffectAdapterIdentityDigest !==
-      (await workflowAdapterIdentity(repositoryPath, digest))
+      (await workflowAdapterIdentityV2(repositoryPath, digest))
   ) {
     throw new TypeError("workflow runtime manifestが実行byte列または静的adapterと一致しません");
   }

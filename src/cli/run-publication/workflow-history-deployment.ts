@@ -19,7 +19,7 @@ import {
 } from "../notification-history-pages-deployment-record.js";
 import { decodeNotificationHistoryPagesDeploymentOutcome } from "../notification-history-pages-deployment-outcome.js";
 import { readPreviousNotificationHistoryOutcome } from "../previous-notification-history-outcome.js";
-import { isWorkflowPublicationReplay, workflowAdapterIdentity } from "../publication-runtime.js";
+import { isWorkflowPublicationReplay, workflowAdapterIdentityV2 } from "../publication-runtime.js";
 import { readNotificationMessageState } from "../notification-message-state.js";
 import type { RunPublicationAdapters } from "./contracts.js";
 
@@ -96,7 +96,7 @@ export async function preflightWorkflowNotificationHistoryDeployment(
     observedAt: adapters.now().toISOString(),
     effectTarget: source.transaction.record.executionPolicy.effectTarget,
     ...(source.transaction.record.executionPolicy.effectTarget === "production"
-      ? { adapterIdentityDigest: await workflowAdapterIdentity(adapters.repositoryPath, digest) }
+      ? { adapterIdentityDigest: await workflowAdapterIdentityV2(adapters.repositoryPath, digest) }
       : {}),
   });
   await adapters.writeJsonArtifact(
@@ -189,7 +189,7 @@ export async function recordWorkflowNotificationHistoryDeployment(
         ? {}
         : { pageUrl: optionalOutput(adapters.environment, "PAGES_URL") }),
     },
-    adapterIdentityDigest: await workflowAdapterIdentity(adapters.repositoryPath, digest),
+    adapterIdentityDigest: await workflowAdapterIdentityV2(adapters.repositoryPath, digest),
     observedAt: adapters.now().toISOString(),
   });
   await adapters.writeJsonArtifact(resolve(adapters.repositoryPath, command.outcomePath), outcome);

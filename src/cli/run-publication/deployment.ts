@@ -9,7 +9,7 @@ import {
   recordInitialPagesSequentialDeployment,
   recordInitialPagesWorkflowDeployment,
 } from "../initial-pages-deployment.js";
-import { isWorkflowPublicationReplay, workflowAdapterIdentity } from "../publication-runtime.js";
+import { isWorkflowPublicationReplay, workflowAdapterIdentityV2 } from "../publication-runtime.js";
 import { readNotificationMessageState } from "../notification-message-state.js";
 import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content-digest.js";
 import type { Config } from "../../config/index.js";
@@ -69,7 +69,7 @@ export async function preflightWorkflowPagesDeployment(
     effectTarget: source.transaction.record.executionPolicy.effectTarget,
     ...(source.transaction.record.executionPolicy.effectTarget === "production"
       ? {
-          adapterIdentityDigest: await workflowAdapterIdentity(
+          adapterIdentityDigest: await workflowAdapterIdentityV2(
             adapters.repositoryPath,
             nodeContentDigestPort,
           ),
@@ -161,7 +161,7 @@ export async function recordWorkflowPagesDeployment(
         ? {}
         : { pageUrl: optionalOutput(adapters.environment, "PAGES_URL") }),
     },
-    adapterIdentityDigest: await workflowAdapterIdentity(
+    adapterIdentityDigest: await workflowAdapterIdentityV2(
       adapters.repositoryPath,
       nodeContentDigestPort,
     ),
