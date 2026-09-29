@@ -23,7 +23,7 @@ import { StateFormatError } from "./errors.js";
 import {
   parseRunTransactionNotificationLedger,
   parseStateOperationsAlertLedger,
-  serializeStateOperationsAlertLedger,
+  isCanonicalStateOperationsAlertLedgerSource,
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
 } from "./state-documents.js";
 import { parseStateSnapshot, serializeStateSnapshot } from "./snapshot-v21.js";
@@ -99,7 +99,7 @@ export function verifyRunTransactionFiles(
   if (operationsBytes != null) {
     const operationsSource = source(operationsBytes);
     const operationsLedger = parseStateOperationsAlertLedger(operationsSource);
-    if (operationsSource !== serializeStateOperationsAlertLedger(operationsLedger)) {
+    if (!isCanonicalStateOperationsAlertLedgerSource(operationsSource)) {
       throw new StateFormatError("operations alert ledger", {
         cause: new TypeError("運用通知ledgerがcanonical JSONではありません"),
       });

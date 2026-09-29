@@ -88,6 +88,19 @@ export async function createStateLedgerUpdates(
     z.object({ schemaVersion: z.string() }).parse(JSON.parse(normalSource)).schemaVersion !==
       NOTIFICATION_LEDGER_SCHEMA_VERSION_10;
   const current = await loadStateNotificationLedgers(adapter, configuration, head);
+  const operationsFile: StateFileReadResult =
+    head.status === "missing"
+      ? { status: "missing" }
+      : await adapter.readFile(head.revision, OPERATIONS_ALERT_LEDGER_STATE_PATH_V1);
+  const operationsSource = decodeStateFile(operationsFile, "operations alert ledger");
+  const currentOperationsLedger =
+    operationsSource == null
+      ? createStateOperationsAlertLedger({
+          schemaVersion: "2",
+          operationsAlerts: current.operationsAlerts,
+          deliveryReservations: [],
+        })
+      : parseStateOperationsAlertLedger(operationsSource);
   const normal = Object.freeze({
     path: configuration.notificationLedgerPath,
     bytes: encodeStateFile(serializeStateNotificationLedger(ledger)),
@@ -97,8 +110,9 @@ export async function createStateLedgerUpdates(
     bytes: encodeStateFile(
       serializeStateOperationsAlertLedger(
         createStateOperationsAlertLedger({
-          schemaVersion: "1",
+          schemaVersion: "2",
           operationsAlerts: ledger.operationsAlerts,
+          deliveryReservations: currentOperationsLedger.deliveryReservations,
         }),
       ),
     ),
@@ -118,8 +132,9 @@ export async function createStateLedgerUpdates(
   }
   const currentOperations = serializeStateOperationsAlertLedger(
     createStateOperationsAlertLedger({
-      schemaVersion: "1",
+      schemaVersion: "2",
       operationsAlerts: current.operationsAlerts,
+      deliveryReservations: currentOperationsLedger.deliveryReservations,
     }),
   );
   if (currentOperations !== new TextDecoder().decode(operations.bytes)) {
@@ -127,10 +142,6 @@ export async function createStateLedgerUpdates(
       cause: new TypeError("追跡commitで運用障害通知ledgerを変更できません"),
     });
   }
-  const operationsFile: StateFileReadResult =
-    head.status === "missing"
-      ? { status: "missing" }
-      : await adapter.readFile(head.revision, OPERATIONS_ALERT_LEDGER_STATE_PATH_V1);
   return operationsFile.status === "missing"
     ? Object.freeze([normal, operations])
     : Object.freeze([normal]);

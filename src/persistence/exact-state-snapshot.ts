@@ -46,14 +46,16 @@ export async function readExactStateSnapshot(
       });
     }
     const ledger = ledgerSource == null ? undefined : parseStateNotificationLedger(ledgerSource);
+    const operationsLedger =
+      operationsSource == null ? undefined : parseStateOperationsAlertLedger(operationsSource);
     const operationsCount =
-      operationsSource == null
+      operationsLedger == null
         ? (ledger?.operationsAlerts.length ?? 0)
-        : parseStateOperationsAlertLedger(operationsSource).operationsAlerts.length;
+        : operationsLedger.operationsAlerts.length + operationsLedger.deliveryReservations.length;
     const paths = await adapter.listFiles(revision.revision, "state");
     if (
       (ledger?.entries.length ?? 0) === 0 &&
-      operationsCount > 0 &&
+      (operationsCount > 0 || operationsSource != null) &&
       paths.every(
         (path) =>
           path === configuration.notificationLedgerPath ||

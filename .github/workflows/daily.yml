@@ -816,6 +816,12 @@ jobs:
           pattern: daily-failure-${{ github.run_id }}-${{ github.run_attempt }}-*
           path: artifacts/workflow/failures
           merge-multiple: true
+      - name: 以前の運用障害通知receiptを取得
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: operations-alert-receipt-${{ github.run_id }}-*
+          path: artifacts/workflow/previous-operations-alert-receipts
       - name: 運用障害をDiscordへ通知
         id: notify
         env:
@@ -843,7 +849,7 @@ jobs:
         if: always() && steps.notify.outcome != 'skipped'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: operations-alert-receipt
+          name: operations-alert-receipt-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/workflow/operations-alert-receipt.json
           if-no-files-found: warn
           retention-days: 7

@@ -29,6 +29,7 @@ import {
   parseStateHistoryRecords,
   parseStateNotificationLedger,
   parseStateOperationsAlertLedger,
+  isCanonicalStateOperationsAlertLedgerSource,
   createStateOperationsAlertLedger,
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
   serializeStateOperationsAlertLedger,
@@ -267,7 +268,7 @@ async function verifyOperationsAlertLedger(
     return createVerification(
       migrated.operationsAlerts.length,
       [jsonDocumentSchemaVersion(normalSource, "notification ledger")],
-      ["1"],
+      ["2"],
     );
   }
   if (legacy.operationsAlerts.length !== 0) {
@@ -278,13 +279,17 @@ async function verifyOperationsAlertLedger(
   }
   const operationsSource = new TextDecoder("utf-8", { fatal: true }).decode(operationsBytes);
   const ledger = parseStateOperationsAlertLedger(operationsSource);
-  if (operationsSource !== serializeStateOperationsAlertLedger(ledger)) {
+  if (!isCanonicalStateOperationsAlertLedgerSource(operationsSource)) {
     throw verificationError(
       operationsPath,
       new TypeError("運用障害通知ledgerがcanonical JSONではありません"),
     );
   }
-  return createVerification(ledger.operationsAlerts.length, ["1"], ["1"]);
+  return createVerification(
+    ledger.operationsAlerts.length + ledger.deliveryReservations.length,
+    [jsonDocumentSchemaVersion(operationsSource, "operations alert ledger")],
+    [ledger.schemaVersion],
+  );
 }
 
 async function verifyRunTransaction(

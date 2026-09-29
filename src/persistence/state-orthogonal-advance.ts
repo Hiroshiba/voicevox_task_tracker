@@ -12,8 +12,7 @@ import {
 } from "../application/tracking-run/contracts/recovery-paths.js";
 import {
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
-  parseStateOperationsAlertLedger,
-  serializeStateOperationsAlertLedger,
+  isCanonicalStateOperationsAlertLedgerSource,
 } from "./state-documents.js";
 
 export const MAX_INTERVENING_COMMITS = 1024;
@@ -76,7 +75,7 @@ export async function authorizeAdvanceAfterOrthogonalCommits(
         throw new TypeError("介在commitに運用通知ledgerがありません");
       }
       const source = new TextDecoder("utf-8", { fatal: true }).decode(operationsFile.bytes);
-      if (serializeStateOperationsAlertLedger(parseStateOperationsAlertLedger(source)) !== source) {
+      if (!isCanonicalStateOperationsAlertLedgerSource(source)) {
         throw new TypeError("介在commitの運用通知ledgerが現行形式ではありません");
       }
       intervening.push(revision);

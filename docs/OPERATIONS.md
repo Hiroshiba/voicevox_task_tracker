@@ -21,6 +21,7 @@ GitHub Actionsのscheduleには遅延があるため、厳密な投稿時刻は�
 通常の公開経路は`notify-discord`までの6 jobです。通知候補があるrunでは、その後に`publish-notification-history`が動きます。
 `deploy-pages`は公開前にremote stateとWeb出力全fileを照合し、Pages actionの結果を`initial-pages-deployment-record` artifactへ保存します。`notify-discord`はこのartifactの成功receiptを検証します。
 `notify-operations`は収集、Pages関連、Discord通知のいずれかのjobが失敗したときだけ実行されます。公開境界違反を検出した場合は運用障害通知も送りません。収集jobでは公開境界の分類をrun reportとは別のjob出力にも記録します。CLI開始前などでrun reportが作られなかった通常障害は運用障害通知を続けます。存在するrun reportが破損している場合は通知を停止します。通知のHTTP呼出前に既存stateと送信予定値の公開安全性を検査します。
+運用障害通知はDiscordへ送る前に`state/operations-alert-ledger-v1.json`へ送信予約を保存します。送信済みの記録か送信結果が不明な予約があるincidentは再送しません。予約が残った場合は同じincidentのDiscord投稿を手動で確認してください。送信されなかったことが明確な場合だけ予約を解除して再試行できます。receipt artifactを失っても、専用ledgerの予約と送信済み記録を確認してから送信を判断します。
 `report-workflow`は先行jobの成否にかかわらず実行され、全job結果と収集metricをActions artifactへ保存します。
 
 Pagesではトップの項目一覧に未完了の追跡項目が表示され、既定が要対応度の降順であることを確認します。

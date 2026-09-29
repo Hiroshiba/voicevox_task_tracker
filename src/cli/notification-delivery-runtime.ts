@@ -1,5 +1,13 @@
-import { type OperationsAlertLedgerEntry } from "../domain/index.js";
+import { createUtcIsoDateTime, type OperationsAlertLedgerEntry } from "../domain/index.js";
 import {
+  buildDiscordOperationsAlertPlan,
+  DiscordOperationsPostSendError,
+  DiscordPayloadError,
+  DiscordWebhookDeliveryUnknownError,
+  DiscordWebhookRequestError,
+  DiscordWebhookSecretInvalidError,
+  DiscordWebhookSecretMissingError,
+  DiscordWebhookSecretReadError,
   sendDiscordOperationsAlert,
   type DiscordDeliveryDependencies,
   type DiscordDeliverySettings,
@@ -9,6 +17,7 @@ import {
   type DiscordWebhookHttpClient,
 } from "../discord/index.js";
 import {
+  buildDiscordInfrastructureAlertPlan,
   sendDiscordInfrastructureAlert,
   type WorkflowInfrastructureIncident,
 } from "../discord/infrastructure-alert.js";
@@ -16,12 +25,16 @@ import {
   assertOperationsAlertLedgerWritable,
   assertExistingStatePublicSafety,
   commitOperationsAlertLedger,
+  loadOperationsAlertLedger,
+  releaseOperationsAlertDelivery,
+  reserveOperationsAlertDelivery,
   type StateBranchAdapter,
   type StateBranchCommitResult,
   type StatePersistenceConfiguration,
   type StatePersistenceSession,
   type StateSnapshot,
   type StateSnapshotReadResult,
+  type StateOperationsAlertReservation,
 } from "../persistence/index.js";
 import { operationsAlertLedgerEntry } from "./notification-ledger-normalization.js";
 import { requireEnvironmentValue } from "./production-runtime-setup.js";
@@ -55,10 +68,30 @@ type OperationsIncident =
 /** Discord送信後に専用ledgerへの確定記録が失敗したことを表す。 */
 export class OperationsAlertCommitFailureError extends Error {
   public readonly discordMessageId: string;
+  public readonly observedState: "sent" | "reserved" | "absent" | "unverified";
 
-  public constructor(discordMessageId: string, cause: unknown) {
+  public constructor(
+    discordMessageId: string,
+    observedState: "sent" | "reserved" | "absent" | "unverified",
+    cause: unknown,
+  ) {
     super("運用障害通知の送信後にledgerを確定できませんでした", { cause });
     this.discordMessageId = discordMessageId;
+    this.observedState = observedState;
+  }
+}
+
+/** 送信結果未確定の予約が残るため同じ通知を停止する。 */
+export class OperationsAlertPendingDeliveryError extends Error {
+  public constructor(cause?: unknown) {
+    super("運用障害通知の送信結果が未確定です。手動で確認してください", { cause });
+  }
+}
+
+/** 明確な不送信後に予約を解除したことを表す。 */
+export class OperationsAlertNoEffectError extends Error {
+  public constructor(cause: unknown) {
+    super("運用障害通知は送信されませんでした", { cause });
   }
 }
 
@@ -72,6 +105,24 @@ function environmentSecretProvider(
   return Object.freeze({
     read: (name) => requireEnvironmentValue(environment, name),
   });
+}
+
+async function observeOperationsAlertState(
+  adapters: NotificationDeliveryRuntimeAdapters,
+  configuration: StatePersistenceConfiguration,
+  alertKey: string,
+  discordMessageId: string,
+): Promise<"sent" | "reserved" | "absent" | "unverified"> {
+  const adapter = adapters.createStateBranchAdapter();
+  const head = await adapter.resolveHead(configuration.branch);
+  const ledger = await loadOperationsAlertLedger(adapter, head);
+  const sent = ledger.operationsAlerts.find((entry) => entry.alertKey === alertKey);
+  if (sent != null) {
+    return sent.discordMessageId === discordMessageId ? "sent" : "unverified";
+  }
+  return ledger.deliveryReservations.some((entry) => entry.alertKey === alertKey)
+    ? "reserved"
+    : "absent";
 }
 
 /** 運用障害通知を送達し、成功した通知管理記録を保存する。 */
@@ -89,17 +140,55 @@ export async function deliverOperationsAlert(
   }>
 > {
   const currentNotificationLedger = await state.session.loadNotificationLedger();
+  const existing = await loadOperationsAlertLedger(
+    adapters.createStateBranchAdapter(),
+    state.session.baseRevision,
+  );
   assertExistingStatePublicSafety(
     previousSnapshot(state),
     await state.session.loadHistoryRecords(),
     currentNotificationLedger,
-    [incident],
+    [incident, existing],
     knownSecrets,
   );
   await assertOperationsAlertLedgerWritable(
     adapters.createStateBranchAdapter(),
     configuration,
     state.session.baseRevision,
+  );
+  if (!settings.enabled) {
+    return Object.freeze({ delivery: { status: "disabled" } });
+  }
+  const alertKey =
+    incident.kind === "workflow_infrastructure_failure"
+      ? buildDiscordInfrastructureAlertPlan(incident).alertKey
+      : buildDiscordOperationsAlertPlan(incident).alertKey;
+  const recorded = existing.operationsAlerts.find((entry) => entry.alertKey === alertKey);
+  if (recorded != null) {
+    if (recorded.incidentId !== incident.incidentId || recorded.kind !== incident.kind) {
+      throw new TypeError("運用障害通知ledgerのincidentが一致しません");
+    }
+    return Object.freeze({ delivery: { status: "already_recorded", alertKey } });
+  }
+  if (existing.deliveryReservations.some((entry) => entry.alertKey === alertKey)) {
+    throw new OperationsAlertPendingDeliveryError();
+  }
+  const startedAt = createUtcIsoDateTime(adapters.now().toISOString());
+  if (startedAt < incident.occurredAt) {
+    throw new RangeError("運用障害通知の開始時刻が障害発生時刻より前です");
+  }
+  const reservation: StateOperationsAlertReservation = {
+    alertKey,
+    incidentId: incident.incidentId,
+    kind: incident.kind,
+    occurredAt: incident.occurredAt,
+    startedAt,
+  };
+  const reservationCommit = await reserveOperationsAlertDelivery(
+    adapters.createStateBranchAdapter(),
+    configuration,
+    state.session.baseRevision,
+    reservation,
   );
   const operationsAlertsByKey = new Map<string, OperationsAlertLedgerEntry>(
     currentNotificationLedger.operationsAlerts.map((entry) => [
@@ -125,30 +214,84 @@ export async function deliverOperationsAlert(
       },
     },
   };
-  const operationsAlert =
-    incident.kind === "workflow_infrastructure_failure"
-      ? await sendDiscordInfrastructureAlert(incident, settings, deliveryDependencies)
-      : await sendDiscordOperationsAlert({
-          incident,
-          settings,
-          dependencies: deliveryDependencies,
-        });
+  let operationsAlert: DiscordOperationsAlertDelivery;
+  try {
+    operationsAlert =
+      incident.kind === "workflow_infrastructure_failure"
+        ? await sendDiscordInfrastructureAlert(incident, settings, deliveryDependencies)
+        : await sendDiscordOperationsAlert({
+            incident,
+            settings,
+            dependencies: deliveryDependencies,
+          });
+  } catch (error: unknown) {
+    if (
+      error instanceof DiscordWebhookRequestError ||
+      error instanceof DiscordWebhookSecretInvalidError ||
+      error instanceof DiscordWebhookSecretMissingError ||
+      error instanceof DiscordWebhookSecretReadError ||
+      error instanceof DiscordPayloadError
+    ) {
+      try {
+        await releaseOperationsAlertDelivery(
+          adapters.createStateBranchAdapter(),
+          configuration,
+          { status: "present", revision: reservationCommit.revision },
+          reservation,
+        );
+      } catch (releaseError: unknown) {
+        throw new OperationsAlertPendingDeliveryError(
+          new AggregateError([error, releaseError], "運用障害通知の送信予約を解除できませんでした"),
+        );
+      }
+      throw new OperationsAlertNoEffectError(error);
+    }
+    if (
+      error instanceof DiscordOperationsPostSendError ||
+      error instanceof DiscordWebhookDeliveryUnknownError
+    ) {
+      throw error;
+    }
+    throw new OperationsAlertPendingDeliveryError(error);
+  }
   const operationsDelivery = operationsAlert;
   if (operationsDelivery.status !== "sent") {
-    return Object.freeze({
-      delivery: operationsDelivery,
-    });
+    throw new OperationsAlertPendingDeliveryError(
+      new TypeError("送信予約後の運用障害通知に送信結果がありません"),
+    );
   }
   let operationsCommit: StateBranchCommitResult;
   try {
     operationsCommit = await commitOperationsAlertLedger(
       adapters.createStateBranchAdapter(),
       configuration,
-      state.session.baseRevision,
+      { status: "present", revision: reservationCommit.revision },
       operationsDelivery.ledgerEntry,
     );
   } catch (error: unknown) {
-    throw new OperationsAlertCommitFailureError(operationsDelivery.discordMessageId, error);
+    let observedState: "sent" | "reserved" | "absent" | "unverified" = "unverified";
+    let cause = error;
+    try {
+      observedState = await observeOperationsAlertState(
+        adapters,
+        configuration,
+        alertKey,
+        operationsDelivery.discordMessageId,
+      );
+    } catch (observationError: unknown) {
+      cause = new AggregateError(
+        [error, observationError],
+        "運用障害通知ledgerを再観測できませんでした",
+        {
+          cause: error,
+        },
+      );
+    }
+    throw new OperationsAlertCommitFailureError(
+      operationsDelivery.discordMessageId,
+      observedState,
+      cause,
+    );
   }
   return Object.freeze({
     delivery: operationsDelivery,

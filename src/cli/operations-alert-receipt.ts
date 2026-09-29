@@ -6,7 +6,8 @@ import {
   type Receipt,
   type ReceiptBinding,
 } from "../application/tracking-run/receipt-schema.js";
-import { createReceipt } from "../application/tracking-run/receipt-codec.js";
+import { createReceipt, decodeReceipt } from "../application/tracking-run/receipt-codec.js";
+import { serializeCanonicalJson } from "../canonical-json/value.js";
 import type { PublicFailureArtifact } from "../application/tracking-run/failure-artifact.js";
 import type { StateBranchCommitResult } from "../persistence/branch-adapter.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
@@ -81,7 +82,11 @@ export function createOperationsAlertReceipt(
   delivery:
     | Readonly<{ status: "sent"; discordMessageId: string }>
     | Readonly<{ status: "no_effect" }>
-    | Readonly<{ status: "ambiguous"; discordMessageId?: string }>,
+    | Readonly<{
+        status: "ambiguous";
+        discordMessageId?: string;
+        observedOperationsLedgerState?: "sent" | "reserved" | "absent" | "unverified";
+      }>,
   commit: StateBranchCommitResult | undefined,
 ): OperationsAlertReceipt {
   if ((delivery.status === "sent") !== (commit != null)) {
@@ -120,6 +125,9 @@ export function createOperationsAlertReceipt(
       result: {
         incidentId,
         ...(discordMessageId == null ? {} : { discordMessageId }),
+        ...(delivery.status === "ambiguous" && delivery.observedOperationsLedgerState != null
+          ? { observedOperationsLedgerState: delivery.observedOperationsLedgerState }
+          : {}),
         ...(commit == null
           ? {}
           : {
@@ -139,6 +147,29 @@ export function createOperationsAlertReceipt(
   );
   if (receipt.receiptType !== "operations_alert") {
     throw new TypeError("運用障害通知receiptの種別が不正です");
+  }
+  return receipt;
+}
+
+/** 以前の運用通知receiptが現在のincidentと失敗証拠に結合することを確かめる。 */
+export function decodeOperationsAlertReceiptForIncident(
+  bytes: Uint8Array,
+  artifact: PublicFailureArtifact,
+  incidentId: string,
+): OperationsAlertReceipt {
+  const receipt = decodeReceipt(bytes, nodeContentDigestPort);
+  const binding = alertBinding(artifact);
+  if (
+    receipt.receiptType !== "operations_alert" ||
+    receipt.logicalTarget !== incidentId ||
+    receipt.result.incidentId !== incidentId ||
+    receipt.phaseSequence !== (artifact.failure.completedPhaseSequence ?? 1) ||
+    receipt.previousReceiptDigest !== artifact.failure.lastReceiptDigest ||
+    serializeCanonicalJson(receipt.binding) !== serializeCanonicalJson(binding) ||
+    serializeCanonicalJson(receipt.expectedStateRevision ?? null) !==
+      serializeCanonicalJson(expectedAlertStateRevision(artifact, binding) ?? null)
+  ) {
+    throw new TypeError("以前の運用障害通知receiptが現在のincidentと一致しません");
   }
   return receipt;
 }

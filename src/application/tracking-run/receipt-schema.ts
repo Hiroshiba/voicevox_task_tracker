@@ -255,6 +255,9 @@ export const receiptSchema = z.discriminatedUnion("receiptType", [
     result: z.strictObject({
       incidentId: nonEmptyStringSchema,
       discordMessageId: nonEmptyStringSchema.optional(),
+      observedOperationsLedgerState: z
+        .enum(["sent", "reserved", "absent", "unverified"])
+        .optional(),
       operationsLedgerRevision: gitCommitRevisionSchema.optional(),
       operationsLedgerCommitMetadata: z
         .strictObject({

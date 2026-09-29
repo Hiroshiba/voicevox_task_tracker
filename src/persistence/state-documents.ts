@@ -20,10 +20,13 @@ export {
 } from "./state-run-report.js";
 export {
   createStateOperationsAlertLedger,
+  isCanonicalStateOperationsAlertLedgerSource,
   parseStateOperationsAlertLedger,
   serializeStateOperationsAlertLedger,
   OPERATIONS_ALERT_LEDGER_SCHEMA_VERSION_1,
+  OPERATIONS_ALERT_LEDGER_SCHEMA_VERSION_2,
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
+  type StateOperationsAlertReservation,
   type StateOperationsAlertLedger,
 } from "./operations-alert-ledger.js";
 

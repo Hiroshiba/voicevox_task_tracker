@@ -20,6 +20,7 @@ import {
   readWorkflowFailureArtifacts,
 } from "../operations-failure-selection.js";
 import { createOperationsAlertReceipt } from "../operations-alert-receipt.js";
+import { readPriorOperationsAlertReceipts } from "../operations-alert-receipt-file.js";
 import type {
   BuildPagesCliCommand,
   NotifyOperationsCliCommand,
@@ -29,6 +30,8 @@ import type {
 import {
   deliverOperationsAlert,
   OperationsAlertCommitFailureError,
+  OperationsAlertNoEffectError,
+  OperationsAlertPendingDeliveryError,
 } from "../notification-delivery-runtime.js";
 import { requireEnvironmentValue } from "../production-runtime-setup.js";
 import {
@@ -310,6 +313,35 @@ export async function notifyWorkflowOperations(
     snapshot,
     notificationLedger: await session.loadNotificationLedger(),
   });
+  const priorReceipts = await readPriorOperationsAlertReceipts(
+    resolve(dependencies.adapters.repositoryPath, command.receiptPath),
+    resolve(dependencies.adapters.repositoryPath, command.previousReceiptsDirectory),
+    command.workflowRunId,
+    primary,
+    incidentId,
+  );
+  const priorDeliveries = priorReceipts.filter((receipt) => receipt.status !== "no_effect");
+  if (priorDeliveries.length > 0) {
+    const recorded = state.notificationLedger.operationsAlerts.find(
+      (entry) => entry.incidentId === incidentId && entry.kind === incidentKind,
+    );
+    if (recorded == null) {
+      throw new OperationsAlertPendingDeliveryError(
+        new TypeError("既存receiptの送信結果をexact stateで確認できません"),
+      );
+    }
+    if (
+      priorDeliveries.some(
+        (receipt) =>
+          receipt.result.discordMessageId != null &&
+          receipt.result.discordMessageId !== recorded.discordMessageId,
+      )
+    ) {
+      throw new OperationsAlertPendingDeliveryError(
+        new TypeError("既存receiptとexact stateのDiscord message IDが一致しません"),
+      );
+    }
+  }
   const knownSecrets = config.notifications.discord.enabled
     ? Object.freeze([
         requireEnvironmentValue(
@@ -349,15 +381,27 @@ export async function notifyWorkflowOperations(
   } catch (error: unknown) {
     if (
       !(error instanceof OperationsAlertCommitFailureError) &&
+      !(error instanceof OperationsAlertPendingDeliveryError) &&
+      !(error instanceof OperationsAlertNoEffectError) &&
       !(error instanceof DiscordOperationsPostSendError) &&
       !(error instanceof DiscordWebhookDeliveryUnknownError)
     ) {
       throw error;
     }
-    const delivery =
-      error instanceof DiscordWebhookDeliveryUnknownError
-        ? { status: "ambiguous" as const }
-        : { status: "ambiguous" as const, discordMessageId: error.discordMessageId };
+    let delivery: Parameters<typeof createOperationsAlertReceipt>[3];
+    if (error instanceof OperationsAlertNoEffectError) {
+      delivery = { status: "no_effect" };
+    } else if (error instanceof OperationsAlertCommitFailureError) {
+      delivery = {
+        status: "ambiguous",
+        discordMessageId: error.discordMessageId,
+        observedOperationsLedgerState: error.observedState,
+      };
+    } else if (error instanceof DiscordOperationsPostSendError) {
+      delivery = { status: "ambiguous", discordMessageId: error.discordMessageId };
+    } else {
+      delivery = { status: "ambiguous" };
+    }
     try {
       const receipt = createOperationsAlertReceipt(
         primary,
@@ -372,7 +416,7 @@ export async function notifyWorkflowOperations(
       );
     } catch (receiptError: unknown) {
       throw new OperationsAlertReceiptFailureError(
-        "ambiguous",
+        delivery.status === "no_effect" ? "no_effect" : "ambiguous",
         new AggregateError(
           [error, receiptError],
           "運用障害通知の失敗receiptを保存できませんでした",

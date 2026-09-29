@@ -216,6 +216,8 @@ function assertReceiptSemantics(receipt: Receipt): void {
       (receipt.status === "no_effect") !== (receipt.receiptKind === "not_required") ||
       (receipt.status === "sent" && receipt.result.discordMessageId == null) ||
       (receipt.status === "no_effect" && receipt.result.discordMessageId != null) ||
+      (receipt.status !== "ambiguous" && receipt.result.observedOperationsLedgerState != null) ||
+      (receipt.status === "sent") !== (receipt.result.operationsLedgerRevision != null) ||
       (receipt.result.operationsLedgerRevision != null) !==
         (receipt.result.operationsLedgerCommitMetadata != null)
     ) {

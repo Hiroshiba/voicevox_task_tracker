@@ -171,6 +171,7 @@ type NotifyOperationsCommandFields = Readonly<{
   failureDirectory: string;
   failedJobs: readonly string[];
   receiptPath: string;
+  previousReceiptsDirectory: string;
   occurredAt: UtcIsoDateTime;
   retryAttempts: number;
 }>;
@@ -686,6 +687,7 @@ function parseNotifyOperations(args: readonly string[]): NotifyOperationsCliComm
       "--failure-directory",
       "--failed-job",
       "--receipt",
+      "--previous-receipts-directory",
       "--occurred-at",
       "--retry-attempts",
     ]),
@@ -735,6 +737,11 @@ function parseNotifyOperations(args: readonly string[]): NotifyOperationsCliComm
       options,
       "--receipt",
       "artifacts/workflow/operations-alert-receipt.json",
+    ),
+    previousReceiptsDirectory: singleOption(
+      options,
+      "--previous-receipts-directory",
+      "artifacts/workflow/previous-operations-alert-receipts",
     ),
     occurredAt,
     retryAttempts,

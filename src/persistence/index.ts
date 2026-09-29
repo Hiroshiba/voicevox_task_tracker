@@ -68,6 +68,9 @@ export { MemoryStateBranchAdapter } from "./memory-state-branch-adapter.js";
 export {
   assertOperationsAlertLedgerWritable,
   commitOperationsAlertLedger,
+  loadOperationsAlertLedger,
+  releaseOperationsAlertDelivery,
+  reserveOperationsAlertDelivery,
 } from "./operations-alert-cas.js";
 export {
   assertExistingStatePublicSafety,
@@ -132,6 +135,7 @@ export {
   createEmptyStateNotificationLedger,
   createStateNotificationLedger,
   createStateOperationsAlertLedger,
+  isCanonicalStateOperationsAlertLedgerSource,
   createStateRunReport,
   NOTIFICATION_LEDGER_SCHEMA_VERSION_6,
   NOTIFICATION_LEDGER_SCHEMA_VERSION_7,
@@ -139,6 +143,7 @@ export {
   NOTIFICATION_LEDGER_SCHEMA_VERSION_9,
   NOTIFICATION_LEDGER_SCHEMA_VERSION_10,
   OPERATIONS_ALERT_LEDGER_SCHEMA_VERSION_1,
+  OPERATIONS_ALERT_LEDGER_SCHEMA_VERSION_2,
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
   NOTIFICATION_LEDGER_SCHEMA_VERSION_5,
   parseStateNotificationLedger,
@@ -148,5 +153,6 @@ export {
   serializeStateRunReport,
   type StateNotificationLedger,
   type StateOperationsAlertLedger,
+  type StateOperationsAlertReservation,
   type StateRunReport,
 } from "./state-documents.js";

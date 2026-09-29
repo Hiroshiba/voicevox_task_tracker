@@ -13,9 +13,16 @@ import {
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
 import { StateBranchConflictError, StateBranchCommitError } from "./errors.js";
-import { createStateNotificationLedger } from "./state-documents.js";
+import { decodeStateFile, encodeStateFile } from "./state-file-codec.js";
 import { createStateLedgerUpdates, loadStateNotificationLedgers } from "./state-ledger-files.js";
-import { OPERATIONS_ALERT_LEDGER_STATE_PATH_V1 } from "./operations-alert-ledger.js";
+import {
+  createStateOperationsAlertLedger,
+  OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
+  parseStateOperationsAlertLedger,
+  serializeStateOperationsAlertLedger,
+  type StateOperationsAlertLedger,
+  type StateOperationsAlertReservation,
+} from "./operations-alert-ledger.js";
 import { writeStateCas } from "./state-cas.js";
 
 /** 送信前にexact headの専用ledgerだけを更新できることを確認する。 */
@@ -68,46 +75,57 @@ async function assertProtectedFilesUnchanged(
   }
 }
 
-/** 運用障害通知だけを専用ledgerへCAS保存し、追跡fileをpush前後に照合する。 */
-export async function commitOperationsAlertLedger(
+/** exact stateから送信予約と送信済み通知を読む。 */
+export async function loadOperationsAlertLedger(
+  adapter: StateBranchAdapter,
+  head: StateBranchHead,
+): Promise<StateOperationsAlertLedger> {
+  const file =
+    head.status === "missing"
+      ? ({ status: "missing" } satisfies StateFileReadResult)
+      : await adapter.readFile(head.revision, OPERATIONS_ALERT_LEDGER_STATE_PATH_V1);
+  const source = decodeStateFile(file, "operations alert ledger");
+  return source == null
+    ? createStateOperationsAlertLedger({
+        schemaVersion: "2",
+        operationsAlerts: [],
+        deliveryReservations: [],
+      })
+    : parseStateOperationsAlertLedger(source);
+}
+
+async function commitOperationsAlertUpdate(
   adapter: StateBranchAdapter,
   configuration: StatePersistenceConfiguration,
   expectedHead: StateBranchHead,
-  entry: OperationsAlertLedgerEntry,
+  alertKey: string,
+  action: "reserve" | "settle" | "release",
+  committedAt: string,
+  update: (ledger: StateOperationsAlertLedger) => StateOperationsAlertLedger,
 ): Promise<StateBranchCommitResult> {
   const commitIdentity = Object.freeze({
     commitScope: "operations_alert" as const,
     operationId: createStateCommitOperationId({
       scope: "operations_alert",
-      alertKey: entry.alertKey,
+      alertKey,
+      action,
     }),
   });
   const written = await writeStateCas(adapter, configuration, expectedHead, {
     commitIdentity,
     build: async (parent) => {
-      const current = await loadStateNotificationLedgers(adapter, configuration, parent);
-      if (current.operationsAlerts.some((alert) => alert.alertKey === entry.alertKey)) {
-        throw new StateBranchConflictError();
-      }
-      const next = createStateNotificationLedger({
-        ...current,
-        operationsAlerts: [...current.operationsAlerts, entry],
-      });
-      const updates = await createStateLedgerUpdates(
-        adapter,
-        configuration,
-        parent,
-        next,
-        "operations_alert",
-      );
-      if (updates.length !== 1 || updates[0]?.path !== OPERATIONS_ALERT_LEDGER_STATE_PATH_V1) {
-        throw new TypeError("運用障害通知commitに専用ledger以外の更新があります");
-      }
+      await assertOperationsAlertLedgerWritable(adapter, configuration, parent);
+      const next = update(await loadOperationsAlertLedger(adapter, parent));
       return {
-        updates,
+        updates: [
+          {
+            path: OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
+            bytes: encodeStateFile(serializeStateOperationsAlertLedger(next)),
+          },
+        ],
         deletions: [],
-        message: `tracker operations alert ${entry.alertKey}`,
-        committedAt: entry.sentAt,
+        message: `tracker operations alert ${action} ${alertKey}`,
+        committedAt,
         commitIdentity,
       };
     },
@@ -137,4 +155,110 @@ export async function commitOperationsAlertLedger(
   }
   await assertProtectedFilesUnchanged(adapter, configuration, inspected.parent, published.revision);
   return written.commit;
+}
+
+/** Discord HTTPより前に送信予約を専用ledgerへCAS保存する。 */
+export async function reserveOperationsAlertDelivery(
+  adapter: StateBranchAdapter,
+  configuration: StatePersistenceConfiguration,
+  expectedHead: StateBranchHead,
+  reservation: StateOperationsAlertReservation,
+): Promise<StateBranchCommitResult> {
+  return commitOperationsAlertUpdate(
+    adapter,
+    configuration,
+    expectedHead,
+    reservation.alertKey,
+    "reserve",
+    reservation.startedAt,
+    (ledger) => {
+      if (
+        ledger.operationsAlerts.some((entry) => entry.alertKey === reservation.alertKey) ||
+        ledger.deliveryReservations.some((entry) => entry.alertKey === reservation.alertKey)
+      ) {
+        throw new StateBranchConflictError();
+      }
+      return createStateOperationsAlertLedger({
+        ...ledger,
+        deliveryReservations: [...ledger.deliveryReservations, reservation],
+      });
+    },
+  );
+}
+
+/** 送信予約を同じincidentの送信済み記録へCAS確定する。 */
+export async function commitOperationsAlertLedger(
+  adapter: StateBranchAdapter,
+  configuration: StatePersistenceConfiguration,
+  expectedHead: StateBranchHead,
+  entry: OperationsAlertLedgerEntry,
+): Promise<StateBranchCommitResult> {
+  return commitOperationsAlertUpdate(
+    adapter,
+    configuration,
+    expectedHead,
+    entry.alertKey,
+    "settle",
+    entry.sentAt,
+    (ledger) => {
+      const reservation = ledger.deliveryReservations.find(
+        (item) => item.alertKey === entry.alertKey,
+      );
+      if (reservation == null) {
+        throw new StateBranchConflictError();
+      }
+      if (
+        reservation.incidentId !== entry.incidentId ||
+        reservation.kind !== entry.kind ||
+        reservation.occurredAt !== entry.occurredAt ||
+        entry.sentAt < reservation.startedAt
+      ) {
+        throw new StateBranchConflictError();
+      }
+      return createStateOperationsAlertLedger({
+        ...ledger,
+        operationsAlerts: [...ledger.operationsAlerts, entry],
+        deliveryReservations: ledger.deliveryReservations.filter(
+          (item) => item.alertKey !== entry.alertKey,
+        ),
+      });
+    },
+  );
+}
+
+/** 明確に送信されなかった通知の予約だけをCAS解除する。 */
+export async function releaseOperationsAlertDelivery(
+  adapter: StateBranchAdapter,
+  configuration: StatePersistenceConfiguration,
+  expectedHead: StateBranchHead,
+  reservation: StateOperationsAlertReservation,
+): Promise<StateBranchCommitResult> {
+  return commitOperationsAlertUpdate(
+    adapter,
+    configuration,
+    expectedHead,
+    reservation.alertKey,
+    "release",
+    reservation.startedAt,
+    (ledger) => {
+      const current = ledger.deliveryReservations.find(
+        (item) => item.alertKey === reservation.alertKey,
+      );
+      if (current == null) {
+        throw new StateBranchConflictError();
+      }
+      if (
+        current.incidentId !== reservation.incidentId ||
+        current.startedAt !== reservation.startedAt
+      ) {
+        throw new StateBranchConflictError();
+      }
+      return createStateOperationsAlertLedger({
+        ...ledger,
+        deliveryReservations: ledger.deliveryReservations.filter(
+          (item) => item.alertKey !== reservation.alertKey,
+        ),
+      });
+    },
+  );
 }

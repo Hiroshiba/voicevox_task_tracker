@@ -79,15 +79,10 @@ function infrastructureAlertPayload(
   return payload;
 }
 
-/** workflow基盤障害を専用kindのmessageとledger entryで送る。 */
-export async function sendDiscordInfrastructureAlert(
+/** workflow基盤障害の送信識別子とpayloadを確定する。 */
+export function buildDiscordInfrastructureAlertPlan(
   incident: WorkflowInfrastructureIncident,
-  settings: DiscordDeliverySettings,
-  dependencies: DiscordDeliveryDependencies,
-): Promise<DiscordOperationsAlertDelivery> {
-  if (!settings.enabled) {
-    return Object.freeze({ status: "disabled" });
-  }
+): Readonly<{ alertKey: string; payload: DiscordWebhookPayload }> {
   if (!INCIDENT_ID_PATTERN.test(incident.incidentId)) {
     throw new DiscordPayloadError("運用障害のincident IDが不正です");
   }
@@ -100,6 +95,19 @@ export async function sendDiscordInfrastructureAlert(
     .slice(0, 24);
   const alertKey = `discord-operations-alert:v1:${alertHash}`;
   const payload = infrastructureAlertPayload(incident, alertKey);
+  return Object.freeze({ alertKey, payload });
+}
+
+/** workflow基盤障害を専用kindのmessageとledger entryで送る。 */
+export async function sendDiscordInfrastructureAlert(
+  incident: WorkflowInfrastructureIncident,
+  settings: DiscordDeliverySettings,
+  dependencies: DiscordDeliveryDependencies,
+): Promise<DiscordOperationsAlertDelivery> {
+  if (!settings.enabled) {
+    return Object.freeze({ status: "disabled" });
+  }
+  const { alertKey, payload } = buildDiscordInfrastructureAlertPlan(incident);
   if (await dependencies.ledger.hasOperationsAlert(alertKey)) {
     return Object.freeze({ status: "already_recorded", alertKey });
   }

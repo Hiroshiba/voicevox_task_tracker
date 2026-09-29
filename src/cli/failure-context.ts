@@ -31,7 +31,11 @@ import {
   readWorkflowFailureArtifacts,
 } from "./operations-failure-selection.js";
 import { NotificationSettlementFailureError } from "./notification-settlement.js";
-import { OperationsAlertCommitFailureError } from "./notification-delivery-runtime.js";
+import {
+  OperationsAlertCommitFailureError,
+  OperationsAlertNoEffectError,
+  OperationsAlertPendingDeliveryError,
+} from "./notification-delivery-runtime.js";
 import { isPublicBoundaryViolation } from "./public-boundary-error.js";
 import type { CliExecutionResult } from "./application.js";
 import { CliUsageError, CliWorkflowArtifactError, CliCodexAuthenticationError } from "./errors.js";
@@ -79,6 +83,8 @@ function failureKind(error: unknown): FailedRun["failureKind"] {
   }
   if (
     error instanceof OperationsAlertCommitFailureError ||
+    error instanceof OperationsAlertPendingDeliveryError ||
+    error instanceof OperationsAlertNoEffectError ||
     error instanceof DiscordOperationsPostSendError ||
     error instanceof DiscordWebhookDeliveryUnknownError
   ) {
@@ -198,6 +204,7 @@ export async function observeCliFailureContext(
   }
   if (
     error instanceof OperationsAlertCommitFailureError ||
+    error instanceof OperationsAlertPendingDeliveryError ||
     error instanceof DiscordOperationsPostSendError ||
     error instanceof DiscordWebhookDeliveryUnknownError
   ) {
