@@ -28,7 +28,7 @@ export async function finalizeDailyRun(
     createNotificationSettlementPort(
       adapters,
       configuration,
-      input.repositoryInventory.inventory,
+      state.snapshot.repositories,
       input.configuration.credentials.knownSecrets,
       input.configuration.target.kind === "production" ? "production" : "recording",
     ),

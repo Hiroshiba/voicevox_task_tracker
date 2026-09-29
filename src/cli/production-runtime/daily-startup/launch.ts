@@ -5,13 +5,14 @@ import {
   serializeCanonicalJsonLine,
 } from "../../../canonical-json/value.js";
 import { nodeContentDigestPort } from "../../../infrastructure/tracking-run/content-digest.js";
-import { inspectRunBootstrapState } from "../../../infrastructure/tracking-run/bootstrap-state.js";
+import {
+  inspectRunBootstrapState,
+  type RunRecoveryIntent,
+} from "../../../infrastructure/tracking-run/bootstrap-state.js";
 import { inspectRunState } from "../../../infrastructure/tracking-run/inspect-run-state.js";
 import { receiptChainEnvelopeSchema } from "../../../application/tracking-run/receipt-chain-schema.js";
 import { verifyReceiptChain } from "../../../application/tracking-run/receipt-chain.js";
 import { completeTrackingRun } from "../../../application/tracking-run/complete-run.js";
-import { RUN_TRANSACTION_MARKER_STATE_PATH_V1 } from "../../../application/tracking-run/contracts/recovery-paths.js";
-import { readRunTransactionMarkerRecoveryBootstrap } from "../../../application/tracking-run/recovery-bootstrap.js";
 import type { DailyTransactionDependencies } from "../../daily-transaction.js";
 import { readPublicationRuntimeContext } from "../../publication-runtime.js";
 import { sequentialReceiptPath } from "../../sequential-receipt-path.js";
@@ -52,7 +53,7 @@ export function createInspectLaunchStage(
   adapters: ConfigurationRuntimeAdapters,
   now: () => Date,
 ): ProductionDailyDependencies["inspectLaunch"] {
-  return async (request, invocationId) => {
+  return async (request, invocationId, intent) => {
     const config = await adapters.loadConfig(resolve(adapters.repositoryPath, request.configPath));
     const target = await resolveRuntimeTarget(
       Object.freeze({
@@ -66,29 +67,25 @@ export function createInspectLaunchStage(
       request,
     );
     const adapter = adapters.createStateBranchAdapter();
-    let bootstrap = await inspectRunBootstrapState(adapter, target.state.branch, {
-      kind: "start_new",
-    });
-    if (
-      bootstrap.kind === "start_with_current_runtime" &&
-      bootstrap.observedStateHead.status === "present"
-    ) {
-      const markerFile = await adapter.readFile(
-        bootstrap.observedStateHead.revision,
-        RUN_TRANSACTION_MARKER_STATE_PATH_V1,
-      );
-      if (markerFile.status === "present") {
-        const marker = readRunTransactionMarkerRecoveryBootstrap(markerFile.bytes);
-        if (marker.phase === "run_finalized") {
-          bootstrap = await inspectRunBootstrapState(adapter, target.state.branch, {
-            kind: "retry_run",
-            runId: marker.runId,
-            exactStateRevision: bootstrap.observedStateHead.revision,
-          });
-        }
+    let recoveryIntent: RunRecoveryIntent;
+    if (intent.kind === "start_new") {
+      recoveryIntent = intent;
+    } else {
+      const head = await adapter.resolveHead(target.state.branch);
+      if (head.status !== "present") {
+        throw new TypeError("再開するrunのstate headがありません");
       }
+      recoveryIntent = {
+        kind: "retry_run",
+        runId: intent.runId,
+        exactStateRevision: head.revision,
+      };
     }
+    const bootstrap = await inspectRunBootstrapState(adapter, target.state.branch, recoveryIntent);
     if (bootstrap.kind === "start_with_current_runtime") {
+      if (intent.kind !== "start_new") {
+        throw new TypeError("再開するrunのstate bootstrapがありません");
+      }
       return Object.freeze({
         runtime: "current",
         decision: Object.freeze({ kind: "start_new", baseRevision: bootstrap.observedStateHead }),
@@ -154,10 +151,6 @@ export function createInspectLaunchStage(
         },
         nodeContentDigestPort,
       );
-      return Object.freeze({
-        runtime: "current",
-        decision: Object.freeze({ kind: "start_new", baseRevision: bootstrap.observedStateHead }),
-      });
     }
     const runtime = await readPublicationRuntimeContext(
       adapters.repositoryPath,

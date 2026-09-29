@@ -17,6 +17,22 @@ const statePathSchema = z
   );
 const nonNegativeNumberSchema = z.number().nonnegative();
 const positiveIntegerSchema = z.number().int().positive();
+const webBasePathPattern = /^\/(?:[A-Za-z0-9._~-]+\/)*$/u;
+export const publicationPagesUrlSchema = z.url().refine((value) => {
+  const url = new URL(value);
+  return (
+    url.protocol === "https:" &&
+    url.hostname === "voicevox.github.io" &&
+    url.port === "" &&
+    url.username === "" &&
+    url.password === "" &&
+    url.search === "" &&
+    url.hash === "" &&
+    url.href === value &&
+    webBasePathPattern.test(url.pathname) &&
+    !url.pathname.split("/").some((segment) => segment === "." || segment === "..")
+  );
+});
 const publicationFileStateSchema = z.discriminatedUnion("status", [
   z.strictObject({ status: z.literal("missing") }),
   z.strictObject({ status: z.literal("present"), digest: sha256Schema }),
@@ -63,7 +79,7 @@ export const publicationInputsSchema = z.strictObject({
     previousInitialPagesEvidence: publicationFileStateSchema,
   }),
   pages: z.strictObject({
-    url: z.url().startsWith("https://"),
+    url: publicationPagesUrlSchema,
     confidenceThresholds: z.strictObject({
       high: z.number().min(0).max(1),
       medium: z.number().min(0).max(1),

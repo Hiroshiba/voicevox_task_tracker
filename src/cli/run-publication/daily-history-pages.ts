@@ -1,5 +1,3 @@
-import { resolve } from "node:path";
-
 import {
   PagesEffectNotStartedError,
   publishPagesWithEffect,
@@ -10,6 +8,7 @@ import {
   recordNotificationHistorySequentialFailure,
 } from "../notification-history-pages-deployment-record.js";
 import { parseNotificationHistoryPagesBuildArtifact } from "../notification-history-pages-build-artifact.js";
+import { sequentialPagesArtifactPath } from "../sequential-pages-artifact-path.js";
 import type { NotificationHistoryPagesDeploymentOutcome } from "../notification-history-pages-deployment-outcome.js";
 import type {
   NotificationHistoryPagesPreparedRun,
@@ -64,8 +63,16 @@ export async function buildDailyNotificationHistoryPages(
     now: adapters.now,
   });
   const artifact = parseNotificationHistoryPagesBuildArtifact(built);
+  if (artifact.receipt.binding.bindingKind !== "checkpoint") {
+    throw new TypeError("通知履歴Pages build receiptにcheckpoint結合がありません");
+  }
   await adapters.writeJsonArtifact(
-    resolve(adapters.repositoryPath, "artifacts/workflow/notification-history-pages-build.json"),
+    sequentialPagesArtifactPath(
+      adapters.repositoryPath,
+      artifact.receipt.binding.runId,
+      "notification-history",
+      "build",
+    ),
     artifact,
   );
   return artifact;
@@ -143,9 +150,11 @@ export async function deployDailyNotificationHistoryPages(
               observedAt: adapters.now().toISOString(),
             });
       await adapters.writeJsonArtifact(
-        resolve(
+        sequentialPagesArtifactPath(
           adapters.repositoryPath,
-          "artifacts/workflow/notification-history-pages-deployment.json",
+          input.runId,
+          "notification-history",
+          "deployment",
         ),
         deployed,
       );

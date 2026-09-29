@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 
 import { completeTrackingRun } from "../../../application/tracking-run/complete-run.js";
+import { createInitialPagesPublicationEvidence } from "../../../application/tracking-run/initial-pages-evidence.js";
 import {
   PagesEffectNotStartedError,
   publishPagesWithEffect,
@@ -16,6 +17,8 @@ import {
 import type {
   InitialStateCommitReceipt,
   NotificationSettlementReceipt,
+  PagesBuildReceipt,
+  Receipt,
   RunFinalizationReceipt,
 } from "../../../application/tracking-run/receipt-schema.js";
 import { nodeContentDigestPort } from "../../../infrastructure/tracking-run/content-digest.js";
@@ -24,15 +27,20 @@ import type { DailyTransactionDependencies } from "../../daily-transaction.js";
 import {
   decodeInitialPagesBuildArtifact,
   parseInitialPagesBuildArtifact,
+  type InitialPagesBuildArtifact,
 } from "../../initial-pages-build-artifact.js";
 import {
+  InitialPagesDeploymentFailureError,
   preflightInitialPagesDeployment,
   recordInitialPagesSequentialDeployment,
   recordInitialPagesSequentialFailure,
   readInitialPagesDeploymentOutcome,
 } from "../../initial-pages-deployment.js";
-import { decodeNotificationHistoryPagesBuildArtifact } from "../../notification-history-pages-build-artifact.js";
-import { CliWorkflowArtifactError } from "../../errors.js";
+import {
+  decodeNotificationHistoryPagesBuildArtifact,
+  parseNotificationHistoryPagesBuildArtifact,
+  type NotificationHistoryPagesBuildArtifact,
+} from "../../notification-history-pages-build-artifact.js";
 import { readNotificationMessageState } from "../../notification-message-state.js";
 import { createNotificationSettlementPort } from "../../notification-stage-runtime.js";
 import {
@@ -41,11 +49,14 @@ import {
 } from "../../notification-settlement.js";
 import { readRuntimeCredentials, resolveRuntimeTarget } from "../../production-runtime-setup.js";
 import { finalizeRun } from "../../run-finalization.js";
+import type { DurablePublicationRecord } from "../../durable-record-schema.js";
 import {
   buildDailyNotificationHistoryPages,
   deployDailyNotificationHistoryPages,
 } from "../../run-publication/daily-history-pages.js";
 import { buildPublicPages } from "../../run-publication/pages.js";
+import { buildNotificationHistoryPages } from "../../run-publication/notification-history-pages.js";
+import { sequentialPagesArtifactPath } from "../../sequential-pages-artifact-path.js";
 import type { RunRequest } from "../../../application/tracking-run/request.js";
 import type { ProductionRuntimeAdapters } from "../adapters.js";
 import type { ProductionTypes } from "../contracts.js";
@@ -73,26 +84,22 @@ async function optionalArtifactBytes(
   }
 }
 
-async function requiredArtifactBytes(
-  adapters: ProductionRuntimeAdapters,
-  path: string,
-): Promise<Uint8Array> {
-  try {
-    return await adapters.readArtifactBytes(resolve(adapters.repositoryPath, path));
-  } catch (error: unknown) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      throw new CliWorkflowArtifactError(path, "missing", { cause: error });
-    }
-    throw error;
-  }
-}
-
 function initialReceipt(entries: readonly ReceiptChainEntry[]): InitialStateCommitReceipt {
   const receipt = entries.find(
     (entry) => entry.receipt.receiptType === "initial_state_commit",
   )?.receipt;
   if (receipt?.receiptType !== "initial_state_commit") {
     throw new TypeError("再開に必要なinitial_state_commit receiptが保存されていません");
+  }
+  return receipt;
+}
+
+function initialBuildReceipt(entries: readonly ReceiptChainEntry[]): PagesBuildReceipt {
+  const receipt = entries.find(
+    (entry) => entry.receipt.receiptType === "pages_build" && entry.receipt.phase === "initial",
+  )?.receipt;
+  if (receipt?.receiptType !== "pages_build" || receipt.phase !== "initial") {
+    throw new TypeError("再開に必要な初回Pages build receiptが保存されていません");
   }
   return receipt;
 }
@@ -140,6 +147,131 @@ async function pendingConfiguration(
   });
 }
 
+async function initialPagesArtifact(
+  adapters: ProductionRuntimeAdapters,
+  configuration: PendingConfiguration,
+  record: DurablePublicationRecord,
+  initialStateRevision: string,
+  initial: InitialStateCommitReceipt,
+  receipt: PagesBuildReceipt,
+): Promise<InitialPagesBuildArtifact> {
+  const path = sequentialPagesArtifactPath(
+    adapters.repositoryPath,
+    record.runIdentity.runId,
+    "initial",
+    "build",
+  );
+  const saved = await optionalArtifactBytes(adapters, path);
+  if (saved != null) {
+    const artifact = decodeInitialPagesBuildArtifact(saved);
+    if (
+      artifact.receipt.receiptDigest !== receipt.receiptDigest ||
+      artifact.intent.runId !== record.runIdentity.runId ||
+      artifact.intent.checkpointDigest !== record.checkpointDigest ||
+      artifact.intent.sourceStateRevision !== initialStateRevision ||
+      artifact.receipt.previousReceiptDigest !== initial.receiptDigest
+    ) {
+      throw new TypeError("保存済み初回Pages build artifactがexact runと一致しません");
+    }
+    return artifact;
+  }
+  const rebuilt = await buildPublicPages({
+    adapter: adapters.createStateBranchAdapter(),
+    config: configuration.config,
+    stateConfiguration: configuration.target.state,
+    initialStateCommitReceipt: initial,
+    repositoryPath: adapters.repositoryPath,
+    outputDirectory: adapters.pagesOutputDirectory,
+    knownSecrets: configuration.credentials.knownSecrets,
+    writePublicData: adapters.writePublicData,
+    buildWebOutput: adapters.buildWebOutput,
+    now: adapters.now,
+  });
+  if (
+    receipt.result == null ||
+    rebuilt.intent.runId !== record.runIdentity.runId ||
+    rebuilt.intent.checkpointDigest !== record.checkpointDigest ||
+    rebuilt.intent.sourceStateRevision !== initialStateRevision ||
+    rebuilt.intent.deploymentIntentDigest !== receipt.result.deploymentIntentDigest ||
+    rebuilt.intent.pagesContentDigest !== receipt.result.pagesContentDigest ||
+    rebuilt.intent.outputManifestDigest !== receipt.result.outputManifestDigest ||
+    receipt.previousReceiptDigest !== initial.receiptDigest
+  ) {
+    throw new TypeError("再生成した初回Pagesのdigestが検証済みreceiptと一致しません");
+  }
+  const artifact = parseInitialPagesBuildArtifact({
+    schemaVersion: 1,
+    manifest: rebuilt.manifest,
+    intent: rebuilt.intent,
+    receipt,
+  });
+  await adapters.writeJsonArtifact(path, artifact);
+  return artifact;
+}
+
+async function notificationHistoryArtifact(
+  adapters: ProductionRuntimeAdapters,
+  configuration: PendingConfiguration,
+  record: DurablePublicationRecord,
+  exactStateRevision: string,
+  settlement: NotificationSettlementReceipt,
+  finalization: RunFinalizationReceipt,
+  receipt: PagesBuildReceipt,
+): Promise<NotificationHistoryPagesBuildArtifact> {
+  const path = sequentialPagesArtifactPath(
+    adapters.repositoryPath,
+    record.runIdentity.runId,
+    "notification-history",
+    "build",
+  );
+  const saved = await optionalArtifactBytes(adapters, path);
+  if (saved != null) {
+    const artifact = decodeNotificationHistoryPagesBuildArtifact(saved);
+    if (
+      artifact.receipt.receiptDigest !== receipt.receiptDigest ||
+      artifact.receipt.binding.bindingKind !== "checkpoint" ||
+      artifact.receipt.binding.runId !== record.runIdentity.runId ||
+      artifact.receipt.binding.checkpointDigest !== record.checkpointDigest ||
+      artifact.sourceStateRevision !== exactStateRevision ||
+      artifact.receipt.previousReceiptDigest !== finalization.receiptDigest
+    ) {
+      throw new TypeError("保存済み通知履歴Pages build artifactがexact runと一致しません");
+    }
+    return artifact;
+  }
+  const rebuilt = await buildNotificationHistoryPages({
+    adapter: adapters.createStateBranchAdapter(),
+    config: configuration.config,
+    stateConfiguration: configuration.target.state,
+    settlementReceipt: settlement,
+    finalizationReceipt: finalization,
+    repositoryPath: adapters.repositoryPath,
+    outputDirectory: adapters.pagesOutputDirectory,
+    knownSecrets: configuration.credentials.knownSecrets,
+    writePublicData: adapters.writePublicData,
+    buildWebOutput: adapters.buildWebOutput,
+    now: adapters.now,
+  });
+  if (
+    rebuilt.sourceStateRevision !== exactStateRevision ||
+    rebuilt.receipt.binding.bindingKind !== "checkpoint" ||
+    rebuilt.receipt.binding.runId !== record.runIdentity.runId ||
+    rebuilt.receipt.binding.checkpointDigest !== record.checkpointDigest ||
+    receipt.previousReceiptDigest !== finalization.receiptDigest ||
+    rebuilt.status !== receipt.status ||
+    (rebuilt.status === "built" &&
+      (receipt.result?.deploymentIntentDigest !== rebuilt.intent.deploymentIntentDigest ||
+        receipt.result.pagesContentDigest !== rebuilt.intent.pagesContentDigest ||
+        receipt.result.outputManifestDigest !== rebuilt.intent.outputManifestDigest)) ||
+    (rebuilt.status === "not_required" && receipt.notRequiredReason !== rebuilt.reason)
+  ) {
+    throw new TypeError("再生成した通知履歴Pagesのdigestが検証済みreceiptと一致しません");
+  }
+  const artifact = parseNotificationHistoryPagesBuildArtifact({ ...rebuilt, receipt });
+  await adapters.writeJsonArtifact(path, artifact);
+  return artifact;
+}
+
 /** 保存済みrunのexact effectを実行するproduction portを作る。 */
 export function createPendingRunStage(
   adapters: ProductionRuntimeAdapters,
@@ -147,6 +279,7 @@ export function createPendingRunStage(
   invocationId: string,
   inspectLaunch: ProductionDailyDependencies["inspectLaunch"],
   getRunId: () => string,
+  onReceiptRecorded: (receipt: Receipt) => void,
 ): ReturnType<ProductionDailyDependencies["pendingRun"]> {
   const readEntries = (): Promise<ReceiptChainEntry[]> =>
     readSequentialReceipts(adapters.repositoryPath, getRunId(), adapters.readArtifactBytes).then(
@@ -154,6 +287,7 @@ export function createPendingRunStage(
     );
   const appendEntries = async (...added: readonly ReceiptChainEntry[]): Promise<void> => {
     const entries = await readEntries();
+    const recorded: Receipt[] = [];
     for (const entry of added) {
       if (
         entries.some((current) => current.receipt.receiptDigest === entry.receipt.receiptDigest)
@@ -161,15 +295,22 @@ export function createPendingRunStage(
         continue;
       }
       entries.push(entry);
+      recorded.push(entry.receipt);
     }
     verifyReceiptChain(entries, nodeContentDigestPort);
     await adapters.writeJsonArtifact(
       sequentialReceiptPath(adapters.repositoryPath, getRunId()),
       receiptChainEnvelopeSchema.parse({ schemaVersion: RECEIPT_CHAIN_SCHEMA_VERSION, entries }),
     );
+    for (const receipt of recorded) {
+      onReceiptRecorded(receipt);
+    }
   };
   const inspect = async (): Promise<RecoveryStageInput> => {
-    const launch = await inspectLaunch(request, invocationId);
+    const launch = await inspectLaunch(request, invocationId, {
+      kind: "retry_run",
+      runId: getRunId(),
+    });
     if (launch.runtime !== "exact" || launch.decision.kind !== "resume_pending") {
       throw new TypeError("再開中のrunがexact pendingでなくなりました");
     }
@@ -197,10 +338,13 @@ export function createPendingRunStage(
             evidence: { kind: "state_commit", state: value.resumeInput.initialStateCommitEvidence },
           });
         }
-        const saved = await optionalArtifactBytes(
-          adapters,
-          "artifacts/workflow/initial-pages-build.json",
+        const buildPath = sequentialPagesArtifactPath(
+          adapters.repositoryPath,
+          value.record.runIdentity.runId,
+          "initial",
+          "build",
         );
+        const saved = await optionalArtifactBytes(adapters, buildPath);
         if (saved != null) {
           const artifact = decodeInitialPagesBuildArtifact(saved);
           if (
@@ -227,7 +371,7 @@ export function createPendingRunStage(
           now: adapters.now,
         });
         await adapters.writeJsonArtifact(
-          resolve(adapters.repositoryPath, "artifacts/workflow/initial-pages-build.json"),
+          buildPath,
           parseInitialPagesBuildArtifact({
             schemaVersion: 1,
             manifest: built.manifest,
@@ -241,14 +385,23 @@ export function createPendingRunStage(
         if (value.stage !== "initial_pages_deploy") {
           throw new TypeError("初回Pages deployの再開段階が一致しません");
         }
-        const artifact = decodeInitialPagesBuildArtifact(
-          await requiredArtifactBytes(adapters, "artifacts/workflow/initial-pages-build.json"),
-        );
-        if (artifact.receipt.receiptDigest !== value.buildReceipt.receiptDigest) {
-          throw new TypeError("保存済み初回Pages build artifactとexact receiptが一致しません");
-        }
         const configuration = await pendingConfiguration(adapters, request);
         const initial = initialReceipt(await readEntries());
+        let artifact: InitialPagesBuildArtifact;
+        try {
+          artifact = await initialPagesArtifact(
+            adapters,
+            configuration,
+            value.record,
+            value.initialStateRevision,
+            initial,
+            value.buildReceipt,
+          );
+        } catch (cause: unknown) {
+          throw new PagesEffectNotStartedError("初回Pages公開用buildの再読込に失敗しました", {
+            cause,
+          });
+        }
         const deployment = await publishPagesWithEffect(artifact, {
           preflight: (build) =>
             preflightInitialPagesDeployment({
@@ -290,19 +443,24 @@ export function createPendingRunStage(
                     observedAt: adapters.now().toISOString(),
                   });
             await adapters.writeJsonArtifact(
-              resolve(adapters.repositoryPath, "artifacts/workflow/initial-pages-deployment.json"),
+              sequentialPagesArtifactPath(
+                adapters.repositoryPath,
+                value.record.runIdentity.runId,
+                "initial",
+                "deployment",
+              ),
               outcome,
             );
             return outcome;
           },
           requirePublished: (outcome, observation) => {
             if (outcome.kind !== "success") {
-              throw new TypeError("初回Pages公開を確定できません", {
-                cause:
-                  observation.kind === "ambiguous" || observation.kind === "no_effect"
-                    ? observation.cause
-                    : undefined,
-              });
+              throw new InitialPagesDeploymentFailureError(
+                outcome,
+                observation.kind === "ambiguous" || observation.kind === "no_effect"
+                  ? observation.cause
+                  : undefined,
+              );
             }
             return outcome;
           },
@@ -348,17 +506,49 @@ export function createPendingRunStage(
         if (value.stage !== "notifications") {
           throw new TypeError("通知settlementの再開段階が一致しません");
         }
-        const build = decodeInitialPagesBuildArtifact(
-          await requiredArtifactBytes(adapters, "artifacts/workflow/initial-pages-build.json"),
-        );
-        await requiredArtifactBytes(adapters, "artifacts/workflow/initial-pages-deployment.json");
-        const deployed = await readInitialPagesDeploymentOutcome(
-          resolve(adapters.repositoryPath, "artifacts/workflow/initial-pages-deployment.json"),
-          build,
-        );
         const configuration = await pendingConfiguration(adapters, request);
         const entries = await readEntries();
         const initial = initialReceipt(entries);
+        const build = await initialPagesArtifact(
+          adapters,
+          configuration,
+          value.record,
+          value.initialStateRevision,
+          initial,
+          initialBuildReceipt(entries),
+        );
+        const deploymentPath = sequentialPagesArtifactPath(
+          adapters.repositoryPath,
+          value.record.runIdentity.runId,
+          "initial",
+          "deployment",
+        );
+        const savedDeployment = await optionalArtifactBytes(adapters, deploymentPath);
+        const deploymentReceipt = entries[2]?.receipt;
+        if (
+          deploymentReceipt?.receiptType !== "pages_deployment" ||
+          deploymentReceipt.phase !== "initial"
+        ) {
+          throw new TypeError("再開に必要な初回Pages deployment receiptが保存されていません");
+        }
+        const deployed =
+          savedDeployment == null
+            ? {
+                kind: "success" as const,
+                receipt: deploymentReceipt,
+                evidence: createInitialPagesPublicationEvidence(
+                  {
+                    buildReceipt: build.receipt,
+                    deploymentReceipt,
+                    sourceStateRevision: value.initialStateRevision,
+                  },
+                  nodeContentDigestPort,
+                ),
+              }
+            : await readInitialPagesDeploymentOutcome(deploymentPath, build);
+        if (savedDeployment == null) {
+          await adapters.writeJsonArtifact(deploymentPath, deployed);
+        }
         const initialState = await readNotificationMessageState(
           adapters.createStateBranchAdapter(),
           configuration.target.state,
@@ -472,10 +662,13 @@ export function createPendingRunStage(
             },
           });
         }
-        const saved = await optionalArtifactBytes(
-          adapters,
-          "artifacts/workflow/notification-history-pages-build.json",
+        const buildPath = sequentialPagesArtifactPath(
+          adapters.repositoryPath,
+          value.record.runIdentity.runId,
+          "notification-history",
+          "build",
         );
+        const saved = await optionalArtifactBytes(adapters, buildPath);
         if (saved != null) {
           const artifact = decodeNotificationHistoryPagesBuildArtifact(saved);
           if (
@@ -501,17 +694,24 @@ export function createPendingRunStage(
         if (value.stage !== "notification_history_deploy") {
           throw new TypeError("通知履歴Pages deployの再開段階が一致しません");
         }
-        const artifact = decodeNotificationHistoryPagesBuildArtifact(
-          await requiredArtifactBytes(
-            adapters,
-            "artifacts/workflow/notification-history-pages-build.json",
-          ),
-        );
-        if (artifact.receipt.receiptDigest !== value.buildReceipt.receiptDigest) {
-          throw new TypeError("保存済み通知履歴Pages build artifactとexact receiptが一致しません");
-        }
         const configuration = await pendingConfiguration(adapters, request);
         const entries = await readEntries();
+        let artifact: NotificationHistoryPagesBuildArtifact;
+        try {
+          artifact = await notificationHistoryArtifact(
+            adapters,
+            configuration,
+            value.record,
+            value.exactStateRevision,
+            settlementReceipt(entries),
+            finalizationReceipt(entries),
+            value.buildReceipt,
+          );
+        } catch (cause: unknown) {
+          throw new PagesEffectNotStartedError("通知履歴Pages公開用buildの再読込に失敗しました", {
+            cause,
+          });
+        }
         const deployment = await deployDailyNotificationHistoryPages(adapters, {
           configuration,
           prepared: artifact,

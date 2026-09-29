@@ -12,7 +12,7 @@ const exactStateViewSchema = z.strictObject({
   revision: revisionSchema,
   snapshotDigest: sha256Schema,
   normalNotificationLedgerDigest: sha256Schema,
-  marker: z.strictObject({
+  marker: z.object({
     runId: z.string().regex(/^tracker-run:[0-9a-f]{64}$/u),
     checkpointDigest: sha256Schema,
     publicationRecordDigest: sha256Schema,

@@ -1,5 +1,7 @@
 import { createUtcIsoDateTime, type UtcIsoDateTime } from "../domain/index.js";
 import type { FailedRun } from "../application/tracking-run/failure-artifact.js";
+import type { CompletedRun } from "../application/tracking-run/complete-run.js";
+import type { StateRunReport } from "../persistence/state-run-report.js";
 import { createRunReport, type RunMetrics, type RunReport, type RunStage } from "./run-report.js";
 import type { DailyRunInvocation, DailyRunRuntime, DryRunArtifact } from "./daily-transaction.js";
 
@@ -73,6 +75,37 @@ export function completedReport(
       durationMilliseconds: Date.parse(finishedAt) - Date.parse(invocation.startedAt),
     }),
     diagnostics,
+  });
+}
+
+/** 最終stateの保存済み値と完了receiptからCLI run reportを作る。 */
+export function completedReportFromState(
+  invocation: DailyRunInvocation,
+  stateReport: StateRunReport,
+  completed: CompletedRun,
+): RunReport {
+  const sentAt = completed.chain.receipts
+    .filter(
+      (receipt) => receipt.receiptType === "notification_message" && receipt.status === "sent",
+    )
+    .map((receipt) => receipt.effectOccurredAt)
+    .sort()
+    .at(-1);
+  return createRunReport({
+    schemaVersion: "5",
+    runId: stateReport.runId,
+    command: invocation.command.kind,
+    status: stateReport.status,
+    complete: true,
+    scheduledFor: stateReport.scheduledFor,
+    startedAt: stateReport.startedAt,
+    finishedAt: stateReport.finishedAt,
+    discordSentAt:
+      invocation.executionPolicy.effectTarget === "production" && sentAt != null
+        ? createUtcIsoDateTime(sentAt)
+        : null,
+    metrics: stateReport.metrics,
+    diagnostics: stateReport.diagnostics,
   });
 }
 

@@ -143,8 +143,6 @@ export function createDailyPublicationStages<Types extends DailyTransactionTypeM
       const pagesPrepared = await dependencies.buildPages({
         invocation: input.invocation,
         configuration: input.configuration,
-        repositoryInventory: input.repositoryInventory,
-        planned: input.planned,
         persisted: committed,
       });
       progress.pagesBuilt();
@@ -173,7 +171,6 @@ export function createDailyPublicationStages<Types extends DailyTransactionTypeM
       const notifications = await dependencies.settleNotifications({
         invocation: input.invocation,
         configuration: input.configuration,
-        repositoryInventory: input.repositoryInventory,
         persisted: published.committed,
         pages: published.pages,
       });
@@ -190,7 +187,6 @@ export function createDailyPublicationStages<Types extends DailyTransactionTypeM
       const finalization = await dependencies.finalizeRun({
         invocation: input.invocation,
         configuration: input.configuration,
-        repositoryInventory: input.repositoryInventory,
         persisted: settled.committed,
         notifications: settled.notifications.value,
       });

@@ -16,6 +16,7 @@ import {
   createValidateConfigurationStage,
 } from "./daily-startup/configuration.js";
 import { createInspectLaunchStage } from "./daily-startup/launch.js";
+import { createReadCompletedReportStage } from "./daily-startup/completed-report.js";
 import { createPendingRunStage } from "./daily-startup/pending.js";
 import { GitHubRunSessions } from "../../infrastructure/tracking-run/github-port.js";
 import { projectLegacyRepositoryInventory } from "../tracking-run/migration-bridge/inventory.js";
@@ -61,8 +62,16 @@ export function createDailyDependencies(
       : { diagnosticsRecorder: adapters.diagnosticsRecorder }),
     readAiProcessAttemptCount: createReadAiProcessAttemptCountStage(),
     inspectLaunch,
-    pendingRun: (request, invocationId, getRunId) =>
-      createPendingRunStage(adapters, request, invocationId, inspectLaunch, getRunId),
+    readCompletedReport: createReadCompletedReportStage(adapters),
+    pendingRun: (request, invocationId, getRunId, onReceiptRecorded) =>
+      createPendingRunStage(
+        adapters,
+        request,
+        invocationId,
+        inspectLaunch,
+        getRunId,
+        onReceiptRecorded,
+      ),
     validateConfiguration: createValidateConfigurationStage(adapters),
     loadState: createLoadStateStage(adapters),
     prepareRun: createPrepareRunStage(),

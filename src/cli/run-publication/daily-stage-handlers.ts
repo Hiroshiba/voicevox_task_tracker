@@ -17,6 +17,7 @@ import {
 } from "../initial-pages-deployment.js";
 import { writePublicationCheckpointFile } from "../publication-checkpoint-file.js";
 import { readNotificationMessageState } from "../notification-message-state.js";
+import { sequentialPagesArtifactPath } from "../sequential-pages-artifact-path.js";
 import type { BoundPublicationCheckpoint } from "../publication-checkpoint-binding.js";
 import {
   readPublicationRuntimeContext,
@@ -151,7 +152,12 @@ export async function buildDailyPages(
     now: dependencies.adapters.now,
   });
   await dependencies.adapters.writeJsonArtifact(
-    resolve(dependencies.adapters.repositoryPath, "artifacts/workflow/initial-pages-build.json"),
+    sequentialPagesArtifactPath(
+      dependencies.adapters.repositoryPath,
+      result.intent.runId,
+      "initial",
+      "build",
+    ),
     parseInitialPagesBuildArtifact({
       schemaVersion: 1,
       manifest: result.manifest,
@@ -226,9 +232,11 @@ export async function deployDailyPages(
               observedAt: dependencies.adapters.now().toISOString(),
             });
       await dependencies.adapters.writeJsonArtifact(
-        resolve(
+        sequentialPagesArtifactPath(
           dependencies.adapters.repositoryPath,
-          "artifacts/workflow/initial-pages-deployment.json",
+          input.invocation.runId,
+          "initial",
+          "deployment",
         ),
         deployment,
       );

@@ -1,6 +1,7 @@
 import type { AiBudgetLedgerSummary } from "../contracts/ai-budget-ledger.js";
 import type { FinalSnapshotCandidate } from "../contracts/final-snapshot.js";
 import type { PreviousNotificationLedger } from "../contracts/previous-state.js";
+import { publicationPagesUrlSchema } from "../contracts/publication-inputs.js";
 import type { NotificationLedgerEntry, PendingNotification } from "../../../domain/index.js";
 import type { PersonalReminderFinalizedRun } from "./personal-reminder-finalization.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
@@ -35,7 +36,7 @@ export type RunNotificationSelection =
       pendingNotifications: readonly PendingNotification[];
     }>;
 
-/** 公開値内のURLがGitHubのHTTPS URLだけを指すことを確認する。 */
+/** 公開値内のURLがGitHubか設定由来のPagesのHTTPS URLを指すことを確認する。 */
 export function assertPublicUrls(value: unknown, path: readonly (string | number)[]): void {
   if (Array.isArray(value)) {
     for (const [index, entry] of value.entries()) assertPublicUrls(entry, [...path, index]);
@@ -45,6 +46,24 @@ export function assertPublicUrls(value: unknown, path: readonly (string | number
   for (const [key, entry] of Object.entries(value)) {
     const entryPath = [...path, key];
     if ((key === "url" || key === "sourceUrl") && typeof entry === "string") {
+      const isConfiguredPagesUrl =
+        (entryPath.length === 5 &&
+          entryPath[0] === "publicValues" &&
+          entryPath[1] === 1 &&
+          entryPath[2] === "publicationInputs" &&
+          entryPath[3] === "pages" &&
+          entryPath[4] === "url") ||
+        (entryPath.length === 4 &&
+          entryPath[0] === "validatedRun" &&
+          entryPath[1] === "publicationInputs" &&
+          entryPath[2] === "pages" &&
+          entryPath[3] === "url");
+      if (isConfiguredPagesUrl) {
+        if (!publicationPagesUrlSchema.safeParse(entry).success) {
+          throw new RunCompletenessError("unsafe_public_value", entry, entryPath, undefined);
+        }
+        continue;
+      }
       if (!URL.canParse(entry)) {
         throw new RunCompletenessError("unsafe_public_value", entry, entryPath, undefined);
       }

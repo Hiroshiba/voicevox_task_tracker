@@ -39,7 +39,7 @@ export async function settleDailyNotifications(
     createNotificationSettlementPort(
       adapters,
       configuration,
-      input.repositoryInventory.inventory,
+      initial.snapshot.repositories,
       input.configuration.credentials.knownSecrets,
       input.configuration.target.kind === "production" ? "production" : "recording",
     ),

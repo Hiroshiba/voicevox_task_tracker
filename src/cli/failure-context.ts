@@ -16,7 +16,12 @@ import type { Receipt } from "../application/tracking-run/receipt-schema.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
 import { StateBranchConflictError } from "../persistence/index.js";
 import { decodeInitialPagesBuildArtifact } from "./initial-pages-build-artifact.js";
-import { readInitialPagesDeploymentOutcome } from "./initial-pages-deployment.js";
+import {
+  InitialPagesDeploymentFailureError,
+  readInitialPagesDeploymentOutcome,
+} from "./initial-pages-deployment.js";
+import { PagesEffectNotStartedError } from "../application/tracking-run/pages-effect.js";
+import { NotificationHistoryPagesFailureError } from "./run-publication/daily-history-pages.js";
 import { decodeNotificationHistoryPagesBuildArtifact } from "./notification-history-pages-build-artifact.js";
 import { decodeNotificationHistoryPagesDeploymentOutcome } from "./notification-history-pages-deployment-outcome.js";
 import type { CliCommand } from "./command.js";
@@ -197,15 +202,18 @@ export async function observeCliFailureContext(
   command: CliCommand | undefined,
   error: unknown,
   result: CliExecutionResult | undefined,
+  exactStage?: FailedRun["failedStage"],
+  latestReceipt?: Receipt,
 ): Promise<CliFailureContext> {
   const report = result != null && "result" in result ? result.result.report : undefined;
   let stage =
-    report?.status === "failure"
+    exactStage ??
+    (report?.status === "failure"
       ? stageFromReport(
           report.failedStage,
           result != null && "result" in result && result.result.effects.stateCommitted,
         )
-      : stageFromCommand(command);
+      : stageFromCommand(command));
   let kind: CliFailureContext["failureKind"] = failureKind(error);
   if (report?.status === "failure") {
     kind = report.failureKind === "public_boundary" ? "public_boundary" : "unexpected";
@@ -221,6 +229,17 @@ export async function observeCliFailureContext(
   if (error instanceof StateBranchConflictError) {
     effectCertainty = "no_effect";
   }
+  if (error instanceof PagesEffectNotStartedError) {
+    effectCertainty = "no_effect";
+  }
+  if (error instanceof InitialPagesDeploymentFailureError) {
+    effectCertainty = error.outcome.effectCertainty;
+    kind = "external_effect";
+  }
+  if (error instanceof NotificationHistoryPagesFailureError) {
+    effectCertainty = error.outcome.failedOperationEffectCertainty;
+    kind = "external_effect";
+  }
   if (error instanceof CliWorkflowArtifactError && command?.kind === "daily") {
     effectCertainty = "no_effect";
   }
@@ -235,7 +254,17 @@ export async function observeCliFailureContext(
   if (error instanceof OperationsAlertReceiptFailureError) {
     effectCertainty = error.effectCertainty;
   }
-  let receipt = await previousReceipt(command);
+  if (
+    (latestReceipt?.receiptType === "initial_state_commit" ||
+      latestReceipt?.receiptType === "pages_deployment" ||
+      latestReceipt?.receiptType === "notification_settlement" ||
+      latestReceipt?.receiptType === "run_finalization") &&
+    latestReceipt.stage === stage &&
+    latestReceipt.effectCertainty === "committed"
+  ) {
+    effectCertainty = "committed";
+  }
+  let receipt = latestReceipt ?? (await previousReceipt(command));
   let finalStateRevision =
     (command?.kind === "prepare-notification-history-pages" ||
       command?.kind === "preflight-notification-history-deployment" ||
@@ -243,6 +272,9 @@ export async function observeCliFailureContext(
     receipt != null
       ? revisionFromReceipt(receipt)
       : undefined;
+  if (error instanceof NotificationHistoryPagesFailureError) {
+    finalStateRevision = error.outcome.sourceStateRevision;
+  }
   let observedRevision: string | undefined;
   if (error instanceof NotificationSettlementFailureError) {
     const outcome = error.outcome;

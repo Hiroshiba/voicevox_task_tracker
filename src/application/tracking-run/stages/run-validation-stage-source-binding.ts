@@ -118,36 +118,28 @@ export function assertStageSourceValuesMatch(
     ["notificationSelection", "pendingNotifications"],
     "notification",
   );
-  for (const [index, addition] of closure.outward.aiCacheAdditions.entries()) {
-    const saved = values.aiCacheAdditions[index];
-    if (saved == null)
-      throw new RunCompletenessError(
-        "missing_value",
-        addition.itemNodeId,
-        ["aiCacheAdditions", index],
-        undefined,
-      );
-    assertRunValueMatches(
-      addition.result,
-      saved.generation.result,
-      ["aiCacheAdditions", index, "generation", "result"],
-      addition.itemNodeId,
-    );
-  }
-  for (const [index, addition] of closure.outward.personalReminderAiCacheAdditions.entries()) {
-    const saved = values.personalReminderAiCacheAdditions[index];
-    if (saved == null)
-      throw new RunCompletenessError(
-        "missing_value",
-        addition.itemNodeId,
-        ["personalReminderAiCacheAdditions", index],
-        undefined,
-      );
-    assertRunValueMatches(
-      addition.result,
-      saved.generation.result,
-      ["personalReminderAiCacheAdditions", index, "generation", "result"],
-      addition.itemNodeId,
-    );
-  }
+  assertRunValueMatches(
+    canonicalValues(
+      closure.outward.aiCacheAdditions.map((addition) => ({
+        element: addition.element,
+        result: addition.result,
+      })),
+    ),
+    canonicalValues(
+      values.aiCacheAdditions.map((addition) => ({
+        element: addition.element,
+        result: addition.generation.result,
+      })),
+    ),
+    ["aiCacheAdditions"],
+    "aiCache",
+  );
+  assertRunValueMatches(
+    canonicalValues(closure.outward.personalReminderAiCacheAdditions.map(({ result }) => result)),
+    canonicalValues(
+      values.personalReminderAiCacheAdditions.map(({ generation }) => generation.result),
+    ),
+    ["personalReminderAiCacheAdditions"],
+    "personalReminderAiCache",
+  );
 }

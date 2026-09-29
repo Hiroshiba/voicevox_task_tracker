@@ -141,9 +141,20 @@ export async function workflowAdapterIdentity(
 async function codeRevision(repositoryPath: string, filesDigest: string): Promise<string> {
   const [head, status] = await Promise.all([
     execFileAsync("git", ["rev-parse", "HEAD"], { cwd: repositoryPath }),
-    execFileAsync("git", ["status", "--porcelain", "--untracked-files=normal"], {
-      cwd: repositoryPath,
-    }),
+    execFileAsync(
+      "git",
+      [
+        "status",
+        "--porcelain",
+        "--untracked-files=normal",
+        "--",
+        ".",
+        ":(exclude)web/public/data/summary.json",
+        ":(exclude)web/public/data/details.json",
+        ":(exclude)web/public/data/notification-history.json",
+      ],
+      { cwd: repositoryPath },
+    ),
   ]);
   const revision = head.stdout.trim();
   if (!/^[0-9a-f]{40}$/u.test(revision)) {
@@ -238,7 +249,9 @@ async function createManifest(
     repositoryPath,
     shape === "split_workflow" ? "artifacts/workflow/runtime" : "dist",
   );
-  const files = await checkedFiles(root, root);
+  const files = (await checkedFiles(root, root)).filter(
+    (file) => shape !== "sequential" || !file.path.startsWith("web/"),
+  );
   const entrypointRelativePath = normalizedBundlePathSchema.parse(
     shape === "split_workflow" ? "tracker-run.mjs" : "cli/tracker-run.js",
   );

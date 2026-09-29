@@ -47,10 +47,20 @@ export async function publishPagesWithEffect<
   build: Build,
   port: PagesEffectPort<Build, Preflight, Result, Recorded, Published>,
 ): Promise<Published> {
-  const preflight = await port.preflight(build);
+  let preflight: Preflight;
+  try {
+    preflight = await port.preflight(build);
+  } catch (cause: unknown) {
+    throw new PagesEffectNotStartedError("Pages公開前の検証に失敗しました", { cause });
+  }
   let observation: PagesEffectObservation<Result> = { kind: "skipped" };
   if (preflight.kind === "ready") {
-    const intent = port.intent(build);
+    let intent: PagesDeploymentIntent;
+    try {
+      intent = port.intent(build);
+    } catch (cause: unknown) {
+      throw new PagesEffectNotStartedError("Pages公開指示を作れません", { cause });
+    }
     try {
       observation = await port.deploy(intent);
     } catch (cause: unknown) {

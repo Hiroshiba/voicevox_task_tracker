@@ -20,6 +20,7 @@ import type {
   RunFinalizationReceipt,
 } from "../application/tracking-run/receipt-schema.js";
 import type { StateCommitReceiptEvidence } from "../application/tracking-run/observed-state-commit.js";
+import type { StateRunReport } from "../persistence/state-run-report.js";
 import type { InitialStateCommitReference } from "../application/tracking-run/engine.js";
 import {
   runTrackingAnalysis,
@@ -35,6 +36,7 @@ import {
   updateMetrics,
   createDryRunArtifact,
   completedReport,
+  completedReportFromState,
   failureReport,
   reportStageForEngine,
   isPreCheckpointFailureStage,
@@ -190,11 +192,14 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
   inspectLaunch: (
     request: RunRequest,
     invocationId: string,
+    intent: Readonly<{ kind: "start_new" } | { kind: "retry_run"; runId: string }>,
   ) => Promise<TrackingRunLaunchDecision<RecoveryStageInput>>;
+  readCompletedReport: (request: RunRequest, completed: CompletedRun) => Promise<StateRunReport>;
   pendingRun: (
     request: RunRequest,
     invocationId: string,
     getRunId: () => string,
+    onReceiptRecorded: (receipt: Receipt) => void,
   ) => PendingRunPorts<RecoveryStageInput>;
   validateConfiguration: (
     input: Readonly<{
@@ -332,8 +337,6 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
     input: Readonly<{
       invocation: DailyRunInvocation;
       configuration: Types["configuration"];
-      repositoryInventory: Types["repositoryInventory"];
-      planned: Types["planned"];
       persisted: Types["persisted"];
     }>,
   ) => Promise<Types["pagesPrepared"]>;
@@ -349,7 +352,6 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
     input: Readonly<{
       invocation: DailyRunInvocation;
       configuration: Types["configuration"];
-      repositoryInventory: Types["repositoryInventory"];
       persisted: Types["persisted"];
       pages: Types["pages"];
     }>,
@@ -358,7 +360,6 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
     input: Readonly<{
       invocation: DailyRunInvocation;
       configuration: Types["configuration"];
-      repositoryInventory: Types["repositoryInventory"];
       persisted: Types["persisted"];
       notifications: Types["notifications"];
     }>,
@@ -658,16 +659,22 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
                 baseStateRevision: prepared.core.baseState.revision,
                 configDigest: prepared.core.configDigest,
               };
-        const context = await observeCliFailureContext(invocation.command, error, {
-          command: invocation.command.kind,
-          exitCode: 1,
-          execution: "executed",
-          result: {
-            ...reported,
-            failureDiagnosticRecordId: recordId,
-            ...(failureEvidence == null ? {} : { failureEvidence }),
+        const context = await observeCliFailureContext(
+          invocation.command,
+          error,
+          {
+            command: invocation.command.kind,
+            exitCode: 1,
+            execution: "executed",
+            result: {
+              ...reported,
+              failureDiagnosticRecordId: recordId,
+              ...(failureEvidence == null ? {} : { failureEvidence }),
+            },
           },
-        });
+          failedStage,
+          lastReceipt,
+        );
         const effectiveStage =
           context.evidence.bindingKind === "state_bootstrap_alert"
             ? "runtime_bootstrap"
@@ -690,7 +697,12 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
             : { finalStateRevision: context.finalStateRevision }),
           publicDiagnostics: { code: publicDiagnosticCode(context.failureKind) },
           encryptedDiagnosticsRecordIds: [recordId],
-          lastVerifiedReceipt: lastReceipt ?? context.lastVerifiedReceipt,
+          lastVerifiedReceipt:
+            context.lastVerifiedReceipt != null &&
+            (lastReceipt == null ||
+              context.lastVerifiedReceipt.phaseSequence > lastReceipt.phaseSequence)
+              ? context.lastVerifiedReceipt
+              : lastReceipt,
           stateObservation: context.stateObservation,
         });
         failedResult = Object.freeze({
@@ -864,7 +876,9 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         RecoveryStageInput
       >(
         async () => {
-          const launch = await this.#dependencies.inspectLaunch(request, invocation.invocationId);
+          const launch = await this.#dependencies.inspectLaunch(request, invocation.invocationId, {
+            kind: "start_new",
+          });
           if (launch.decision.kind === "start_new") {
             baseStateHead = launch.decision.baseRevision;
           } else if (launch.decision.kind === "resume_pending") {
@@ -878,30 +892,36 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           return launch;
         },
         stages,
-        this.#dependencies.pendingRun(request, invocation.invocationId, () =>
-          required(pendingRunId, "再開run IDがありません"),
+        this.#dependencies.pendingRun(
+          request,
+          invocation.invocationId,
+          () => required(pendingRunId, "再開run IDがありません"),
+          (receipt) => {
+            lastReceipt = receipt;
+          },
         ),
         boundary,
       );
       if (outcome.status === "failed") {
         return required(failedResult, "失敗runの報告結果がありません");
       }
-      const report = completedReport(
-        invocation,
-        runStatus,
-        this.#metricsWithAiProcessAttemptCount(metrics, configuration),
-        diagnostics,
-        discordSentAt,
-        currentTime(this.#runtime),
-      );
-      await this.#dependencies.writeReport(request.reportPath, report);
-      return Object.freeze({
-        report,
-        effects: freezeEffects(effects),
-        completedRun: outcome,
-      });
+      try {
+        const stateReport = await this.#dependencies.readCompletedReport(request, outcome);
+        const report = completedReportFromState(invocation, stateReport, outcome);
+        await this.#dependencies.writeReport(request.reportPath, report);
+        return Object.freeze({
+          report,
+          effects: freezeEffects(effects),
+          completedRun: outcome,
+        });
+      } catch (error: unknown) {
+        await boundary.fail("completed", error);
+        return required(failedResult, "失敗runの報告結果がありません");
+      }
     }
-    const launch = await this.#dependencies.inspectLaunch(request, invocation.invocationId);
+    const launch = await this.#dependencies.inspectLaunch(request, invocation.invocationId, {
+      kind: "start_new",
+    });
     if (launch.decision.kind !== "start_new") {
       throw new TypeError("解析artifactの起動時に未完了runがあります");
     }

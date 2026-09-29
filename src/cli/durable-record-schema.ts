@@ -52,7 +52,15 @@ const initialPagesProjectionSchema = z.strictObject({
     digest: sha256Schema,
   }),
   repositoryAllowlist: z.array(
-    z.strictObject({ id: z.string().min(1), owner: z.string().min(1), name: z.string().min(1) }),
+    z.strictObject({
+      id: z.string().min(1),
+      owner: z.string().min(1),
+      name: z.string().min(1),
+      visibility: z.literal("public"),
+      archived: z.literal(false),
+      disabled: z.literal(false),
+      observedAt: z.iso.datetime({ offset: true }),
+    }),
   ),
   repositoryAllowlistDigest: sha256Schema,
   publicDtoSchemaVersion: z.literal(PUBLIC_DTO_SCHEMA_VERSION),
