@@ -287,12 +287,12 @@ function assertMessageChain(receipts: readonly SettledMessageReceipt[]): void {
   }
 }
 
-async function assertObservedPagesReceipt(
+async function readPagesReceiptEvidence(
   input: NotificationSettlementInput,
   port: NotificationSettlementPort,
-): Promise<void> {
-  if (input.initialPages.kind !== "state") {
-    return;
+): Promise<ReceiptChainEvidence> {
+  if (input.pagesReceipt.receiptKind !== "observed") {
+    return { kind: "none" };
   }
   const revision = input.pagesReceipt.expectedStateRevision;
   if (typeof revision !== "string") {
@@ -314,28 +314,22 @@ async function assertObservedPagesReceipt(
       "no_effect",
     );
   }
-  verifyReceiptChain(
-    [
-      {
-        receipt: input.pagesReceipt,
-        evidence: {
-          kind: "initial_pages_state",
-          state: {
-            exactStateRevision: revision,
-            marker: {
-              runId: marker.runId,
-              checkpointDigest: marker.checkpointDigest,
-              phase: marker.phase,
-              initialPagesPublicationEvidenceDigest: marker.initialPagesPublicationEvidenceDigest,
-              initialStateRevision: marker.initialStateRevision,
-            },
-            evidence,
-          },
-        },
+  const receiptEvidence = {
+    kind: "initial_pages_state" as const,
+    state: {
+      exactStateRevision: revision,
+      marker: {
+        runId: marker.runId,
+        checkpointDigest: marker.checkpointDigest,
+        phase: marker.phase,
+        initialPagesPublicationEvidenceDigest: marker.initialPagesPublicationEvidenceDigest,
+        initialStateRevision: marker.initialStateRevision,
       },
-    ],
-    digest,
-  );
+      evidence,
+    },
+  };
+  verifyReceiptChain([{ receipt: input.pagesReceipt, evidence: receiptEvidence }], digest);
+  return receiptEvidence;
 }
 
 async function initialState(
@@ -405,7 +399,7 @@ async function settleNotificationsChecked(
   }
   try {
     assertPagesReceipt(input);
-    await assertObservedPagesReceipt(input, port);
+    const pagesReceiptEvidence = await readPagesReceiptEvidence(input, port);
     if (input.initialPages.kind === "published") {
       verifyReceiptChain(
         [
@@ -417,7 +411,7 @@ async function settleNotificationsChecked(
                 : { kind: "none" },
           },
           { receipt: input.initialPages.buildReceipt, evidence: { kind: "none" } },
-          { receipt: input.pagesReceipt, evidence: { kind: "none" } },
+          { receipt: input.pagesReceipt, evidence: pagesReceiptEvidence },
         ],
         digest,
       );

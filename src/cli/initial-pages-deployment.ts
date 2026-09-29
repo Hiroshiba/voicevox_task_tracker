@@ -114,6 +114,20 @@ export type WorkflowPagesActionObservation = z.output<typeof workflowActionObser
 /** 初回Pages公開の成功証拠または型付き失敗。 */
 export type InitialPagesDeploymentOutcome = z.output<typeof deploymentOutcomeSchema>;
 
+/** 初回Pagesの確定できなかった結果をCLI境界へ渡す。 */
+export class InitialPagesDeploymentFailureError extends Error {
+  public readonly outcome: Extract<InitialPagesDeploymentOutcome, { kind: "failure" }>;
+
+  public constructor(
+    outcome: Extract<InitialPagesDeploymentOutcome, { kind: "failure" }>,
+    cause: unknown,
+  ) {
+    super(`初回Pages公開を確定できません。種別: ${outcome.reason}`, { cause });
+    this.name = "InitialPagesDeploymentFailureError";
+    this.outcome = outcome;
+  }
+}
+
 /** sequential production portが確認して返す公開結果。 */
 export type SequentialPagesResult = z.output<typeof sequentialPagesResultSchema>;
 
@@ -225,6 +239,23 @@ function failedDeployment(
     deploymentIntentDigest: artifact.intent.deploymentIntentDigest,
     observedHeadRevision: preflight.observedHeadRevision,
   });
+}
+
+/** 直列portが公開不可または応答不明と観測した結果を保存する。 */
+export function recordInitialPagesSequentialFailure(
+  artifact: InitialPagesBuildArtifact,
+  preflight: InitialPagesDeploymentPreflight,
+  effectCertainty: "no_effect" | "ambiguous",
+): InitialPagesDeploymentOutcome {
+  if (preflight.kind !== "ready") {
+    throw new TypeError("Pages公開を開始していないpreflightへeffect失敗を付けられません");
+  }
+  return failedDeployment(
+    artifact,
+    preflight,
+    effectCertainty === "no_effect" ? "action_failed" : "effect_unconfirmed",
+    effectCertainty,
+  );
 }
 
 /** remote stateと出力全fileをdeploy直前に再検証する。 */

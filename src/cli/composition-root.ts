@@ -28,6 +28,7 @@ import {
 } from "./production-runtime.js";
 import { verifyPersistentStateDirectory } from "./state-verification.js";
 import { parseSandboxContext } from "./sandbox-context.js";
+import { PagesEffectNotStartedError } from "../application/tracking-run/pages-effect.js";
 
 const DEFAULT_PAGES_OUTPUT_DIRECTORY = "web/public/data";
 
@@ -107,9 +108,7 @@ export function createDefaultCliCompositionAdapters(
     writePublicData: writePublicDataFiles,
     buildWebOutput,
     deployProductionPages: () =>
-      Promise.reject(
-        new TypeError("sequential production Pages deploy adapterが接続されていません"),
-      ),
+      Promise.reject(new PagesEffectNotStartedError("GitHub Actions Pages公開環境がありません")),
     sendDiscord: sendDiscordDigest,
   });
 }

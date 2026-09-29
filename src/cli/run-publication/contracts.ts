@@ -3,7 +3,6 @@ import type { DiagnosticsJsonlRecorder } from "../../diagnostics/recorder.js";
 import type { AiCacheEntry, PersonalReminderAiCacheEntry } from "../../codex/index.js";
 import type { ValidatedRun as TrackingValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
 import type { PublicationPlannedRun } from "../../publication/publication-plan-contracts.js";
-import type { BoundPublicationCheckpoint } from "../publication-checkpoint-binding.js";
 import type { Sha256Hash } from "../../canonical-json/sha256.js";
 import type { Repository } from "../../domain/index.js";
 import type {
@@ -30,6 +29,7 @@ import type {
   PagesDeploymentIntent,
 } from "../../application/tracking-run/pages-build-contracts.js";
 import type { PagesBuildReceipt } from "../../application/tracking-run/receipt-schema.js";
+import type { ReceiptChainEvidence } from "../../application/tracking-run/receipt-chain-schema.js";
 import type { NotificationHistoryPagesBuildArtifact } from "../notification-history-pages-build-artifact.js";
 import type { NotificationHistoryPagesDeploymentOutcome } from "../notification-history-pages-deployment-outcome.js";
 import type {
@@ -56,9 +56,6 @@ export type ValidatedRun = TrackingValidatedRun<
 /** 初期保存後にPages生成へ渡す値。 */
 export type PersistedRun = Readonly<{
   result: InitialStateCommitResult;
-  notificationLedger: StateNotificationLedger;
-  session: StatePersistenceSession;
-  bound: BoundPublicationCheckpoint;
 }>;
 
 /** Pages生成と書込みの結果。 */
@@ -92,6 +89,7 @@ export type InitialPagesPublishedRun = Readonly<{
   prepared: InitialPagesPreparedRun;
   deployment: Extract<InitialPagesDeploymentOutcome, { kind: "success" }>;
   pagesUrl: string;
+  receiptEvidence: ReceiptChainEvidence;
 }>;
 
 /** 公開処理が参照してよい設定とcredential。 */

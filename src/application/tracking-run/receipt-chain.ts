@@ -409,7 +409,8 @@ export function verifyReceiptChain(
       lastTrackingStateRevision != null &&
       receipt.expectedStateRevision != null &&
       receipt.binding.bindingKind === "checkpoint" &&
-      lastTrackingStateRevision !== receipt.expectedStateRevision
+      lastTrackingStateRevision !== receipt.expectedStateRevision &&
+      !(receipt.receiptType === "pages_deployment" && receipt.receiptKind === "observed")
     ) {
       throw new TypeError("receiptの期待state revisionが直前のtracking結果と一致しません");
     }

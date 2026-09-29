@@ -30,7 +30,16 @@ import {
 import { createFinalizeRunStage } from "./publication/completion.js";
 import { createSettleNotificationsStage } from "./publication/notification.js";
 import { createBuildPagesStage, createDeployPagesStage } from "./publication/pages.js";
-import { createPersistStateStage } from "./publication/persistence.js";
+import {
+  createCommitPreparedCheckpointStage,
+  createPersistStateStage,
+  createPrepareCheckpointStage,
+  createReadCommittedStateStage,
+} from "./publication/persistence.js";
+import {
+  createBuildNotificationHistoryPagesStage,
+  createDeployNotificationHistoryPagesStage,
+} from "./publication/history-pages.js";
 import { createValidateCompletenessStage } from "./validation/stage.js";
 
 /** 日次transactionの各段階を既存アダプターへ接続する。 */
@@ -58,11 +67,16 @@ export function createDailyDependencies(
     analyzePersonalReminders: createAnalyzePersonalRemindersStage(adapters),
     validateCompleteness: createValidateCompletenessStage(githubSessions),
     planPublication: (validated) => planPublication(validated, nodeContentDigestPort),
+    prepareCheckpoint: createPrepareCheckpointStage(adapters),
+    commitPreparedCheckpoint: createCommitPreparedCheckpointStage(adapters),
+    readCommittedState: createReadCommittedStateStage(adapters),
     persistState: createPersistStateStage(adapters),
     buildPages: createBuildPagesStage(adapters),
     deployPages: createDeployPagesStage(adapters),
     settleNotifications: createSettleNotificationsStage(adapters),
     finalizeRun: createFinalizeRunStage(adapters),
+    buildNotificationHistoryPages: createBuildNotificationHistoryPagesStage(adapters),
+    deployNotificationHistoryPages: createDeployNotificationHistoryPagesStage(adapters),
     writeDryRunArtifact: createWriteDryRunArtifactStage(adapters),
     writeCollectAnalyzeArtifact: createWriteCollectAnalyzeArtifactStage(adapters),
     writeReport: createWriteReportStage(adapters),

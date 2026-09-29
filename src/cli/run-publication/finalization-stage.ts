@@ -36,4 +36,5 @@ export async function finalizeDailyRun(
   if (outcome.kind !== "finalized") {
     throw new TypeError(`run finalizationを確定できません。状態: ${outcome.kind}`);
   }
+  return outcome;
 }

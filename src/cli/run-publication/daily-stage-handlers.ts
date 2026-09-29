@@ -1,13 +1,23 @@
 import { basename, resolve } from "node:path";
 
+import {
+  PagesEffectNotStartedError,
+  publishPagesWithEffect,
+} from "../../application/tracking-run/pages-effect.js";
+import { verifyReceiptChain } from "../../application/tracking-run/receipt-chain.js";
+import type { ReceiptChainEvidence } from "../../application/tracking-run/receipt-chain-schema.js";
 import { encodePublicationCheckpoint } from "../publication-checkpoint-codec.js";
 import { bindPublicationCheckpoint } from "../publication-checkpoint-binding.js";
 import { parseInitialPagesBuildArtifact } from "../initial-pages-build-artifact.js";
 import {
+  InitialPagesDeploymentFailureError,
   preflightInitialPagesDeployment,
+  recordInitialPagesSequentialFailure,
   recordInitialPagesSequentialDeployment,
 } from "../initial-pages-deployment.js";
 import { writePublicationCheckpointFile } from "../publication-checkpoint-file.js";
+import { readNotificationMessageState } from "../notification-message-state.js";
+import type { BoundPublicationCheckpoint } from "../publication-checkpoint-binding.js";
 import {
   readPublicationRuntimeContext,
   writeWorkflowRuntimeManifest,
@@ -19,8 +29,8 @@ import type { DailyPublicationStageHandlers, RunPublicationAdapters } from "./co
 import { buildPublicPages } from "./pages.js";
 import { persistValidatedRun } from "./persistence.js";
 
-/** 完全性検証済みrunを初期保存へ渡す。 */
-export async function persistDailyState(
+/** 完全性検証済みrunをcodec往復済みcheckpointへ結ぶ。 */
+export async function prepareDailyCheckpoint(
   dependencies: Readonly<{
     adapters: Pick<
       RunPublicationAdapters,
@@ -28,7 +38,7 @@ export async function persistDailyState(
     >;
   }>,
   input: Parameters<DailyPublicationStageHandlers["persistState"]>[0],
-): ReturnType<DailyPublicationStageHandlers["persistState"]> {
+): Promise<BoundPublicationCheckpoint> {
   const { configuration, state, repositoryInventory, planned } = input;
   if (
     nodeContentDigestPort.sha256Utf8(serializeCanonicalJson(configuration.config)) !==
@@ -76,14 +86,39 @@ export async function persistDailyState(
     },
     nodeContentDigestPort,
   );
+  return bound;
+}
+
+/** 検証済みcheckpointから初回stateだけをcommitする。 */
+export async function commitDailyCheckpoint(
+  dependencies: Readonly<{
+    adapters: Pick<RunPublicationAdapters, "createStateBranchAdapter" | "now">;
+  }>,
+  input: Parameters<DailyPublicationStageHandlers["persistState"]>[0],
+  bound: BoundPublicationCheckpoint,
+): ReturnType<DailyPublicationStageHandlers["persistState"]> {
   return persistValidatedRun({
-    configuration,
-    state,
-    inventory: repositoryInventory,
+    configuration: input.configuration,
+    state: input.state,
+    inventory: input.repositoryInventory,
     bound,
     adapter: dependencies.adapters.createStateBranchAdapter(),
     now: dependencies.adapters.now,
   });
+}
+
+/** 旧commandの単一呼出をcheckpointと初回commitへ接続する。 */
+export async function persistDailyState(
+  dependencies: Readonly<{
+    adapters: Pick<
+      RunPublicationAdapters,
+      "repositoryPath" | "environment" | "createStateBranchAdapter" | "now"
+    >;
+  }>,
+  input: Parameters<DailyPublicationStageHandlers["persistState"]>[0],
+): ReturnType<DailyPublicationStageHandlers["persistState"]> {
+  const bound = await prepareDailyCheckpoint(dependencies, input);
+  return commitDailyCheckpoint(dependencies, input, bound);
 }
 
 /** 初期保存済みrunをPages生成へ渡す。 */
@@ -147,42 +182,116 @@ export async function deployDailyPages(
     intent: input.pagesPrepared.intent,
     receipt: input.pagesPrepared.receipt,
   });
-  const preflight = await preflightInitialPagesDeployment({
-    adapter: dependencies.adapters.createStateBranchAdapter(),
-    configuration: input.configuration.target.state,
-    repositoryPath: dependencies.adapters.repositoryPath,
-    artifact,
-    initialStateCommitReceipt: input.persisted.result.receipt,
-    replay: false,
-    observedAt: dependencies.adapters.now().toISOString(),
-    effectTarget: input.configuration.target.kind,
-  });
-  const productionResult =
-    preflight.kind === "ready" && input.configuration.target.kind === "production"
-      ? await dependencies.adapters.deployProductionPages(artifact.intent)
-      : undefined;
-  const deployment = recordInitialPagesSequentialDeployment({
-    artifact,
-    preflight,
-    target: input.configuration.target.kind === "production" ? "production" : "recording",
-    ...(productionResult == null ? {} : { productionResult }),
-    recordingId: `${input.invocation.runId}:${artifact.intent.deploymentIntentDigest}`,
-    observedAt: dependencies.adapters.now().toISOString(),
-  });
-  await dependencies.adapters.writeJsonArtifact(
-    resolve(
-      dependencies.adapters.repositoryPath,
-      "artifacts/workflow/initial-pages-deployment.json",
-    ),
-    deployment,
-  );
-  if (deployment.kind !== "success" || deployment.receipt.result == null) {
-    throw new TypeError("初回Pages公開の成功receiptがありません");
-  }
-  return Object.freeze({
-    prepared: input.pagesPrepared,
-    deployment,
-    pagesUrl: deployment.receipt.result.pageUrl,
+  return publishPagesWithEffect(artifact, {
+    preflight: (build) =>
+      preflightInitialPagesDeployment({
+        adapter: dependencies.adapters.createStateBranchAdapter(),
+        configuration: input.configuration.target.state,
+        repositoryPath: dependencies.adapters.repositoryPath,
+        artifact: build,
+        initialStateCommitReceipt: input.persisted.result.receipt,
+        replay: false,
+        observedAt: dependencies.adapters.now().toISOString(),
+        effectTarget: input.configuration.target.kind,
+      }),
+    intent: (build) => build.intent,
+    deploy: async (intent) => {
+      if (input.configuration.target.kind !== "production") {
+        return { kind: "deployed", result: undefined };
+      }
+      try {
+        return {
+          kind: "deployed",
+          result: await dependencies.adapters.deployProductionPages(intent),
+        };
+      } catch (cause: unknown) {
+        if (cause instanceof PagesEffectNotStartedError) {
+          return { kind: "no_effect", cause };
+        }
+        throw cause;
+      }
+    },
+    record: async (build, preflight, observation) => {
+      const deployment =
+        observation.kind === "no_effect" || observation.kind === "ambiguous"
+          ? recordInitialPagesSequentialFailure(build, preflight, observation.kind)
+          : recordInitialPagesSequentialDeployment({
+              artifact: build,
+              preflight,
+              target: input.configuration.target.kind === "production" ? "production" : "recording",
+              ...(observation.kind !== "deployed" || observation.result == null
+                ? {}
+                : { productionResult: observation.result }),
+              recordingId: `${input.invocation.runId}:${build.intent.deploymentIntentDigest}`,
+              observedAt: dependencies.adapters.now().toISOString(),
+            });
+      await dependencies.adapters.writeJsonArtifact(
+        resolve(
+          dependencies.adapters.repositoryPath,
+          "artifacts/workflow/initial-pages-deployment.json",
+        ),
+        deployment,
+      );
+      return deployment;
+    },
+    requirePublished: async (deployment, observation) => {
+      if (deployment.kind !== "success") {
+        throw new InitialPagesDeploymentFailureError(
+          deployment,
+          observation.kind === "ambiguous" || observation.kind === "no_effect"
+            ? observation.cause
+            : undefined,
+        );
+      }
+      if (deployment.receipt.result == null) {
+        throw new TypeError("初回Pages公開の成功receiptに結果がありません");
+      }
+      let receiptEvidence: ReceiptChainEvidence = { kind: "none" };
+      if (deployment.receipt.receiptKind === "observed") {
+        const revision = deployment.receipt.expectedStateRevision;
+        if (typeof revision !== "string") {
+          throw new TypeError("再観測した初回Pagesにexact state revisionがありません");
+        }
+        const state = await readNotificationMessageState(
+          dependencies.adapters.createStateBranchAdapter(),
+          input.configuration.target.state,
+          revision,
+        );
+        const marker = state.transaction.marker;
+        if (
+          marker.phase === "initial_state_committed" ||
+          state.transaction.initialPagesEvidence == null ||
+          serializeCanonicalJson(state.transaction.initialPagesEvidence) !==
+            serializeCanonicalJson(deployment.evidence)
+        ) {
+          throw new TypeError("初回Pagesの再観測receiptとexact state証拠が一致しません");
+        }
+        receiptEvidence = {
+          kind: "initial_pages_state",
+          state: {
+            exactStateRevision: revision,
+            marker: {
+              runId: marker.runId,
+              checkpointDigest: marker.checkpointDigest,
+              phase: marker.phase,
+              initialPagesPublicationEvidenceDigest: marker.initialPagesPublicationEvidenceDigest,
+              initialStateRevision: marker.initialStateRevision,
+            },
+            evidence: deployment.evidence,
+          },
+        };
+        verifyReceiptChain(
+          [{ receipt: deployment.receipt, evidence: receiptEvidence }],
+          nodeContentDigestPort,
+        );
+      }
+      return Object.freeze({
+        prepared: input.pagesPrepared,
+        deployment,
+        pagesUrl: deployment.receipt.result.pageUrl,
+        receiptEvidence,
+      });
+    },
   });
 }
 

@@ -130,6 +130,25 @@ function failure(
   );
 }
 
+/** 直列portの未実行または応答不明を履歴Pages失敗へ記録する。 */
+export function recordNotificationHistorySequentialFailure(
+  artifact: NotificationHistoryPagesBuildArtifact,
+  preflight: NotificationHistoryPagesDeploymentPreflight,
+  effectCertainty: "no_effect" | "ambiguous",
+  observedAt: string,
+): NotificationHistoryPagesDeploymentOutcome {
+  if (preflight.kind !== "ready") {
+    throw new TypeError("履歴Pages公開を開始していないpreflightへeffect失敗を付けられません");
+  }
+  return failure(
+    artifact,
+    preflight,
+    effectCertainty === "no_effect" ? "action_failed" : "effect_unconfirmed",
+    effectCertainty,
+    observedAt,
+  );
+}
+
 /** actionの実outputから履歴専用receiptまたは型付き失敗を確定する。 */
 export function recordNotificationHistoryWorkflowDeployment(
   input: Readonly<{

@@ -5,7 +5,7 @@ import {
   assertBoundPublicationCheckpoint,
   type BoundPublicationCheckpoint,
 } from "../publication-checkpoint-binding.js";
-import { StatePersistenceSession, type StateBranchAdapter } from "../../persistence/index.js";
+import type { StateBranchAdapter } from "../../persistence/index.js";
 import type {
   PersistedRun,
   PublicationConfiguration,
@@ -24,7 +24,7 @@ export type PersistValidatedRunInput = Readonly<{
   now: () => Date;
 }>;
 
-/** 完全性検証済みrunを初期保存し、後続段階用state sessionを開く。 */
+/** 完全性検証済みrunを初期保存し、後続段階へcommit結果だけを渡す。 */
 export async function persistValidatedRun(input: PersistValidatedRunInput): Promise<PersistedRun> {
   assertBoundPublicationCheckpoint(input.bound);
   const { validated } = input.bound.planned;
@@ -37,18 +37,7 @@ export async function persistValidatedRun(input: PersistValidatedRunInput): Prom
     knownSecrets: input.configuration.credentials.knownSecrets,
     now: input.now,
   });
-  const session = await StatePersistenceSession.openAtRevision(
-    input.adapter,
-    input.configuration.target.state,
-    input.configuration.config.staleness.timezone,
-    result.revision,
-  );
-  return Object.freeze({
-    result,
-    notificationLedger: await session.loadNotificationLedger(),
-    session,
-    bound: input.bound,
-  });
+  return Object.freeze({ result });
 }
 
 /** state sessionの保存待ちAI cacheが公開計画の値と一致することを確認する。 */

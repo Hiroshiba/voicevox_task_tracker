@@ -9,6 +9,27 @@ import type {
 } from "../application/tracking-run/request.js";
 import type { PreparedRun } from "../application/tracking-run/prepare-run.js";
 import type { FailedRun } from "../application/tracking-run/failure-artifact.js";
+import type { CompletedRun } from "../application/tracking-run/complete-run.js";
+import type {
+  NotificationSettlementReceipt,
+  RunFinalizationReceipt,
+} from "../application/tracking-run/receipt-schema.js";
+import type { StateCommitReceiptEvidence } from "../application/tracking-run/observed-state-commit.js";
+import type { InitialStateCommitReference } from "../application/tracking-run/engine.js";
+import type { BoundPublicationCheckpoint } from "./publication-checkpoint-binding.js";
+import type { InitialStateCommitResult } from "./initial-state-commit.js";
+import type { NotificationSettlementOutcome } from "./notification-settlement.js";
+import type {
+  InitialPagesPreparedRun,
+  InitialPagesPublishedRun,
+  NotificationHistoryPagesPreparedRun,
+  NotificationHistoryPublishedRun,
+} from "./run-publication/contracts.js";
+import type { FinalizeRunOutcome } from "./run-finalization.js";
+import {
+  runDailyPublication,
+  type PublicationStageInput,
+} from "./daily-transaction-publication.js";
 import type { InventoryCollectedRun } from "../application/tracking-run/stages/inventory.js";
 import type { CollectedRun } from "../application/tracking-run/stages/collection.js";
 import type { RunEvaluatedAt } from "../application/tracking-run/contracts/evaluation-time.js";
@@ -64,10 +85,10 @@ export type DailyTransactionTypeMap = Readonly<{
   personalReminderAnalysis: unknown;
   validated: unknown;
   planned: unknown;
-  persisted: unknown;
-  pagesPrepared: unknown;
-  pages: unknown;
-  notifications: unknown;
+  persisted: Readonly<{ result: InitialStateCommitResult }>;
+  pagesPrepared: InitialPagesPreparedRun;
+  pages: InitialPagesPublishedRun;
+  notifications: Extract<NotificationSettlementOutcome, { kind: "settled" }>;
 }>;
 
 /** run内の全段階へ渡す安定した識別情報。 */
@@ -211,6 +232,28 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
     }>,
   ) => Promise<Types["validated"]>;
   planPublication: (validated: Types["validated"]) => Types["planned"];
+  prepareCheckpoint: (
+    input: Parameters<DailyTransactionDependencies<Types>["persistState"]>[0],
+  ) => Promise<BoundPublicationCheckpoint>;
+  commitPreparedCheckpoint: (
+    input: Parameters<DailyTransactionDependencies<Types>["persistState"]>[0],
+    checkpoint: BoundPublicationCheckpoint,
+  ) => Promise<Types["persisted"]>;
+  readCommittedState: (
+    input: Readonly<{
+      configuration: Types["configuration"];
+      reference: InitialStateCommitReference;
+    }>,
+  ) => Promise<
+    Types["persisted"] &
+      Readonly<{
+        stateContentDigest: string;
+        receiptEvidence: Extract<
+          StateCommitReceiptEvidence,
+          { receiptType: "initial_state_commit" }
+        >;
+      }>
+  >;
   persistState: (
     input: Readonly<{
       invocation: DailyRunInvocation;
@@ -257,7 +300,23 @@ export type DailyTransactionDependencies<Types extends DailyTransactionTypeMap> 
       persisted: Types["persisted"];
       notifications: Types["notifications"];
     }>,
-  ) => Promise<void>;
+  ) => Promise<Extract<FinalizeRunOutcome, { kind: "finalized" }>>;
+  buildNotificationHistoryPages: (
+    input: Readonly<{
+      configuration: Types["configuration"];
+      settlementReceipt: NotificationSettlementReceipt;
+      finalizationReceipt: RunFinalizationReceipt;
+    }>,
+  ) => Promise<NotificationHistoryPagesPreparedRun>;
+  deployNotificationHistoryPages: (
+    input: Readonly<{
+      configuration: Types["configuration"];
+      prepared: NotificationHistoryPagesPreparedRun;
+      settlementReceipt: NotificationSettlementReceipt;
+      finalizationReceipt: RunFinalizationReceipt;
+      runId: string;
+    }>,
+  ) => Promise<NotificationHistoryPublishedRun>;
   writeDryRunArtifact: (path: string, artifact: DryRunArtifact<Types["planned"]>) => Promise<void>;
   writeCollectAnalyzeArtifact: (
     path: string,
@@ -287,6 +346,7 @@ export type DailyRunEffects = Readonly<{
 export type DailyRunExecutionResult = Readonly<{
   report: RunReport;
   effects: DailyRunEffects;
+  completedRun?: CompletedRun;
   failureDiagnosticRecordId?: string;
   failureEvidence?: FailedRun["evidence"];
 }>;
@@ -566,8 +626,8 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
     let discordSentAt: UtcIsoDateTime | null = null;
     let configuration: Types["configuration"] | undefined;
     let state: Types["state"] | undefined;
-    let persisted: Types["persisted"] | undefined;
     let prepared: PreparedRun | undefined;
+    let completedRun: CompletedRun | undefined;
 
     try {
       configuration = await this.#dependencies.validateConfiguration({
@@ -723,8 +783,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
       }
 
       if (request.output.kind === "publication") {
-        stage = "state_persistence";
-        persisted = await this.#dependencies.persistState({
+        const publicationInput = {
           invocation,
           configuration,
           state,
@@ -733,48 +792,32 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
           metrics,
           status: runStatus,
           diagnostics,
-        });
-        effects.stateCommitted = true;
-
-        stage = "pages";
-        const pagesPrepared = await this.#dependencies.buildPages({
-          invocation,
-          configuration,
-          repositoryInventory,
-          planned,
-          persisted,
-        });
-        effects.pagesBuilt = true;
-
-        const pages = await this.#dependencies.deployPages({
-          invocation,
-          configuration,
-          persisted,
-          pagesPrepared,
-        });
-
-        stage = "discord";
-        effects.discordAttempted = request.executionPolicy.notificationAction === "send";
-        const notifications = await this.#dependencies.settleNotifications({
-          invocation,
-          configuration,
-          repositoryInventory,
-          persisted,
-          pages,
-        });
-        discordSentAt = notifications.discordSentAt;
-        metrics = updateMetrics(metrics, {
-          notificationCount: notifications.notificationCount,
-        });
-
-        stage = "state_persistence";
-        await this.#dependencies.finalizeRun({
-          invocation,
-          configuration,
-          repositoryInventory,
-          persisted,
-          notifications: notifications.value,
-        });
+        } satisfies PublicationStageInput<Types>;
+        completedRun = await runDailyPublication(
+          this.#dependencies,
+          this.#runtime,
+          publicationInput,
+          {
+            setStage: (value) => {
+              stage = value;
+            },
+            stateCommitted: () => {
+              effects.stateCommitted = true;
+            },
+            pagesBuilt: () => {
+              effects.pagesBuilt = true;
+            },
+            notificationStarted: () => {
+              effects.discordAttempted = request.executionPolicy.notificationAction === "send";
+            },
+            notificationsSettled: (notifications) => {
+              discordSentAt = notifications.discordSentAt;
+              metrics = updateMetrics(metrics, {
+                notificationCount: notifications.notificationCount,
+              });
+            },
+          },
+        );
       }
 
       const report = completedReport(
@@ -789,6 +832,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
       return Object.freeze({
         report,
         effects: freezeEffects(effects),
+        ...(completedRun == null ? {} : { completedRun }),
       });
     } catch (error: unknown) {
       const failureDiagnosticRecordId = await this.#recordError(
