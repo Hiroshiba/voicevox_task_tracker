@@ -1,6 +1,7 @@
 import { WorkflowStageRunner } from "../../workflow-stage.js";
 import type { ProductionRuntimeAdapters } from "../adapters.js";
 import { createBuildWorkflowPagesStage } from "./build-pages.js";
+import { prepareWorkflowNotificationHistoryPages } from "../../run-publication/workflow-history-pages.js";
 import {
   preflightWorkflowPagesDeployment,
   recordWorkflowPagesDeployment,
@@ -26,6 +27,8 @@ export function createWorkflowStageRunner(
   return new WorkflowStageRunner({
     persistState: createPersistWorkflowStateStage(adapters),
     buildPages: createBuildWorkflowPagesStage(adapters),
+    prepareNotificationHistoryPages: (command) =>
+      prepareWorkflowNotificationHistoryPages(adapters, command),
     preflightPagesDeployment: (command) => preflightWorkflowPagesDeployment(adapters, command),
     recordPagesDeployment: (command) => recordWorkflowPagesDeployment(adapters, command),
     settleNotifications: createSettleWorkflowNotificationsStage(adapters),

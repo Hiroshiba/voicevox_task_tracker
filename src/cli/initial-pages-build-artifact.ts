@@ -31,6 +31,7 @@ export function parseInitialPagesBuildArtifact(value: unknown): InitialPagesBuil
   if (
     receipt.receiptType !== "pages_build" ||
     receipt.phase !== "initial" ||
+    intent.phase !== "initial" ||
     receipt.status !== "built" ||
     receipt.binding.bindingKind !== "checkpoint" ||
     receipt.binding.runId !== intent.runId ||

@@ -32,6 +32,7 @@ import type {
   PagesDeploymentIntent,
 } from "../../application/tracking-run/pages-build-contracts.js";
 import type { PagesBuildReceipt } from "../../application/tracking-run/receipt-schema.js";
+import type { NotificationHistoryPagesBuildArtifact } from "../notification-history-pages-build-artifact.js";
 import type {
   InitialPagesDeploymentOutcome,
   SequentialPagesResult,
@@ -70,6 +71,9 @@ export type InitialPagesPreparedRun = Readonly<{
   intent: PagesDeploymentIntent;
   receipt: PagesBuildReceipt;
 }>;
+
+/** 最終state revisionと公開要否を固定した通知履歴Pages結果。 */
+export type NotificationHistoryPagesPreparedRun = NotificationHistoryPagesBuildArtifact;
 
 /** deploy receiptと保存候補証拠を持つ初回Pages公開結果。 */
 export type InitialPagesPublishedRun = Readonly<{

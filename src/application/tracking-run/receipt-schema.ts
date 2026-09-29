@@ -180,6 +180,9 @@ export const receiptSchema = z.discriminatedUnion("receiptType", [
     phase: z.enum(["initial", "notification_history"]),
     status: z.enum(["built", "not_required"]),
     effectCertainty: z.enum(["committed", "no_effect"]),
+    notRequiredReason: z
+      .enum(["notification_action_held", "notification_action_acknowledged", "no_sent_history"])
+      .optional(),
     result: pagesBuildResultSchema.optional(),
   }),
   z.strictObject({

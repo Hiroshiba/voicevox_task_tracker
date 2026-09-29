@@ -1,5 +1,6 @@
 import {
   type BuildPagesCliCommand,
+  type PrepareNotificationHistoryPagesCliCommand,
   type PreflightPagesDeploymentCliCommand,
   type RecordPagesDeploymentCliCommand,
   type SettleNotificationsCliCommand,
@@ -19,6 +20,7 @@ import {
 export type WorkflowStageCliCommand =
   | PersistStateCliCommand
   | BuildPagesCliCommand
+  | PrepareNotificationHistoryPagesCliCommand
   | PreflightPagesDeploymentCliCommand
   | RecordPagesDeploymentCliCommand
   | SettleNotificationsCliCommand
@@ -36,6 +38,9 @@ export type WorkflowStageCliCommand =
 export type WorkflowStageDependencies = Readonly<{
   persistState: (command: PersistStateCliCommand) => Promise<void>;
   buildPages: (command: BuildPagesCliCommand) => Promise<void>;
+  prepareNotificationHistoryPages: (
+    command: PrepareNotificationHistoryPagesCliCommand,
+  ) => Promise<void>;
   preflightPagesDeployment: (command: PreflightPagesDeploymentCliCommand) => Promise<void>;
   recordPagesDeployment: (command: RecordPagesDeploymentCliCommand) => Promise<void>;
   settleNotifications: (command: SettleNotificationsCliCommand) => Promise<void>;
@@ -66,6 +71,9 @@ export class WorkflowStageRunner {
         return;
       case "build-pages":
         await this.#dependencies.buildPages(command);
+        return;
+      case "prepare-notification-history-pages":
+        await this.#dependencies.prepareNotificationHistoryPages(command);
         return;
       case "preflight-pages-deployment":
         await this.#dependencies.preflightPagesDeployment(command);

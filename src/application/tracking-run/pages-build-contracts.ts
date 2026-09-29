@@ -32,7 +32,7 @@ export const pagesContentManifestSchema = z.strictObject({
 
 export const pagesDeploymentIntentSchema = z.strictObject({
   schemaVersion: z.literal(1),
-  phase: z.literal("initial"),
+  phase: z.enum(["initial", "notification_history"]),
   runId: z.string().regex(/^tracker-run:[0-9a-f]{64}$/u),
   checkpointDigest: sha256Schema,
   recordDigest: sha256Schema,
@@ -49,7 +49,7 @@ export const pagesDeploymentIntentSchema = z.strictObject({
 /** Pagesの実出力を相対pathとbyte列digestで固定した一覧。 */
 export type PagesContentManifest = z.output<typeof pagesContentManifestSchema>;
 
-/** 初回Pagesのdeploy対象と正本revisionを固定した指示。 */
+/** Pagesのdeploy対象と正本revisionを固定した指示。 */
 export type PagesDeploymentIntent = z.output<typeof pagesDeploymentIntentSchema>;
 
 /** file一覧の重複と順序を照合して内容digestを返す。 */
@@ -82,12 +82,12 @@ export function digestPagesContentManifest(
   });
 }
 
-/** 初回Pagesの正本と出力manifestからdeploy指示を作る。 */
+/** Pagesの正本と出力manifestからdeploy指示を作る。 */
 export function createPagesDeploymentIntent(
-  value: Omit<PagesDeploymentIntent, "schemaVersion" | "phase" | "deploymentIntentDigest">,
+  value: Omit<PagesDeploymentIntent, "schemaVersion" | "deploymentIntentDigest">,
   digest: ContentDigestPort,
 ): PagesDeploymentIntent {
-  const payload = { schemaVersion: 1, phase: "initial", ...value };
+  const payload = { schemaVersion: 1, ...value };
   return parsePagesDeploymentIntent(
     { ...payload, deploymentIntentDigest: digest.sha256Utf8(serializeCanonicalJson(payload)) },
     digest,

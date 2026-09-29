@@ -8,6 +8,8 @@ import { assertNonNullable } from "../util/index.js";
 import { CliUsageError } from "./errors.js";
 import { type WorkflowJobResult, type WorkflowJobResults } from "./workflow-run-report.js";
 
+export { formatCliUsage } from "./command-usage.js";
+
 const DEFAULT_CONFIG_PATH = "config.yml";
 const DEFAULT_REPORT_DIRECTORY = "artifacts/run-reports";
 const DEFAULT_ARTIFACT_DIRECTORY = "artifacts";
@@ -15,6 +17,7 @@ const DEFAULT_WORKFLOW_ARTIFACT_PATH = "artifacts/workflow/validated-run.json";
 const DEFAULT_INITIAL_STATE_RECEIPT_PATH = "artifacts/workflow/initial-state-commit-receipt.json";
 const DEFAULT_SETTLEMENT_RECEIPT_PATH = "artifacts/workflow/notification-settlement-receipt.json";
 const DEFAULT_FINALIZATION_RECEIPT_PATH = "artifacts/workflow/run-finalization-receipt.json";
+const DEFAULT_HISTORY_BUILD_PATH = "artifacts/workflow/notification-history-pages-build.json";
 const DEFAULT_COLLECT_ANALYZE_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/collect-analyze.json`;
 const DEFAULT_WORKFLOW_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/workflow.json`;
 const REPOSITORY_FILTER_PATTERN = /^VOICEVOX\/[A-Za-z0-9._-]+$/u;
@@ -90,6 +93,16 @@ export type BuildPagesCliCommand = Readonly<{
   kind: "build-pages";
   configPath: string;
   initialStateReceiptPath: string;
+  buildArtifactPath: string;
+  outputDirectory: string;
+}>;
+
+/** 最終stateから通知履歴Pagesの公開要否とbuild artifactを作る入力。 */
+export type PrepareNotificationHistoryPagesCliCommand = Readonly<{
+  kind: "prepare-notification-history-pages";
+  configPath: string;
+  settlementReceiptPath: string;
+  finalizationReceiptPath: string;
   buildArtifactPath: string;
   outputDirectory: string;
 }>;
@@ -229,6 +242,7 @@ export type CliCommand =
   | CollectAnalyzeCliCommand
   | PersistStateCliCommand
   | BuildPagesCliCommand
+  | PrepareNotificationHistoryPagesCliCommand
   | PreflightPagesDeploymentCliCommand
   | RecordPagesDeploymentCliCommand
   | SettleNotificationsCliCommand
@@ -505,6 +519,37 @@ function parseBuildPages(args: readonly string[]): BuildPagesCliCommand {
       "--build-artifact",
       "artifacts/workflow/initial-pages-build.json",
     ),
+    outputDirectory: singleOption(options, "--output", "web/public/data"),
+  });
+}
+
+function parsePrepareNotificationHistoryPages(
+  args: readonly string[],
+): PrepareNotificationHistoryPagesCliCommand {
+  const options = parseOptions(
+    args,
+    new Set([
+      "--config",
+      "--settlement-receipt",
+      "--finalization-receipt",
+      "--build-artifact",
+      "--output",
+    ]),
+  );
+  return Object.freeze({
+    kind: "prepare-notification-history-pages",
+    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
+    settlementReceiptPath: singleOption(
+      options,
+      "--settlement-receipt",
+      DEFAULT_SETTLEMENT_RECEIPT_PATH,
+    ),
+    finalizationReceiptPath: singleOption(
+      options,
+      "--finalization-receipt",
+      DEFAULT_FINALIZATION_RECEIPT_PATH,
+    ),
+    buildArtifactPath: singleOption(options, "--build-artifact", DEFAULT_HISTORY_BUILD_PATH),
     outputDirectory: singleOption(options, "--output", "web/public/data"),
   });
 }
@@ -920,6 +965,8 @@ export function parseCliArguments(args: readonly string[]): CliCommand {
       return parsePersistState(options);
     case "build-pages":
       return parseBuildPages(options);
+    case "prepare-notification-history-pages":
+      return parsePrepareNotificationHistoryPages(options);
     case "preflight-pages-deployment":
       return parsePreflightPagesDeployment(options);
     case "record-pages-deployment":
@@ -949,31 +996,4 @@ export function parseCliArguments(args: readonly string[]): CliCommand {
     default:
       throw usageError(`未対応のサブコマンドです。対象: ${subcommand}`);
   }
-}
-
-/** CLIで表示する簡潔な使用方法を返す。 */
-export function formatCliUsage(): string {
-  return [
-    "使用方法:",
-    "  voicevox-task-tracker daily [--config PATH] [--notification-action send|hold|acknowledge-current] [--sandbox-context PATH] [--scheduled-for ISO] [--report PATH]",
-    "  voicevox-task-tracker dry-run [--config PATH] [--artifact PATH] [--report PATH]",
-    "  voicevox-task-tracker backfill [--mode none|linked|all-open] [--notification-action send|hold|acknowledge-current] [--repository VOICEVOX/REPO]",
-    "  voicevox-task-tracker collect-analyze [--mode none|linked|all-open] [--notification-action send|hold|acknowledge-current] [--scheduled-for ISO] [--artifact PATH]",
-    "  voicevox-task-tracker persist-state [--config PATH] [--artifact PATH] [--receipt PATH]",
-    "  voicevox-task-tracker build-pages [--config PATH] [--receipt PATH] [--build-artifact PATH] [--output PATH]",
-    "  voicevox-task-tracker preflight-pages-deployment [--config PATH] [--receipt PATH] [--build-artifact PATH] [--preflight PATH] [--run-attempt NUMBER]",
-    "  voicevox-task-tracker record-pages-deployment [--build-artifact PATH] [--preflight PATH] [--outcome PATH]",
-    "  voicevox-task-tracker settle-notifications [--receipt PATH] [--build-artifact PATH] [--pages-deployment PATH] [--settlement-receipt PATH]",
-    "  voicevox-task-tracker finalize-run [--receipt PATH] [--settlement-receipt PATH] [--finalization-receipt PATH]",
-    "  voicevox-task-tracker resolve-discord-delivery --delivery-id ID --resolution retry|acknowledge [--config PATH]",
-    "  voicevox-task-tracker notify-operations --kind collection --incident-id ID --occurred-at ISO --collect-analyze-report PATH",
-    "  voicevox-task-tracker notify-operations --kind pages|discord --incident-id ID --occurred-at ISO",
-    "  voicevox-task-tracker report-workflow --run-id ID --run-attempt NUMBER --quality-result RESULT --collect-analyze-result RESULT --persist-state-result RESULT --build-pages-result RESULT --deploy-pages-result RESULT --notify-discord-result RESULT --publish-notification-history-result RESULT --notify-operations-result RESULT",
-    "  voicevox-task-tracker verify-state --state-directory PATH [--config PATH]",
-    "  voicevox-task-tracker verify-checkpoint [--artifact PATH] [--config PATH]",
-    "  voicevox-task-tracker verify-runtime-recovery --input PATH [--bundle-root PATH]",
-    "  voicevox-task-tracker inspect-run-state [--config PATH] [--state-ref REF] [--run-id ID --state-revision SHA]",
-    "  voicevox-task-tracker verify-receipt-chain --input PATH",
-    "  voicevox-task-tracker report-failure --input PATH --output PATH",
-  ].join("\n");
 }

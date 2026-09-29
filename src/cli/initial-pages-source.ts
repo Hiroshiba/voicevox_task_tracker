@@ -34,12 +34,13 @@ export type InitialPagesSource = Readonly<{
 function requiredSource(files: ReadonlyMap<string, StateFileReadResult>, path: string): string {
   const file = files.get(path);
   if (file?.status !== "present") {
-    throw new TypeError(`初回Pages buildに必要なstate fileがありません。対象: ${path}`);
+    throw new TypeError(`Pages buildに必要なstate fileがありません。対象: ${path}`);
   }
   return new TextDecoder("utf-8", { fatal: true }).decode(file.bytes);
 }
 
-function readHistoryRecords(
+/** exact stateの全履歴fileをcanonical形式で読む。 */
+export function readPagesHistoryRecords(
   files: ReadonlyMap<string, StateFileReadResult>,
   historyDirectory: string,
 ): readonly StateHistoryRecord[] {
@@ -48,7 +49,7 @@ function readHistoryRecords(
   for (const path of paths) {
     const date = path.slice(historyDirectory.length + 1);
     if (!/^\d{4}-\d{2}-\d{2}\.jsonl$/u.test(date)) {
-      throw new TypeError("初回Pages buildのhistory file名が不正です");
+      throw new TypeError("Pages buildのhistory file名が不正です");
     }
     const source = requiredSource(files, path);
     const fileRecords = parseStateHistoryRecords(source);
@@ -56,7 +57,7 @@ function readHistoryRecords(
       source !== serializeStateHistoryRecords(fileRecords) ||
       fileRecords.some((record) => `${record.date}.jsonl` !== date)
     ) {
-      throw new TypeError("初回Pages buildのhistory fileがcanonical recordではありません");
+      throw new TypeError("Pages buildのhistory fileがcanonical recordではありません");
     }
     records.push(...fileRecords);
   }
@@ -147,7 +148,7 @@ export async function readInitialPagesSource(
     previousRepositoryId = repository.id;
   }
   const snapshot = parseStateSnapshot(requiredSource(files, stateConfiguration.snapshotPath));
-  const historyRecords = readHistoryRecords(files, stateConfiguration.historyDirectory);
+  const historyRecords = readPagesHistoryRecords(files, stateConfiguration.historyDirectory);
   const matching = historyRecords.filter((record) => record.runId === transaction.marker.runId);
   if (
     snapshot.run.id !== transaction.marker.runId ||

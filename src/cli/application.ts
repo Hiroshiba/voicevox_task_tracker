@@ -23,6 +23,7 @@ export type CliExecutionResult =
       command:
         | "persist-state"
         | "build-pages"
+        | "prepare-notification-history-pages"
         | "preflight-pages-deployment"
         | "record-pages-deployment"
         | "settle-notifications"
@@ -84,6 +85,7 @@ export class CliApplication<Types extends DailyTransactionTypeMap> {
       }
       case "persist-state":
       case "build-pages":
+      case "prepare-notification-history-pages":
       case "preflight-pages-deployment":
       case "record-pages-deployment":
       case "settle-notifications":

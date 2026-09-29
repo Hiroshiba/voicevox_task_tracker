@@ -158,6 +158,8 @@ function assertReceiptSemantics(receipt: Receipt): void {
       (receipt.status === "built") !== (receipt.result != null) ||
       (receipt.status === "built") !== (receipt.effectCertainty === "committed") ||
       (receipt.status === "not_required") !== (receipt.receiptKind === "not_required") ||
+      (receipt.status === "not_required") !== (receipt.notRequiredReason != null) ||
+      (receipt.phase === "initial" && receipt.notRequiredReason != null) ||
       (receipt.result != null && receipt.logicalTarget !== receipt.result.deploymentIntentDigest)
     ) {
       throw new TypeError("Pages build receiptの段階と結果が一致しません");
