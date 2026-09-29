@@ -10,7 +10,12 @@ import {
   DiscordWebhookDeliveryUnknownError,
 } from "../../discord/index.js";
 import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content-digest.js";
-import { joinStatePath, readExactStateSnapshot } from "../../persistence/index.js";
+import {
+  assertOperationsAlertLedgerWritable,
+  joinStatePath,
+  loadOperationsAlertLedger,
+  readExactStateSnapshot,
+} from "../../persistence/index.js";
 import type { StateBranchAdapter } from "../../persistence/index.js";
 import type { BaseStateRevision } from "../../application/tracking-run/contracts/run-core.js";
 import { operationsIncidentKindForFailure } from "../../application/tracking-run/failure-primary.js";
@@ -307,6 +312,11 @@ export async function notifyWorkflowOperations(
     config.state,
     config.staleness.timezone,
   );
+  await assertOperationsAlertLedgerWritable(
+    dependencies.adapters.createStateBranchAdapter(),
+    config.state,
+    session.baseRevision,
+  );
   const snapshot = await session.loadSnapshot();
   const state = Object.freeze({
     session,
@@ -322,9 +332,14 @@ export async function notifyWorkflowOperations(
   );
   const priorDeliveries = priorReceipts.filter((receipt) => receipt.status !== "no_effect");
   if (priorDeliveries.length > 0) {
-    const recorded = state.notificationLedger.operationsAlerts.find(
-      (entry) => entry.incidentId === incidentId && entry.kind === incidentKind,
+    const dedicated = await loadOperationsAlertLedger(
+      dependencies.adapters.createStateBranchAdapter(),
+      config.state,
     );
+    const recorded = [
+      ...state.notificationLedger.operationsAlerts,
+      ...dedicated.ledger.operationsAlerts,
+    ].find((entry) => entry.incidentId === incidentId && entry.kind === incidentKind);
     if (recorded == null) {
       throw new OperationsAlertPendingDeliveryError(
         new TypeError("既存receiptの送信結果をexact stateで確認できません"),

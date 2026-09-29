@@ -114,8 +114,7 @@ async function observeOperationsAlertState(
   discordMessageId: string,
 ): Promise<"sent" | "reserved" | "absent" | "unverified"> {
   const adapter = adapters.createStateBranchAdapter();
-  const head = await adapter.resolveHead(configuration.branch);
-  const ledger = await loadOperationsAlertLedger(adapter, head);
+  const { ledger } = await loadOperationsAlertLedger(adapter, configuration);
   const sent = ledger.operationsAlerts.find((entry) => entry.alertKey === alertKey);
   if (sent != null) {
     return sent.discordMessageId === discordMessageId ? "sent" : "unverified";
@@ -140,21 +139,21 @@ export async function deliverOperationsAlert(
   }>
 > {
   const currentNotificationLedger = await state.session.loadNotificationLedger();
+  await assertOperationsAlertLedgerWritable(
+    adapters.createStateBranchAdapter(),
+    configuration,
+    state.session.baseRevision,
+  );
   const existing = await loadOperationsAlertLedger(
     adapters.createStateBranchAdapter(),
-    state.session.baseRevision,
+    configuration,
   );
   assertExistingStatePublicSafety(
     previousSnapshot(state),
     await state.session.loadHistoryRecords(),
     currentNotificationLedger,
-    [incident, existing],
+    [incident, existing.ledger],
     knownSecrets,
-  );
-  await assertOperationsAlertLedgerWritable(
-    adapters.createStateBranchAdapter(),
-    configuration,
-    state.session.baseRevision,
   );
   if (!settings.enabled) {
     return Object.freeze({ delivery: { status: "disabled" } });
@@ -163,14 +162,17 @@ export async function deliverOperationsAlert(
     incident.kind === "workflow_infrastructure_failure"
       ? buildDiscordInfrastructureAlertPlan(incident).alertKey
       : buildDiscordOperationsAlertPlan(incident).alertKey;
-  const recorded = existing.operationsAlerts.find((entry) => entry.alertKey === alertKey);
+  const recorded = [
+    ...currentNotificationLedger.operationsAlerts,
+    ...existing.ledger.operationsAlerts,
+  ].find((entry) => entry.alertKey === alertKey);
   if (recorded != null) {
     if (recorded.incidentId !== incident.incidentId || recorded.kind !== incident.kind) {
       throw new TypeError("運用障害通知ledgerのincidentが一致しません");
     }
     return Object.freeze({ delivery: { status: "already_recorded", alertKey } });
   }
-  if (existing.deliveryReservations.some((entry) => entry.alertKey === alertKey)) {
+  if (existing.ledger.deliveryReservations.some((entry) => entry.alertKey === alertKey)) {
     throw new OperationsAlertPendingDeliveryError();
   }
   const startedAt = createUtcIsoDateTime(adapters.now().toISOString());
@@ -187,14 +189,13 @@ export async function deliverOperationsAlert(
   const reservationCommit = await reserveOperationsAlertDelivery(
     adapters.createStateBranchAdapter(),
     configuration,
-    state.session.baseRevision,
+    existing.head,
     reservation,
   );
   const operationsAlertsByKey = new Map<string, OperationsAlertLedgerEntry>(
-    currentNotificationLedger.operationsAlerts.map((entry) => [
-      entry.alertKey,
-      operationsAlertLedgerEntry(entry),
-    ]),
+    [...currentNotificationLedger.operationsAlerts, ...existing.ledger.operationsAlerts].map(
+      (entry) => [entry.alertKey, operationsAlertLedgerEntry(entry)],
+    ),
   );
   const deliveryDependencies: DiscordDeliveryDependencies = {
     secretProvider: environmentSecretProvider(adapters.environment),

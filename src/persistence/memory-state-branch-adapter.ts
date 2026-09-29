@@ -1,5 +1,5 @@
 import {
-  assertValidStateBranch,
+  assertValidStateStorageBranch,
   assertValidStateDirectory,
   assertValidStatePath,
   type StateBranchAdapter,
@@ -160,7 +160,7 @@ export class MemoryStateBranchAdapter implements StateBranchAdapter {
   }
 
   public async commit(request: StateBranchCommitRequest): Promise<StateBranchCommitResult> {
-    assertValidStateBranch(request.branch);
+    assertValidStateStorageBranch(request.branch);
     if (request.updates.length === 0) {
       return Promise.reject(
         new StateBranchCommitError({
@@ -292,7 +292,7 @@ export class MemoryStateBranchAdapter implements StateBranchAdapter {
 
   /** メモリ上のstate branchを公開済みとして扱う。 */
   public async publish(request: StateBranchPublishRequest): Promise<void> {
-    assertValidStateBranch(request.branch);
+    assertValidStateStorageBranch(request.branch);
     if (!this.#commits.has(request.revision)) {
       return Promise.reject(
         new StateBranchReadError({

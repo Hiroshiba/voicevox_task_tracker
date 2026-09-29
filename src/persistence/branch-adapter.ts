@@ -14,6 +14,8 @@ import { OPERATIONS_ALERT_LEDGER_STATE_PATH_V1 } from "./operations-alert-ledger
 const STATE_ROOT_DIRECTORY = "state";
 const STATE_PATH_PREFIX = "state/";
 const STATE_BRANCH_PATTERN = /^(?:tracker-state|sandbox-state\/env-[1-9][0-9]*-[1-9][0-9]*)$/u;
+const OPERATIONS_ALERT_BRANCH_PATTERN =
+  /^(?:tracker-operations-alerts|sandbox-operations-alerts\/env-[1-9][0-9]*-[1-9][0-9]*)$/u;
 
 /** 永続化が利用する設定のstate節。 */
 export type StatePersistenceConfiguration = Readonly<{
@@ -113,6 +115,21 @@ export function assertValidStateBranch(branch: string): void {
   if (!STATE_BRANCH_PATTERN.test(branch)) {
     throw new StateConfigurationError("tracker-stateまたはsandbox-state配下のbranchが必要です");
   }
+}
+
+/** stateまたは運用通知専用branch名か検証する。 */
+export function assertValidStateStorageBranch(branch: string): void {
+  if (!STATE_BRANCH_PATTERN.test(branch) && !OPERATIONS_ALERT_BRANCH_PATTERN.test(branch)) {
+    throw new StateConfigurationError("stateまたは運用通知専用branchが必要です");
+  }
+}
+
+/** 追跡state branchに対応する運用通知専用branchを返す。 */
+export function operationsAlertBranchForStateBranch(branch: string): string {
+  assertValidStateBranch(branch);
+  return branch === "tracker-state"
+    ? "tracker-operations-alerts"
+    : branch.replace(/^sandbox-state\//u, "sandbox-operations-alerts/");
 }
 
 /** state branch内で利用できる正規化済み相対パスか検証する。 */

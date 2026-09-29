@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 
 import {
   assertValidStateDirectory,
-  assertValidStateBranch,
+  assertValidStateStorageBranch,
   assertValidStatePath,
   type StateBranchAdapter,
   type StateBranchCommitRequest,
@@ -235,7 +235,7 @@ function parseGitBatchResult(
 }
 
 function validateBranch(branch: string): void {
-  assertValidStateBranch(branch);
+  assertValidStateStorageBranch(branch);
 }
 
 function validateCommitRequest(request: StateBranchCommitRequest): void {

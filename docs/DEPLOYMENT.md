@@ -131,13 +131,11 @@ read and writeへ変更する必要はありません。
 全workflowはtop-levelの`permissions`を空にし、各jobで必要な権限だけを指定しています。
 `CODEX_AUTH_SYNC_TOKEN`はjobの`permissions`とは独立した資格情報です。
 同期のために既定のread-only設定や`collect-analyze`の`contents: read`を変更しません。
-`persist-state`、`notify-discord`、`notify-operations`は`tracker-state`へpushするため、それぞれ`contents: write`を指定します。
+`persist-state`と`notify-discord`は`tracker-state`へ、`notify-operations`は`tracker-operations-alerts`へpushするため、それぞれ`contents: write`を指定します。
 これらのjobにはGitHub Actionsが`GITHUB_TOKEN`を自動発行するため、独自の`GITHUB_TOKEN` secretは登録しません。
 
-CLIはremote repositoryへpushしません。
-`src/persistence/git-state-branch-adapter.ts`が`hash-object`、`commit-tree`、`update-ref`などを使い、localの`refs/heads/tracker-state`へcommitを作ります。
-workflowはCLIの実行前にremoteの`tracker-state`をlocal refへfetchし、CLIの実行後に明示的な`git push`でremoteへ反映します。
-`tracker-state`へrulesetを設定する場合はGitHub Actionsによるstate更新を許可し、人間の通常作業branchとして使わないでください。
+`src/persistence/git-state-branch-adapter.ts`はremote refの現在値を読み、`hash-object`と`commit-tree`でcommitを作って非force pushします。運用障害通知の専用refは初回通知時に作成し、以後は同じrefの直前commitを親にします。
+`tracker-state`と`tracker-operations-alerts`へrulesetを設定する場合は、GitHub Actionsによる更新を許可し、人間の通常作業branchとして使わないでください。
 
 `collect-analyze`は`artifacts/workflow/validated-run.json`へ検証済みsnapshot、通知候補、通知管理記録、run report生成用の収集指標、AI cache、Pages URL、Discord送信設定だけを書きます。
 GitHub App key、installation token、Codex認証情報、`CODEX_AUTH_SYNC_TOKEN`、Discord webhookはartifactへ含めません。

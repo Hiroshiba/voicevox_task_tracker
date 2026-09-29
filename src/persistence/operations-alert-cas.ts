@@ -1,97 +1,120 @@
+import { z } from "zod";
+
 import type { OperationsAlertLedgerEntry } from "../domain/index.js";
-import {
-  DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
-  INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1,
-  RUN_TRANSACTION_MARKER_STATE_PATH_V1,
-} from "../application/tracking-run/contracts/recovery-paths.js";
 import { createStateCommitOperationId } from "./state-commit-metadata.js";
 import {
+  operationsAlertBranchForStateBranch,
   type StateBranchAdapter,
   type StateBranchCommitResult,
   type StateBranchHead,
-  type StateFileReadResult,
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
-import { StateBranchConflictError, StateBranchCommitError } from "./errors.js";
+import { StateBranchConflictError, StateBranchCommitError, StateFormatError } from "./errors.js";
 import { decodeStateFile, encodeStateFile } from "./state-file-codec.js";
-import { createStateLedgerUpdates, loadStateNotificationLedgers } from "./state-ledger-files.js";
 import {
   createStateOperationsAlertLedger,
+  isCanonicalStateOperationsAlertLedgerSource,
+  OPERATIONS_ALERT_LEDGER_SCHEMA_VERSION_1,
+  OPERATIONS_ALERT_LEDGER_SCHEMA_VERSION_2,
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
   parseStateOperationsAlertLedger,
   serializeStateOperationsAlertLedger,
   type StateOperationsAlertLedger,
   type StateOperationsAlertReservation,
 } from "./operations-alert-ledger.js";
-import { writeStateCas } from "./state-cas.js";
 
-/** 送信前にexact headの専用ledgerだけを更新できることを確認する。 */
+type OperationsAlertLedgerAtRef = Readonly<{
+  head: StateBranchHead;
+  ledger: StateOperationsAlertLedger;
+}>;
+
+function sameHead(left: StateBranchHead, right: StateBranchHead): boolean {
+  return (
+    left.status === right.status &&
+    (left.status === "missing" || (right.status === "present" && left.revision === right.revision))
+  );
+}
+
+/** 追跡refの旧v1 ledgerだけを読み、現行通知が変更できる状態か確認する。 */
 export async function assertOperationsAlertLedgerWritable(
   adapter: StateBranchAdapter,
   configuration: StatePersistenceConfiguration,
   head: StateBranchHead,
 ): Promise<void> {
-  const ledger = await loadStateNotificationLedgers(adapter, configuration, head);
-  await createStateLedgerUpdates(adapter, configuration, head, ledger, "operations_alert");
-}
-
-function sameFile(left: StateFileReadResult, right: StateFileReadResult): boolean {
-  if (left.status !== right.status) {
-    return false;
+  const observed = await adapter.resolveHead(configuration.branch);
+  if (!sameHead(head, observed)) {
+    throw new StateBranchConflictError();
   }
-  if (left.status === "missing" || right.status === "missing") {
-    return true;
+  if (head.status === "missing") {
+    return;
   }
-  return (
-    left.bytes.length === right.bytes.length &&
-    left.bytes.every((byte, index) => byte === right.bytes[index])
+  const source = decodeStateFile(
+    await adapter.readFile(head.revision, OPERATIONS_ALERT_LEDGER_STATE_PATH_V1),
+    "operations alert ledger",
   );
-}
-
-async function assertProtectedFilesUnchanged(
-  adapter: StateBranchAdapter,
-  configuration: StatePersistenceConfiguration,
-  parent: StateBranchHead,
-  revision: string,
-): Promise<void> {
-  const paths = [
-    configuration.snapshotPath,
-    configuration.notificationLedgerPath,
-    DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
-    RUN_TRANSACTION_MARKER_STATE_PATH_V1,
-    INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1,
-  ];
-  const before =
-    parent.status === "missing"
-      ? new Map(paths.map((path) => [path, { status: "missing" } satisfies StateFileReadResult]))
-      : await adapter.readFiles(parent.revision, paths);
-  const after = await adapter.readFiles(revision, paths);
-  for (const path of paths) {
-    const previous = before.get(path);
-    const current = after.get(path);
-    if (previous == null || current == null || !sameFile(previous, current)) {
-      throw new TypeError("運用障害通知commitで追跡state fileが変更されました");
-    }
+  if (source == null) {
+    return;
   }
+  const value: unknown = JSON.parse(source);
+  const version = z.object({ schemaVersion: z.string() }).parse(value).schemaVersion;
+  if (version !== OPERATIONS_ALERT_LEDGER_SCHEMA_VERSION_1) {
+    throw new StateBranchConflictError({
+      cause: new TypeError("追跡stateに旧runtimeが読めない運用通知ledgerがあります"),
+    });
+  }
+  if (!isCanonicalStateOperationsAlertLedgerSource(source)) {
+    throw new StateFormatError("operations alert ledger", {
+      cause: new TypeError("旧運用通知ledgerの保存byte列がcanonicalではありません"),
+    });
+  }
+  parseStateOperationsAlertLedger(source);
 }
 
-/** exact stateから送信予約と送信済み通知を読む。 */
+/** 運用通知専用refのexact headからv2 ledgerを読む。 */
 export async function loadOperationsAlertLedger(
   adapter: StateBranchAdapter,
-  head: StateBranchHead,
-): Promise<StateOperationsAlertLedger> {
-  const file =
-    head.status === "missing"
-      ? ({ status: "missing" } satisfies StateFileReadResult)
-      : await adapter.readFile(head.revision, OPERATIONS_ALERT_LEDGER_STATE_PATH_V1);
-  const source = decodeStateFile(file, "operations alert ledger");
-  return source == null
-    ? createStateOperationsAlertLedger({
-        schemaVersion: "2",
+  configuration: StatePersistenceConfiguration,
+): Promise<OperationsAlertLedgerAtRef> {
+  const head = await adapter.resolveHead(operationsAlertBranchForStateBranch(configuration.branch));
+  if (head.status === "missing") {
+    return Object.freeze({
+      head,
+      ledger: createStateOperationsAlertLedger({
+        schemaVersion: OPERATIONS_ALERT_LEDGER_SCHEMA_VERSION_2,
         operationsAlerts: [],
         deliveryReservations: [],
-      })
-    : parseStateOperationsAlertLedger(source);
+      }),
+    });
+  }
+  const paths = await adapter.listFiles(head.revision, "state");
+  if (paths.length !== 1 || paths[0] !== OPERATIONS_ALERT_LEDGER_STATE_PATH_V1) {
+    throw new StateBranchConflictError({
+      cause: new TypeError("運用通知専用refの保存pathが不正です"),
+    });
+  }
+  const commit = await adapter.readCommit(head.revision);
+  if (commit.metadata.commitScope !== "operations_alert") {
+    throw new StateBranchConflictError({
+      cause: new TypeError("運用通知専用refのcommit scopeが不正です"),
+    });
+  }
+  const source = decodeStateFile(
+    await adapter.readFile(head.revision, OPERATIONS_ALERT_LEDGER_STATE_PATH_V1),
+    "operations alert ledger",
+  );
+  if (source == null) {
+    throw new StateFormatError("operations alert ledger", {
+      cause: new TypeError("運用通知専用refにledgerがありません"),
+    });
+  }
+  const value: unknown = JSON.parse(source);
+  z.object({ schemaVersion: z.literal(OPERATIONS_ALERT_LEDGER_SCHEMA_VERSION_2) }).parse(value);
+  if (!isCanonicalStateOperationsAlertLedgerSource(source)) {
+    throw new StateFormatError("operations alert ledger", {
+      cause: new TypeError("運用通知専用refの保存byte列がcanonicalではありません"),
+    });
+  }
+  return Object.freeze({ head, ledger: parseStateOperationsAlertLedger(source) });
 }
 
 async function commitOperationsAlertUpdate(
@@ -103,61 +126,74 @@ async function commitOperationsAlertUpdate(
   committedAt: string,
   update: (ledger: StateOperationsAlertLedger) => StateOperationsAlertLedger,
 ): Promise<StateBranchCommitResult> {
+  const branch = operationsAlertBranchForStateBranch(configuration.branch);
+  const atRef = await loadOperationsAlertLedger(adapter, configuration);
+  if (!sameHead(atRef.head, expectedHead)) {
+    throw new StateBranchConflictError();
+  }
+  const next = update(atRef.ledger);
+  const bytes = encodeStateFile(serializeStateOperationsAlertLedger(next));
   const commitIdentity = Object.freeze({
     commitScope: "operations_alert" as const,
     operationId: createStateCommitOperationId({
       scope: "operations_alert",
+      branch,
       alertKey,
       action,
     }),
   });
-  const written = await writeStateCas(adapter, configuration, expectedHead, {
+  const commit = await adapter.commit({
+    branch,
+    expectedHead,
+    updates: [{ path: OPERATIONS_ALERT_LEDGER_STATE_PATH_V1, bytes }],
+    deletions: [],
+    message: `tracker operations alert ${action} ${alertKey}`,
+    committedAt,
     commitIdentity,
-    build: async (parent) => {
-      await assertOperationsAlertLedgerWritable(adapter, configuration, parent);
-      const next = update(await loadOperationsAlertLedger(adapter, parent));
-      return {
-        updates: [
-          {
-            path: OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
-            bytes: encodeStateFile(serializeStateOperationsAlertLedger(next)),
-          },
-        ],
-        deletions: [],
-        message: `tracker operations alert ${action} ${alertKey}`,
-        committedAt,
-        commitIdentity,
-      };
-    },
-    verifyCandidate: async (_files, revision, request) => {
-      const candidate = await adapter.readCommit(revision);
-      await assertProtectedFilesUnchanged(adapter, configuration, candidate.parent, revision);
-      if (
-        request.updates.length !== 1 ||
-        request.updates[0]?.path !== OPERATIONS_ALERT_LEDGER_STATE_PATH_V1
-      ) {
-        throw new TypeError("運用障害通知commitの変更pathが不正です");
-      }
-    },
   });
-  if (written.status === "conflict") {
-    throw new StateBranchConflictError();
-  }
-  if (written.status === "no_effect") {
+  const inspected = await adapter.readCommit(commit.revision);
+  const paths = await adapter.listFiles(commit.revision, "state");
+  const candidate = await adapter.readFile(commit.revision, OPERATIONS_ALERT_LEDGER_STATE_PATH_V1);
+  if (
+    !sameHead(inspected.parent, expectedHead) ||
+    inspected.metadata.commitScope !== "operations_alert" ||
+    inspected.metadata.operationId !== commitIdentity.operationId ||
+    inspected.metadata.changedPathManifestDigest !== commit.metadata.changedPathManifestDigest ||
+    inspected.changedPathManifest.entries.length !== 1 ||
+    inspected.changedPathManifest.entries[0]?.path !== OPERATIONS_ALERT_LEDGER_STATE_PATH_V1 ||
+    paths.length !== 1 ||
+    paths[0] !== OPERATIONS_ALERT_LEDGER_STATE_PATH_V1 ||
+    candidate.status !== "present" ||
+    candidate.bytes.length !== bytes.length ||
+    !candidate.bytes.every((byte, index) => byte === bytes[index])
+  ) {
     throw new StateBranchCommitError({
-      cause: new TypeError("運用障害通知ledgerをremoteへ反映できませんでした"),
+      cause: new TypeError("運用通知専用refのcommit候補を照合できません"),
     });
   }
-  const inspected = await adapter.readCommit(written.commit.revision);
-  const published = await adapter.resolveHead(configuration.branch);
-  if (published.status !== "present" || published.revision !== written.commit.revision) {
+  try {
+    await adapter.publish({ branch, revision: commit.revision });
+  } catch (error: unknown) {
+    const observed = await adapter.resolveHead(branch);
+    if (!sameHead(observed, { status: "present", revision: commit.revision })) {
+      if (!sameHead(observed, expectedHead)) {
+        throw new StateBranchConflictError({ cause: error });
+      }
+      throw new StateBranchCommitError({ cause: error });
+    }
+  }
+  const published = await loadOperationsAlertLedger(adapter, configuration);
+  if (
+    !sameHead(published.head, { status: "present", revision: commit.revision }) ||
+    serializeStateOperationsAlertLedger(published.ledger) !==
+      serializeStateOperationsAlertLedger(next)
+  ) {
     throw new StateBranchConflictError();
   }
-  await assertProtectedFilesUnchanged(adapter, configuration, inspected.parent, published.revision);
-  return written.commit;
+  return commit;
 }
 
-/** Discord HTTPより前に送信予約を専用ledgerへCAS保存する。 */
+/** Discord HTTPより前に送信予約を運用通知専用refへCAS保存する。 */
 export async function reserveOperationsAlertDelivery(
   adapter: StateBranchAdapter,
   configuration: StatePersistenceConfiguration,
