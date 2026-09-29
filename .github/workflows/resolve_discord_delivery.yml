@@ -400,6 +400,7 @@ jobs:
           HISTORY_ACTION_FAILED: ${{ needs.publish-notification-history.outputs.action_failed }}
           FAILURE_DOWNLOAD_OUTCOME: ${{ steps.download_failures.outcome }}
           VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
+          VOICEVOX_TASK_TRACKER_FAILURE_DIRECTORY: ${{ github.workspace }}/artifacts/workflow/notify-failures
         run: |
           occurred_at="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
           arguments=(notify-operations --workflow-run-id "$WORKFLOW_RUN_ID" --workflow-run-attempt "$WORKFLOW_RUN_ATTEMPT" --workflow-kind manual --occurred-at "$occurred_at")
@@ -423,6 +424,7 @@ jobs:
         uses: ./.github/actions/upload-failure-artifact
         with:
           artifact-name: manual-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          failure-directory: artifacts/workflow/notify-failures
       - name: 診断JSONLを暗号化
         if: always() && (steps.notify.outcome == 'success' || steps.notify.outcome == 'failure')
         env:

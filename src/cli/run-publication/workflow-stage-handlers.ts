@@ -277,6 +277,22 @@ export async function notifyWorkflowOperations(
   command: NotifyOperationsCliCommand,
 ): Promise<void> {
   const failureDirectory = resolve(dependencies.adapters.repositoryPath, command.failureDirectory);
+  const outputFailureDirectory = resolve(
+    dependencies.adapters.repositoryPath,
+    command.outputFailureDirectory,
+  );
+  if (failureDirectory === outputFailureDirectory) {
+    throw new TypeError("元jobの公開失敗artifactと通知jobの出力先が同じです");
+  }
+  const configuredFailureDirectory =
+    dependencies.adapters.environment["VOICEVOX_TASK_TRACKER_FAILURE_DIRECTORY"];
+  if (
+    configuredFailureDirectory != null &&
+    resolve(dependencies.adapters.repositoryPath, configuredFailureDirectory) !==
+      outputFailureDirectory
+  ) {
+    throw new TypeError("通知jobの公開失敗artifact出力先がCLI境界と一致しません");
+  }
   const artifacts = await readWorkflowFailureArtifacts(failureDirectory);
   if (artifacts.some((artifact) => artifact.failure.failureKind === "public_boundary")) {
     return;
@@ -286,7 +302,7 @@ export async function notifyWorkflowOperations(
   if (artifacts.length === 0) {
     assertNonNullable(recorder, "運用障害通知の暗号化診断recorderがありません");
     primary = await createWorkflowInfrastructureFailure(
-      failureDirectory,
+      outputFailureDirectory,
       command.failedJobs,
       recorder,
     );

@@ -154,7 +154,9 @@ export async function reportCliFailure(
     });
     const artifact = createPublicFailureArtifact(failure, nodeContentDigestPort);
     const directory =
-      process.env[FAILURE_DIRECTORY_ENVIRONMENT_VARIABLE] ?? "artifacts/workflow/failures";
+      command?.kind === "notify-operations"
+        ? command.outputFailureDirectory
+        : (process.env[FAILURE_DIRECTORY_ENVIRONMENT_VARIABLE] ?? "artifacts/workflow/failures");
     await writeCliJsonArtifact(resolve(directory, `${invocationId}.json`), artifact);
     return error;
   } catch (artifactError: unknown) {

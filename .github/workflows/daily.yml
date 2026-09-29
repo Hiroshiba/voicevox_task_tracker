@@ -766,12 +766,10 @@ jobs:
       - notify-discord
       - publish-notification-history
     if: >-
-      always() &&
-      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      always() && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
       (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') &&
       (github.event_name != 'schedule' || vars.VOICEVOX_TASK_TRACKER_SCHEDULE_PAUSED != 'true') &&
-      (needs.collect-analyze.result == 'failure' ||
-      needs.persist-state.result == 'failure' ||
+      (needs.collect-analyze.result == 'failure' || needs.persist-state.result == 'failure' ||
       needs.build-pages.result == 'failure' ||
       needs.deploy-pages.result == 'failure' ||
       needs.publish-notification-history.result == 'failure' ||
@@ -836,6 +834,7 @@ jobs:
           PUBLISH_NOTIFICATION_HISTORY_RESULT: ${{ needs.publish-notification-history.result }}
           PERSIST_STATE_RESULT: ${{ needs.persist-state.result }}
           VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
+          VOICEVOX_TASK_TRACKER_FAILURE_DIRECTORY: ${{ github.workspace }}/artifacts/workflow/notify-failures
         run: |
           occurred_at="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
           arguments=(notify-operations --workflow-run-id "$WORKFLOW_RUN_ID" --workflow-run-attempt "$WORKFLOW_RUN_ATTEMPT" --workflow-kind daily --occurred-at "$occurred_at")
@@ -860,6 +859,7 @@ jobs:
         uses: ./.github/actions/upload-failure-artifact
         with:
           artifact-name: daily-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          failure-directory: artifacts/workflow/notify-failures
       - name: 診断JSONLを暗号化
         if: >-
           always() &&

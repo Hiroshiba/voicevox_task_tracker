@@ -364,11 +364,18 @@ export async function observeCliFailureContext(
   ) {
     kind = "public_boundary";
   }
-  const causedByFailureArtifactDigest =
-    command?.kind === "notify-operations"
-      ? primaryAlertFailure(await readWorkflowFailureArtifacts(resolve(command.failureDirectory)))
-          ?.failureArtifactDigest
-      : undefined;
+  let causedByFailureArtifactDigest: string | undefined;
+  if (command?.kind === "notify-operations") {
+    const sourceArtifacts = await readWorkflowFailureArtifacts(resolve(command.failureDirectory));
+    const source = sourceArtifacts.length === 0 ? undefined : primaryAlertFailure(sourceArtifacts);
+    const outputArtifacts =
+      source == null
+        ? await readWorkflowFailureArtifacts(resolve(command.outputFailureDirectory))
+        : [];
+    const primary =
+      source ?? (outputArtifacts.length === 0 ? undefined : primaryAlertFailure(outputArtifacts));
+    causedByFailureArtifactDigest = primary?.failureArtifactDigest;
+  }
   return {
     failedStage: stage,
     failureKind: kind,

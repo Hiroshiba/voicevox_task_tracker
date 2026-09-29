@@ -9,6 +9,7 @@ export type NotifyOperationsCliCommand = Readonly<{
   workflowRunAttempt: number;
   workflowKind: "daily" | "manual";
   failureDirectory: string;
+  outputFailureDirectory: string;
   previousFailuresDirectory: string;
   failedJobs: readonly string[];
   receiptPath: string;
@@ -27,6 +28,7 @@ export function parseNotifyOperations(args: readonly string[]): NotifyOperations
       "--workflow-run-attempt",
       "--workflow-kind",
       "--failure-directory",
+      "--output-failure-directory",
       "--previous-failures-directory",
       "--failed-job",
       "--receipt",
@@ -91,6 +93,11 @@ export function parseNotifyOperations(args: readonly string[]): NotifyOperations
     workflowRunAttempt,
     workflowKind,
     failureDirectory: singleOption(options, "--failure-directory", "artifacts/workflow/failures"),
+    outputFailureDirectory: singleOption(
+      options,
+      "--output-failure-directory",
+      "artifacts/workflow/notify-failures",
+    ),
     previousFailuresDirectory: singleOption(
       options,
       "--previous-failures-directory",
