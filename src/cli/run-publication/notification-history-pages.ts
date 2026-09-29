@@ -81,6 +81,7 @@ export async function buildNotificationHistoryPages(
   }
   const output = await buildPagesOutput({
     ...input,
+    phase: "notification_history",
     record: source.record,
     snapshot: source.snapshot,
     historyRecords: source.historyRecords,

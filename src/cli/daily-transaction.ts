@@ -38,6 +38,7 @@ import {
   completedReport,
   completedReportFromState,
   failureReport,
+  reportContextForFailure,
   reportStageForEngine,
   isPreCheckpointFailureStage,
 } from "./daily-transaction-report.js";
@@ -446,9 +447,7 @@ interface MutableEffects {
 }
 
 function freezeEffects(effects: MutableEffects): DailyRunEffects {
-  return Object.freeze({
-    ...effects,
-  });
+  return Object.freeze({ ...effects });
 }
 
 function initialEffects(): MutableEffects {
@@ -634,9 +633,10 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         return Promise.resolve();
       },
       fail: async (failedStage, error) => {
+        const reportContext = reportContextForFailure(invocation, failedStage, error);
         const recordId = await this.#recordError(
-          invocation,
-          reportStageForEngine(failedStage),
+          reportContext.invocation,
+          reportContext.stage,
           "cli.stage.failed",
           error,
         );
@@ -645,18 +645,18 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         }
         const failureKind = isPublicBoundaryViolation(error) ? "public_boundary" : "other";
         const reported = await this.#writeFailure(
-          invocation,
+          reportContext.invocation,
           request.reportPath,
-          reportStageForEngine(failedStage),
+          reportContext.stage,
           failureKind,
           metrics,
           configuration,
-          [...diagnostics, safeErrorDiagnostic(reportStageForEngine(failedStage), error)],
+          [...diagnostics, safeErrorDiagnostic(reportContext.stage, error)],
           discordSentAt,
           effects,
         );
         const failureEvidence =
-          prepared == null || !isPreCheckpointFailureStage(reportStageForEngine(failedStage))
+          prepared == null || !isPreCheckpointFailureStage(reportContext.stage)
             ? undefined
             : {
                 bindingKind: "run_pre_checkpoint_alert" as const,
@@ -683,7 +683,7 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
         const effectiveStage =
           context.evidence.bindingKind === "state_bootstrap_alert"
             ? "runtime_bootstrap"
-            : failedStage;
+            : context.failedStage;
         const failure = createFailedRun({
           invocationId: invocation.invocationId,
           failedStage: effectiveStage,
@@ -893,6 +893,9 @@ export class DailyTransactionRunner<Types extends DailyTransactionTypeMap> {
               runId: pendingRunId,
             });
             lastReceipt = launch.decision.pending.receiptChain.at(-1);
+          } else if (launch.decision.kind === "completed") {
+            invocation = Object.freeze({ ...invocation, runId: launch.decision.runId });
+            lastReceipt = launch.decision.completed.chain.receipts.at(-1);
           }
           return launch;
         },

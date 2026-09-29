@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
-import { readFile, realpath } from "node:fs/promises";
-import { relative, resolve, sep } from "node:path";
+import { mkdtemp, open, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../canonical-json/value.js";
@@ -104,8 +105,9 @@ async function assertRecoveryRuntime(
   if (
     checkoutRevision.stdout.trim() !== plan.codeRevision ||
     checkoutStatus.stdout.length !== 0 ||
-    input.expectedWorkflowEffectAdapterIdentityDigest !==
-      (await workflowAdapterIdentity(repositoryPath, nodeContentDigestPort))
+    (plan.kind === "rebuild_exact" &&
+      input.expectedWorkflowEffectAdapterIdentityDigest !==
+        (await workflowAdapterIdentity(repositoryPath, nodeContentDigestPort)))
   ) {
     throw new TypeError("exact checkoutのrevisionまたはworkflow adapter identityが一致しません");
   }
@@ -133,6 +135,16 @@ async function assertRecoveryRuntime(
   return entrypoint;
 }
 
+/** 固定V1入力とexact runtimeの識別を副作用なしで検証する。 */
+export async function verifyRuntimeRecoveryV1(
+  repositoryPath: string,
+  bundleRoot: string,
+  value: unknown,
+): Promise<void> {
+  const input = runtimeRecoveryInputV1Schema.parse(value);
+  await assertRecoveryRuntime(repositoryPath, bundleRoot, input);
+}
+
 /** 固定I/Oだけでexact runtimeのV1 entrypointを起動する。 */
 export async function launchRuntimeRecoveryV1(
   repositoryPath: string,
@@ -141,41 +153,46 @@ export async function launchRuntimeRecoveryV1(
 ): Promise<RuntimeRecoveryOutputV1> {
   const input = runtimeRecoveryInputV1Schema.parse(value);
   const entrypoint = await assertRecoveryRuntime(repositoryPath, bundleRoot, input);
-  const child = spawn(process.execPath, [entrypoint], {
-    cwd: repositoryPath,
-    env: {
-      ...process.env,
-      VOICEVOX_RUNTIME_RECOVERY_PROTOCOL_V1: "1",
-      VOICEVOX_RUNTIME_BUNDLE_ROOT: bundleRoot,
-    },
-    stdio: ["pipe", "pipe", "inherit"],
-  });
-  const output: Buffer[] = [];
-  let outputLength = 0;
-  child.stdout.on("data", (chunk: Buffer) => {
-    outputLength += chunk.length;
-    if (outputLength > MAX_PROTOCOL_BYTES) {
-      child.kill();
-      return;
+  const directory = await mkdtemp(join(tmpdir(), "voicevox-runtime-protocol-"));
+  try {
+    const inputPath = join(directory, "input.json");
+    const outputPath = join(directory, "output.json");
+    await writeFile(inputPath, serializeCanonicalJsonLine(input), { flag: "wx", mode: 0o600 });
+    const inputFile = await open(inputPath, "r");
+    const outputFile = await open(outputPath, "wx", 0o600);
+    let exitCode: number;
+    try {
+      const child = spawn(process.execPath, [entrypoint], {
+        cwd: repositoryPath,
+        env: {
+          ...process.env,
+          VOICEVOX_RUNTIME_RECOVERY_PROTOCOL_V1: "1",
+          VOICEVOX_RUNTIME_BUNDLE_ROOT: bundleRoot,
+        },
+        stdio: [inputFile.fd, outputFile.fd, "inherit"],
+      });
+      exitCode = await new Promise<number>((resolveExit, rejectExit) => {
+        child.once("error", rejectExit);
+        child.once("close", (code) => {
+          resolveExit(code ?? 1);
+        });
+      });
+    } finally {
+      await inputFile.close();
+      await outputFile.close();
     }
-    output.push(chunk);
-  });
-  child.stdin.end(serializeCanonicalJsonLine(input));
-  const exitCode = await new Promise<number>((resolveExit, rejectExit) => {
-    child.once("error", rejectExit);
-    child.once("close", (code) => {
-      resolveExit(code ?? 1);
-    });
-  });
-  if (exitCode !== 0 || outputLength > MAX_PROTOCOL_BYTES) {
-    throw new TypeError("V1回復entrypointが固定I/Oを完了できませんでした");
+    if (exitCode !== 0 || (await stat(outputPath)).size > MAX_PROTOCOL_BYTES) {
+      throw new TypeError("V1回復entrypointが固定I/Oを完了できませんでした");
+    }
+    const source = await readFile(outputPath, "utf8");
+    const valueOutput: unknown = JSON.parse(source);
+    if (source !== serializeCanonicalJsonLine(valueOutput)) {
+      throw new TypeError("V1回復出力がcanonical JSONではありません");
+    }
+    return runtimeRecoveryOutputV1Schema.parse(valueOutput);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
-  const source = Buffer.concat(output).toString("utf8");
-  const valueOutput: unknown = JSON.parse(source);
-  if (source !== serializeCanonicalJsonLine(valueOutput)) {
-    throw new TypeError("V1回復出力がcanonical JSONではありません");
-  }
-  return runtimeRecoveryOutputV1Schema.parse(valueOutput);
 }
 
 /** exact runtime内の固定V1入力を受理し、効果実行前に識別を照合する。 */
@@ -221,6 +238,12 @@ export async function runRuntimeRecoveryEntrypointV1(
       receipts: [],
     },
   );
-  const output = recoveryDecisionOutput(decision);
+  const output =
+    decision.kind === "resume_pending" &&
+    decision.stageInput.record.executionPolicy.executionShape === "sequential"
+      ? await (
+          await import("./runtime-recovery-sequential-v1.js")
+        ).resumeExactSequentialRunV1(repositoryPath, input, decision)
+      : recoveryDecisionOutput(decision);
   process.stdout.write(serializeCanonicalJsonLine(output));
 }

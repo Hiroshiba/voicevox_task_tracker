@@ -28,6 +28,7 @@ import type { CliCommand } from "./command.js";
 import {
   BoundPublicationFailureError,
   OperationsAlertReceiptFailureError,
+  VerifiedPendingRuntimeFailureError,
 } from "./failure-context-error.js";
 import { observeBootstrap } from "./failure-context-state.js";
 import { stageFromCommand, stageFromReport } from "./failure-stage.js";
@@ -68,6 +69,11 @@ function failureKind(error: unknown): CliFailureContext["failureKind"] {
   }
   if (error instanceof BoundPublicationFailureError) {
     return failureKind(error.cause);
+  }
+  if (error instanceof VerifiedPendingRuntimeFailureError) {
+    return error.failedStage === "workflow_effect_observation"
+      ? "content_integrity"
+      : "runtime_unavailable";
   }
   const operationError = error instanceof BoundPublicationFailureError ? error.cause : error;
   if (operationError instanceof StateBranchConflictError) {
@@ -246,6 +252,12 @@ export async function observeCliFailureContext(
     stage === "notification_history_pages_published"
       ? "ambiguous"
       : "no_effect";
+  if (
+    error instanceof VerifiedPendingRuntimeFailureError &&
+    error.failedStage === "workflow_effect_observation"
+  ) {
+    effectCertainty = "ambiguous";
+  }
   if (error instanceof StateBranchConflictError) {
     effectCertainty = "no_effect";
   }
@@ -376,6 +388,17 @@ export async function observeCliFailureContext(
       checkpointFileDigest: error.binding.checkpointFileDigest,
     };
   }
+  if (error instanceof VerifiedPendingRuntimeFailureError) {
+    context = {
+      ...context,
+      evidence: error.binding,
+      runId: error.binding.runId,
+      checkpointDigest: error.binding.checkpointDigest,
+      checkpointFileDigest: error.binding.checkpointFileDigest,
+    };
+    stage = error.failedStage;
+    kind = failureKind(error);
+  }
   const path = configPath(command);
   const runId = expectedRunId(command, context);
   if (
@@ -390,13 +413,22 @@ export async function observeCliFailureContext(
       context = { ...context, bootstrapError };
     }
     if (bootstrap != null) {
-      if (bootstrap.evidence?.bindingKind === "state_bootstrap_alert") {
+      if (
+        bootstrap.evidence?.bindingKind === "state_bootstrap_alert" &&
+        !(error instanceof VerifiedPendingRuntimeFailureError)
+      ) {
         context = bootstrap;
         stage = "runtime_bootstrap";
         kind = kind === "public_boundary" ? kind : "content_integrity";
         effectCertainty = "no_effect";
         receipt = undefined;
         finalStateRevision = undefined;
+      } else if (bootstrap.evidence?.bindingKind === "state_bootstrap_alert") {
+        context = {
+          ...context,
+          stateObservation: bootstrap.stateObservation,
+          bootstrapError: bootstrap.bootstrapError,
+        };
       } else {
         context = { ...context, ...bootstrap };
       }

@@ -68,6 +68,9 @@ const runReportSchema = z
       failureKind: z.enum(["public_boundary", "other"]),
       failedStage: z.enum([
         "configuration",
+        "runtime_selection",
+        "runtime_launch",
+        "workflow_effect_observation",
         "authentication",
         "repository_inventory",
         "incremental_collection",

@@ -47,15 +47,17 @@ function parseYaml(source: string): unknown {
   return document.toJS();
 }
 
-function workflowReferences(source: string): readonly string[] {
+function workflowReferences(
+  source: string,
+): readonly Readonly<{ kind: "workflow" | "action"; reference: string }>[] {
   const workflow = workflowSchema.parse(parseYaml(source));
-  const references: string[] = [];
+  const references: Readonly<{ kind: "workflow" | "action"; reference: string }>[] = [];
   for (const job of Object.values(workflow.jobs)) {
-    if (job.uses != null && job.uses !== "./.github/workflows/_tracking-run.yml") {
-      references.push(job.uses);
+    if (job.uses != null) {
+      references.push({ kind: "workflow", reference: job.uses });
     }
     for (const step of job.steps ?? []) {
-      if (step.uses != null) references.push(step.uses);
+      if (step.uses != null) references.push({ kind: "action", reference: step.uses });
     }
   }
   return references;
@@ -122,20 +124,26 @@ export async function workflowActionSources(
   Readonly<{
     effectActions: readonly (readonly [string, string])[];
     localActionFiles: readonly Readonly<{ path: string; byteLength: number; digest: string }>[];
+    localWorkflowFiles: readonly Readonly<{ path: string; byteLength: number; digest: string }>[];
   }>
 > {
   const effectActions = new Map<string, string>();
   const localActions = new Map<string, readonly ActionFile[]>();
-  const visiting = new Set<string>();
+  const localWorkflows = new Map<
+    string,
+    Readonly<{ path: string; byteLength: number; digest: string }>
+  >();
+  const visitingActions = new Set<string>();
+  const visitingWorkflows = new Set<string>();
 
-  async function visit(reference: string): Promise<void> {
+  async function visitAction(reference: string): Promise<void> {
     if (reference.startsWith("./")) {
       const relativePath = normalizedBundlePathSchema.parse(reference.slice(2));
-      if (visiting.has(relativePath)) {
+      if (visitingActions.has(relativePath)) {
         throw new TypeError("workflowのlocal action参照が循環しています");
       }
       if (localActions.has(relativePath)) return;
-      visiting.add(relativePath);
+      visitingActions.add(relativePath);
       const directory = await checkedActionDirectory(repositoryPath, relativePath);
       const files = await actionFiles(repositoryPath, directory, digest);
       const metadata = files.filter(
@@ -148,9 +156,9 @@ export async function workflowActionSources(
       const definition = metadata[0];
       assertNonNullable(definition, "workflowのlocal action定義を取得できません");
       for (const nested of actionReferences(definition.bytes.toString("utf8"))) {
-        await visit(nested);
+        await visitAction(nested);
       }
-      visiting.delete(relativePath);
+      visitingActions.delete(relativePath);
       localActions.set(relativePath, files);
       return;
     }
@@ -172,9 +180,59 @@ export async function workflowActionSources(
     }
   }
 
+  async function visitWorkflow(reference: string): Promise<void> {
+    if (!reference.startsWith("./")) {
+      await visitAction(reference);
+      return;
+    }
+    const relativePath = normalizedBundlePathSchema.parse(reference.slice(2));
+    if (visitingWorkflows.has(relativePath)) {
+      throw new TypeError("workflowの再利用参照が循環しています");
+    }
+    if (localWorkflows.has(relativePath)) return;
+    if (!/^\.github\/workflows\/[^/]+\.ya?ml$/u.test(relativePath)) {
+      throw new TypeError("再利用workflowは.github/workflows内のYAMLを指定してください");
+    }
+    const segments = relativePath.split("/");
+    let path = resolve(repositoryPath);
+    for (const segment of segments.slice(0, -1)) {
+      path = join(path, segment);
+      const status = await lstat(path);
+      if (status.isSymbolicLink() || !status.isDirectory()) {
+        throw new TypeError("再利用workflowの親pathは通常のdirectoryである必要があります");
+      }
+    }
+    const filename = segments.at(-1);
+    assertNonNullable(filename, "再利用workflowのfile名がありません");
+    path = join(path, filename);
+    const status = await lstat(path);
+    if (status.isSymbolicLink() || !status.isFile()) {
+      throw new TypeError("再利用workflowは通常のYAML fileである必要があります");
+    }
+    visitingWorkflows.add(relativePath);
+    const bytes = await readFile(path);
+    for (const nested of workflowReferences(bytes.toString("utf8"))) {
+      if (nested.kind === "workflow") {
+        await visitWorkflow(nested.reference);
+      } else {
+        await visitAction(nested.reference);
+      }
+    }
+    visitingWorkflows.delete(relativePath);
+    localWorkflows.set(relativePath, {
+      path: relativePath,
+      byteLength: bytes.length,
+      digest: digest.sha256Bytes(bytes),
+    });
+  }
+
   for (const source of workflowSources) {
     for (const reference of workflowReferences(source)) {
-      await visit(reference);
+      if (reference.kind === "workflow") {
+        await visitWorkflow(reference.reference);
+      } else {
+        await visitAction(reference.reference);
+      }
     }
   }
   if (effectActionNames.some((name) => !effectActions.has(name))) {
@@ -193,5 +251,8 @@ export async function workflowActionSources(
         })),
       )
       .sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0)),
+    localWorkflowFiles: [...localWorkflows.values()].sort((left, right) =>
+      left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+    ),
   };
 }

@@ -34,6 +34,10 @@ export function stageFromReport(
   stateCommitted: boolean,
 ): FailedRun["failedStage"] {
   switch (stage) {
+    case "runtime_selection":
+    case "runtime_launch":
+    case "workflow_effect_observation":
+      return stage;
     case "configuration":
       return "prepare";
     case "authentication":

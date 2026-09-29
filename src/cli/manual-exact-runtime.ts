@@ -7,12 +7,10 @@ import { z } from "zod";
 
 import { serializeCanonicalJsonLine } from "../canonical-json/value.js";
 import { decodePublicFailureArtifact } from "../application/tracking-run/failure-artifact.js";
-import {
-  runtimeRecoveryInputV1Schema,
-  runtimeRecoveryOutputV1Schema,
-} from "../application/tracking-run/contracts/runtime-recovery-v1.js";
+import { runtimeRecoveryInputV1Schema } from "../application/tracking-run/contracts/runtime-recovery-v1.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
 import { writeCliTextFile } from "./file-output.js";
+import { verifyRecoveryBundle } from "./publication-runtime.js";
 import { observeBootstrap, type BootstrapFailureObservation } from "./failure-context-state.js";
 import { encryptManualDiagnostics } from "./manual-diagnostics-encryption.js";
 import {
@@ -142,22 +140,10 @@ async function selectRuntime(
     "artifacts/workflow/manual-recovery-input.json",
     serializeCanonicalJsonLine(input),
   );
-  const verification = await runExactCli(
-    controlEntrypoint,
-    [
-      "verify-runtime-recovery",
-      "--input",
-      "artifacts/workflow/manual-recovery-input.json",
-      "--bundle-root",
-      "artifacts/workflow/runtime",
-    ],
-    true,
-  );
-  const output: unknown = JSON.parse(verification);
-  const verified = runtimeRecoveryOutputV1Schema.parse(output);
-  if (verified.status === "manual_resolution_required" && verified.reason !== "effect_uncertain") {
-    throw new TypeError("旧runtimeのV1回復入口を検証できません");
+  if (input.runtimeRecoveryPlan.kind !== "workflow_bundle") {
+    throw new TypeError("手動復旧のworkflow bundleを選べません");
   }
+  await verifyRecoveryBundle(resolve("artifacts/workflow/runtime"), input.runtimeRecoveryPlan);
 }
 
 /** 手動workflowの現行制御CLIを実行し、未報告の失敗を記録する。 */

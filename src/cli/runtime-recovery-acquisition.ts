@@ -5,9 +5,14 @@ import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
+import { serializeCanonicalJsonLine } from "../canonical-json/value.js";
+import {
+  receiptChainEnvelopeSchema,
+  type ReceiptChainEntry,
+} from "../application/tracking-run/receipt-chain-schema.js";
+import { verifyReceiptChain } from "../application/tracking-run/receipt-chain.js";
 import {
   runtimeRecoveryInputV1Schema,
-  runtimeRecoveryOutputV1Schema,
   type RuntimeRecoveryInputV1,
   type RuntimeRecoveryOutputV1,
 } from "../application/tracking-run/contracts/runtime-recovery-v1.js";
@@ -16,7 +21,11 @@ import {
   verifyRebuiltRuntime,
   verifyRecoveryBundle,
 } from "./publication-runtime.js";
-import { launchRuntimeRecoveryV1 } from "./runtime-recovery-launcher-v1.js";
+import {
+  launchRuntimeRecoveryV1,
+  verifyRuntimeRecoveryV1,
+} from "./runtime-recovery-launcher-v1.js";
+import { sequentialReceiptPath } from "./sequential-receipt-path.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_COMMAND_OUTPUT_BYTES = 10 * 1024 * 1024;
@@ -148,57 +157,107 @@ async function downloadWorkflowBundle(
   return root;
 }
 
-/** 記録済みrevisionを隔離し、元artifactまたは一致する再buildからV1入口を起動する。 */
-export async function recoverRuntimeV1(
+export type SequentialRuntimeRecoveryV1 = Readonly<{
+  output: RuntimeRecoveryOutputV1;
+  receiptEntries: readonly ReceiptChainEntry[];
+}>;
+
+/** exact V1 processの起動または固定出力が失敗したことを表す。 */
+export class RuntimeRecoveryLaunchError extends Error {
+  public constructor(cause: unknown) {
+    super("exact V1 runtimeを起動できませんでした", { cause });
+  }
+}
+
+/** exact V1 processの完了証拠を読み取れないことを表す。 */
+export class RuntimeRecoveryObservationError extends Error {
+  public constructor(cause: unknown) {
+    super("exact V1 runtimeの完了証拠を読めませんでした", { cause });
+  }
+}
+
+async function launchWithReceipts(
+  checkoutPath: string,
+  root: string,
+  input: RuntimeRecoveryInputV1,
+): Promise<SequentialRuntimeRecoveryV1> {
+  let output: RuntimeRecoveryOutputV1;
+  try {
+    output = await launchRuntimeRecoveryV1(checkoutPath, root, input);
+  } catch (cause: unknown) {
+    throw new RuntimeRecoveryLaunchError(cause);
+  }
+  if (output.status !== "completed") {
+    return { output, receiptEntries: [] };
+  }
+  try {
+    const source = await readFile(sequentialReceiptPath(checkoutPath, input.runId), "utf8");
+    const value: unknown = JSON.parse(source);
+    if (source !== serializeCanonicalJsonLine(value)) {
+      throw new TypeError("exact runtimeのreceipt chainがcanonical JSONではありません");
+    }
+    const receiptEntries = receiptChainEnvelopeSchema.parse(value).entries;
+    verifyReceiptChain(receiptEntries, nodeContentDigestPort);
+    return { output, receiptEntries };
+  } catch (cause: unknown) {
+    throw new RuntimeRecoveryObservationError(cause);
+  }
+}
+
+async function withAcquiredRuntime<T>(
   repositoryPath: string,
   bundleRoot: string | undefined,
   value: unknown,
-): Promise<RuntimeRecoveryOutputV1> {
+  execute: (checkoutPath: string, root: string, input: RuntimeRecoveryInputV1) => Promise<T>,
+): Promise<T> {
   const input = runtimeRecoveryInputV1Schema.parse(value);
   const plan = input.runtimeRecoveryPlan;
   if (plan.kind === "not_reproducible") {
-    return runtimeRecoveryOutputV1Schema.parse({
-      protocolVersion: 1,
-      outputContract: "tracking-run-recovery-output-v1",
-      status: "manual_resolution_required",
-      reason: "recovery_stage_unavailable",
-    });
+    throw new TypeError("記録済みrunのruntimeを再現できません");
   }
-  try {
-    await assertRecoveryToolchain(repositoryPath, plan);
-    return await withExactWorktree(repositoryPath, plan.codeRevision, async (checkoutPath) => {
-      if (plan.kind === "rebuild_exact") {
-        const root = await rebuildSourceRuntime(checkoutPath, plan);
-        return launchRuntimeRecoveryV1(checkoutPath, root, input);
+  await assertRecoveryToolchain(repositoryPath, plan);
+  return withExactWorktree(repositoryPath, plan.codeRevision, async (checkoutPath) => {
+    if (plan.kind === "rebuild_exact") {
+      const root = await rebuildSourceRuntime(checkoutPath, plan);
+      return execute(checkoutPath, root, input);
+    }
+    let root: string | undefined;
+    if (bundleRoot != null) {
+      if (!(await isPresent(bundleRoot))) {
+        throw new TypeError("指定した旧workflow bundleがありません");
       }
-      let root: string | undefined;
-      if (bundleRoot != null) {
-        if (!(await isPresent(bundleRoot))) {
-          throw new TypeError("指定した旧workflow bundleがありません");
+      root = resolve(bundleRoot);
+      await verifyRecoveryBundle(root, plan);
+    } else {
+      const downloadDirectory = await mkdtemp(join(tmpdir(), "voicevox-runtime-download-"));
+      try {
+        root = await downloadWorkflowBundle(checkoutPath, plan, downloadDirectory);
+        if (root != null) {
+          return await execute(checkoutPath, root, input);
         }
-        root = resolve(bundleRoot);
-        await verifyRecoveryBundle(root, plan);
-      } else {
-        const downloadDirectory = await mkdtemp(join(tmpdir(), "voicevox-runtime-download-"));
-        try {
-          root = await downloadWorkflowBundle(checkoutPath, plan, downloadDirectory);
-          if (root != null) {
-            return await launchRuntimeRecoveryV1(checkoutPath, root, input);
-          }
-        } finally {
-          await rm(downloadDirectory, { recursive: true, force: true });
-        }
+      } finally {
+        await rm(downloadDirectory, { recursive: true, force: true });
       }
-      root ??= await rebuildWorkflowBundle(checkoutPath, plan);
-      return launchRuntimeRecoveryV1(checkoutPath, root, input);
-    });
-  } catch (error: unknown) {
-    console.error(error);
-    return runtimeRecoveryOutputV1Schema.parse({
-      protocolVersion: 1,
-      outputContract: "tracking-run-recovery-output-v1",
-      status: "manual_resolution_required",
-      reason: "recovery_stage_unavailable",
-    });
-  }
+    }
+    root ??= await rebuildWorkflowBundle(checkoutPath, plan);
+    return execute(checkoutPath, root, input);
+  });
+}
+
+/** 記録済みrevisionを隔離し、元artifactまたは一致する再buildからV1入口を起動する。 */
+export async function recoverSequentialRuntimeV1(
+  repositoryPath: string,
+  bundleRoot: string | undefined,
+  value: unknown,
+): Promise<SequentialRuntimeRecoveryV1> {
+  return withAcquiredRuntime(repositoryPath, bundleRoot, value, launchWithReceipts);
+}
+
+/** 記録済みrevisionと固定V1入力の実runtimeを副作用なしで検証する。 */
+export async function verifyAcquiredRuntimeV1(
+  repositoryPath: string,
+  bundleRoot: string | undefined,
+  value: unknown,
+): Promise<void> {
+  await withAcquiredRuntime(repositoryPath, bundleRoot, value, verifyRuntimeRecoveryV1);
 }

@@ -13,6 +13,7 @@ import type { InitialPagesPreparedRun, RunPublicationAdapters } from "./contract
 
 /** 両Pages phaseに共通のexact state投影とWeb出力。 */
 export type BuildPagesOutputInput = Readonly<{
+  phase: "initial" | "notification_history";
   config: Config;
   record: DurablePublicationRecord;
   snapshot: StateSnapshot;
@@ -60,7 +61,7 @@ export async function buildPagesOutput(input: BuildPagesOutputInput): Promise<
   });
   if (
     data.summary.runId !== input.record.runIdentity.runId ||
-    data.summary.generatedAt !== projection.generatedAt
+    (input.phase === "initial" && data.summary.generatedAt !== projection.generatedAt)
   ) {
     throw new TypeError("Pages公開DTOのrunと生成時刻がrecordと一致しません");
   }

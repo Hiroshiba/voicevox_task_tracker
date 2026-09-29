@@ -158,6 +158,9 @@ export async function workflowAdapterIdentity(
     serializeCanonicalJson({
       effectActions: actionSources.effectActions,
       localActionFiles: actionSources.localActionFiles,
+      ...(actionSources.localWorkflowFiles.length === 0
+        ? {}
+        : { localWorkflowFiles: actionSources.localWorkflowFiles }),
       adapterSourcesDigest,
     }),
   );
@@ -275,7 +278,11 @@ async function createManifest(
     shape === "split_workflow" ? "artifacts/workflow/runtime" : "dist",
   );
   const files = (await checkedFiles(root, root)).filter(
-    (file) => shape !== "sequential" || !file.path.startsWith("web/"),
+    (file) =>
+      shape !== "sequential" ||
+      (!file.path.startsWith("web/") &&
+        !file.path.endsWith(".d.ts") &&
+        !file.path.endsWith(".d.ts.map")),
   );
   const entrypointRelativePath = normalizedBundlePathSchema.parse(
     shape === "split_workflow" ? "tracker-run.mjs" : "cli/tracker-run.js",

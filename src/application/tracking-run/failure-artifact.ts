@@ -228,6 +228,12 @@ export function deriveRecoveryDisposition(
   ) {
     return "not_retryable";
   }
+  if (
+    input.failureKind === "runtime_unavailable" &&
+    input.stateObservation.kind === "consistent_pending"
+  ) {
+    return "manual_resolution_required";
+  }
   if (input.failedOperationEffectCertainty === "ambiguous") {
     return "manual_resolution_required";
   }

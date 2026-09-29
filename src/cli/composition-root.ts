@@ -100,6 +100,13 @@ function createProductionAdapters(adapters: CliCompositionAdapters): ProductionR
   });
 }
 
+/** Node.js process向けの実アダプターでexact復旧段階を組み立てる。 */
+export function createDefaultProductionRuntimeAdapters(
+  diagnosticsRecorder?: DiagnosticsJsonlRecorder,
+): ProductionRuntimeAdapters {
+  return createProductionAdapters(createDefaultCliCompositionAdapters(diagnosticsRecorder));
+}
+
 /** 注入済みの具体アダプターから全サブコマンドを実行するapplicationを組み立てる。 */
 export function createCliApplication(
   adapters: CliCompositionAdapters,

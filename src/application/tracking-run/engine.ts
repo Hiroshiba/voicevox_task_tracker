@@ -99,6 +99,7 @@ export type TrackingRunLaunchDecision<Pending> = Readonly<{
   decision:
     | Readonly<{ kind: "start_new"; baseRevision: BaseStateRevision }>
     | Readonly<{ kind: "resume_pending"; pending: Pending }>
+    | Readonly<{ kind: "completed"; completed: CompletedRun; runId: string }>
     | Readonly<{
         kind: "manual_resolution_required" | "operator_conflict_resolution";
         failure: FailedRun;
@@ -292,6 +293,9 @@ export async function runTrackingRunSequentially<
     }
     if (selected.runtime === "exact" && selected.decision.kind === "resume_pending") {
       return await resumePendingTrackingRun(selected.decision.pending, pendingRun, boundary);
+    }
+    if (selected.runtime === "exact" && selected.decision.kind === "completed") {
+      return selected.decision.completed;
     }
     throw new TypeError("launcherとengineの起動判断が一致しません");
   } catch (error: unknown) {

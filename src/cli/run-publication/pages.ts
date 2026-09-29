@@ -40,6 +40,7 @@ export async function buildPublicPages(
   const projection = record.initialPagesProjection;
   const output = await buildPagesOutput({
     ...input,
+    phase: "initial",
     record,
     snapshot: source.snapshot,
     historyRecords: source.historyRecords,

@@ -3,6 +3,7 @@ import type { FailedRun } from "../application/tracking-run/failure-artifact.js"
 import type { CompletedRun } from "../application/tracking-run/complete-run.js";
 import type { StateRunReport } from "../persistence/state-run-report.js";
 import { createRunReport, type RunMetrics, type RunReport, type RunStage } from "./run-report.js";
+import { VerifiedPendingRuntimeFailureError } from "./failure-context-error.js";
 import type { DailyRunInvocation, DailyRunRuntime, DryRunArtifact } from "./daily-transaction.js";
 
 /** run runtimeの現在時刻をUTC日時へ変換する。 */
@@ -142,11 +143,13 @@ export function failureReport(
 export function reportStageForEngine(stage: FailedRun["failedStage"]): RunStage {
   switch (stage) {
     case "runtime_bootstrap":
-    case "runtime_selection":
-    case "runtime_launch":
     case "prepare":
     case "prepared":
       return "configuration";
+    case "runtime_selection":
+    case "runtime_launch":
+    case "workflow_effect_observation":
+      return stage;
     case "inventory_collected":
       return "repository_inventory";
     case "collected":
@@ -169,7 +172,6 @@ export function reportStageForEngine(stage: FailedRun["failedStage"]): RunStage 
     case "checkpoint_encoding":
     case "checkpoint_binding":
     case "completed":
-    case "workflow_effect_observation":
       return "artifact";
     case "initial_state_committed":
     case "run_finalized":
@@ -182,6 +184,21 @@ export function reportStageForEngine(stage: FailedRun["failedStage"]): RunStage 
     case "notifications_settled":
       return "discord";
   }
+}
+
+/** 検証済みpending runの失敗reportを保存済みrunへ結び付ける。 */
+export function reportContextForFailure(
+  invocation: DailyRunInvocation,
+  stage: FailedRun["failedStage"],
+  error: unknown,
+): Readonly<{ invocation: DailyRunInvocation; stage: RunStage }> {
+  if (error instanceof VerifiedPendingRuntimeFailureError) {
+    return {
+      invocation: Object.freeze({ ...invocation, runId: error.binding.runId }),
+      stage: error.failedStage,
+    };
+  }
+  return { invocation, stage: reportStageForEngine(stage) };
 }
 
 /** checkpoint前の失敗段階か判定する。 */

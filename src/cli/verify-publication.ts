@@ -24,7 +24,7 @@ import type {
 } from "./command.js";
 import { writeCliJsonArtifact } from "./file-output.js";
 import { verifyWorkflowCheckpoint } from "./run-publication/workflow-stage-handlers.js";
-import { recoverRuntimeV1 } from "./runtime-recovery-acquisition.js";
+import { verifyAcquiredRuntimeV1 } from "./runtime-recovery-acquisition.js";
 import type { ProductionRuntimeAdapters } from "./production-runtime/adapters.js";
 
 /** v19 checkpointの実fileとexact baseへの結合を検証する。 */
@@ -36,7 +36,7 @@ export async function verifyCheckpointCommand(
   await adapters.writeStandardOutput("checkpointの検証に成功しました\n");
 }
 
-/** 固定V1入力でexact runtimeを起動し回復protocolを検証する。 */
+/** 固定V1入力でexact runtimeの回復protocolを検証する。 */
 export async function verifyRuntimeRecoveryCommand(
   adapters: ProductionRuntimeAdapters,
   command: VerifyRuntimeRecoveryCliCommand,
@@ -46,12 +46,12 @@ export async function verifyRuntimeRecoveryCommand(
   if (source !== serializeCanonicalJsonLine(value)) {
     throw new TypeError("V1回復入力がcanonical JSONではありません");
   }
-  const output = await recoverRuntimeV1(
+  await verifyAcquiredRuntimeV1(
     adapters.repositoryPath,
     command.bundleRoot == null ? undefined : resolve(adapters.repositoryPath, command.bundleRoot),
     value,
   );
-  await adapters.writeStandardOutput(serializeCanonicalJsonLine(output));
+  await adapters.writeStandardOutput("固定V1 runtimeの検証に成功しました\n");
 }
 
 /** state refのV1 bootstrapから起動runtimeと固定回復入力を判定する。 */
