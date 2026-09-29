@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { parseSha256Hash } from "../../../canonical-json/sha256.js";
 import { gitCommitRevisionSchema } from "./revision.js";
-import { runtimeRecoveryPlanSchema } from "../recovery-bootstrap.js";
+import { runtimeRecoveryPlanV1Schema } from "../recovery-bootstrap.js";
 
 const sha256Schema = z.string().transform(parseSha256Hash);
 
@@ -16,7 +16,7 @@ export const runtimeRecoveryInputV1Schema = z.strictObject({
   expectedRecordDigest: sha256Schema,
   expectedRuntimeIdentityDigest: sha256Schema,
   expectedWorkflowEffectAdapterIdentityDigest: sha256Schema,
-  runtimeRecoveryPlan: runtimeRecoveryPlanSchema,
+  runtimeRecoveryPlan: runtimeRecoveryPlanV1Schema,
 });
 
 export const runtimeRecoveryOutputV1Schema = z.discriminatedUnion("status", [

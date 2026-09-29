@@ -23,8 +23,12 @@ function failureArtifactPath(command: CliCommand | undefined, invocationId: stri
     command?.kind === "notify-operations"
       ? command.outputFailureDirectory
       : (process.env[FAILURE_DIRECTORY_ENVIRONMENT_VARIABLE] ?? "artifacts/workflow/failures");
-  const fileName =
-    command?.kind === "run-stage" ? splitStageFailureFileName(command) : `${invocationId}.json`;
+  let fileName = `${invocationId}.json`;
+  if (command?.kind === "run-stage") {
+    fileName = splitStageFailureFileName(command);
+  } else if (command?.kind === "runtime-recovery-v2") {
+    fileName = `${command.runId.slice("tracker-run:".length)}-${command.operation}-${command.stage ?? command.phase ?? "inspect"}-attempt-${command.runAttempt.toString()}.json`;
+  }
   return resolve(directory, fileName);
 }
 

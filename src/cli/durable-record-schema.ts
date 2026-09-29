@@ -3,8 +3,14 @@ import { z } from "zod";
 import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../canonical-json/value.js";
 import { baseStateRevisionSchema } from "../application/tracking-run/contracts/run-core.js";
 import { runtimeIdentitySchema } from "../application/tracking-run/contracts/runtime-identity.js";
-import { runtimeRecoveryPlanSchema } from "../application/tracking-run/recovery-bootstrap.js";
-import { readDurablePublicationRecoveryBootstrap } from "../application/tracking-run/recovery-bootstrap.js";
+import {
+  runtimeRecoveryPlanV1Schema,
+  runtimeRecoveryPlanV2Schema,
+} from "../application/tracking-run/recovery-bootstrap.js";
+import {
+  readDurablePublicationRecoveryBootstrap,
+  readDurablePublicationRecoveryBootstrapV2,
+} from "../application/tracking-run/recovery-bootstrap.js";
 import type { ContentDigestPort } from "../application/tracking-run/ports.js";
 import {
   runExecutionPolicySchema,
@@ -25,7 +31,7 @@ import {
 
 const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const MAX_RECORD_BYTES = 8 * 1024 * 1024;
-export const DURABLE_PUBLICATION_RECORD_SCHEMA_VERSION = 1;
+export const DURABLE_PUBLICATION_RECORD_SCHEMA_VERSION = 2;
 const acknowledgedLedgerEntrySchema = z.strictObject({
   notificationKey: z.string().min(1).max(1000),
   itemNodeId: z.string().min(1).max(1000),
@@ -142,15 +148,15 @@ export const durablePublicationRecordTemplateSchema = z.strictObject({
   notificationHistoryPagesPolicy: notificationHistoryPagesPolicySchema,
 });
 
-export const durablePublicationRecordSchema = z.strictObject({
+const durablePublicationRecordV1Schema = z.strictObject({
   recoveryBootstrapVersion: z.literal(1),
-  schemaVersion: z.literal(DURABLE_PUBLICATION_RECORD_SCHEMA_VERSION),
+  schemaVersion: z.literal(1),
   runIdentity: runIdentitySchema,
   executionPolicy: runExecutionPolicySchema,
   checkpointDigest: sha256Schema,
   checkpointFileDigest: sha256Schema,
   runtimeIdentity: runtimeIdentitySchema,
-  runtimeRecoveryPlan: runtimeRecoveryPlanSchema,
+  runtimeRecoveryPlan: runtimeRecoveryPlanV1Schema,
   configDigest: sha256Schema,
   baseStateRevision: baseStateRevisionSchema,
   initialStateContentDigests: initialStateContentDigestsSchema,
@@ -160,6 +166,16 @@ export const durablePublicationRecordSchema = z.strictObject({
   notificationHistoryPagesPolicy: notificationHistoryPagesPolicySchema,
   recordDigest: sha256Schema,
 });
+
+const durablePublicationRecordV2Schema = durablePublicationRecordV1Schema.extend({
+  schemaVersion: z.literal(2),
+  runtimeRecoveryPlan: runtimeRecoveryPlanV2Schema,
+});
+
+export const durablePublicationRecordSchema = z.discriminatedUnion("schemaVersion", [
+  durablePublicationRecordV1Schema,
+  durablePublicationRecordV2Schema,
+]);
 
 /** checkpoint成立前に確定できる業務値だけのrecord template。 */
 export type DurablePublicationRecordTemplate = z.output<
@@ -197,9 +213,13 @@ export function materializeDurablePublicationRecord(
   ) {
     throw new TypeError("checkpointと永続record templateの結合が一致しません");
   }
+  const schemaVersion = template.executionPolicy.executionShape === "split_workflow" ? 2 : 1;
+  if (bound.binding.runtimeRecoveryPlan.schemaVersion !== schemaVersion) {
+    throw new TypeError("永続recordの版と回復計画の版が一致しません");
+  }
   const payload = {
     recoveryBootstrapVersion: 1,
-    schemaVersion: DURABLE_PUBLICATION_RECORD_SCHEMA_VERSION,
+    schemaVersion,
     runIdentity: template.runIdentity,
     executionPolicy: template.executionPolicy,
     checkpointDigest: bound.checkpointDigest,
@@ -240,10 +260,20 @@ export function parseDurablePublicationRecord(
   if (digest.sha256Utf8(serializeCanonicalJson(payload)) !== recordDigest) {
     throw new TypeError("durable publication recordのdigestが一致しません");
   }
-  readDurablePublicationRecoveryBootstrap(
-    new TextEncoder().encode(serializeCanonicalJsonLine(record)),
-    digest,
-  );
+  if (record.schemaVersion === 1) {
+    readDurablePublicationRecoveryBootstrap(
+      new TextEncoder().encode(serializeCanonicalJsonLine(record)),
+      digest,
+    );
+  } else {
+    readDurablePublicationRecoveryBootstrapV2(
+      new TextEncoder().encode(serializeCanonicalJsonLine(record)),
+      digest,
+    );
+    if (record.executionPolicy.executionShape !== "split_workflow") {
+      throw new TypeError("V2永続recordは分割workflowだけに使用できます");
+    }
+  }
   if (
     record.initialStateContentDigests.snapshot !== record.initialPagesProjection.snapshot.digest ||
     record.initialStateContentDigests.notificationLedger !==

@@ -41,7 +41,8 @@ export type CliExecutionResult =
         | "verify-receipt-chain"
         | "report-failure"
         | "run-stage"
-        | "route-stage";
+        | "route-stage"
+        | "runtime-recovery-v2";
       exitCode: 0;
     }>
   | Readonly<{
@@ -106,6 +107,9 @@ export class CliApplication<Types extends DailyTransactionTypeMap> {
       case "route-stage":
         await this.#dependencies.splitStageRunner.route(command, invocationId);
         return Object.freeze({ command: "route-stage", exitCode: 0 });
+      case "runtime-recovery-v2":
+        await this.#dependencies.splitStageRunner.recover(command, invocationId);
+        return Object.freeze({ command: "runtime-recovery-v2", exitCode: 0 });
       case "persist-state":
       case "build-pages":
       case "prepare-notification-history-pages":

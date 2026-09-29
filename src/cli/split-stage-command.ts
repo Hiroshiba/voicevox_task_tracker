@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { runtimeRecoveryStageV2Schema } from "../application/tracking-run/contracts/runtime-recovery-v2.js";
 
 import type { NotificationAction } from "../application/tracking-run/contracts/closed-values.js";
 import { optionalSingleOption, parseOptions, singleOption, usageError } from "./command-options.js";
@@ -47,6 +48,85 @@ export type RouteStageCliCommand = Readonly<{
   runId: string | undefined;
   effectTarget: "production" | "sandbox" | "recording";
 }>;
+
+/** V2固定入口へ渡す分割runの操作。 */
+export type RecoverRuntimeV2CliCommand = Readonly<{
+  kind: "runtime-recovery-v2";
+  operation: "inspect" | "execute_stage" | "record_pages";
+  configPath: string;
+  stateRef: string;
+  runId: string;
+  runAttempt: number;
+  stage: z.output<typeof runtimeRecoveryStageV2Schema> | undefined;
+  observationPath: string | undefined;
+  phase: "initial" | "notification_history" | undefined;
+  manualResolutionReceiptPath: string | undefined;
+  bundleRoot: string | undefined;
+}>;
+
+/** V2固定入口の操作と観測fileを検証する。 */
+export function parseRecoverRuntimeV2(args: readonly string[]): RecoverRuntimeV2CliCommand {
+  const options = parseOptions(
+    args,
+    new Set([
+      "--operation",
+      "--config",
+      "--state-ref",
+      "--run-id",
+      "--run-attempt",
+      "--stage",
+      "--observation",
+      "--phase",
+      "--manual-resolution-receipt",
+      "--bundle-root",
+    ]),
+  );
+  const operation = z
+    .enum(["inspect", "execute_stage", "record_pages"])
+    .parse(optionalSingleOption(options, "--operation"));
+  const stateRef = z
+    .string()
+    .regex(/^(?:tracker-state|sandbox-state\/env-[1-9][0-9]*-[1-9][0-9]*)$/u)
+    .parse(optionalSingleOption(options, "--state-ref"));
+  const runId = z
+    .string()
+    .regex(/^tracker-run:[0-9a-f]{64}$/u)
+    .parse(optionalSingleOption(options, "--run-id"));
+  const runAttempt = z.coerce
+    .number()
+    .int()
+    .positive()
+    .parse(singleOption(options, "--run-attempt", "1"));
+  const stageValue = optionalSingleOption(options, "--stage");
+  const stage = stageValue == null ? undefined : runtimeRecoveryStageV2Schema.parse(stageValue);
+  const observationPath = optionalSingleOption(options, "--observation");
+  const phaseValue = optionalSingleOption(options, "--phase");
+  const phase =
+    phaseValue == null ? undefined : z.enum(["initial", "notification_history"]).parse(phaseValue);
+  const manualResolutionReceiptPath = optionalSingleOption(options, "--manual-resolution-receipt");
+  if (
+    (operation === "execute_stage") !== (stage != null) ||
+    (operation === "record_pages") !== (observationPath != null) ||
+    (operation === "record_pages") !== (phase != null) ||
+    (manualResolutionReceiptPath != null &&
+      (operation !== "execute_stage" || stage !== "settle-notifications"))
+  ) {
+    throw usageError("V2固定入口の操作と段階または観測fileが一致しません");
+  }
+  return Object.freeze({
+    kind: "runtime-recovery-v2",
+    operation,
+    configPath: singleOption(options, "--config", "config.yml"),
+    stateRef,
+    runId,
+    runAttempt,
+    stage,
+    observationPath,
+    phase,
+    manualResolutionReceiptPath,
+    bundleRoot: optionalSingleOption(options, "--bundle-root"),
+  });
+}
 
 /** route-stageのstate ref、run、外部効果先を検証する。 */
 export function parseRouteStage(args: readonly string[]): RouteStageCliCommand {

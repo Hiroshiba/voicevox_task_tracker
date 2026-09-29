@@ -1,5 +1,6 @@
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import type { RuntimeRecoveryInputV1 } from "../../application/tracking-run/contracts/runtime-recovery-v1.js";
+import type { RuntimeRecoveryInputV2 } from "../../application/tracking-run/contracts/runtime-recovery-v2.js";
 import type { Receipt } from "../../application/tracking-run/receipt-schema.js";
 import type { ObservedStateCommitPosition } from "../../application/tracking-run/observed-state-commit.js";
 import { verifyReceiptChain } from "../../application/tracking-run/receipt-chain.js";
@@ -46,7 +47,9 @@ export type InspectRunStateRequest =
       expectedRecordDigest: string;
       expectedRuntimeIdentityDigest: string;
       expectedWorkflowEffectAdapterIdentityDigest: string;
-      runtimeRecoveryPlan: RuntimeRecoveryInputV1["runtimeRecoveryPlan"];
+      runtimeRecoveryPlan:
+        | RuntimeRecoveryInputV1["runtimeRecoveryPlan"]
+        | RuntimeRecoveryInputV2["runtimeRecoveryPlan"];
       observation: Readonly<{ invocationId: string; observedAt: string }>;
       receipts: readonly ReceiptChainEntry[];
     }>;

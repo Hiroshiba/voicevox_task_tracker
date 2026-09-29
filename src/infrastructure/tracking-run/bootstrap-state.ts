@@ -4,8 +4,11 @@ import {
 } from "../../application/tracking-run/contracts/recovery-paths.js";
 import {
   readDurablePublicationRecoveryBootstrap,
+  readDurablePublicationRecoveryBootstrapV2,
+  readDurablePublicationRecordSchemaVersion,
   readRunTransactionMarkerRecoveryBootstrap,
   type DurablePublicationRecoveryBootstrapV1,
+  type DurablePublicationRecoveryBootstrapV2,
   type RunTransactionMarkerRecoveryBootstrapV1,
 } from "../../application/tracking-run/recovery-bootstrap.js";
 import type { StateBranchAdapter, StateBranchHead } from "../../persistence/branch-adapter.js";
@@ -25,7 +28,7 @@ export type RuntimeLaunchDecision =
       kind: "resume_with_exact_runtime";
       observedStateHead: Extract<StateBranchHead, { status: "present" }>;
       marker: RunTransactionMarkerRecoveryBootstrapV1;
-      record: DurablePublicationRecoveryBootstrapV1;
+      record: DurablePublicationRecoveryBootstrapV1 | DurablePublicationRecoveryBootstrapV2;
     }>
   | Readonly<{
       kind: "manual_resolution_required";
@@ -95,10 +98,17 @@ export async function inspectRunBootstrapState(
     );
   }
   let marker: RunTransactionMarkerRecoveryBootstrapV1;
-  let record: DurablePublicationRecoveryBootstrapV1;
+  let record: DurablePublicationRecoveryBootstrapV1 | DurablePublicationRecoveryBootstrapV2;
   try {
     marker = readRunTransactionMarkerRecoveryBootstrap(markerFile.bytes);
-    record = readDurablePublicationRecoveryBootstrap(recordFile.bytes, nodeContentDigestPort);
+    const recordVersion = readDurablePublicationRecordSchemaVersion(recordFile.bytes);
+    if (recordVersion === 1) {
+      record = readDurablePublicationRecoveryBootstrap(recordFile.bytes, nodeContentDigestPort);
+    } else if (recordVersion === 2) {
+      record = readDurablePublicationRecoveryBootstrapV2(recordFile.bytes, nodeContentDigestPort);
+    } else {
+      throw new TypeError("未対応のdurable record schemaです");
+    }
   } catch (error: unknown) {
     return manualResolution(
       observedStateHead,
@@ -169,7 +179,7 @@ export function createRuntimeRecoveryInputV1(
   invocationId: string,
 ): RuntimeRecoveryInputV1 {
   const plan = decision.record.runtimeRecoveryPlan;
-  if (plan.kind === "not_reproducible") {
+  if (plan.kind === "not_reproducible" || plan.schemaVersion !== 1) {
     throw new TypeError("回復不能なruntimeへV1入力を作れません");
   }
   return runtimeRecoveryInputV1Schema.parse({

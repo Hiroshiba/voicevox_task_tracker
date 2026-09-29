@@ -157,7 +157,8 @@ async function optionalReceipt(path: string): Promise<Receipt | undefined> {
 
 async function previousReceipt(command: CliCommand | undefined): Promise<Receipt | undefined> {
   switch (command?.kind) {
-    case "run-stage": {
+    case "run-stage":
+    case "runtime-recovery-v2": {
       if (command.runId == null) {
         return undefined;
       }
@@ -212,6 +213,9 @@ function expectedRunId(
     return command.runId;
   }
   if (command?.kind === "run-stage") {
+    return command.runId;
+  }
+  if (command?.kind === "runtime-recovery-v2") {
     return command.runId;
   }
   if (command?.kind === "inspect-run-state" && command.recoveryIntent.kind === "retry_run") {

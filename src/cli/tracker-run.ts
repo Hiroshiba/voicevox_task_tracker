@@ -24,6 +24,7 @@ import {
 } from "./errors.js";
 import { type RunStage } from "./run-report.js";
 import { runRuntimeRecoveryEntrypointV1 } from "./runtime-recovery-launcher-v1.js";
+import { runRuntimeRecoveryEntrypointV2 } from "./runtime-recovery-launcher-v2.js";
 
 const DIAGNOSTICS_PATH_ENVIRONMENT_VARIABLE = "VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH";
 
@@ -112,6 +113,7 @@ export function createTrackerRunCliArguments(args: readonly string[]): readonly 
     args[0] === "run-sequential" ||
     args[0] === "run-stage" ||
     args[0] === "route-stage" ||
+    args[0] === "runtime-recovery-v2" ||
     args[0] === "persist-state" ||
     args[0] === "build-pages" ||
     args[0] === "prepare-notification-history-pages" ||
@@ -205,6 +207,7 @@ function topLevelDiagnosticStage(command: CliCommand): RunStage | "unknown" {
     case "run-sequential":
     case "run-stage":
     case "route-stage":
+    case "runtime-recovery-v2":
     case "verify-state":
     case "verify-checkpoint":
     case "verify-runtime-recovery":
@@ -255,6 +258,17 @@ function writeDiagnosticsTopLevelError(error: unknown): void {
 
 /** tracker-run共通entryからCLIを実行する。 */
 export async function runTrackerCliMain(args: readonly string[]): Promise<number> {
+  if (process.env["VOICEVOX_RUNTIME_RECOVERY_PROTOCOL_V2"] === "2") {
+    if (args.length !== 0) {
+      throw new TypeError("V2回復entrypointにCLI引数は指定できません");
+    }
+    const bundleRoot = process.env["VOICEVOX_RUNTIME_BUNDLE_ROOT"];
+    if (bundleRoot == null || bundleRoot.length === 0) {
+      throw new TypeError("V2回復entrypointのruntime rootがありません");
+    }
+    await runRuntimeRecoveryEntrypointV2(process.cwd(), bundleRoot);
+    return 0;
+  }
   if (process.env["VOICEVOX_RUNTIME_RECOVERY_PROTOCOL_V1"] === "1") {
     if (args.length !== 0) {
       throw new TypeError("V1回復entrypointにCLI引数は指定できません");

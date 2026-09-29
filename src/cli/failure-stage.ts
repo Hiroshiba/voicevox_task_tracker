@@ -92,6 +92,16 @@ export function stageFromCommand(command: CliCommand | undefined): FailedRun["fa
     case "route-stage":
     case "verify-runtime-recovery":
       return "runtime_bootstrap";
+    case "runtime-recovery-v2":
+      if (command.operation === "record_pages") {
+        return command.phase === "initial"
+          ? "initial_pages_published"
+          : "notification_history_pages_published";
+      }
+      if (command.operation === "execute_stage" && command.stage != null) {
+        return stageFromSplitCommand(command.stage);
+      }
+      return "runtime_bootstrap";
     case "verify-checkpoint":
       return "checkpoint_binding";
     case "daily":

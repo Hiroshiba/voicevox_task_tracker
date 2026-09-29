@@ -5,6 +5,10 @@ import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../canonical
 import { completeTrackingRun } from "../application/tracking-run/complete-run.js";
 import { runTrackingStageOnce } from "../application/tracking-run/engine.js";
 import { decodeReceipt } from "../application/tracking-run/receipt-codec.js";
+import {
+  runtimeRecoveryInputV2Schema,
+  workflowEffectObservationV2Schema,
+} from "../application/tracking-run/contracts/runtime-recovery-v2.js";
 import type { TrackingRunStageName } from "../application/tracking-run/contracts/closed-values.js";
 import type { ReceiptChainEntry } from "../application/tracking-run/receipt-chain-schema.js";
 import { inspectRunBootstrapState } from "../infrastructure/tracking-run/bootstrap-state.js";
@@ -15,6 +19,7 @@ import { findInitialStateRevision } from "../persistence/state-orthogonal-advanc
 import { assertNonNullable } from "../util/index.js";
 import type {
   CollectAnalyzeCliCommand,
+  RecoverRuntimeV2CliCommand,
   RouteStageCliCommand,
   RunStageCliCommand,
 } from "./command.js";
@@ -50,6 +55,7 @@ import {
 } from "./publication-runtime.js";
 import { projectPublicationSettings } from "./run-publication/settings.js";
 import { DURABLE_PUBLICATION_RECORD_SCHEMA_VERSION } from "./durable-record-schema.js";
+import { recoverSplitRuntimeV2 } from "./runtime-recovery-acquisition.js";
 import type { ProductionRuntimeAdapters } from "./production-runtime/adapters.js";
 import type { ProductionTypes } from "./production-runtime/contracts.js";
 import {
@@ -377,6 +383,131 @@ export class SplitStageRunner {
   ) {
     this.#adapters = adapters;
     this.#dailyRunner = dailyRunner;
+  }
+
+  /** 永続bootstrapだけからV2入力を作り、exact bundleの固定入口で一段進める。 */
+  public async recover(command: RecoverRuntimeV2CliCommand, invocationId: string): Promise<void> {
+    if (
+      command.manualResolutionReceiptPath != null &&
+      resolve(this.#adapters.repositoryPath, command.manualResolutionReceiptPath) !==
+        splitStagePaths(this.#adapters.repositoryPath, command.runId).manualResolutionReceipt
+    ) {
+      throw new TypeError("V2手動解決receiptはrun別の固定pathが必要です");
+    }
+    const config = await this.#adapters.loadConfig(
+      resolve(this.#adapters.repositoryPath, command.configPath),
+    );
+    if (config.state.branch !== command.stateRef) {
+      throw new TypeError("V2回復のstate refと設定が一致しません");
+    }
+    const adapter = this.#adapters.createStateBranchAdapter();
+    const head = await adapter.resolveHead(command.stateRef);
+    if (head.status !== "present") {
+      throw new TypeError("V2回復のexact stateがありません");
+    }
+    const bootstrap = await inspectRunBootstrapState(adapter, command.stateRef, {
+      kind: "retry_run",
+      runId: command.runId,
+      exactStateRevision: head.revision,
+    });
+    if (
+      bootstrap.kind !== "resume_with_exact_runtime" ||
+      bootstrap.record.recordSchemaVersion !== 2 ||
+      bootstrap.record.runtimeRecoveryPlan.schemaVersion !== 2 ||
+      bootstrap.record.runtimeRecoveryPlan.kind !== "workflow_bundle"
+    ) {
+      throw new TypeError("V2固定入口を持つ未完了runを選べません");
+    }
+    const plan = bootstrap.record.runtimeRecoveryPlan;
+    let observation: unknown;
+    if (command.operation === "record_pages") {
+      assertNonNullable(command.observationPath, "V2 Pages観測fileがありません");
+      const source = await readFile(
+        resolve(this.#adapters.repositoryPath, command.observationPath),
+        "utf8",
+      );
+      const raw: unknown = JSON.parse(source);
+      if (source !== serializeCanonicalJsonLine(raw)) {
+        throw new TypeError("V2 Pages観測fileがcanonical JSONではありません");
+      }
+      const parsedObservation = workflowEffectObservationV2Schema.parse(raw);
+      if (parsedObservation.phase !== command.phase) {
+        throw new TypeError("V2 Pages観測fileと指定phaseが一致しません");
+      }
+      observation = parsedObservation;
+    }
+    const input = runtimeRecoveryInputV2Schema.parse({
+      protocolVersion: 2,
+      inputContract: "tracking-run-recovery-input-v2",
+      operation: command.operation,
+      invocationId,
+      configPath: command.configPath,
+      stateRef: command.stateRef,
+      exactStateRevision: head.revision,
+      runId: command.runId,
+      runAttempt: command.runAttempt,
+      expectedRecordDigest: bootstrap.record.recordDigest,
+      expectedRuntimeIdentityDigest: bootstrap.record.runtimeIdentityDigest,
+      expectedWorkflowEffectAdapterIdentityDigest:
+        plan.recoveryProtocol.workflowEffectAdapterIdentityDigest,
+      runtimeRecoveryPlan: plan,
+      ...(command.operation === "execute_stage"
+        ? {
+            stage: command.stage,
+            ...(command.manualResolutionReceiptPath == null
+              ? {}
+              : { manualResolutionReceiptPath: command.manualResolutionReceiptPath }),
+          }
+        : {}),
+      ...(command.operation === "record_pages" ? { observation } : {}),
+    });
+    const output = await recoverSplitRuntimeV2(
+      this.#adapters.repositoryPath,
+      command.bundleRoot == null
+        ? undefined
+        : resolve(this.#adapters.repositoryPath, command.bundleRoot),
+      input,
+    );
+    const entries = await readSplitReceiptChain(
+      splitStagePaths(this.#adapters.repositoryPath, command.runId).receiptChain,
+      command.runId,
+    );
+    if (
+      output.runId !== command.runId ||
+      output.workflowEffectAdapterIdentityDigest !==
+        plan.recoveryProtocol.workflowEffectAdapterIdentityDigest ||
+      output.receiptChainDigest !== digest.sha256Utf8(serializeCanonicalJson(entries))
+    ) {
+      throw new TypeError("V2固定入口の結果とreceipt chainが一致しません");
+    }
+    const state = await inspectRunBootstrapState(adapter, command.stateRef, {
+      kind: "retry_run",
+      runId: command.runId,
+      exactStateRevision: output.stateRevision,
+    });
+    if (
+      state.kind !== "resume_with_exact_runtime" ||
+      state.record.recordDigest !== bootstrap.record.recordDigest
+    ) {
+      throw new TypeError("V2固定入口の結果と永続recordが一致しません");
+    }
+    const verified = await inspectRunState(adapter, config.state, {
+      kind: "resume_run",
+      runtime: "exact",
+      runId: command.runId,
+      exactStateRevision: output.stateRevision,
+      expectedRecordDigest: bootstrap.record.recordDigest,
+      expectedRuntimeIdentityDigest: bootstrap.record.runtimeIdentityDigest,
+      expectedWorkflowEffectAdapterIdentityDigest:
+        plan.recoveryProtocol.workflowEffectAdapterIdentityDigest,
+      runtimeRecoveryPlan: plan,
+      observation: { invocationId, observedAt: this.#adapters.now().toISOString() },
+      receipts: entries,
+    });
+    if (verified.kind !== "resume_pending") {
+      throw new TypeError("V2固定入口のreceiptとexact stateを検証できません");
+    }
+    await this.#adapters.writeStandardOutput(serializeCanonicalJsonLine(output));
   }
 
   /** remote exact stateと検証済みreceiptから次の分割段階を返す。 */

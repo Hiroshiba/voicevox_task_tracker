@@ -42,7 +42,7 @@ export const runtimeRecoveryProtocolV1Schema = z.strictObject({
   workflowEffectAdapterIdentityDigest: sha256Schema,
 });
 
-export const runtimeRecoveryPlanSchema = z.discriminatedUnion("kind", [
+export const runtimeRecoveryPlanV1Schema = z.discriminatedUnion("kind", [
   z.strictObject({
     schemaVersion: z.literal(1),
     kind: z.literal("workflow_bundle"),
@@ -72,6 +72,52 @@ export const runtimeRecoveryPlanSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+export const runtimeRecoveryProtocolV2Schema = z.strictObject({
+  protocolVersion: z.literal(2),
+  entrypointRelativePath: normalizedBundlePathSchema,
+  entrypointSha256: sha256Schema,
+  inputContract: z.literal("tracking-run-recovery-input-v2"),
+  outputContract: z.literal("tracking-run-recovery-output-v2"),
+  workflowEffectObservationContract: z.literal("tracking-run-workflow-effect-observation-v2"),
+  workflowEffectAdapterIdentityDigest: sha256Schema,
+  workflowEffectAdapterVersion: z.literal("tracking-run-pages-actions-v2"),
+});
+
+export const runtimeRecoveryPlanV2Schema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    schemaVersion: z.literal(2),
+    kind: z.literal("workflow_bundle"),
+    workflowRunId: nonEmptyStringSchema,
+    workflowRunAttempt: positiveIntegerSchema,
+    artifactName: nonEmptyStringSchema,
+    bundleSha256: sha256Schema,
+    codeRevision: gitCommitRevisionSchema,
+    lockfileSha256: sha256Schema,
+    toolchain: runtimeToolchainIdentitySchema,
+    recoveryProtocol: runtimeRecoveryProtocolV2Schema,
+  }),
+  z.strictObject({
+    schemaVersion: z.literal(2),
+    kind: z.literal("rebuild_exact"),
+    codeRevision: gitCommitRevisionSchema,
+    lockfileSha256: sha256Schema,
+    toolchain: runtimeToolchainIdentitySchema,
+    expectedRuntimeManifestSha256: sha256Schema,
+    recoveryProtocol: runtimeRecoveryProtocolV2Schema,
+  }),
+  z.strictObject({
+    schemaVersion: z.literal(2),
+    kind: z.literal("not_reproducible"),
+    reason: z.enum(["dirty_worktree", "runtime_artifact_unavailable"]),
+    runtimeIdentityDigest: sha256Schema,
+  }),
+]);
+
+export const runtimeRecoveryPlanSchema = z.union([
+  runtimeRecoveryPlanV1Schema,
+  runtimeRecoveryPlanV2Schema,
+]);
+
 const recordBootstrapSchema = z.looseObject({
   recoveryBootstrapVersion: z.literal(1),
   schemaVersion: positiveIntegerSchema,
@@ -79,8 +125,13 @@ const recordBootstrapSchema = z.looseObject({
   checkpointDigest: sha256Schema,
   checkpointFileDigest: sha256Schema,
   runtimeIdentity: runtimeIdentitySchema,
-  runtimeRecoveryPlan: runtimeRecoveryPlanSchema,
+  runtimeRecoveryPlan: runtimeRecoveryPlanV1Schema,
   recordDigest: sha256Schema,
+});
+
+const recordBootstrapV2Schema = recordBootstrapSchema.extend({
+  schemaVersion: z.literal(2),
+  runtimeRecoveryPlan: runtimeRecoveryPlanV2Schema,
 });
 
 const markerBootstrapSchema = z.looseObject({
@@ -105,7 +156,19 @@ export type DurablePublicationRecoveryBootstrapV1 = Readonly<{
   runId: string;
   checkpointDigest: string;
   checkpointFileDigest: string;
-  runtimeRecoveryPlan: z.output<typeof runtimeRecoveryPlanSchema>;
+  runtimeRecoveryPlan: z.output<typeof runtimeRecoveryPlanV1Schema>;
+  runtimeIdentityDigest: string;
+  recordDigest: string;
+}>;
+
+/** V2の固定入口を選ぶためだけに読む永続recordの安定部分。 */
+export type DurablePublicationRecoveryBootstrapV2 = Readonly<{
+  recoveryBootstrapVersion: 1;
+  recordSchemaVersion: 2;
+  runId: string;
+  checkpointDigest: string;
+  checkpointFileDigest: string;
+  runtimeRecoveryPlan: z.output<typeof runtimeRecoveryPlanV2Schema>;
   runtimeIdentityDigest: string;
   recordDigest: string;
 }>;
@@ -162,6 +225,55 @@ function parseCanonicalBootstrap(bytes: Uint8Array): unknown {
     throw new TypeError("bootstrap JSONがcanonical形式ではありません");
   }
   return value;
+}
+
+/** business payloadを解釈せずrecord schemaの版だけを読む。 */
+export function readDurablePublicationRecordSchemaVersion(bytes: Uint8Array): number {
+  return z
+    .looseObject({ schemaVersion: positiveIntegerSchema })
+    .parse(parseCanonicalBootstrap(bytes)).schemaVersion;
+}
+
+/** V2永続recordからexact runtime選択に使うfieldだけを読む。 */
+export function readDurablePublicationRecoveryBootstrapV2(
+  bytes: Uint8Array,
+  digest: ContentDigestPort,
+): DurablePublicationRecoveryBootstrapV2 {
+  const record = recordBootstrapV2Schema.parse(parseCanonicalBootstrap(bytes));
+  const { recordDigest, ...content } = record;
+  if (digest.sha256Utf8(serializeCanonicalJson(content)) !== recordDigest) {
+    throw new TypeError("V2 durable publication recordのdigestが一致しません");
+  }
+  const plan = record.runtimeRecoveryPlan;
+  const identity = record.runtimeIdentity;
+  const runtimeIdentityDigest = digest.sha256Utf8(serializeCanonicalJson(identity));
+  if (
+    (plan.kind === "workflow_bundle" &&
+      (identity.kind !== "workflow_bundle" ||
+        plan.bundleSha256 !== identity.bundleSha256 ||
+        plan.codeRevision !== identity.codeRevision ||
+        plan.lockfileSha256 !== identity.lockfileSha256 ||
+        serializeCanonicalJson(plan.toolchain) !== serializeCanonicalJson(identity.toolchain))) ||
+    (plan.kind === "rebuild_exact" &&
+      (identity.kind !== "source_process" ||
+        plan.expectedRuntimeManifestSha256 !== identity.runtimeManifestSha256 ||
+        plan.codeRevision !== identity.codeRevision ||
+        plan.lockfileSha256 !== identity.lockfileSha256 ||
+        serializeCanonicalJson(plan.toolchain) !== serializeCanonicalJson(identity.toolchain))) ||
+    (plan.kind === "not_reproducible" && plan.runtimeIdentityDigest !== runtimeIdentityDigest)
+  ) {
+    throw new TypeError("V2回復計画とruntime identityが一致しません");
+  }
+  return Object.freeze({
+    recoveryBootstrapVersion: 1,
+    recordSchemaVersion: 2,
+    runId: record.runIdentity.runId,
+    checkpointDigest: record.checkpointDigest,
+    checkpointFileDigest: record.checkpointFileDigest,
+    runtimeRecoveryPlan: plan,
+    runtimeIdentityDigest,
+    recordDigest,
+  });
 }
 
 /** 永続recordのbusiness payloadを解釈せず回復用fieldを読む。 */

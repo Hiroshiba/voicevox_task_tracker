@@ -14,11 +14,13 @@ import {
   normalizedBundlePathSchema,
   runtimeRecoveryPlanSchema,
   runtimeRecoveryProtocolV1Schema,
+  runtimeRecoveryProtocolV2Schema,
 } from "../application/tracking-run/recovery-bootstrap.js";
 import type { ContentDigestPort } from "../application/tracking-run/ports.js";
 import type { RunExecutionPolicy } from "../application/tracking-run/request.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
 import { workflowActionSources } from "./workflow-action-identity.js";
+import { assertWorkflowV2Adapter } from "./workflow-v2-adapter.js";
 
 const execFileAsync = promisify(execFile);
 const MANIFEST_FILE_NAME = "runtime-manifest.json";
@@ -28,7 +30,7 @@ const runtimeFileSchema = z.strictObject({
   byteLength: z.number().int().nonnegative(),
   digest: sha256Schema,
 });
-export const runtimeManifestSchema = z.strictObject({
+const runtimeManifestV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
   codeRevision: z.string().min(1),
   lockfileSha256: sha256Schema,
@@ -36,6 +38,14 @@ export const runtimeManifestSchema = z.strictObject({
   files: z.array(runtimeFileSchema).min(1),
   recoveryProtocol: runtimeRecoveryProtocolV1Schema,
 });
+const runtimeManifestV2Schema = runtimeManifestV1Schema.extend({
+  schemaVersion: z.literal(2),
+  recoveryProtocol: runtimeRecoveryProtocolV2Schema,
+});
+export const runtimeManifestSchema = z.discriminatedUnion("schemaVersion", [
+  runtimeManifestV1Schema,
+  runtimeManifestV2Schema,
+]);
 
 /** 実行byte列と回復計画の実測値。 */
 export type PublicationRuntimeContext = Readonly<{
@@ -292,21 +302,35 @@ async function createManifest(
     throw new TypeError("runtime entrypointがbuild outputにありません");
   }
   const filesDigest = digest.sha256Utf8(serializeCanonicalJson(files));
+  const adapterIdentity = await workflowAdapterIdentity(repositoryPath, digest);
+  const recoveryProtocol =
+    shape === "split_workflow"
+      ? runtimeRecoveryProtocolV2Schema.parse({
+          protocolVersion: 2,
+          entrypointRelativePath,
+          entrypointSha256: entrypoint.digest,
+          inputContract: "tracking-run-recovery-input-v2",
+          outputContract: "tracking-run-recovery-output-v2",
+          workflowEffectObservationContract: "tracking-run-workflow-effect-observation-v2",
+          workflowEffectAdapterIdentityDigest: adapterIdentity,
+          workflowEffectAdapterVersion: "tracking-run-pages-actions-v2",
+        })
+      : runtimeRecoveryProtocolV1Schema.parse({
+          protocolVersion: 1,
+          entrypointRelativePath,
+          entrypointSha256: entrypoint.digest,
+          inputContract: "tracking-run-recovery-input-v1",
+          outputContract: "tracking-run-recovery-output-v1",
+          workflowEffectObservationContract: "tracking-run-workflow-effect-observation-v1",
+          workflowEffectAdapterIdentityDigest: adapterIdentity,
+        });
   return runtimeManifestSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: shape === "split_workflow" ? 2 : 1,
     codeRevision: await codeRevision(repositoryPath, filesDigest),
     lockfileSha256: digest.sha256Bytes(await readFile(resolve(repositoryPath, "pnpm-lock.yaml"))),
     toolchain: await measuredToolchain(repositoryPath, shape, digest),
     files,
-    recoveryProtocol: {
-      protocolVersion: 1,
-      entrypointRelativePath,
-      entrypointSha256: entrypoint.digest,
-      inputContract: "tracking-run-recovery-input-v1",
-      outputContract: "tracking-run-recovery-output-v1",
-      workflowEffectObservationContract: "tracking-run-workflow-effect-observation-v1",
-      workflowEffectAdapterIdentityDigest: await workflowAdapterIdentity(repositoryPath, digest),
-    },
+    recoveryProtocol,
   });
 }
 
@@ -328,6 +352,9 @@ async function readWorkflowRuntimeManifest(
   const source = await readFile(resolve(root, MANIFEST_FILE_NAME), "utf8");
   const value: unknown = JSON.parse(source);
   const manifest = runtimeManifestSchema.parse(value);
+  if (manifest.schemaVersion !== 2) {
+    throw new TypeError("分割workflowのruntime manifestはV2が必要です");
+  }
   if (source !== serializeCanonicalJsonLine(manifest)) {
     throw new TypeError("workflow runtime manifestがcanonical JSONではありません");
   }
@@ -377,6 +404,12 @@ export async function readPublicationRuntimeContext(
     shape === "split_workflow"
       ? await readWorkflowRuntimeManifest(repositoryPath, nodeContentDigestPort)
       : await createManifest(repositoryPath, shape, nodeContentDigestPort);
+  if (shape === "split_workflow" && manifest.schemaVersion !== 2) {
+    throw new TypeError("分割workflowのruntime manifestはV2が必要です");
+  }
+  if (shape === "split_workflow") {
+    await assertWorkflowV2Adapter(repositoryPath);
+  }
   const manifestDigest = nodeContentDigestPort.sha256Utf8(serializeCanonicalJson(manifest));
   const runtimeIdentity: RuntimeIdentity =
     shape === "split_workflow"
@@ -395,9 +428,10 @@ export async function readPublicationRuntimeContext(
           toolchain: manifest.toolchain,
         };
   let runtimeRecoveryPlan: z.output<typeof runtimeRecoveryPlanSchema>;
+  const planVersion = shape === "split_workflow" ? 2 : 1;
   if (manifest.codeRevision.startsWith("worktree:")) {
     runtimeRecoveryPlan = runtimeRecoveryPlanSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: planVersion,
       kind: "not_reproducible",
       reason: "dirty_worktree",
       runtimeIdentityDigest: nodeContentDigestPort.sha256Utf8(
@@ -421,7 +455,7 @@ export async function readPublicationRuntimeContext(
     /^[1-9]\d*$/u.test(environment["GITHUB_RUN_ATTEMPT"])
   ) {
     runtimeRecoveryPlan = runtimeRecoveryPlanSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: planVersion,
       kind: "workflow_bundle",
       workflowRunId: environment["GITHUB_RUN_ID"],
       workflowRunAttempt: Number(environment["GITHUB_RUN_ATTEMPT"]),
@@ -434,7 +468,7 @@ export async function readPublicationRuntimeContext(
     });
   } else {
     runtimeRecoveryPlan = runtimeRecoveryPlanSchema.parse({
-      schemaVersion: 1,
+      schemaVersion: planVersion,
       kind: "not_reproducible",
       reason: "runtime_artifact_unavailable",
       runtimeIdentityDigest: nodeContentDigestPort.sha256Utf8(

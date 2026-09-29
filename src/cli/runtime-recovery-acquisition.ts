@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { lstat, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -17,6 +17,11 @@ import {
   type RuntimeRecoveryOutputV1,
 } from "../application/tracking-run/contracts/runtime-recovery-v1.js";
 import {
+  runtimeRecoveryInputV2Schema,
+  type RuntimeRecoveryInputV2,
+  type RuntimeRecoveryOutputV2,
+} from "../application/tracking-run/contracts/runtime-recovery-v2.js";
+import {
   assertRecoveryToolchain,
   verifyRebuiltRuntime,
   verifyRecoveryBundle,
@@ -25,7 +30,12 @@ import {
   launchRuntimeRecoveryV1,
   verifyRuntimeRecoveryV1,
 } from "./runtime-recovery-launcher-v1.js";
+import {
+  launchRuntimeRecoveryV2,
+  verifyRuntimeRecoveryV2,
+} from "./runtime-recovery-launcher-v2.js";
 import { sequentialReceiptPath } from "./sequential-receipt-path.js";
+import { splitStagePaths } from "./split-stage-paths.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_COMMAND_OUTPUT_BYTES = 10 * 1024 * 1024;
@@ -108,7 +118,10 @@ async function installExactDependencies(
 
 async function rebuildWorkflowBundle(
   checkoutPath: string,
-  plan: Extract<RuntimeRecoveryInputV1["runtimeRecoveryPlan"], { kind: "workflow_bundle" }>,
+  plan: Extract<
+    RuntimeRecoveryInputV1["runtimeRecoveryPlan"] | RuntimeRecoveryInputV2["runtimeRecoveryPlan"],
+    { kind: "workflow_bundle" }
+  >,
 ): Promise<string> {
   await installExactDependencies(checkoutPath, plan.lockfileSha256);
   await runCommand("pnpm", ["build"], checkoutPath);
@@ -139,7 +152,10 @@ async function rebuildSourceRuntime(
 
 async function downloadWorkflowBundle(
   checkoutPath: string,
-  plan: Extract<RuntimeRecoveryInputV1["runtimeRecoveryPlan"], { kind: "workflow_bundle" }>,
+  plan: Extract<
+    RuntimeRecoveryInputV1["runtimeRecoveryPlan"] | RuntimeRecoveryInputV2["runtimeRecoveryPlan"],
+    { kind: "workflow_bundle" }
+  >,
   destination: string,
 ): Promise<string | undefined> {
   try {
@@ -260,4 +276,73 @@ export async function verifyAcquiredRuntimeV1(
   value: unknown,
 ): Promise<void> {
   await withAcquiredRuntime(repositoryPath, bundleRoot, value, verifyRuntimeRecoveryV1);
+}
+
+/** V2 bundleを元artifactまたはbyte一致再buildから取得して固定入口を起動する。 */
+export async function recoverSplitRuntimeV2(
+  repositoryPath: string,
+  bundleRoot: string | undefined,
+  value: unknown,
+): Promise<RuntimeRecoveryOutputV2> {
+  const input = runtimeRecoveryInputV2Schema.parse(value);
+  const plan = input.runtimeRecoveryPlan;
+  if (plan.kind !== "workflow_bundle") {
+    throw new TypeError("V2分割回復にはworkflow bundleが必要です");
+  }
+  await assertRecoveryToolchain(repositoryPath, plan);
+  return withExactWorktree(repositoryPath, plan.codeRevision, async (checkoutPath) => {
+    const current = splitStagePaths(repositoryPath, input.runId);
+    const exact = splitStagePaths(checkoutPath, input.runId);
+    const inputs: readonly (readonly [string, string])[] = [
+      [current.root, exact.root],
+      [join(repositoryPath, "dist/web"), join(checkoutPath, "dist/web")],
+      [current.pagesOutput, exact.pagesOutput],
+    ];
+    for (const [from, to] of inputs) {
+      if (await isPresent(from)) {
+        await mkdir(dirname(to), { recursive: true });
+        await cp(from, to, { recursive: true, force: true });
+      }
+    }
+    try {
+      const exactBundleRoot = join(checkoutPath, "artifacts/workflow/runtime");
+      if (bundleRoot != null && (await isPresent(bundleRoot))) {
+        const root = resolve(bundleRoot);
+        await verifyRecoveryBundle(root, plan);
+        await mkdir(dirname(exactBundleRoot), { recursive: true });
+        await cp(root, exactBundleRoot, { recursive: true, force: true });
+        await verifyRuntimeRecoveryV2(checkoutPath, exactBundleRoot, input);
+        return await launchRuntimeRecoveryV2(checkoutPath, exactBundleRoot, input);
+      }
+      const downloadDirectory = await mkdtemp(join(tmpdir(), "voicevox-runtime-v2-download-"));
+      try {
+        const downloaded = await downloadWorkflowBundle(checkoutPath, plan, downloadDirectory);
+        if (downloaded != null) {
+          await mkdir(dirname(exactBundleRoot), { recursive: true });
+          await cp(downloaded, exactBundleRoot, { recursive: true, force: true });
+          await verifyRuntimeRecoveryV2(checkoutPath, exactBundleRoot, input);
+          return await launchRuntimeRecoveryV2(checkoutPath, exactBundleRoot, input);
+        }
+      } finally {
+        await rm(downloadDirectory, { recursive: true, force: true });
+      }
+      const rebuilt = await rebuildWorkflowBundle(checkoutPath, plan);
+      await verifyRuntimeRecoveryV2(checkoutPath, rebuilt, input);
+      return await launchRuntimeRecoveryV2(checkoutPath, rebuilt, input);
+    } finally {
+      const source = splitStagePaths(checkoutPath, input.runId);
+      const destination = splitStagePaths(repositoryPath, input.runId);
+      const outputs: readonly (readonly [string, string])[] = [
+        [source.root, destination.root],
+        [join(checkoutPath, "dist/web"), join(repositoryPath, "dist/web")],
+        [source.pagesOutput, destination.pagesOutput],
+      ];
+      for (const [from, to] of outputs) {
+        if (await isPresent(from)) {
+          await mkdir(dirname(to), { recursive: true });
+          await cp(from, to, { recursive: true, force: true });
+        }
+      }
+    }
+  });
 }

@@ -121,6 +121,13 @@ export function createInspectLaunchStage(
       runtimeIdentityDigest: bootstrap.record.runtimeIdentityDigest,
     };
     const plan = bootstrap.record.runtimeRecoveryPlan;
+    if (plan.schemaVersion !== 1) {
+      throw new VerifiedPendingRuntimeFailureError(
+        "runtime_selection",
+        binding,
+        new TypeError("分割workflowのV2 runtimeは直列入口から再開できません"),
+      );
+    }
     if (adapters.environment["VOICEVOX_RUNTIME_RECOVERY_PROTOCOL_V1"] === "1") {
       if (plan.kind === "not_reproducible") {
         throw new VerifiedPendingRuntimeFailureError(
