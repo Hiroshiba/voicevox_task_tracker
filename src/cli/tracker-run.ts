@@ -357,10 +357,10 @@ export async function runTrackerCliMain(args: readonly string[]): Promise<number
         githubOutputPath,
         [
           `notification_settlement_kind=${outcome.kind}`,
-          ...(outcome.kind === "structural_failure"
+          ...(outcome.kind === "structural_failure" || outcome.kind === "state_unconfirmed"
             ? [
                 `notification_marker_phase=${outcome.markerPhase}`,
-                `notification_failed_operation_effect_certainty=${outcome.failedOperationEffectCertainty}`,
+                `notification_failed_operation_effect_certainty=${outcome.kind === "structural_failure" ? outcome.failedOperationEffectCertainty : outcome.effectCertainty}`,
                 `notification_recovery_disposition=${outcome.recoveryDisposition}`,
                 `notification_state_revision=${outcome.stateRevision}`,
                 ...(outcome.lastReceipt == null

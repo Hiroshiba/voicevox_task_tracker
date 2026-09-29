@@ -1,18 +1,27 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import { ZodError } from "zod";
+
 import { decodeReceipt } from "../../application/tracking-run/receipt-codec.js";
 import type { InitialStateCommitReceipt } from "../../application/tracking-run/receipt-schema.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content-digest.js";
-import { decodeInitialPagesBuildArtifact } from "../initial-pages-build-artifact.js";
-import { readInitialPagesDeploymentOutcome } from "../initial-pages-deployment.js";
+import {
+  decodeInitialPagesBuildArtifact,
+  type InitialPagesBuildArtifact,
+} from "../initial-pages-build-artifact.js";
+import {
+  readInitialPagesDeploymentOutcome,
+  type InitialPagesDeploymentOutcome,
+} from "../initial-pages-deployment.js";
 import { readNotificationMessageState } from "../notification-message-state.js";
 import {
   NotificationSettlementFailureError,
-  settleNotifications,
+  settleNotificationsWithPreflight,
 } from "../notification-settlement.js";
 import { createNotificationSettlementPort } from "../notification-stage-runtime.js";
+import { NotificationStructureError } from "../notification-structure-error.js";
 import { requireEnvironmentValue } from "../production-runtime-setup.js";
 import { finalizeRun } from "../run-finalization.js";
 import type { FinalizeRunCliCommand, SettleNotificationsCliCommand } from "../command.js";
@@ -29,6 +38,20 @@ type WorkflowNotificationAdapters = Pick<
   | "writeJsonArtifact"
   | "now"
 >;
+
+function pagesArtifactFailure(cause: unknown): never {
+  if (
+    cause instanceof SyntaxError ||
+    cause instanceof ZodError ||
+    cause instanceof TypeError ||
+    (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+  ) {
+    throw new NotificationStructureError("workflow通知のPages artifactが不正です", "no_effect", {
+      cause,
+    });
+  }
+  throw cause;
+}
 
 async function initialReceipt(
   adapters: WorkflowNotificationAdapters,
@@ -63,22 +86,6 @@ export async function settleWorkflowNotifications(
     initialStateReceipt.result.resultingStateRevision,
   );
   const record = initial.transaction.record;
-  const build = decodeInitialPagesBuildArtifact(
-    await readFile(resolve(adapters.repositoryPath, command.buildArtifactPath)),
-  );
-  const deployment = await readInitialPagesDeploymentOutcome(
-    resolve(adapters.repositoryPath, command.deploymentOutcomePath),
-    build,
-  );
-  if (
-    deployment.kind !== "success" ||
-    build.intent.runId !== record.runIdentity.runId ||
-    build.intent.checkpointDigest !== record.checkpointDigest ||
-    serializeCanonicalJson(build.receipt.binding) !==
-      serializeCanonicalJson(initialStateReceipt.binding)
-  ) {
-    throw new TypeError("workflow通知のPages証拠とstate recordが一致しません");
-  }
   const knownSecrets =
     record.executionPolicy.effectTarget === "production" &&
     record.notificationOutbox.action === "send" &&
@@ -94,17 +101,50 @@ export async function settleWorkflowNotifications(
           ),
         ]
       : [];
-  const outcome = await settleNotifications(
+  const outcome = await settleNotificationsWithPreflight(
     {
       record,
       initialStateReceipt,
-      initialPages: {
-        kind: "published",
-        buildReceipt: build.receipt,
-        deploymentReceipt: deployment.receipt,
-        evidence: deployment.evidence,
+      loadPages: async () => {
+        let build: InitialPagesBuildArtifact;
+        try {
+          build = decodeInitialPagesBuildArtifact(
+            await readFile(resolve(adapters.repositoryPath, command.buildArtifactPath)),
+          );
+        } catch (cause: unknown) {
+          pagesArtifactFailure(cause);
+        }
+        let deployment: InitialPagesDeploymentOutcome;
+        try {
+          deployment = await readInitialPagesDeploymentOutcome(
+            resolve(adapters.repositoryPath, command.deploymentOutcomePath),
+            build,
+          );
+        } catch (cause: unknown) {
+          pagesArtifactFailure(cause);
+        }
+        if (
+          deployment.kind !== "success" ||
+          build.intent.runId !== record.runIdentity.runId ||
+          build.intent.checkpointDigest !== record.checkpointDigest ||
+          serializeCanonicalJson(build.receipt.binding) !==
+            serializeCanonicalJson(initialStateReceipt.binding)
+        ) {
+          throw new NotificationStructureError(
+            "workflow通知のPages証拠とstate recordが一致しません",
+            "no_effect",
+          );
+        }
+        return {
+          initialPages: {
+            kind: "published" as const,
+            buildReceipt: build.receipt,
+            deploymentReceipt: deployment.receipt,
+            evidence: deployment.evidence,
+          },
+          pagesReceipt: deployment.receipt,
+        };
       },
-      pagesReceipt: deployment.receipt,
     },
     createNotificationSettlementPort(
       adapters,

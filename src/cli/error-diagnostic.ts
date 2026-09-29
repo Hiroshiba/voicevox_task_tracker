@@ -275,11 +275,14 @@ function appendCodexOutputValidationDiagnostics(
 function appendKnownErrorDiagnostics(fields: DiagnosticField[], error: Error): void {
   if (error instanceof NotificationSettlementFailureError) {
     fields.push({ key: "notificationSettlementKind", value: error.outcome.kind });
-    if (error.outcome.kind === "structural_failure") {
+    if (error.outcome.kind === "structural_failure" || error.outcome.kind === "state_unconfirmed") {
       fields.push({ key: "notificationMarkerPhase", value: error.outcome.markerPhase });
       fields.push({
         key: "failedOperationEffectCertainty",
-        value: error.outcome.failedOperationEffectCertainty,
+        value:
+          error.outcome.kind === "structural_failure"
+            ? error.outcome.failedOperationEffectCertainty
+            : error.outcome.effectCertainty,
       });
       fields.push({ key: "recoveryDisposition", value: error.outcome.recoveryDisposition });
     }

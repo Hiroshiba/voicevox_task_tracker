@@ -344,34 +344,59 @@ export async function deliverNotificationMessage(
   if (result.kind !== "committed") {
     const observedHead = await port.adapter.resolveHead(port.configuration.branch);
     if (observedHead.status === "present") {
-      try {
-        const observed = await observeNotificationMessageDelivery(
-          input,
-          port.adapter,
-          port.configuration,
-          observedHead.revision,
-          currentTime(port),
-        );
+      const observed = await observeNotificationMessageDelivery(
+        input,
+        port.adapter,
+        port.configuration,
+        observedHead.revision,
+        currentTime(port),
+      );
+      if (observed != null) {
         if (
-          observed != null &&
-          ((outcome.status === "sent" &&
+          (outcome.status === "sent" &&
             observed.receipt.status === "sent" &&
             observed.receipt.result.discordMessageId === outcome.discordMessageId) ||
-            (outcome.status === "clear_rejection" && observed.receipt.status === "no_effect"))
+          (outcome.status === "clear_rejection" && observed.receipt.status === "no_effect")
         ) {
           return observedOutcome(observed);
         }
-      } catch (cause: unknown) {
-        await port.recordDiagnostic(cause);
+        if (observed.receipt.status !== "ambiguous") {
+          throw new NotificationStructureError(
+            "通知messageのHTTP結果と保存済み結果が一致しません",
+            outcome.status === "sent" ? "committed" : "no_effect",
+          );
+        }
       }
     }
     await port.recordDiagnostic(new TypeError("通知messageの結果commitをremoteで確定できません"));
     return {
       kind: "state_unconfirmed",
-      stateRevision: reserved.revision,
+      stateRevision: observedHead.status === "present" ? observedHead.revision : reserved.revision,
       effectCertainty: outcome.status === "sent" ? "committed" : "no_effect",
       ...(outcome.status === "sent" ? { discordMessageId: outcome.discordMessageId } : {}),
     };
+  }
+  if (result.observed) {
+    const observed = await observeNotificationMessageDelivery(
+      input,
+      port.adapter,
+      port.configuration,
+      result.revision,
+      currentTime(port),
+    );
+    if (
+      observed == null ||
+      (outcome.status === "sent" &&
+        (observed.receipt.status !== "sent" ||
+          observed.receipt.result.discordMessageId !== outcome.discordMessageId)) ||
+      (outcome.status === "clear_rejection" && observed.receipt.status !== "no_effect")
+    ) {
+      throw new NotificationStructureError(
+        "通知messageの再観測結果がHTTP結果と一致しません",
+        outcome.status === "sent" ? "committed" : "no_effect",
+      );
+    }
+    return observedOutcome(observed);
   }
   const receipt = receiptForMessage(
     input,

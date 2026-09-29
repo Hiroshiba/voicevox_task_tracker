@@ -30,6 +30,7 @@ import {
   parseStateHistoryRecords,
   serializeStateHistoryRecords,
 } from "../persistence/history.js";
+import { StateFormatError, StateHistoryError } from "../persistence/errors.js";
 import { createStateLedgerUpdates } from "../persistence/state-ledger-files.js";
 import { assertStatePublicSafety } from "../persistence/public-safety.js";
 import {
@@ -280,14 +281,46 @@ export async function messageStateUpdates(
       configuration.historyDirectory,
       `${state.snapshot.generatedAt.slice(0, 10)}.jsonl`,
     );
-    const source = appendStateHistoryNotificationEvents(
-      requiredSource(state.files, path),
-      marker.runId,
-      events,
-    );
+    const historyFile = state.files.get(path);
+    if (historyFile?.status !== "present") {
+      throw new NotificationStructureError(
+        "通知messageの結果CASに必要な履歴fileがありません",
+        "no_effect",
+        { cause: new TypeError(`通知messageのstate fileがありません。対象: ${path}`) },
+      );
+    }
+    let originalSource: string;
+    try {
+      originalSource = new TextDecoder("utf-8", { fatal: true }).decode(historyFile.bytes);
+    } catch (cause: unknown) {
+      if (!(cause instanceof TypeError)) {
+        throw cause;
+      }
+      throw new NotificationStructureError(
+        "通知messageの結果CASの履歴fileがUTF-8ではありません",
+        "no_effect",
+        { cause },
+      );
+    }
+    let source: string;
+    try {
+      source = appendStateHistoryNotificationEvents(originalSource, marker.runId, events);
+    } catch (cause: unknown) {
+      if (!(cause instanceof StateFormatError || cause instanceof StateHistoryError)) {
+        throw cause;
+      }
+      throw new NotificationStructureError(
+        "通知messageの結果CASの履歴fileまたはrecordが不正です",
+        "no_effect",
+        { cause },
+      );
+    }
     const records = parseStateHistoryRecords(source);
     if (serializeStateHistoryRecords(records) !== source) {
-      throw new TypeError("通知履歴の保存値がcanonical JSON Linesではありません");
+      throw new NotificationStructureError(
+        "通知履歴の保存値がcanonical JSON Linesではありません",
+        "no_effect",
+      );
     }
     historyRecords = records;
     updates.push({ path, bytes: new TextEncoder().encode(source) });
