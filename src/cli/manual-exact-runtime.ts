@@ -25,6 +25,7 @@ import {
   revision,
 } from "./manual-exact-failure.js";
 import { parseRecordNotificationHistoryDeployment } from "./notification-history-deployment-command.js";
+import { readPreviousNotificationHistoryOutcome } from "./previous-notification-history-outcome.js";
 
 const commandSchema = z.enum([
   "verify-checkpoint",
@@ -204,6 +205,12 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
       childStarted = true;
       await selectRuntime(entrypoint, input.runId, input.codeRevision, stateRevision);
     } else {
+      if (command === "preflight-notification-history-deployment") {
+        await readPreviousNotificationHistoryOutcome(
+          resolve("artifacts/workflow/previous/notification-history-pages-deployment.json"),
+          process.env["VOICEVOX_PREVIOUS_HISTORY_OUTCOME_STATUS"],
+        );
+      }
       if (command === "record-notification-history-deployment") {
         const paths = parseRecordNotificationHistoryDeployment(args.slice(1));
         pagesRecordPaths = {

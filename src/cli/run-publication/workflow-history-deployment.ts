@@ -15,6 +15,7 @@ import {
 } from "../notification-history-pages-deployment.js";
 import { recordNotificationHistoryWorkflowDeployment } from "../notification-history-pages-deployment-record.js";
 import { decodeNotificationHistoryPagesDeploymentOutcome } from "../notification-history-pages-deployment-outcome.js";
+import { readPreviousNotificationHistoryOutcome } from "../previous-notification-history-outcome.js";
 import { workflowAdapterIdentity } from "../publication-runtime.js";
 import type { RunPublicationAdapters } from "./contracts.js";
 
@@ -27,17 +28,6 @@ type WorkflowHistoryDeploymentAdapters = Pick<
   | "now"
   | "writeJsonArtifact"
 >;
-
-async function readPreviousOutcome(path: string): Promise<Uint8Array | undefined> {
-  try {
-    return await readFile(path);
-  } catch (error: unknown) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return undefined;
-    }
-    throw error;
-  }
-}
 
 function optionalOutput(
   environment: Readonly<NodeJS.ProcessEnv>,
@@ -69,8 +59,9 @@ export async function preflightWorkflowNotificationHistoryDeployment(
   ) {
     throw new TypeError("通知履歴Pages deployにsettlementとfinalizationのreceiptが必要です");
   }
-  const previousBytes = await readPreviousOutcome(
+  const previousBytes = await readPreviousNotificationHistoryOutcome(
     resolve(adapters.repositoryPath, command.previousOutcomePath),
+    adapters.environment["VOICEVOX_PREVIOUS_HISTORY_OUTCOME_STATUS"],
   );
   const config = await adapters.loadConfig(resolve(adapters.repositoryPath, command.configPath));
   const preflight = await preflightNotificationHistoryPagesDeployment({
