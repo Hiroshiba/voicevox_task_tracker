@@ -241,6 +241,8 @@ jobs:
     permissions:
       contents: write
       actions: read
+      pages: write
+      id-token: write
     uses: ./.github/workflows/_tracking-run.yml
     with:
       state_ref: ${{ needs.prepare.outputs.state_branch }}
