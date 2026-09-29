@@ -1,4 +1,5 @@
 import { ZodError } from "zod";
+import { randomUUID } from "node:crypto";
 
 import { serializeCanonicalJson } from "../canonical-json/value.js";
 import type { InitialPagesPublicationEvidence } from "../application/tracking-run/initial-pages-evidence.js";
@@ -11,6 +12,7 @@ import type {
 } from "../application/tracking-run/receipt-schema.js";
 import type { DurablePublicationRecord } from "./durable-record-schema.js";
 import { describeNotificationMessage } from "./notification-message-context.js";
+import { observeManualResolutionAtRevision } from "./manual-resolution-observation.js";
 import { nodeContentDigestPort as digest } from "../infrastructure/tracking-run/content-digest.js";
 import { createStateCommitOperationId } from "../persistence/state-commit-metadata.js";
 import { readNotificationMessageState } from "./notification-message-state.js";
@@ -64,6 +66,9 @@ function receiptRevision(receipt: Receipt | undefined): string | undefined {
   if (receipt?.receiptType === "notification_message") {
     return receipt.result.ledgerStateRevision;
   }
+  if (receipt?.receiptType === "manual_resolution") {
+    return receipt.result.resultingStateRevision;
+  }
   return undefined;
 }
 
@@ -109,10 +114,38 @@ async function sameRunAncestors(
       if (!(await onlyOrthogonalAfter(adapter, configuration, commit.parent.revision, revision))) {
         return false;
       }
-    } else if (
-      commit.metadata.commitScope !== "tracking_run" ||
-      commit.metadata.runId !== record.runIdentity.runId
-    ) {
+    } else if (commit.metadata.commitScope === "manual_resolution") {
+      if (commit.metadata.runId !== record.runIdentity.runId) {
+        return false;
+      }
+      const current = await readNotificationMessageState(adapter, configuration, revision);
+      const resolved = current.ledger.entries.find(
+        (entry) => entry.manualResolution?.operationId === commit.metadata.operationId,
+      );
+      const resolution = resolved?.manualResolution;
+      const attempt = resolved?.lastDeliveryAttempt;
+      if (resolution == null || attempt == null) {
+        return false;
+      }
+      await observeManualResolutionAtRevision(
+        adapter,
+        configuration,
+        revision,
+        {
+          runId: record.runIdentity.runId,
+          checkpointDigest: record.checkpointDigest,
+          deliveryId: resolution.deliveryId,
+          attemptId: resolution.attemptId,
+          notificationKeys: attempt.notificationKeys,
+          decision: resolution.decision,
+        },
+        {
+          invocationId: randomUUID(),
+          observedAt: resolution.resolvedAt,
+          receiptKind: "observed",
+        },
+      );
+    } else if (commit.metadata.runId !== record.runIdentity.runId) {
       return false;
     } else {
       const [current, parent] = await Promise.all([

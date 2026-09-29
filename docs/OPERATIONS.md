@@ -430,20 +430,17 @@ backfillはGitHub Actionsの`日次タスク追跡`を手動実行して指定�
 
 ### 送信結果が不明な通知を確認する
 
-通信例外、HTTP 5xx、応答不正が発生すると、Discordに届いたかどうかを判定できません。プロセスが送信中に停止した場合も、通知管理記録には送信開始済みの`delivery_started`が残ります。この記録は時間が経っても解除しません。同じrunの再実行は確認を求めるエラーで停止し、次の通常runは保留中の通知を除いて処理します。
+通信例外、HTTP 5xx、応答不正が発生すると、Discordに届いたかどうかを判定できません。プロセスが送信中に停止した場合も、通知管理記録には送信開始済みの`delivery_started`が残ります。この記録は時間が経っても自動解除しません。
 
-Discordの投稿と実行ログを確認し、対象メッセージを確認済みにするか、次回の送信候補へ戻します。運用障害通知のincident ID、または再実行時のエラーに表示される`deliveryId`で対象を指定します。ログが残っていない場合は、`tracker-state`の`state/notification-ledger.json`から`status`が`delivery_started`の記録を確認します。
+送達結果が曖昧な間は、同じrunの通知確定と最終保存を止めます。新しい日次runも開始できません。Discordの投稿と実行ログを確認し、届いていなければ`retry`、届いていたか送信不要なら`acknowledge`を選びます。受信を確認せずに`retry`を選ぶと、同じ内容を重複送信する可能性があります。
 
-1. 日次workflowが実行中でないことを確認し、ローカルの`tracker-state`を`origin`の最新状態へ取得します。
-2. Discordで通知を確認できた場合、または送信を不要と判断した場合は、次のコマンドで確認済みにします。`ID`には対象の`deliveryId`を指定します。
+1. `tracker-state`の`state/notification-ledger.json`で、対象の`delivery_started`から`deliveryId`、`lastDeliveryAttempt.attemptId`、同じ試行を共有する`notificationKey`を確認します。`runId`と`checkpointDigest`は同じrevisionの`state/run-transaction-marker-v1.json`から取得します。
+2. 元の日次Actions実行IDとコードcommit SHAを確認します。「Discord送達の手動解決」をdefault branchから手動起動し、取得した値と判断を指定します。複数のnotification keyは固定outboxの順番でカンマ区切りにします。
+3. `resolve-and-finalize`と`publish-notification-history`の結果を確認します。前者は手動解決receiptを保存し、同じrunの残りのmessage、settlement、finalizationまで進めます。後者は送信履歴が増えた場合だけPagesを公開します。
 
-   ```console
-   pnpm tracker:run resolve-discord-delivery --delivery-id ID --resolution acknowledge
-   ```
+ローカルで解決するときも、同じrunのコードと元runのartifactを使います。`resolve-discord-delivery`には`--run-id`、`--checkpoint-digest`、`--delivery-id`、`--attempt-id`、対象keyごとの`--notification-key`、`--resolution`を指定します。出力された`artifacts/workflow/manual-resolution-receipt.json`を`settle-notifications --manual-resolution-receipt artifacts/workflow/manual-resolution-receipt.json`へ渡し、成功したら`finalize-run`を実行します。
 
-3. Discordへ届いていないことを確認できた場合は、`--resolution retry`を指定して実行します。その後、新しい日次runを開始します。
-
-このコマンドは通知管理記録を保存してpushします。ローカルでのビルドと、`origin`の`tracker-state`へpushできる認証が必要です。`retry`は通知を直接送信せず、次の集計時にまだ有効な候補だけを選別対象に戻します。`acknowledge`は確認済みにし、送信済みの履歴は作りません。受信の有無を確認せずに`retry`を選ぶと重複送信する可能性があります。
+`retry`の解決操作ではDiscordへ送信しません。元の固定予約と開始試行を保持し、検証済みreceiptを使う同じrunの再開だけが再送できます。期限切れの予約も、この明示的な再開でだけ使えます。`acknowledge`は通知管理記録を確認済みにし、送信履歴を追加しません。手動解決receiptを失った場合は、同じ入力で解決コマンドを再実行するとGitの親子stateから観測したreceiptが返ります。相反する判断や別runへの適用は拒否されます。
 
 ### 通知候補を保持して送信を保留する
 

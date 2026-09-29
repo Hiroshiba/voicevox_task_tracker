@@ -7,6 +7,7 @@ import type {
 import type { StateNotificationLedger } from "../persistence/state-documents.js";
 import type { StateSnapshot } from "../persistence/snapshot-v21.js";
 import type { InitialPagesPublicationEvidence } from "../application/tracking-run/initial-pages-evidence.js";
+import type { ManualResolutionReceipt } from "../application/tracking-run/receipt-schema.js";
 import type { DurablePublicationRecord } from "./durable-record-schema.js";
 import { NotificationStructureError } from "./notification-structure-error.js";
 
@@ -16,6 +17,7 @@ export type NotificationMessageContext = Readonly<{
   message: PreparedDiscordDigestMessage;
   notificationKeys: readonly string[];
   durableAttemptSequence: number;
+  manualResolutionReceipt?: ManualResolutionReceipt;
 }>;
 
 /** 永続outboxから一messageの位置、本文、keyを決定する。 */
@@ -118,6 +120,7 @@ export function prepareNotificationMessageContext(
   ledger: StateNotificationLedger,
   pagesEvidence: InitialPagesPublicationEvidence,
   messageIndex: number,
+  manualResolutionReceipt: ManualResolutionReceipt | undefined,
 ): NotificationMessageContext {
   const described = describeNotificationMessage(record, snapshot, pagesEvidence, messageIndex);
   const { notificationKeys } = described;
@@ -149,7 +152,19 @@ export function prepareNotificationMessageContext(
       );
     }
     const attempt = entry.lastDeliveryAttempt;
-    if (attempt != null && attempt.result !== "clear_rejection") {
+    if (
+      attempt != null &&
+      attempt.result !== "clear_rejection" &&
+      (attempt.result !== "started" ||
+        entry.manualResolution?.decision !== "retry" ||
+        manualResolutionReceipt?.result.decision !== "retry" ||
+        entry.manualResolution.operationId !== manualResolutionReceipt.operationId ||
+        entry.manualResolution.attemptId !== attempt.attemptId ||
+        manualResolutionReceipt.result.deliveryAttemptId !== attempt.attemptId ||
+        manualResolutionReceipt.result.deliveryId !== described.deliveryId ||
+        serializeCanonicalJson(manualResolutionReceipt.result.notificationKeys) !==
+          serializeCanonicalJson(notificationKeys))
+    ) {
       throw new NotificationStructureError(
         "未確定または送信済みの通知messageを再送できません",
         "no_effect",
@@ -183,5 +198,6 @@ export function prepareNotificationMessageContext(
   return Object.freeze({
     ...described,
     durableAttemptSequence: (lastAttempt?.durableAttemptSequence ?? 0) + 1,
+    ...(manualResolutionReceipt == null ? {} : { manualResolutionReceipt }),
   });
 }

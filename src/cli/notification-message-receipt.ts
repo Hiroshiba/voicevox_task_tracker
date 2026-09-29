@@ -81,6 +81,20 @@ export function validatePreviousReceipt(
         "no_effect",
       );
     }
+  } else if (previous.receiptType === "manual_resolution") {
+    const match = /:message:([1-9][0-9]*)$/u.exec(previous.result.deliveryId);
+    const resolvedIndex = match?.[1] == null ? -1 : Number(match[1]) - 1;
+    if (
+      previous.result.resultingStateRevision !== input.expectedStateRevision ||
+      input.messageIndex !== resolvedIndex + (previous.result.decision === "retry" ? 0 : 1) ||
+      (previous.result.decision === "retry" &&
+        input.manualResolutionReceipt?.receiptDigest !== previous.receiptDigest)
+    ) {
+      throw new NotificationStructureError(
+        "通知messageの手動解決receiptと固定outboxの位置が一致しません",
+        "no_effect",
+      );
+    }
   } else if (
     previous.receiptType !== "notification_message" ||
     previous.status === "ambiguous" ||

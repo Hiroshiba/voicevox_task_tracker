@@ -78,6 +78,7 @@ export async function commitMessageTransition(
           state.ledger,
           evidence,
           input.messageIndex,
+          input.manualResolutionReceipt,
         );
       }
       const outbox = input.record.notificationOutbox;

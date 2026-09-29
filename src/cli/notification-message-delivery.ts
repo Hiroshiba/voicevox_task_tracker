@@ -5,6 +5,7 @@ import type { ReceiptChainEvidence } from "../application/tracking-run/receipt-c
 import type {
   InitialStateCommitReceipt,
   NotificationMessageReceipt,
+  ManualResolutionReceipt,
   PagesBuildReceipt,
   PagesDeploymentReceipt,
   Receipt,
@@ -45,6 +46,7 @@ import {
 } from "./notification-message-state.js";
 import { createGitHubRepositoryId, type Repository } from "../domain/index.js";
 import { NotificationStructureError } from "./notification-structure-error.js";
+import { verifyManualResolutionReceipt } from "./manual-resolution.js";
 import type { NotificationCasOutcome, NotificationHttpOutcome } from "./notification-recovery.js";
 
 /** 初回Pages成功のreceipt列またはstateへ保存済みの証拠。 */
@@ -67,6 +69,7 @@ export type NotificationMessageDeliveryInput = Readonly<{
   messageIndex: number;
   invocationId: string;
   localAttemptIndex: number;
+  manualResolutionReceipt?: ManualResolutionReceipt;
 }>;
 
 /** state、送信、診断の副作用を持つ通知message境界。 */
@@ -188,6 +191,24 @@ export async function deliverNotificationMessage(
     port.configuration,
     head.observedHead.revision,
   );
+  if (input.manualResolutionReceipt != null) {
+    const verified = await verifyManualResolutionReceipt(
+      port,
+      input.manualResolutionReceipt,
+      head.observedHead.revision,
+    );
+    if (
+      verified.receipt.result.resultingStateRevision !== input.expectedStateRevision ||
+      verified.receipt.binding.bindingKind !== "checkpoint" ||
+      verified.receipt.binding.runId !== record.runIdentity.runId ||
+      verified.receipt.binding.checkpointDigest !== record.checkpointDigest
+    ) {
+      throw new NotificationStructureError(
+        "通知messageの手動再送receiptが同じrunの期待revisionと一致しません",
+        "no_effect",
+      );
+    }
+  }
   const evidence = validatePagesSource(
     input.initialPages,
     input.initialStateReceipt,
@@ -205,6 +226,7 @@ export async function deliverNotificationMessage(
     state.ledger,
     evidence,
     input.messageIndex,
+    input.manualResolutionReceipt,
   );
   const identity = receiptIdentifiers(
     {

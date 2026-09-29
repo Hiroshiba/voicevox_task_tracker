@@ -25,6 +25,7 @@ const DEFAULT_WORKFLOW_ARTIFACT_PATH = "artifacts/workflow/validated-run.json";
 const DEFAULT_INITIAL_STATE_RECEIPT_PATH = "artifacts/workflow/initial-state-commit-receipt.json";
 const DEFAULT_SETTLEMENT_RECEIPT_PATH = "artifacts/workflow/notification-settlement-receipt.json";
 const DEFAULT_FINALIZATION_RECEIPT_PATH = "artifacts/workflow/run-finalization-receipt.json";
+const DEFAULT_MANUAL_RESOLUTION_RECEIPT_PATH = "artifacts/workflow/manual-resolution-receipt.json";
 const DEFAULT_COLLECT_ANALYZE_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/collect-analyze.json`;
 const DEFAULT_WORKFLOW_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/workflow.json`;
 const REPOSITORY_FILTER_PATTERN = /^VOICEVOX\/[A-Za-z0-9._-]+$/u;
@@ -37,6 +38,9 @@ export type {
 } from "./notification-history-deployment-command.js";
 const deliveryIdSchema = z.string().regex(DELIVERY_ID_PATTERN);
 const resolveDiscordDeliveryResolutionSchema = z.enum(["retry", "acknowledge"]);
+const runIdSchema = z.string().regex(/^tracker-run:[0-9a-f]{64}$/u);
+const checkpointDigestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
+const attemptIdSchema = z.string().regex(/^attempt:v1:[0-9a-f]{64}$/u);
 
 /** runの予定時刻を現在時刻または明示値から決める指定。 */
 export type CliSchedule =
@@ -135,6 +139,7 @@ export type SettleNotificationsCliCommand = Readonly<{
   buildArtifactPath: string;
   deploymentOutcomePath: string;
   settlementReceiptPath: string;
+  manualResolutionReceiptPath?: string;
 }>;
 
 /** settlement済みrunの最終CASを確定するCLI入力。 */
@@ -150,8 +155,13 @@ export type FinalizeRunCliCommand = Readonly<{
 export type ResolveDiscordDeliveryCliCommand = Readonly<{
   kind: "resolve-discord-delivery";
   configPath: string;
+  runId: string;
+  checkpointDigest: string;
   deliveryId: string;
+  attemptId: string;
+  notificationKeys: readonly string[];
   resolution: "retry" | "acknowledge";
+  receiptPath: string;
 }>;
 
 type NotifyOperationsCommandFields = Readonly<{
@@ -547,6 +557,7 @@ function parseSettleNotifications(args: readonly string[]): SettleNotificationsC
       "--build-artifact",
       "--pages-deployment",
       "--settlement-receipt",
+      "--manual-resolution-receipt",
     ]),
   );
   return Object.freeze({
@@ -568,6 +579,15 @@ function parseSettleNotifications(args: readonly string[]): SettleNotificationsC
       "--settlement-receipt",
       DEFAULT_SETTLEMENT_RECEIPT_PATH,
     ),
+    ...(optionalSingleOption(options, "--manual-resolution-receipt") == null
+      ? {}
+      : {
+          manualResolutionReceiptPath: requiredSingleOption(
+            options,
+            "--manual-resolution-receipt",
+            "settle-notifications",
+          ),
+        }),
   });
 }
 
@@ -594,7 +614,40 @@ function parseFinalizeRun(args: readonly string[]): FinalizeRunCliCommand {
 }
 
 function parseResolveDiscordDelivery(args: readonly string[]): ResolveDiscordDeliveryCliCommand {
-  const options = parseOptions(args, new Set(["--config", "--delivery-id", "--resolution"]));
+  const options = parseOptions(
+    args,
+    new Set([
+      "--config",
+      "--run-id",
+      "--checkpoint-digest",
+      "--delivery-id",
+      "--attempt-id",
+      "--notification-key",
+      "--resolution",
+      "--receipt",
+    ]),
+  );
+  const runId = runIdSchema.safeParse(
+    requiredSingleOption(options, "--run-id", "resolve-discord-delivery"),
+  );
+  const checkpointDigest = checkpointDigestSchema.safeParse(
+    requiredSingleOption(options, "--checkpoint-digest", "resolve-discord-delivery"),
+  );
+  const attemptId = attemptIdSchema.safeParse(
+    requiredSingleOption(options, "--attempt-id", "resolve-discord-delivery"),
+  );
+  const notificationKeys = options.get("--notification-key");
+  if (
+    !runId.success ||
+    !checkpointDigest.success ||
+    !attemptId.success ||
+    notificationKeys == null ||
+    notificationKeys.length === 0 ||
+    notificationKeys.some((key) => key.length === 0) ||
+    new Set(notificationKeys).size !== notificationKeys.length
+  ) {
+    throw usageError("手動解決には正しいrun、checkpoint、試行、notification keyが必要です");
+  }
   const deliveryIdSource = requiredSingleOption(
     options,
     "--delivery-id",
@@ -619,8 +672,13 @@ function parseResolveDiscordDelivery(args: readonly string[]): ResolveDiscordDel
   return Object.freeze({
     kind: "resolve-discord-delivery",
     configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
+    runId: runId.data,
+    checkpointDigest: checkpointDigest.data,
     deliveryId: deliveryIdResult.data,
+    attemptId: attemptId.data,
+    notificationKeys: Object.freeze([...notificationKeys]),
     resolution: resolutionResult.data,
+    receiptPath: singleOption(options, "--receipt", DEFAULT_MANUAL_RESOLUTION_RECEIPT_PATH),
   });
 }
 

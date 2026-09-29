@@ -33,6 +33,7 @@ export function notificationLedgerEntries(
       ...(entry.lastDeliveryAttempt == null
         ? {}
         : { lastDeliveryAttempt: entry.lastDeliveryAttempt }),
+      ...(entry.manualResolution == null ? {} : { manualResolution: entry.manualResolution }),
     };
     if (entry.status === "reserved") {
       entries.push(

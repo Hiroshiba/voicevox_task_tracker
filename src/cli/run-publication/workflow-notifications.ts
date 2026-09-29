@@ -5,7 +5,10 @@ import { resolve } from "node:path";
 import { ZodError } from "zod";
 
 import { decodeReceipt } from "../../application/tracking-run/receipt-codec.js";
-import type { InitialStateCommitReceipt } from "../../application/tracking-run/receipt-schema.js";
+import type {
+  InitialStateCommitReceipt,
+  ManualResolutionReceipt,
+} from "../../application/tracking-run/receipt-schema.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import { nodeContentDigestPort } from "../../infrastructure/tracking-run/content-digest.js";
 import { StateFormatError, StateHistoryError } from "../../persistence/errors.js";
@@ -71,6 +74,7 @@ async function optionalPagesArtifact(path: string): Promise<Uint8Array | undefin
 async function initialReceipt(
   adapters: WorkflowNotificationAdapters,
   path: string,
+  expectedRunId: string | undefined,
 ): Promise<InitialStateCommitReceipt> {
   const receipt = decodeReceipt(
     await readFile(resolve(adapters.repositoryPath, path)),
@@ -80,7 +84,10 @@ async function initialReceipt(
     receipt.receiptType !== "initial_state_commit" ||
     receipt.binding.bindingKind !== "checkpoint" ||
     receipt.binding.runId !==
-      requireEnvironmentValue(adapters.environment, "VOICEVOX_EXPECTED_RUN_ID")
+      (expectedRunId ??
+        requireEnvironmentValue(adapters.environment, "VOICEVOX_EXPECTED_RUN_ID")) ||
+    (adapters.environment["VOICEVOX_EXPECTED_RUN_ID"] != null &&
+      receipt.binding.runId !== adapters.environment["VOICEVOX_EXPECTED_RUN_ID"])
   ) {
     throw new TypeError("workflow通知の初回state receiptが期待runと一致しません");
   }
@@ -93,7 +100,27 @@ export async function settleWorkflowNotifications(
   command: SettleNotificationsCliCommand,
 ): Promise<void> {
   const config = await adapters.loadConfig(resolve(adapters.repositoryPath, command.configPath));
-  const initialStateReceipt = await initialReceipt(adapters, command.initialStateReceiptPath);
+  let manualResolutionReceipt: ManualResolutionReceipt | undefined;
+  if (command.manualResolutionReceiptPath != null) {
+    const receipt = decodeReceipt(
+      await readFile(resolve(adapters.repositoryPath, command.manualResolutionReceiptPath)),
+      nodeContentDigestPort,
+    );
+    if (
+      receipt.receiptType !== "manual_resolution" ||
+      receipt.binding.bindingKind !== "checkpoint"
+    ) {
+      throw new TypeError("workflow通知の手動解決receiptが不正です");
+    }
+    manualResolutionReceipt = receipt;
+  }
+  const initialStateReceipt = await initialReceipt(
+    adapters,
+    command.initialStateReceiptPath,
+    manualResolutionReceipt?.binding.bindingKind === "checkpoint"
+      ? manualResolutionReceipt.binding.runId
+      : undefined,
+  );
   const adapter = adapters.createStateBranchAdapter();
   const initial = await readNotificationMessageState(
     adapter,
@@ -120,6 +147,7 @@ export async function settleWorkflowNotifications(
     {
       record,
       initialStateReceipt,
+      ...(manualResolutionReceipt == null ? {} : { manualResolutionReceipt }),
       loadPages: async () => {
         const head = await adapter.resolveHead(config.state.branch);
         if (head.status !== "present") {
@@ -277,14 +305,21 @@ export async function finalizeWorkflowRun(
   command: FinalizeRunCliCommand,
 ): Promise<void> {
   const config = await adapters.loadConfig(resolve(adapters.repositoryPath, command.configPath));
-  const initialStateReceipt = await initialReceipt(adapters, command.initialStateReceiptPath);
   const settlementReceipt = decodeReceipt(
     await readFile(resolve(adapters.repositoryPath, command.settlementReceiptPath)),
     nodeContentDigestPort,
   );
-  if (settlementReceipt.receiptType !== "notification_settlement") {
+  if (
+    settlementReceipt.receiptType !== "notification_settlement" ||
+    settlementReceipt.binding.bindingKind !== "checkpoint"
+  ) {
     throw new TypeError("workflow finalizationにsettlement receiptがありません");
   }
+  const initialStateReceipt = await initialReceipt(
+    adapters,
+    command.initialStateReceiptPath,
+    settlementReceipt.binding.runId,
+  );
   const adapter = adapters.createStateBranchAdapter();
   const settled = await readNotificationMessageState(
     adapter,

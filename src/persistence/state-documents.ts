@@ -8,7 +8,10 @@ import {
   migrateLegacyNotificationReasonCode,
 } from "./legacy-enum.js";
 import { pendingNotificationSchema } from "../domain/types.js";
-import { notificationDeliveryAttemptSchema } from "../domain/notification-delivery-attempt.js";
+import {
+  notificationDeliveryAttemptSchema,
+  notificationManualResolutionSchema,
+} from "../domain/notification-delivery-attempt.js";
 import { compareStateKeys } from "./state-key-order.js";
 export {
   createStateRunReport,
@@ -154,6 +157,7 @@ const ledgerEntryVersion7Schema = z.discriminatedUnion("status", [
 ]);
 const ledgerEntryVersion10BaseSchema = ledgerEntryVersion4BaseSchema.extend({
   lastDeliveryAttempt: notificationDeliveryAttemptSchema.optional(),
+  manualResolution: notificationManualResolutionSchema.optional(),
 });
 const ledgerEntryVersion10Schema = z.discriminatedUnion("status", [
   ledgerEntryVersion10BaseSchema.extend({

@@ -12,7 +12,10 @@ import {
   parseRunTransactionMarker,
   serializeRunTransactionMarker,
 } from "../application/tracking-run/run-transaction-marker.js";
-import type { NotificationMessageReceipt } from "../application/tracking-run/receipt-schema.js";
+import type {
+  ManualResolutionReceipt,
+  NotificationMessageReceipt,
+} from "../application/tracking-run/receipt-schema.js";
 import { NotificationStructureError } from "./notification-structure-error.js";
 import type { PreparedDiscordDigestMessage } from "../discord/payload.js";
 import { nodeContentDigestPort as digest } from "../infrastructure/tracking-run/content-digest.js";
@@ -36,7 +39,7 @@ export async function commitNotificationSettlement(
   port: NotificationSettlementPort,
   initial: NotificationMessageState,
   messages: readonly PreparedDiscordDigestMessage[],
-  receipts: readonly NotificationMessageReceipt[],
+  receipts: readonly (NotificationMessageReceipt | ManualResolutionReceipt)[],
   evidence: InitialPagesPublicationEvidence,
   expectedStateRevision: string,
 ): Promise<

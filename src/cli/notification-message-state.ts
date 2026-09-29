@@ -160,7 +160,12 @@ export function transitionMessageLedger(
       throw new NotificationStructureError("通知messageの元予約がありません", "no_effect");
     }
     if (result === "started") {
-      if (entry.status !== "reserved" || attempt.startedAt > entry.expiresAt) {
+      if (
+        entry.status !== "reserved" ||
+        (attempt.startedAt > entry.expiresAt && context.manualResolutionReceipt == null) ||
+        (entry.manualResolution != null &&
+          entry.manualResolution.operationId !== context.manualResolutionReceipt?.operationId)
+      ) {
         throw new NotificationStructureError("通知messageの開始前予約が無効です", "no_effect");
       }
       return {

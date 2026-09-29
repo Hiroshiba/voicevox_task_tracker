@@ -1,11 +1,7 @@
-import { resolve } from "node:path";
-
 import { type loadConfig } from "../config/index.js";
 import {
-  createUtcIsoDateTime,
   type NotificationLedgerEntry,
   type OperationsAlertLedgerEntry,
-  type PendingNotification,
   type UtcIsoDateTime,
 } from "../domain/index.js";
 import {
@@ -28,14 +24,11 @@ import {
   type StateSnapshot,
   type StateSnapshotReadResult,
 } from "../persistence/index.js";
-import { type ResolveDiscordDeliveryCliCommand } from "./command.js";
 import {
   operationsAlertLedgerEntry,
   notificationLedgerEntry,
 } from "./notification-ledger-normalization.js";
 import { requireEnvironmentValue } from "./production-runtime-setup.js";
-
-const DISCORD_DELIVERY_ID_PATTERN = /^discord-digest:v1:[0-9a-f]{24}:message:[1-9][0-9]*$/u;
 
 type NotificationDeliveryRuntimeAdapters = Readonly<{
   environment: Readonly<NodeJS.ProcessEnv>;
@@ -201,95 +194,4 @@ export async function deliverOperationsAlert(
     notificationCount: 1,
     discordSentAt: operationsDelivery.ledgerEntry.sentAt,
   });
-}
-
-function acknowledgeDeliveryStartedEntry(
-  entry: Extract<NotificationLedgerEntry, { status: "delivery_started" }>,
-  acknowledgedAt: UtcIsoDateTime,
-): NotificationLedgerEntry {
-  return Object.freeze({
-    notificationKey: entry.notificationKey,
-    itemNodeId: entry.itemNodeId,
-    reasonCode: entry.reasonCode,
-    severity: entry.severity,
-    reservedAt: entry.reservedAt,
-    status: "acknowledged",
-    acknowledgedAt,
-  });
-}
-
-/** 送信開始済み通知を手動で確認済みまたは再試行可能にする。 */
-export async function resolveDiscordDelivery(
-  adapters: NotificationDeliveryRuntimeAdapters,
-  command: ResolveDiscordDeliveryCliCommand,
-): Promise<void> {
-  if (!DISCORD_DELIVERY_ID_PATTERN.test(command.deliveryId)) {
-    throw new TypeError("Discord送信のdelivery IDが不正です");
-  }
-  const config = await adapters.loadConfig(resolve(adapters.repositoryPath, command.configPath));
-  const session = await adapters.openStateSession(
-    adapters.createStateBranchAdapter(),
-    config.state,
-    config.staleness.timezone,
-  );
-  const persistedSnapshot = await session.loadSnapshot();
-  if (persistedSnapshot.status !== "available") {
-    throw new TypeError("Discord送信の手動解決対象となるstate snapshotがありません");
-  }
-  const currentLedger = await session.loadNotificationLedger();
-  const entries = currentLedger.entries.map(notificationLedgerEntry);
-  const matchingEntries = entries.filter(
-    (entry): entry is Extract<NotificationLedgerEntry, { status: "delivery_started" }> =>
-      entry.status === "delivery_started" && entry.deliveryId === command.deliveryId,
-  );
-  if (matchingEntries.length === 0) {
-    throw new TypeError(`指定されたdelivery IDの送信開始記録がありません: ${command.deliveryId}`);
-  }
-  const matchingKeys = new Set(matchingEntries.map((entry) => entry.notificationKey));
-  const resolvedAt = createUtcIsoDateTime(adapters.now().toISOString());
-  if (matchingEntries.some((entry) => resolvedAt < entry.startedAt)) {
-    throw new TypeError("Discord送信の解決時刻は送信開始時刻以後にしてください");
-  }
-  let nextEntries: readonly NotificationLedgerEntry[];
-  let pendingNotifications: readonly PendingNotification[];
-  if (command.resolution === "retry") {
-    nextEntries = Object.freeze(
-      entries.filter((entry) => !matchingKeys.has(entry.notificationKey)),
-    );
-    pendingNotifications = currentLedger.pendingNotifications;
-  } else {
-    nextEntries = Object.freeze(
-      entries.map((entry) => {
-        if (entry.status !== "delivery_started" || entry.deliveryId !== command.deliveryId) {
-          return entry;
-        }
-        return acknowledgeDeliveryStartedEntry(entry, resolvedAt);
-      }),
-    );
-    pendingNotifications = Object.freeze(
-      currentLedger.pendingNotifications.filter(
-        (pending) => !matchingKeys.has(pending.notificationKey),
-      ),
-    );
-  }
-  const notificationLedger = createStateNotificationLedger({
-    schemaVersion: NOTIFICATION_LEDGER_SCHEMA_VERSION_10,
-    entries: nextEntries,
-    operationsAlerts: currentLedger.operationsAlerts,
-    pendingNotifications,
-  });
-  assertExistingStatePublicSafety(
-    persistedSnapshot.snapshot,
-    await session.loadHistoryRecords(),
-    currentLedger,
-    [notificationLedger],
-    [],
-  );
-  await session.persistNotificationLedger({
-    notificationLedger,
-    committedAt: resolvedAt,
-    knownSecrets: [],
-    commitScope: "manual_resolution",
-  });
-  await session.publish();
 }

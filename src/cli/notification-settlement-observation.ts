@@ -3,7 +3,11 @@ import { stateCommitReceiptOperationId } from "../application/tracking-run/obser
 import { verifyReceiptChain } from "../application/tracking-run/receipt-chain.js";
 import type { ReceiptChainEvidence } from "../application/tracking-run/receipt-chain-schema.js";
 import { createReceipt } from "../application/tracking-run/receipt-codec.js";
-import type { Receipt } from "../application/tracking-run/receipt-schema.js";
+import type {
+  ManualResolutionReceipt,
+  NotificationMessageReceipt,
+  Receipt,
+} from "../application/tracking-run/receipt-schema.js";
 import type { PreparedDiscordDigestMessage } from "../discord/payload.js";
 import { nodeContentDigestPort as digest } from "../infrastructure/tracking-run/content-digest.js";
 import { observeStateCommitAtRevision } from "../infrastructure/tracking-run/state-receipt-observation.js";
@@ -100,6 +104,7 @@ export async function receiptForSettlement(
   expectedRevision: string,
   previousReceipt: Receipt,
   messageReceipts: readonly SettledMessageReceipt[],
+  finalReceipts: readonly (NotificationMessageReceipt | ManualResolutionReceipt)[],
   initial: NotificationMessageState,
   messages: readonly PreparedDiscordDigestMessage[],
   invocationId: string,
@@ -165,7 +170,7 @@ export async function receiptForSettlement(
     initial,
     state,
     messages,
-    messageReceipts.map((entry) => entry.receipt),
+    finalReceipts,
     port.configuration,
   );
   if (

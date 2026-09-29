@@ -1,7 +1,10 @@
 import { hashCanonicalJson } from "../canonical-json/index.js";
 import { serializeCanonicalJson } from "../canonical-json/value.js";
 import type { InitialPagesPublicationEvidence } from "../application/tracking-run/initial-pages-evidence.js";
-import type { NotificationMessageReceipt } from "../application/tracking-run/receipt-schema.js";
+import type {
+  ManualResolutionReceipt,
+  NotificationMessageReceipt,
+} from "../application/tracking-run/receipt-schema.js";
 import { NotificationStructureError } from "./notification-structure-error.js";
 import { buildDiscordDigestPlan, type PreparedDiscordDigestMessage } from "../discord/payload.js";
 import {
@@ -194,7 +197,7 @@ export function assertSettledNotificationContent(
   initial: NotificationMessageState,
   current: NotificationMessageState,
   messages: readonly PreparedDiscordDigestMessage[],
-  receipts: readonly NotificationMessageReceipt[],
+  receipts: readonly (NotificationMessageReceipt | ManualResolutionReceipt)[],
   configuration: StatePersistenceConfiguration,
 ): Readonly<{ ledgerDigest: string; historyDigest: string; notificationCount: number }> {
   if (
@@ -232,8 +235,12 @@ export function assertSettledNotificationContent(
     if (
       message == null ||
       receipt == null ||
-      receipt.status === "ambiguous" ||
-      receipt.logicalTarget !== `message:${(index + 1).toString()}` ||
+      (receipt.receiptType === "notification_message" && receipt.status === "ambiguous") ||
+      (receipt.receiptType === "notification_message" &&
+        receipt.logicalTarget !== `message:${(index + 1).toString()}`) ||
+      (receipt.receiptType === "manual_resolution" &&
+        (receipt.result.decision !== "acknowledge" ||
+          !receipt.result.deliveryId.endsWith(`:message:${(index + 1).toString()}`))) ||
       !same(message.notificationKeys, receipt.result.notificationKeys)
     ) {
       throw new NotificationStructureError(
@@ -253,6 +260,26 @@ export function assertSettledNotificationContent(
         );
       }
       const attempt = after.lastDeliveryAttempt;
+      if (receipt.receiptType === "manual_resolution") {
+        if (
+          after.status !== "acknowledged" ||
+          attempt.result !== "started" ||
+          attempt.attemptId !== receipt.result.deliveryAttemptId ||
+          after.manualResolution?.operationId !== receipt.operationId ||
+          after.manualResolution.decision !== "acknowledge" ||
+          after.acknowledgedAt !== receipt.effectOccurredAt ||
+          after.itemNodeId !== before.itemNodeId ||
+          after.reasonCode !== before.reasonCode ||
+          after.severity !== before.severity ||
+          after.reservedAt !== before.reservedAt
+        ) {
+          throw new NotificationStructureError(
+            "手動確認済みmessageと最終ledgerが一致しません",
+            "no_effect",
+          );
+        }
+        continue;
+      }
       if (
         attempt.operationId !== receipt.operationId ||
         (receipt.receiptKind === "executed" && attempt.attemptId !== receipt.attemptId) ||
@@ -307,8 +334,14 @@ export function assertSettledNotificationContent(
       );
     }
   }
+  const acknowledgedKeys = new Set(
+    receipts
+      .filter((receipt) => receipt.receiptType === "manual_resolution")
+      .flatMap((receipt) => receipt.result.notificationKeys),
+  );
   const expectedPending = initial.ledger.pendingNotifications.filter(
-    (pending) => !sentKeys.has(pending.notificationKey),
+    (pending) =>
+      !sentKeys.has(pending.notificationKey) && !acknowledgedKeys.has(pending.notificationKey),
   );
   if (!same(current.ledger.pendingNotifications, expectedPending)) {
     throw new NotificationStructureError(

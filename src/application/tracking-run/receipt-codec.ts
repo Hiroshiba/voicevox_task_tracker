@@ -133,6 +133,7 @@ function assertReceiptSemantics(receipt: Receipt): void {
     } else if (
       receipt.receiptType !== "initial_state_commit" &&
       receipt.receiptType !== "notification_message" &&
+      receipt.receiptType !== "manual_resolution" &&
       receipt.receiptType !== "notification_settlement" &&
       receipt.receiptType !== "run_finalization"
     ) {
@@ -272,7 +273,10 @@ function assertReceiptSemantics(receipt: Receipt): void {
   }
   if (
     receipt.receiptType === "manual_resolution" &&
-    receipt.result.commitScope !== "manual_resolution"
+    (receipt.result.commitScope !== "manual_resolution" ||
+      receipt.logicalTarget !==
+        `manual:${receipt.binding.bindingKind === "checkpoint" ? receipt.binding.checkpointDigest : ""}:${receipt.result.deliveryId}:${receipt.result.deliveryAttemptId}:${receipt.result.decision}` ||
+      new Set(receipt.result.notificationKeys).size !== receipt.result.notificationKeys.length)
   ) {
     throw new TypeError("手動解決receiptのscopeが一致しません");
   }

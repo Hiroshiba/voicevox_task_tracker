@@ -14,6 +14,7 @@ import type { StateCommitReceiptEvidence } from "../application/tracking-run/obs
 import type {
   InitialStateCommitReceipt,
   NotificationMessageReceipt,
+  ManualResolutionReceipt,
   NotificationSettlementReceipt,
   PagesDeploymentReceipt,
   Receipt,
@@ -53,6 +54,7 @@ import {
   type NotificationMessageState,
 } from "./notification-message-state.js";
 import { NotificationStructureError } from "./notification-structure-error.js";
+import { resumeManualNotificationSettlement } from "./notification-manual-resume.js";
 import {
   classifyNotificationRecovery,
   type NotificationCasOutcome,
@@ -66,6 +68,7 @@ export type NotificationSettlementInput = Readonly<{
   initialStateReceipt: InitialStateCommitReceipt;
   initialPages: NotificationInitialPagesSource;
   pagesReceipt: PagesDeploymentReceipt;
+  manualResolutionReceipt?: ManualResolutionReceipt;
 }>;
 
 /** 通知の初回stateとPages artifact読込を同じ失敗境界へ渡す。 */
@@ -73,6 +76,7 @@ export type NotificationSettlementPreflightInput = Readonly<{
   record: DurablePublicationRecord;
   initialStateReceipt: InitialStateCommitReceipt;
   loadPages: () => Promise<Pick<NotificationSettlementInput, "initialPages" | "pagesReceipt">>;
+  manualResolutionReceipt?: ManualResolutionReceipt;
 }>;
 
 /** 通知message、state、診断の副作用境界。 */
@@ -80,7 +84,7 @@ export type NotificationSettlementPort = NotificationMessageDeliveryPort;
 
 /** settlementに先行する各messageのreceiptと観測証拠。 */
 export type SettledMessageReceipt = Readonly<{
-  receipt: NotificationMessageReceipt;
+  receipt: NotificationMessageReceipt | ManualResolutionReceipt;
   evidence: ReceiptChainEvidence;
 }>;
 
@@ -482,7 +486,17 @@ async function settleNotificationsChecked(
   progress.pagesEvidence = evidence;
   const messages = plannedNotificationMessages(record, initial, evidence);
   for (let index = 0; index < messages.length; index += 1) {
-    prepareNotificationMessageContext(record, initial.snapshot, initial.ledger, evidence, index);
+    prepareNotificationMessageContext(
+      record,
+      initial.snapshot,
+      initial.ledger,
+      evidence,
+      index,
+      undefined,
+    );
+  }
+  if (input.manualResolutionReceipt != null) {
+    return resumeManualNotificationSettlement(input, port, initial, current, messages, evidence);
   }
   const invocationId = randomUUID();
   const messageReceipts = progress.messageReceipts;
@@ -542,6 +556,7 @@ async function settleNotificationsChecked(
       expectedRevision,
       previousReceipt,
       messageReceipts,
+      messageReceipts.map((entry) => entry.receipt),
       initial,
       messages,
       invocationId,
@@ -640,6 +655,7 @@ async function settleNotificationsChecked(
     expectedRevision,
     previousReceipt,
     messageReceipts,
+    messageReceipts.map((entry) => entry.receipt),
     initial,
     messages,
     invocationId,
@@ -658,6 +674,9 @@ export async function settleNotifications(
       initialStateReceipt: input.initialStateReceipt,
       loadPages: () =>
         Promise.resolve({ initialPages: input.initialPages, pagesReceipt: input.pagesReceipt }),
+      ...(input.manualResolutionReceipt == null
+        ? {}
+        : { manualResolutionReceipt: input.manualResolutionReceipt }),
     },
     port,
   );
@@ -679,7 +698,14 @@ export async function settleNotificationsWithPreflight(
     progress.previousReceipt = input.initialStateReceipt;
     const pages = await input.loadPages();
     return await settleNotificationsChecked(
-      { record: input.record, initialStateReceipt: input.initialStateReceipt, ...pages },
+      {
+        record: input.record,
+        initialStateReceipt: input.initialStateReceipt,
+        ...pages,
+        ...(input.manualResolutionReceipt == null
+          ? {}
+          : { manualResolutionReceipt: input.manualResolutionReceipt }),
+      },
       port,
       progress,
       initial.state,

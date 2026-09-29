@@ -240,6 +240,8 @@ export const receiptSchema = z.discriminatedUnion("receiptType", [
     effectCertainty: z.literal("committed"),
     result: stateCommitResultSchema.extend({
       deliveryId: nonEmptyStringSchema,
+      deliveryAttemptId: attemptIdSchema,
+      notificationKeys: z.array(nonEmptyStringSchema).min(1),
       decision: z.enum(["retry", "acknowledge"]),
     }),
   }),

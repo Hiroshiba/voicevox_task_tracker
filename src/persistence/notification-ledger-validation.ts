@@ -34,11 +34,35 @@ export function validateNotificationLedger(
   }
   for (const [index, entry] of ledger.entries.entries()) {
     const attempt = entry.lastDeliveryAttempt;
+    const resolution = entry.manualResolution;
+    if (
+      resolution != null &&
+      (attempt?.result !== "started" ||
+        attempt.attemptId !== resolution.attemptId ||
+        resolution.resolvedAt < attempt.startedAt ||
+        (resolution.decision === "retry" && entry.status !== "reserved") ||
+        (resolution.decision === "acknowledge" && entry.status !== "acknowledged") ||
+        attempt.notificationKeys.some((key) => {
+          const peer = entriesByKey.get(key);
+          return (
+            peer?.lastDeliveryAttempt?.attemptId !== attempt.attemptId ||
+            peer.manualResolution?.operationId !== resolution.operationId ||
+            peer.manualResolution.decision !== resolution.decision
+          );
+        }))
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["entries", index, "manualResolution"],
+        message: "手動解決が開始済み送達試行と一致しません",
+      });
+    }
     if (attempt != null) {
       if (
         new Set(attempt.notificationKeys).size !== attempt.notificationKeys.length ||
         !attempt.notificationKeys.includes(entry.notificationKey) ||
-        (attempt.result === "started") !== (entry.status === "delivery_started") ||
+        (attempt.result === "started" && resolution == null) !==
+          (entry.status === "delivery_started") ||
         (entry.status === "sent" && attempt.result !== "sent") ||
         (attempt.result === "started" &&
           (attempt.completedAt != null || attempt.discordMessageId != null)) ||
@@ -51,6 +75,7 @@ export function validateNotificationLedger(
           (entry.discordMessageId !== attempt.discordMessageId ||
             entry.sentAt !== attempt.completedAt)) ||
         (attempt.result === "started" &&
+          resolution == null &&
           (entry.status !== "delivery_started" ||
             attempt.notificationKeys.some((key) => {
               const peer = entriesByKey.get(key);

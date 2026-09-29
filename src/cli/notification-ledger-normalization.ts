@@ -30,6 +30,7 @@ export function notificationLedgerEntry(
     ...(entry.lastDeliveryAttempt == null
       ? {}
       : { lastDeliveryAttempt: entry.lastDeliveryAttempt }),
+    ...(entry.manualResolution == null ? {} : { manualResolution: entry.manualResolution }),
   };
   if (entry.status === "reserved") {
     return Object.freeze({

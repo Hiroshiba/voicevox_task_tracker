@@ -1,24 +1,39 @@
-import { resolveDiscordDelivery } from "../../notification-delivery-runtime.js";
+import { resolve } from "node:path";
+
+import { resolveManualNotificationDelivery } from "../../manual-resolution.js";
 import type { WorkflowStageDependencies } from "../../workflow-stage.js";
 import type { ProductionRuntimeAdapters } from "../adapters.js";
 
 type DeliveryResolutionRuntimeAdapters = Pick<
   ProductionRuntimeAdapters,
-  | "environment"
-  | "repositoryPath"
-  | "loadConfig"
-  | "openStateSession"
-  | "createStateBranchAdapter"
-  | "discordHttpClient"
-  | "now"
-  | "sleep"
-  | "random"
-  | "sendDiscord"
+  "repositoryPath" | "loadConfig" | "createStateBranchAdapter" | "now" | "writeJsonArtifact"
 >;
 
-/** workflowの送信開始済み通知解決を既存処理へ接続する。 */
+/** workflowの手動解決を同じrunのCASへ接続する。 */
 export function createResolveDiscordDeliveryStage(
   adapters: DeliveryResolutionRuntimeAdapters,
 ): WorkflowStageDependencies["resolveDiscordDelivery"] {
-  return (command) => resolveDiscordDelivery(adapters, command);
+  return async (command) => {
+    const config = await adapters.loadConfig(resolve(adapters.repositoryPath, command.configPath));
+    const result = await resolveManualNotificationDelivery(
+      {
+        adapter: adapters.createStateBranchAdapter(),
+        configuration: config.state,
+        knownSecrets: [],
+        now: adapters.now,
+      },
+      {
+        runId: command.runId,
+        checkpointDigest: command.checkpointDigest,
+        deliveryId: command.deliveryId,
+        attemptId: command.attemptId,
+        notificationKeys: command.notificationKeys,
+        decision: command.resolution,
+      },
+    );
+    await adapters.writeJsonArtifact(
+      resolve(adapters.repositoryPath, command.receiptPath),
+      result.receipt,
+    );
+  };
 }

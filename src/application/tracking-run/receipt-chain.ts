@@ -2,6 +2,7 @@ import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import type { ContentDigestPort } from "./ports.js";
 import { parseReceipt } from "./receipt-codec.js";
 import {
+  manualResolutionStateEvidenceSchema,
   notificationMessageStateEvidenceSchema,
   receiptChainEntrySchema,
   type ReceiptChainEvidence,
@@ -121,6 +122,56 @@ function assertObservedReceiptEvidence(
       (state.result == null) !== (attempt.result === "started")
     ) {
       throw new TypeError("再観測した通知message receiptとstate証拠が一致しません");
+    }
+    return;
+  }
+  if (receipt.receiptType === "manual_resolution") {
+    if (witness.kind !== "manual_resolution_state") {
+      throw new TypeError("再観測した手動解決にstate証拠がありません");
+    }
+    const state = manualResolutionStateEvidenceSchema.parse(witness.state);
+    const marker = state.resultingMarker;
+    if (
+      receipt.binding.bindingKind !== "checkpoint" ||
+      receipt.binding.runId !== state.runId ||
+      receipt.binding.checkpointDigest !== state.checkpointDigest ||
+      receipt.result.deliveryId !== state.deliveryId ||
+      receipt.result.deliveryAttemptId !== state.attempt.attemptId ||
+      receipt.result.decision !== state.decision ||
+      serializeCanonicalJson(receipt.result.notificationKeys) !==
+        serializeCanonicalJson(state.notificationKeys) ||
+      receipt.result.expectedTrackingStateRevision !== state.expectedTrackingStateRevision ||
+      receipt.result.actualParentStateRevision !== state.parentRevision ||
+      receipt.result.resultingStateRevision !== state.resultingRevision ||
+      receipt.result.commitOperationId !== state.commitOperationId ||
+      receipt.result.changedPathManifestDigest !== state.changedPathManifestDigest ||
+      receipt.result.stateContentDigest !== state.stateContentDigest ||
+      receipt.effectOccurredAt !== state.resolvedAt ||
+      state.stateContentDigest !==
+        digest.sha256Utf8(
+          serializeCanonicalJson({
+            marker,
+            recordDigest: state.publicationRecordDigest,
+            snapshotDigest: marker.snapshotDigest,
+            notificationLedgerDigest: marker.notificationLedgerDigest,
+          }),
+        ) ||
+      serializeCanonicalJson(receipt.result.interveningOperationsAlertCommits) !==
+        serializeCanonicalJson(state.interveningOperationsAlertCommits) ||
+      marker.phase !== "notifications_in_progress" ||
+      marker.runId !== state.runId ||
+      marker.checkpointDigest !== state.checkpointDigest ||
+      marker.publicationRecordDigest !== state.publicationRecordDigest ||
+      marker.expectedParentStateRevision !== state.parentRevision ||
+      marker.phaseSequence !== state.parentMarker.phaseSequence + 1 ||
+      state.parentMarker.phase !== "notifications_in_progress" ||
+      state.parentMarker.lastMessageDeliveryId !== state.deliveryId ||
+      marker.lastMessageDeliveryId !== state.deliveryId ||
+      state.attempt.result !== "started" ||
+      serializeCanonicalJson(state.attempt.notificationKeys) !==
+        serializeCanonicalJson(state.notificationKeys)
+    ) {
+      throw new TypeError("再観測した手動解決receiptとstate証拠が一致しません");
     }
     return;
   }

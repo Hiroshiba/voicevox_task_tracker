@@ -1,0 +1,246 @@
+name: Discord送達の手動解決
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: 保留中runのActions実行ID
+        required: true
+        type: string
+      code_revision:
+        description: 保留中runのコードcommit SHA
+        required: true
+        type: string
+      run_id:
+        description: 保留中のtracking run ID
+        required: true
+        type: string
+      checkpoint_digest:
+        description: 保留中のcheckpoint digest
+        required: true
+        type: string
+      delivery_id:
+        description: 曖昧な送達のdelivery ID
+        required: true
+        type: string
+      attempt_id:
+        description: 曖昧な送達のattempt ID
+        required: true
+        type: string
+      notification_keys:
+        description: 固定outboxのnotification keyを順番どおりカンマで区切る
+        required: true
+        type: string
+      resolution:
+        description: Discordの実結果を確認した後の判断
+        required: true
+        type: choice
+        options:
+          - acknowledge
+          - retry
+
+permissions: {}
+
+concurrency:
+  group: voicevox-task-tracker-daily
+  cancel-in-progress: false
+
+jobs:
+  resolve-and-finalize:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    env:
+      VOICEVOX_EXPECTED_RUN_ID: ${{ inputs.run_id }}
+    steps:
+      - name: 元runのコードを取得
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.code_revision }}
+          fetch-depth: 0
+      - name: 最新stateを取得
+        run: git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state
+      - name: Node.jsを準備
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+      - name: pnpmを準備
+        run: corepack enable
+      - name: 依存関係をインストール
+        run: pnpm install --frozen-lockfile
+      - name: 元runのruntimeと公開artifactを取得
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: validated-public-run
+          path: artifacts/workflow
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+      - name: 元runの初回commit receiptを取得
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: initial-state-commit-receipt
+          path: artifacts/workflow
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+      - name: 元runのcheckpointを検証
+        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs verify-checkpoint
+      - name: 元runのexact runtimeを検証
+        env:
+          MANUAL_RUN_ID: ${{ inputs.run_id }}
+          MANUAL_CODE_REVISION: ${{ inputs.code_revision }}
+        run: |
+          state_revision=$(git rev-parse refs/heads/tracker-state)
+          node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs inspect-run-state --run-id "$MANUAL_RUN_ID" --state-revision "$state_revision" > "$RUNNER_TEMP/manual-recovery-decision.json"
+          jq -e --arg run "$MANUAL_RUN_ID" --arg code "$MANUAL_CODE_REVISION" '.kind == "resume_with_exact_runtime" and .recoveryInput.runId == $run and .recoveryInput.runtimeRecoveryPlan.codeRevision == $code' "$RUNNER_TEMP/manual-recovery-decision.json"
+          jq -cS '.recoveryInput' "$RUNNER_TEMP/manual-recovery-decision.json" > "$RUNNER_TEMP/manual-recovery-input.json"
+          node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs verify-runtime-recovery --input "$RUNNER_TEMP/manual-recovery-input.json" --bundle-root artifacts/workflow/runtime
+      - name: 曖昧な送達を手動解決
+        env:
+          MANUAL_NOTIFICATION_KEYS: ${{ inputs.notification_keys }}
+          MANUAL_RUN_ID: ${{ inputs.run_id }}
+          MANUAL_CHECKPOINT_DIGEST: ${{ inputs.checkpoint_digest }}
+          MANUAL_DELIVERY_ID: ${{ inputs.delivery_id }}
+          MANUAL_ATTEMPT_ID: ${{ inputs.attempt_id }}
+          MANUAL_RESOLUTION: ${{ inputs.resolution }}
+        run: |
+          IFS=',' read -r -a notification_keys <<< "$MANUAL_NOTIFICATION_KEYS"
+          arguments=(
+            --run-id "$MANUAL_RUN_ID"
+            --checkpoint-digest "$MANUAL_CHECKPOINT_DIGEST"
+            --delivery-id "$MANUAL_DELIVERY_ID"
+            --attempt-id "$MANUAL_ATTEMPT_ID"
+            --resolution "$MANUAL_RESOLUTION"
+          )
+          for notification_key in "${notification_keys[@]}"; do
+            arguments+=(--notification-key "$notification_key")
+          done
+          node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs resolve-discord-delivery "${arguments[@]}"
+      - name: 手動解決receiptを保存
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: manual-resolution-record
+          path: artifacts/workflow/manual-resolution-receipt.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: 同じrunの残り通知をsettleする
+        env:
+          DISCORD_OPERATIONS_WEBHOOK_URL: ${{ secrets.DISCORD_OPERATIONS_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
+        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs settle-notifications --manual-resolution-receipt artifacts/workflow/manual-resolution-receipt.json
+      - name: settlement receiptを保存
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: notification-settlement-record
+          path: artifacts/workflow/notification-settlement-receipt.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: 同じrunをfinalizeする
+        env:
+          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
+        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs finalize-run
+      - name: finalization receiptを保存
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: run-finalization-record
+          path: artifacts/workflow/run-finalization-receipt.json
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-notification-history:
+    needs: resolve-and-finalize
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      pages: write
+      id-token: write
+    env:
+      VOICEVOX_EXPECTED_RUN_ID: ${{ inputs.run_id }}
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 元runのコードを取得
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.code_revision }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: 最新stateを取得
+        run: git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state
+      - name: Node.jsを準備
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+      - name: 元runのruntimeと公開artifactを取得
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: validated-public-run
+          path: artifacts/workflow
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+      - name: settlement receiptを取得
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: notification-settlement-record
+          path: artifacts/workflow
+      - name: finalization receiptを取得
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: run-finalization-record
+          path: artifacts/workflow
+      - name: 通知履歴Pagesを準備
+        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs prepare-notification-history-pages
+      - name: 通知履歴Pages build receiptを保存
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: notification-history-pages-build-record
+          path: artifacts/workflow/notification-history-pages-build.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: deploy直前のfinal stateと出力を検証
+        id: preflight
+        run: |
+          node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs preflight-notification-history-deployment --run-attempt "${{ github.run_attempt }}"
+          echo "kind=$(jq -r .kind artifacts/workflow/notification-history-pages-preflight.json)" >> "$GITHUB_OUTPUT"
+          echo "intent_digest=$(jq -r '.deploymentIntentDigest // ""' artifacts/workflow/notification-history-pages-preflight.json)" >> "$GITHUB_OUTPUT"
+      - name: Pagesを構成
+        if: steps.preflight.outputs.kind == 'ready'
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+      - name: 通知履歴Pages artifactを保存
+        id: upload
+        if: steps.preflight.outputs.kind == 'ready'
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          name: manual-pages-${{ github.run_id }}-${{ github.run_attempt }}-notification-history
+          path: dist/web
+      - name: Pagesへdeploy
+        id: deployment
+        if: steps.upload.outcome == 'success'
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+        with:
+          artifact_name: manual-pages-${{ github.run_id }}-${{ github.run_attempt }}-notification-history
+          timeout: 1200000
+      - name: 通知履歴Pages actionの結果を記録
+        if: always() && steps.preflight.outcome == 'success'
+        env:
+          PAGES_UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+          PAGES_DEPLOYMENT_OUTCOME: ${{ steps.deployment.outcome }}
+          PAGES_DEPLOYMENT_INTENT_DIGEST: ${{ steps.preflight.outputs.intent_digest }}
+          PAGES_ARTIFACT_NAME: manual-pages-${{ github.run_id }}-${{ github.run_attempt }}-notification-history
+          PAGES_ARTIFACT_ID: ${{ steps.upload.outputs.artifact_id }}
+          PAGES_ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact_digest }}
+          PAGES_DEPLOYMENT_ID: ${{ steps.deployment.outputs.deployment_id }}
+          PAGES_URL: ${{ steps.deployment.outputs.page_url }}
+        run: node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs record-notification-history-deployment
+      - name: 通知履歴Pages receiptまたは失敗を保存
+        if: always() && steps.preflight.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: notification-history-pages-deployment-record
+          path: artifacts/workflow/notification-history-pages-deployment.json
+          if-no-files-found: error
+          retention-days: 7

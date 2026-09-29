@@ -3,6 +3,7 @@ import { notificationDeliveryAttemptSchema } from "../../domain/notification-del
 
 import { initialPagesEvidenceStateSchema } from "./initial-pages-evidence.js";
 import { stateCommitReceiptEvidenceSchema } from "./observed-state-commit.js";
+import { runTransactionMarkerSchema } from "./run-transaction-marker.js";
 import { receiptSchema } from "./receipt-schema.js";
 
 export const RECEIPT_CHAIN_SCHEMA_VERSION = 3;
@@ -37,6 +38,29 @@ export type NotificationMessageStateEvidence = z.output<
   typeof notificationMessageStateEvidenceSchema
 >;
 
+export const manualResolutionStateEvidenceSchema = z.strictObject({
+  runId: z.string().regex(/^tracker-run:[0-9a-f]{64}$/u),
+  checkpointDigest: sha256Schema,
+  publicationRecordDigest: sha256Schema,
+  deliveryId: z.string().min(1),
+  notificationKeys: z.array(z.string().min(1)).min(1),
+  decision: z.enum(["retry", "acknowledge"]),
+  resolvedAt: z.iso.datetime({ offset: true }),
+  attempt: notificationDeliveryAttemptSchema,
+  parentRevision: revisionSchema,
+  resultingRevision: revisionSchema,
+  parentMarker: runTransactionMarkerSchema,
+  resultingMarker: runTransactionMarkerSchema,
+  expectedTrackingStateRevision: revisionSchema,
+  interveningOperationsAlertCommits: z.array(revisionSchema),
+  commitOperationId: operationIdSchema,
+  changedPathManifestDigest: sha256Schema,
+  stateContentDigest: sha256Schema,
+});
+
+/** Gitの親子stateで裏付けた手動解決。 */
+export type ManualResolutionStateEvidence = z.output<typeof manualResolutionStateEvidenceSchema>;
+
 export const receiptChainEvidenceSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("none") }),
   z.strictObject({
@@ -47,6 +71,10 @@ export const receiptChainEvidenceSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("notification_message_state"),
     state: notificationMessageStateEvidenceSchema,
+  }),
+  z.strictObject({
+    kind: z.literal("manual_resolution_state"),
+    state: manualResolutionStateEvidenceSchema,
   }),
 ]);
 
