@@ -1,0 +1,247 @@
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { promisify } from "node:util";
+
+import {
+  createFailedRun,
+  createPublicFailureArtifact,
+  type FailedRun,
+} from "../application/tracking-run/failure-artifact.js";
+import {
+  DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
+  RUN_TRANSACTION_MARKER_STATE_PATH_V1,
+} from "../application/tracking-run/contracts/recovery-paths.js";
+import { decodeReceipt } from "../application/tracking-run/receipt-codec.js";
+import type { Receipt } from "../application/tracking-run/receipt-schema.js";
+import {
+  readDurablePublicationRecoveryBootstrap,
+  readRunTransactionMarkerRecoveryBootstrap,
+} from "../application/tracking-run/recovery-bootstrap.js";
+import { createDiagnosticsRecorder } from "../diagnostics/recorder.js";
+import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
+import { GitStateBranchAdapter } from "../persistence/index.js";
+import { writeCliJsonArtifact } from "./file-output.js";
+import type { BootstrapFailureObservation } from "./failure-context-state.js";
+import type { ManualExactCommand } from "./manual-exact-runtime.js";
+
+const execFileAsync = promisify(execFile);
+
+type ManualExactFailureInput = Readonly<{
+  runId: string;
+  checkpointDigest: string;
+  diagnosticsPath: string;
+  failureDirectory: string;
+}>;
+
+function failedStage(command: ManualExactCommand): FailedRun["failedStage"] {
+  switch (command) {
+    case "verify-checkpoint":
+      return "checkpoint_binding";
+    case "select-runtime":
+      return "runtime_selection";
+    case "resolve-discord-delivery":
+    case "settle-notifications":
+      return "notifications_settled";
+    case "finalize-run":
+      return "run_finalized";
+    case "prepare-notification-history-pages":
+      return "notification_history_pages_prepared";
+    case "preflight-notification-history-deployment":
+    case "record-notification-history-deployment":
+      return "notification_history_pages_published";
+  }
+}
+
+function precedingReceiptPath(command: ManualExactCommand): string | undefined {
+  switch (command) {
+    case "verify-checkpoint":
+    case "select-runtime":
+      return undefined;
+    case "resolve-discord-delivery":
+      return "artifacts/workflow/initial-state-commit-receipt.json";
+    case "settle-notifications":
+      return "artifacts/workflow/manual-resolution-receipt.json";
+    case "finalize-run":
+      return "artifacts/workflow/notification-settlement-receipt.json";
+    case "prepare-notification-history-pages":
+    case "preflight-notification-history-deployment":
+    case "record-notification-history-deployment":
+      return "artifacts/workflow/run-finalization-receipt.json";
+  }
+}
+
+/** 失敗観測で実証したstate revisionを返す。 */
+export function revision(observation: BootstrapFailureObservation | undefined): string | undefined {
+  return observation?.stateObservation.kind === "not_observed"
+    ? undefined
+    : observation?.stateObservation.revision;
+}
+
+/** 観測したcheckpointが手動解決対象に一致するか判定する。 */
+export function isExpectedCheckpoint(
+  observation: BootstrapFailureObservation | undefined,
+  runId: string,
+  checkpointDigest: string,
+): boolean {
+  return (
+    observation?.evidence?.bindingKind === "checkpoint" &&
+    observation.evidence.runId === runId &&
+    observation.evidence.checkpointDigest === checkpointDigest &&
+    observation.stateObservation.kind === "consistent_pending"
+  );
+}
+function receiptStateRevision(receipt: Receipt): string {
+  if (receipt.result != null && "resultingStateRevision" in receipt.result) {
+    return receipt.result.resultingStateRevision;
+  }
+  throw new TypeError("旧runtimeの直前receiptに確定済みstate revisionがありません");
+}
+
+async function precedingReceipt(
+  command: ManualExactCommand,
+  evidence: Extract<FailedRun["evidence"], { bindingKind: "checkpoint" }> | undefined,
+  observedStateRevision: string,
+): Promise<Receipt | undefined> {
+  const path = precedingReceiptPath(command);
+  if (path == null || evidence == null) {
+    return undefined;
+  }
+  const receipt = decodeReceipt(await readFile(path), nodeContentDigestPort);
+  if (
+    receipt.binding.bindingKind !== "checkpoint" ||
+    receipt.binding.runId !== evidence.runId ||
+    receipt.binding.checkpointDigest !== evidence.checkpointDigest ||
+    receipt.binding.checkpointFileDigest !== evidence.checkpointFileDigest ||
+    receipt.binding.runtimeIdentityDigest !== evidence.runtimeIdentityDigest
+  ) {
+    throw new TypeError("旧runtimeの直前receiptとcheckpoint結合が一致しません");
+  }
+  const receiptRevision = receiptStateRevision(receipt);
+  const adapter = new GitStateBranchAdapter({
+    repositoryPath: process.cwd(),
+    gitExecutable: "git",
+    authorName: "VOICEVOX Task Tracker",
+    authorEmail: "voicevox-task-tracker@users.noreply.github.com",
+  });
+  const files = await adapter.readFiles(receiptRevision, [
+    RUN_TRANSACTION_MARKER_STATE_PATH_V1,
+    DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
+  ]);
+  const markerFile = files.get(RUN_TRANSACTION_MARKER_STATE_PATH_V1);
+  const recordFile = files.get(DURABLE_PUBLICATION_RECORD_STATE_PATH_V1);
+  if (markerFile?.status !== "present" || recordFile?.status !== "present") {
+    throw new TypeError("旧runtimeの直前receiptに対応するstate bootstrapがありません");
+  }
+  const marker = readRunTransactionMarkerRecoveryBootstrap(markerFile.bytes);
+  const record = readDurablePublicationRecoveryBootstrap(recordFile.bytes, nodeContentDigestPort);
+  if (
+    marker.runId !== evidence.runId ||
+    marker.checkpointDigest !== evidence.checkpointDigest ||
+    marker.publicationRecordDigest !== record.recordDigest ||
+    record.checkpointFileDigest !== evidence.checkpointFileDigest ||
+    record.runtimeIdentityDigest !== evidence.runtimeIdentityDigest ||
+    marker.phaseSequence < receipt.phaseSequence
+  ) {
+    throw new TypeError("旧runtimeの直前receiptとexact stateが一致しません");
+  }
+  try {
+    await execFileAsync("git", [
+      "merge-base",
+      "--is-ancestor",
+      receiptRevision,
+      observedStateRevision,
+    ]);
+  } catch (error: unknown) {
+    throw new TypeError("旧runtimeの直前receiptが観測stateの祖先にありません", {
+      cause: error,
+    });
+  }
+  return receipt;
+}
+
+/** 旧runtimeが公開artifactを作らなかった失敗を実証済みstateから記録する。 */
+export async function reportManualExactFailure(
+  command: ManualExactCommand,
+  error: unknown,
+  before: BootstrapFailureObservation | undefined,
+  after: BootstrapFailureObservation | undefined,
+  input: ManualExactFailureInput,
+): Promise<void> {
+  const invocationId = randomUUID();
+  const recordId = randomUUID();
+  const matchingAfter = isExpectedCheckpoint(after, input.runId, input.checkpointDigest);
+  const matchingBefore = isExpectedCheckpoint(before, input.runId, input.checkpointDigest);
+  const observed = matchingAfter ? after : matchingBefore ? before : undefined;
+  const evidence = observed?.evidence?.bindingKind === "checkpoint" ? observed.evidence : undefined;
+  const bootstrapAlert =
+    after?.evidence?.bindingKind === "state_bootstrap_alert" ? after : undefined;
+  let receipt: Receipt | undefined;
+  let diagnosticError = error;
+  if (evidence != null && bootstrapAlert == null) {
+    try {
+      const observedRevision = revision(observed);
+      if (observedRevision == null) {
+        throw new TypeError("旧runtimeの直前receiptの比較先stateがありません");
+      }
+      receipt = await precedingReceipt(command, evidence, observedRevision);
+    } catch (receiptError: unknown) {
+      diagnosticError = new AggregateError(
+        [error, receiptError],
+        "旧runtimeの失敗と直前receiptの検証に失敗しました",
+        { cause: error },
+      );
+    }
+  }
+  const recorder = await createDiagnosticsRecorder({ path: input.diagnosticsPath });
+  try {
+    await recorder.append({
+      event: "tracking_run.manual_exact_runtime_failed",
+      details: {
+        recordId,
+        invocationId,
+        command,
+        beforeStateRevision: revision(before) ?? null,
+        afterStateRevision: revision(after) ?? null,
+      },
+      error: diagnosticError,
+    });
+  } finally {
+    await recorder.close();
+  }
+  const stateObservation = after?.stateObservation ??
+    before?.stateObservation ?? { kind: "not_observed" as const };
+  const sameHead = revision(before) != null && revision(before) === revision(after);
+  const readOnly =
+    command === "verify-checkpoint" ||
+    command === "select-runtime" ||
+    command === "prepare-notification-history-pages" ||
+    command === "preflight-notification-history-deployment";
+  const effectCertainty =
+    readOnly || (command === "resolve-discord-delivery" && sameHead && matchingAfter)
+      ? "no_effect"
+      : "ambiguous";
+  const failure = createFailedRun({
+    invocationId,
+    failedStage: bootstrapAlert == null ? failedStage(command) : "runtime_bootstrap",
+    failureKind: bootstrapAlert == null ? "unexpected" : "content_integrity",
+    failedOperationEffectCertainty: effectCertainty,
+    evidence: bootstrapAlert?.evidence ?? evidence ?? { bindingKind: "invocation_pre_run_alert" },
+    ...(bootstrapAlert != null || evidence == null
+      ? {}
+      : {
+          runId: evidence.runId,
+          checkpointDigest: evidence.checkpointDigest,
+          checkpointFileDigest: evidence.checkpointFileDigest,
+        }),
+    publicDiagnostics: {
+      code: bootstrapAlert == null ? "unexpected_failure" : "invalid_record",
+    },
+    encryptedDiagnosticsRecordIds: [recordId],
+    lastVerifiedReceipt: receipt,
+    stateObservation: bootstrapAlert == null ? stateObservation : bootstrapAlert.stateObservation,
+  });
+  const artifact = createPublicFailureArtifact(failure, nodeContentDigestPort);
+  await writeCliJsonArtifact(resolve(input.failureDirectory, `${invocationId}.json`), artifact);
+}
