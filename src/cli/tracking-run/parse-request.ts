@@ -6,10 +6,15 @@ import type {
   CollectAnalyzeCliCommand,
   DailyCliCommand,
   DryRunCliCommand,
+  RunSequentialCliCommand,
 } from "../command.js";
 
 type OnlineCommand =
-  DailyCliCommand | DryRunCliCommand | BackfillCliCommand | CollectAnalyzeCliCommand;
+  | DailyCliCommand
+  | DryRunCliCommand
+  | BackfillCliCommand
+  | CollectAnalyzeCliCommand
+  | RunSequentialCliCommand;
 
 function resolveScheduledFor(command: OnlineCommand, startedAt: UtcIsoDateTime): UtcIsoDateTime {
   const scheduledFor = command.schedule.kind === "specified" ? command.schedule.value : startedAt;
@@ -100,6 +105,29 @@ function executionRequest(command: OnlineCommand): object {
             : { kind: "analysis_artifact", path: command.artifactPath },
       };
     }
+    case "run-sequential":
+      return command.mode === "none"
+        ? {
+            requestKind: "sequential_daily",
+            executionPolicy: {
+              kind: "production_daily",
+              executionShape: "sequential",
+              effectTarget: "production",
+              notificationAction: command.notificationAction,
+            },
+            output: { kind: "publication" },
+          }
+        : {
+            requestKind: "sequential_backfill",
+            executionPolicy: {
+              kind: "backfill",
+              executionShape: "sequential",
+              effectTarget: "production",
+              notificationAction: command.notificationAction,
+              backfillRange: { kind: command.mode, repositories: command.repositoryFilter },
+            },
+            output: { kind: "publication" },
+          };
     default:
       throw new UnreachableError(command);
   }

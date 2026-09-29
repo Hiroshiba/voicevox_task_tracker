@@ -17,6 +17,20 @@ export const pendingEffectStageMap = Object.freeze({
   completed: "completed",
 } satisfies Readonly<Record<string, TrackingRunStageName>>);
 
+/** 分割実行で一つのcanonical段階だけを進める。 */
+export async function runTrackingStageOnce<Value>(
+  completedStage: TrackingRunStageName,
+  nextStage: TrackingRunStageName,
+  execute: () => Promise<Value>,
+): Promise<Value> {
+  const completedIndex = trackingRunStageOrder.indexOf(completedStage);
+  const nextIndex = trackingRunStageOrder.indexOf(nextStage);
+  if (completedIndex < 0 || nextIndex !== completedIndex + 1) {
+    throw new TypeError("分割runの段階順がcanonical順序と一致しません");
+  }
+  return execute();
+}
+
 /** 初回commit後にメモリ上のcheckpointを破棄して渡す識別子。 */
 export type InitialStateCommitReference = Readonly<{
   stateRevision: string;

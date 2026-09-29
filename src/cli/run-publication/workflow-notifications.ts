@@ -26,11 +26,12 @@ import { readNotificationMessageState } from "../notification-message-state.js";
 import {
   NotificationSettlementFailureError,
   settleNotificationsWithPreflight,
+  type NotificationSettlementOutcome,
 } from "../notification-settlement.js";
 import { createNotificationSettlementPort } from "../notification-stage-runtime.js";
 import { NotificationStructureError } from "../notification-structure-error.js";
 import { requireEnvironmentValue } from "../production-runtime-setup.js";
-import { finalizeRun } from "../run-finalization.js";
+import { finalizeRun, type FinalizeRunOutcome } from "../run-finalization.js";
 import type { FinalizeRunCliCommand, SettleNotificationsCliCommand } from "../command.js";
 import type { RunPublicationAdapters } from "./contracts.js";
 
@@ -98,7 +99,7 @@ async function initialReceipt(
 export async function settleWorkflowNotifications(
   adapters: WorkflowNotificationAdapters,
   command: SettleNotificationsCliCommand,
-): Promise<void> {
+): Promise<Extract<NotificationSettlementOutcome, { kind: "settled" }>> {
   const config = await adapters.loadConfig(resolve(adapters.repositoryPath, command.configPath));
   let manualResolutionReceipt: ManualResolutionReceipt | undefined;
   if (command.manualResolutionReceiptPath != null) {
@@ -227,6 +228,17 @@ export async function settleWorkflowNotifications(
                   "workflow通知のPages deploy artifactと保存済み証拠が一致しません",
                 );
               }
+              if (build != null) {
+                return {
+                  initialPages: {
+                    kind: "published" as const,
+                    buildReceipt: build.receipt,
+                    deploymentReceipt: deployment.receipt,
+                    evidence,
+                  },
+                  pagesReceipt: deployment.receipt,
+                };
+              }
             }
           } catch (cause: unknown) {
             pagesArtifactFailure(cause);
@@ -297,13 +309,14 @@ export async function settleWorkflowNotifications(
     resolve(adapters.repositoryPath, command.settlementReceiptPath),
     outcome.receipt,
   );
+  return outcome;
 }
 
 /** split workflowの最終reportをsettlement stateから単一CASへ保存する。 */
 export async function finalizeWorkflowRun(
   adapters: WorkflowNotificationAdapters,
   command: FinalizeRunCliCommand,
-): Promise<void> {
+): Promise<Extract<FinalizeRunOutcome, { kind: "finalized" }>> {
   const config = await adapters.loadConfig(resolve(adapters.repositoryPath, command.configPath));
   const settlementReceipt = decodeReceipt(
     await readFile(resolve(adapters.repositoryPath, command.settlementReceiptPath)),
@@ -349,4 +362,5 @@ export async function finalizeWorkflowRun(
     resolve(adapters.repositoryPath, command.finalizationReceiptPath),
     outcome.receipt,
   );
+  return outcome;
 }

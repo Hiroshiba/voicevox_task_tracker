@@ -14,8 +14,19 @@ import { observeCliFailureContext } from "./failure-context.js";
 import { RecordedFailureError, recordFailureDiagnostic } from "./failure-diagnostic.js";
 import { writeCliJsonArtifact } from "./file-output.js";
 import { isPublicBoundaryViolation } from "./public-boundary-error.js";
+import { splitStageFailureFileName } from "./split-stage-paths.js";
 
 const FAILURE_DIRECTORY_ENVIRONMENT_VARIABLE = "VOICEVOX_TASK_TRACKER_FAILURE_DIRECTORY";
+
+function failureArtifactPath(command: CliCommand | undefined, invocationId: string): string {
+  const directory =
+    command?.kind === "notify-operations"
+      ? command.outputFailureDirectory
+      : (process.env[FAILURE_DIRECTORY_ENVIRONMENT_VARIABLE] ?? "artifacts/workflow/failures");
+  const fileName =
+    command?.kind === "run-stage" ? splitStageFailureFileName(command) : `${invocationId}.json`;
+  return resolve(directory, fileName);
+}
 
 /** 失敗種別を公開可能な診断codeへ写す。 */
 export function publicDiagnosticCode(
@@ -56,9 +67,7 @@ export async function reportCliFailure(
   if (result != null && "result" in result && result.result.failedRun != null) {
     try {
       const artifact = createPublicFailureArtifact(result.result.failedRun, nodeContentDigestPort);
-      const directory =
-        process.env[FAILURE_DIRECTORY_ENVIRONMENT_VARIABLE] ?? "artifacts/workflow/failures";
-      await writeCliJsonArtifact(resolve(directory, `${invocationId}.json`), artifact);
+      await writeCliJsonArtifact(failureArtifactPath(command, invocationId), artifact);
       return error;
     } catch (artifactError: unknown) {
       return new AggregateError([error, artifactError], "公開失敗artifactの作成に失敗しました", {
@@ -167,11 +176,7 @@ export async function reportCliFailure(
       stateObservation: context.stateObservation,
     });
     const artifact = createPublicFailureArtifact(failure, nodeContentDigestPort);
-    const directory =
-      command?.kind === "notify-operations"
-        ? command.outputFailureDirectory
-        : (process.env[FAILURE_DIRECTORY_ENVIRONMENT_VARIABLE] ?? "artifacts/workflow/failures");
-    await writeCliJsonArtifact(resolve(directory, `${invocationId}.json`), artifact);
+    await writeCliJsonArtifact(failureArtifactPath(command, invocationId), artifact);
     return error;
   } catch (artifactError: unknown) {
     return new AggregateError([error, artifactError], "公開失敗artifactの作成に失敗しました", {

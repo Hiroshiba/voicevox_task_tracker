@@ -1,4 +1,4 @@
-import { createUtcIsoDateTime, type UtcIsoDateTime } from "../domain/index.js";
+import { type UtcIsoDateTime } from "../domain/index.js";
 import { z } from "zod";
 import {
   notificationActionSchema,
@@ -12,6 +12,13 @@ import {
   usageError,
   type ParsedOptions,
 } from "./command-options.js";
+import {
+  parseBackfillMode,
+  parseNotificationAction,
+  parseRepositoryFilter,
+  parseSchedule,
+} from "./command-online-options.js";
+import { parseRunStage, type RunStageCliCommand } from "./split-stage-command.js";
 import {
   parseNotifyOperations,
   type NotifyOperationsCliCommand,
@@ -37,7 +44,6 @@ const DEFAULT_FINALIZATION_RECEIPT_PATH = "artifacts/workflow/run-finalization-r
 const DEFAULT_MANUAL_RESOLUTION_RECEIPT_PATH = "artifacts/workflow/manual-resolution-receipt.json";
 const DEFAULT_COLLECT_ANALYZE_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/collect-analyze.json`;
 const DEFAULT_WORKFLOW_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/workflow.json`;
-const REPOSITORY_FILTER_PATTERN = /^VOICEVOX\/[A-Za-z0-9._-]+$/u;
 const DELIVERY_ID_PATTERN = /^discord-digest:v1:[0-9a-f]{24}:message:[1-9][0-9]*$/u;
 export { notificationActionSchema, type NotificationAction };
 export type {
@@ -45,6 +51,7 @@ export type {
   PreflightNotificationHistoryDeploymentCliCommand,
   RecordNotificationHistoryDeploymentCliCommand,
 } from "./notification-history-deployment-command.js";
+export type { RunStageCliCommand } from "./split-stage-command.js";
 export type { NotifyOperationsCliCommand } from "./operations-alert-command.js";
 const deliveryIdSchema = z.string().regex(DELIVERY_ID_PATTERN);
 const resolveDiscordDeliveryResolutionSchema = z.enum(["retry", "acknowledge"]);
@@ -92,6 +99,15 @@ export type BackfillCliCommand = OnlineCommandFields &
   NotificationActionCommandFields &
   Readonly<{
     kind: "backfill";
+    mode: "none" | "linked" | "all-open";
+    repositoryFilter: readonly string[];
+  }>;
+
+/** 直列engineを使う日次またはbackfillのCLI入力。 */
+export type RunSequentialCliCommand = OnlineCommandFields &
+  NotificationActionCommandFields &
+  Readonly<{
+    kind: "run-sequential";
     mode: "none" | "linked" | "all-open";
     repositoryFilter: readonly string[];
   }>;
@@ -242,6 +258,8 @@ export type CliCommand =
   | DailyCliCommand
   | DryRunCliCommand
   | BackfillCliCommand
+  | RunSequentialCliCommand
+  | RunStageCliCommand
   | CollectAnalyzeCliCommand
   | PersistStateCliCommand
   | BuildPagesCliCommand
@@ -269,36 +287,6 @@ function requiredSingleOption(options: ParsedOptions, name: string, commandName:
     throw usageError(`${commandName}には${name}が必要です`);
   }
   return value;
-}
-
-function parseSchedule(options: ParsedOptions): CliSchedule {
-  const value = optionalSingleOption(options, "--scheduled-for");
-  if (value == null) {
-    return Object.freeze({
-      kind: "current_time",
-    });
-  }
-  try {
-    return Object.freeze({
-      kind: "specified",
-      value: createUtcIsoDateTime(value),
-    });
-  } catch (error: unknown) {
-    throw usageError("--scheduled-forにはタイムゾーン付きISO 8601日時を指定してください", error);
-  }
-}
-
-function parseNotificationAction(options: ParsedOptions): NotificationAction {
-  const result = notificationActionSchema.safeParse(
-    singleOption(options, "--notification-action", "send"),
-  );
-  if (!result.success) {
-    throw usageError(
-      "--notification-actionにはsend、holdまたはacknowledge-currentを指定してください",
-      result.error,
-    );
-  }
-  return result.data;
 }
 
 function assertDifferentOutputPaths(reportPath: string, artifactPath: string): void {
@@ -360,30 +348,6 @@ function parseDryRun(args: readonly string[]): DryRunCliCommand {
   });
 }
 
-function parseBackfillMode(value: string): BackfillCliCommand["mode"] {
-  switch (value) {
-    case "none":
-    case "linked":
-    case "all-open":
-      return value;
-    default:
-      throw usageError("--modeにはnone、linked、all-openのいずれかを指定してください");
-  }
-}
-
-function parseRepositoryFilter(options: ParsedOptions): readonly string[] {
-  const repositoryFilter = options.get("--repository") ?? [];
-  for (const repository of repositoryFilter) {
-    if (!REPOSITORY_FILTER_PATTERN.test(repository)) {
-      throw usageError("--repositoryにはVOICEVOX配下のowner/name形式を指定してください");
-    }
-  }
-  if (new Set(repositoryFilter).size !== repositoryFilter.length) {
-    throw usageError("--repositoryを重複して指定できません");
-  }
-  return Object.freeze([...repositoryFilter].sort());
-}
-
 function parseBackfill(args: readonly string[]): BackfillCliCommand {
   const options = parseOptions(
     args,
@@ -438,6 +402,18 @@ function parseCollectAnalyze(args: readonly string[]): CollectAnalyzeCliCommand 
     mode,
     repositoryFilter,
     artifactPath,
+  });
+}
+
+function parseRunSequential(args: readonly string[]): RunSequentialCliCommand {
+  const command = parseBackfill(args);
+  return Object.freeze({
+    ...command,
+    kind: "run-sequential",
+    reportPath:
+      command.reportPath === `${DEFAULT_REPORT_DIRECTORY}/backfill.json`
+        ? `${DEFAULT_REPORT_DIRECTORY}/run-sequential.json`
+        : command.reportPath,
   });
 }
 
@@ -842,6 +818,10 @@ export function parseCliArguments(args: readonly string[]): CliCommand {
   }
   const options = args.slice(1);
   switch (subcommand) {
+    case "run-sequential":
+      return parseRunSequential(options);
+    case "run-stage":
+      return parseRunStage(options);
     case "daily":
       return parseDaily(options);
     case "dry-run":

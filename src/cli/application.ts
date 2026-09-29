@@ -6,6 +6,7 @@ import {
 } from "./daily-transaction.js";
 import { StateVerificationRunner } from "./state-verification.js";
 import { WorkflowStageRunner } from "./workflow-stage.js";
+import { SplitStageRunner } from "./split-stage-runner.js";
 
 /** CLI実行後の終了codeとreport種別。 */
 export type CliExecutionResult =
@@ -14,7 +15,8 @@ export type CliExecutionResult =
       exitCode: 0;
     }>
   | Readonly<{
-      command: "daily" | "dry-run" | "backfill" | "collect-analyze";
+      command:
+        "daily" | "dry-run" | "backfill" | "collect-analyze" | "run-sequential" | "run-stage";
       exitCode: 0 | 1;
       execution: "executed" | "deduplicated";
       result: DailyRunExecutionResult;
@@ -37,7 +39,8 @@ export type CliExecutionResult =
         | "verify-runtime-recovery"
         | "inspect-run-state"
         | "verify-receipt-chain"
-        | "report-failure";
+        | "report-failure"
+        | "run-stage";
       exitCode: 0;
     }>
   | Readonly<{
@@ -48,6 +51,7 @@ export type CliExecutionResult =
 /** CLI applicationへ注入するonline、標準出力境界。 */
 export type CliApplicationDependencies<Types extends DailyTransactionTypeMap> = Readonly<{
   dailyRunner: DailyTransactionRunner<Types>;
+  splitStageRunner: SplitStageRunner;
   workflowStageRunner: WorkflowStageRunner;
   stateVerificationRunner: StateVerificationRunner;
   writeStandardOutput: (source: string) => Promise<void>;
@@ -76,6 +80,7 @@ export class CliApplication<Types extends DailyTransactionTypeMap> {
       case "daily":
       case "dry-run":
       case "backfill":
+      case "run-sequential":
       case "collect-analyze": {
         const coordinated = await this.#dependencies.dailyRunner.run(command, invocationId);
         return Object.freeze({
@@ -84,6 +89,18 @@ export class CliApplication<Types extends DailyTransactionTypeMap> {
           execution: coordinated.execution,
           result: coordinated.value,
         });
+      }
+      case "run-stage": {
+        const outcome = await this.#dependencies.splitStageRunner.run(command, invocationId);
+        if (outcome.result != null) {
+          return Object.freeze({
+            command: "run-stage",
+            exitCode: exitCodeForStatus(outcome.result.report.status),
+            execution: "executed",
+            result: outcome.result,
+          });
+        }
+        return Object.freeze({ command: "run-stage", exitCode: 0 });
       }
       case "persist-state":
       case "build-pages":

@@ -5,15 +5,21 @@ import type { ProductionRuntimeAdapters } from "./adapters.js";
 import type { ProductionTypes } from "./contracts.js";
 import { createDailyDependencies } from "./daily-dependencies.js";
 import { createWorkflowStageRunner } from "./workflow/create-runner.js";
+import { SplitStageRunner } from "../split-stage-runner.js";
 
 /** 注入済みの具体アダプターから全サブコマンドを実行するapplicationを組み立てる。 */
 export function createProductionCliApplication(
   adapters: ProductionRuntimeAdapters,
 ): CliApplication<ProductionTypes> {
-  return new CliApplication({
-    dailyRunner: new DailyTransactionRunner(createDailyDependencies(adapters), {
+  const dailyRunner = new DailyTransactionRunner<ProductionTypes>(
+    createDailyDependencies(adapters),
+    {
       now: adapters.now,
-    }),
+    },
+  );
+  return new CliApplication({
+    dailyRunner,
+    splitStageRunner: new SplitStageRunner(adapters, dailyRunner),
     workflowStageRunner: createWorkflowStageRunner(adapters),
     stateVerificationRunner: new StateVerificationRunner({
       repositoryPath: adapters.repositoryPath,

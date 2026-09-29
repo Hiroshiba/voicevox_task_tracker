@@ -73,6 +73,7 @@ import {
   type CollectAnalyzeCliCommand,
   type DailyCliCommand,
   type DryRunCliCommand,
+  type RunSequentialCliCommand,
 } from "./command.js";
 import { safeErrorDiagnostic } from "./error-diagnostic.js";
 import { observeCliFailureContext } from "./failure-context.js";
@@ -92,7 +93,11 @@ import {
 
 /** ネットワークを利用する日次transaction系のサブコマンド。 */
 export type OnlineCliCommand =
-  DailyCliCommand | DryRunCliCommand | BackfillCliCommand | CollectAnalyzeCliCommand;
+  | DailyCliCommand
+  | DryRunCliCommand
+  | BackfillCliCommand
+  | CollectAnalyzeCliCommand
+  | RunSequentialCliCommand;
 
 /** 各段階を型安全につなぐために利用する値の対応表。 */
 export type DailyTransactionTypeMap = Readonly<{

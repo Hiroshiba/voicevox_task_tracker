@@ -44,6 +44,8 @@ import {
 import { isPublicBoundaryViolation } from "./public-boundary-error.js";
 import type { CliExecutionResult } from "./application.js";
 import { CliUsageError, CliWorkflowArtifactError, CliCodexAuthenticationError } from "./errors.js";
+import { readSplitReceiptChain } from "./split-stage-receipts.js";
+import { splitStagePaths } from "./split-stage-paths.js";
 
 export type CliFailureContext = Readonly<{
   failedStage: FailedRun["failedStage"];
@@ -149,6 +151,21 @@ async function optionalReceipt(path: string): Promise<Receipt | undefined> {
 
 async function previousReceipt(command: CliCommand | undefined): Promise<Receipt | undefined> {
   switch (command?.kind) {
+    case "run-stage": {
+      if (command.runId == null) {
+        return undefined;
+      }
+      const path = splitStagePaths(process.cwd(), command.runId).receiptChain;
+      try {
+        const entries = await readSplitReceiptChain(path, command.runId);
+        return entries.at(-1)?.receipt;
+      } catch (error: unknown) {
+        if (isMissing(error)) {
+          return undefined;
+        }
+        throw error;
+      }
+    }
     case "build-pages":
     case "preflight-pages-deployment":
     case "settle-notifications":
@@ -186,6 +203,9 @@ function expectedRunId(
   context: Partial<CliFailureContext>,
 ): string | undefined {
   if (command?.kind === "resolve-discord-delivery") {
+    return command.runId;
+  }
+  if (command?.kind === "run-stage") {
     return command.runId;
   }
   if (command?.kind === "inspect-run-state" && command.recoveryIntent.kind === "retry_run") {

@@ -5,5 +5,7 @@ import type { WorkflowStageDependencies } from "../../workflow-stage.js";
 export function createFinalizeWorkflowRunStage(
   adapters: Parameters<typeof finalizeWorkflowRun>[0],
 ): WorkflowStageDependencies["finalizeRun"] {
-  return (command) => finalizeWorkflowRun(adapters, command);
+  return async (command) => {
+    await finalizeWorkflowRun(adapters, command);
+  };
 }

@@ -5,5 +5,7 @@ import type { WorkflowStageDependencies } from "../../workflow-stage.js";
 export function createSettleWorkflowNotificationsStage(
   adapters: Parameters<typeof settleWorkflowNotifications>[0],
 ): WorkflowStageDependencies["settleNotifications"] {
-  return (command) => settleWorkflowNotifications(adapters, command);
+  return async (command) => {
+    await settleWorkflowNotifications(adapters, command);
+  };
 }
