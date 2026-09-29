@@ -13,7 +13,10 @@ import {
   preflightNotificationHistoryPagesDeployment,
   parseNotificationHistoryPagesDeploymentPreflight,
 } from "../notification-history-pages-deployment.js";
-import { recordNotificationHistoryWorkflowDeployment } from "../notification-history-pages-deployment-record.js";
+import {
+  recordNotificationHistorySequentialDeployment,
+  recordNotificationHistoryWorkflowDeployment,
+} from "../notification-history-pages-deployment-record.js";
 import { decodeNotificationHistoryPagesDeploymentOutcome } from "../notification-history-pages-deployment-outcome.js";
 import { readPreviousNotificationHistoryOutcome } from "../previous-notification-history-outcome.js";
 import { isWorkflowPublicationReplay, workflowAdapterIdentity } from "../publication-runtime.js";
@@ -91,8 +94,10 @@ export async function preflightWorkflowNotificationHistoryDeployment(
         adapters.environment,
       ),
     observedAt: adapters.now().toISOString(),
-    effectTarget: "production",
-    adapterIdentityDigest: await workflowAdapterIdentity(adapters.repositoryPath, digest),
+    effectTarget: source.transaction.record.executionPolicy.effectTarget,
+    ...(source.transaction.record.executionPolicy.effectTarget === "production"
+      ? { adapterIdentityDigest: await workflowAdapterIdentity(adapters.repositoryPath, digest) }
+      : {}),
   });
   await adapters.writeJsonArtifact(
     resolve(adapters.repositoryPath, command.preflightPath),
@@ -117,6 +122,43 @@ export async function recordWorkflowNotificationHistoryDeployment(
     throw new TypeError("通知履歴Pages preflightがcanonical JSONではありません");
   }
   const preflight = parseNotificationHistoryPagesDeploymentPreflight(preflightRaw, artifact);
+  const effectTarget = adapters.environment["TRACKING_EFFECT_TARGET"];
+  if (effectTarget !== "production" && effectTarget !== "sandbox") {
+    throw new TypeError("通知履歴Pages結果のeffect targetが不正です");
+  }
+  if (effectTarget === "sandbox") {
+    if (
+      adapters.environment["PAGES_DEPLOYMENT_OUTCOME"] !== "skipped" ||
+      (preflight.kind === "ready" && adapters.environment["PAGES_UPLOAD_OUTCOME"] !== "success") ||
+      (preflight.kind !== "ready" && adapters.environment["PAGES_UPLOAD_OUTCOME"] !== "skipped")
+    ) {
+      throw new TypeError("sandbox通知履歴Pages artifactの結果が不正です");
+    }
+    let recordingId: string | undefined;
+    if (preflight.kind === "ready") {
+      const artifactId = optionalOutput(adapters.environment, "PAGES_ARTIFACT_ID");
+      const artifactName = optionalOutput(adapters.environment, "PAGES_ARTIFACT_NAME");
+      if (artifactId == null || artifactName == null) {
+        throw new TypeError("sandbox通知履歴Pages artifactの識別情報がありません");
+      }
+      recordingId = `${artifactName}:${artifactId}`;
+    }
+    const outcome = recordNotificationHistorySequentialDeployment({
+      artifact,
+      preflight,
+      target: "recording",
+      ...(recordingId == null ? {} : { recordingId }),
+      observedAt: adapters.now().toISOString(),
+    });
+    await adapters.writeJsonArtifact(
+      resolve(adapters.repositoryPath, command.outcomePath),
+      outcome,
+    );
+    if (outcome.kind === "failure") {
+      throw new TypeError(`sandbox通知履歴Pages結果が確定しませんでした。種別: ${outcome.reason}`);
+    }
+    return;
+  }
   const outcome = recordNotificationHistoryWorkflowDeployment({
     artifact,
     preflight,

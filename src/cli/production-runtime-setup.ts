@@ -219,9 +219,6 @@ export async function resolveRuntimeTarget(
   if (request.requestKind !== "sandbox_daily") {
     throw new TypeError("sandbox実行要求の入力形式が不正です");
   }
-  if (request.executionPolicy.notificationAction !== "hold") {
-    throw new TypeError("sandbox実行のnotification-actionはholdにしてください");
-  }
   const readSandboxContext = dependencies.readSandboxContext;
   if (readSandboxContext == null) {
     throw new TypeError("sandbox contextの読み取りadapterがありません");

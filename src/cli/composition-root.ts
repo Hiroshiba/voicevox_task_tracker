@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { z } from "zod";
 
 import {
   executeCodexAnalysis,
@@ -7,7 +8,7 @@ import {
   executeCodexPersonalReminderAnalysis,
   runCodexProcess,
 } from "../codex/index.js";
-import { loadConfig } from "../config/index.js";
+import { loadConfig, type Config } from "../config/index.js";
 import type { DiagnosticsJsonlRecorder } from "../diagnostics/recorder.js";
 import { createFetchDiscordWebhookHttpClient, sendDiscordDigest } from "../discord/index.js";
 import {
@@ -31,6 +32,38 @@ import { parseSandboxContext } from "./sandbox-context.js";
 import { PagesEffectNotStartedError } from "../application/tracking-run/pages-effect.js";
 
 const DEFAULT_PAGES_OUTPUT_DIRECTORY = "web/public/data";
+const sandboxStateRefSchema = z.string().regex(/^sandbox-state\/env-[1-9][0-9]*-[1-9][0-9]*$/u);
+
+async function loadTrackingConfig(
+  path: string | URL,
+  environment: Readonly<NodeJS.ProcessEnv>,
+): Promise<Config> {
+  const config = await loadConfig(path);
+  const effectTarget = environment["TRACKING_EFFECT_TARGET"];
+  const stateRef = environment["TRACKING_STATE_REF"];
+  if (effectTarget == null && stateRef == null) {
+    return config;
+  }
+  if (
+    effectTarget === "production" &&
+    stateRef === "tracker-state" &&
+    config.state.branch === stateRef
+  ) {
+    return config;
+  }
+  if (
+    effectTarget !== "sandbox" ||
+    environment["GITHUB_REPOSITORY"] !== "Hiroshiba/voicevox_task_tracker" ||
+    config.state.branch !== "tracker-state"
+  ) {
+    throw new TypeError("workflowのeffect targetとstate設定が一致しません");
+  }
+  const branch = sandboxStateRefSchema.parse(stateRef);
+  return Object.freeze({
+    ...config,
+    state: Object.freeze({ ...config.state, branch }),
+  });
+}
 
 type ConcreteOperationName =
   | "collectGitHubItemDetails"
@@ -51,7 +84,7 @@ export type CliCompositionAdapters = Omit<ProductionRuntimeAdapters, ConcreteOpe
 function createProductionAdapters(adapters: CliCompositionAdapters): ProductionRuntimeAdapters {
   return Object.freeze({
     ...adapters,
-    loadConfig,
+    loadConfig: (path) => loadTrackingConfig(path, adapters.environment),
     openStateSession: (adapter, configuration, migrationTimezone) =>
       StatePersistenceSession.open(adapter, configuration, migrationTimezone),
     discoverRepositoryInventory,

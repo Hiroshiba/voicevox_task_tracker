@@ -535,17 +535,22 @@ finalize() {
     die "disposeはfinalizeではなくdispose commandで実行してください"
   fi
   require_environment SANDBOX_ENVIRONMENT_ID
+  require_environment SANDBOX_EXPECTED_REVISION
   validate_environment_id "$SANDBOX_ENVIRONMENT_ID"
+  validate_revision "$SANDBOX_EXPECTED_REVISION"
   local branch="${STATE_BRANCH_PREFIX}/${SANDBOX_ENVIRONMENT_ID}"
-  local local_revision
-  local_revision="$(git rev-parse "refs/heads/${branch}")" || die "sandbox state branchのlocal headを取得できません"
-  validate_revision "$local_revision"
   local remote_revision
   remote_revision="$(remote_branch_head "$branch")"
-  if [[ "$remote_revision" != "$local_revision" ]]; then
-    die "sandbox state branchの完了publish後headが一致しません"
+  if [[ "$remote_revision" != "$SANDBOX_EXPECTED_REVISION" ]]; then
+    die "sandbox state branchの完了revisionがreceiptと一致しません"
   fi
-  write_output state_revision "$local_revision"
+  fetch_remote_branch "$branch"
+  local local_revision
+  local_revision="$(git rev-parse "refs/heads/${branch}")" || die "sandbox state branchのlocal headを取得できません"
+  if [[ "$local_revision" != "$remote_revision" ]]; then
+    die "sandbox state branchのremote再取得結果が一致しません"
+  fi
+  write_output state_revision "$remote_revision"
 }
 
 dispose() {

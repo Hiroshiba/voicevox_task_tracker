@@ -27,7 +27,6 @@ function legacyCommand(
         ...common,
         kind: "daily",
         notificationAction: request.executionPolicy.notificationAction,
-        sandboxContextPath: undefined,
       });
     case "split_daily":
       return Object.freeze({
@@ -37,6 +36,7 @@ function legacyCommand(
         repositoryFilter: Object.freeze([]),
         notificationAction: request.executionPolicy.notificationAction,
         artifactPath: request.output.path,
+        sandboxContextPath: undefined,
       });
     case "backfill_none":
       return Object.freeze({
@@ -49,8 +49,11 @@ function legacyCommand(
     case "sandbox_daily":
       return Object.freeze({
         ...common,
-        kind: "daily",
+        kind: "collect-analyze",
+        mode: "none",
+        repositoryFilter: Object.freeze([]),
         notificationAction: request.executionPolicy.notificationAction,
+        artifactPath: request.output.path,
         sandboxContextPath: request.sandboxContextPath,
       });
     case "dry_run":
@@ -67,6 +70,7 @@ function legacyCommand(
         repositoryFilter: request.executionPolicy.backfillRange.repositories,
         notificationAction: request.executionPolicy.notificationAction,
         artifactPath: request.output.path,
+        sandboxContextPath: undefined,
       });
     case "sequential_backfill":
       return Object.freeze({

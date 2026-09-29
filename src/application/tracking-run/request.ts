@@ -93,7 +93,7 @@ const sandboxDailyRequestSchema = z.strictObject({
   requestKind: z.literal("sandbox_daily"),
   executionPolicy: sandboxDailyPolicySchema,
   sandboxContextPath: nonEmptyStringSchema,
-  output: z.strictObject({ kind: z.literal("publication") }),
+  output: z.strictObject({ kind: z.literal("analysis_artifact"), path: nonEmptyStringSchema }),
 });
 const dryRunRequestSchema = z.strictObject({
   ...requestFields,

@@ -504,6 +504,7 @@ export class SplitStageRunner {
         notificationAction: command.notificationAction,
         mode: command.mode,
         repositoryFilter: command.repositoryFilter,
+        sandboxContextPath: command.sandboxContextPath,
       };
       const coordinated = await this.#dailyRunner.run(analysis, invocationId);
       if (coordinated.value.report.status !== "failure") {

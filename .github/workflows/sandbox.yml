@@ -45,6 +45,25 @@ on:
         description: forced modeで実推論する要素のカンマ区切り
         required: false
         type: string
+      notification_action:
+        description: sandbox通知の処理
+        required: true
+        default: hold
+        type: choice
+        options:
+          - send
+          - hold
+          - acknowledge-current
+      scenario_id:
+        description: sandbox実行scenarioの識別子
+        required: true
+        default: manual
+        type: string
+      recording_control:
+        description: 通知portのoutcomeと対象message位置を示すJSON
+        required: true
+        default: '{"outcome":"recorded_success","messageIndex":0}'
+        type: string
 
 permissions: {}
 
@@ -54,16 +73,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  sandbox:
+  prepare:
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
     permissions:
       contents: write
-    concurrency:
-      group: voicevox-task-tracker-codex-auth
-      cancel-in-progress: false
-      queue: max
+    outputs:
+      environment_id: ${{ steps.prepare.outputs.environment_id }}
+      state_branch: ${{ steps.prepare.outputs.state_branch }}
+      base_state_revision: ${{ steps.prepare.outputs.base_state_revision }}
+      code_revision: ${{ steps.prepare.outputs.code_revision }}
+      recording_outcome: ${{ steps.recording_control.outputs.recording_outcome }}
+      recording_message_index: ${{ steps.recording_control.outputs.recording_message_index }}
     steps:
       - name: forkのコードを取得
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -72,7 +93,26 @@ jobs:
           ref: ${{ inputs.operation == 'dispose' && github.event.repository.default_branch || inputs.source_ref || 'main' }}
           fetch-depth: 0
           persist-credentials: true
-
+      - name: 実行するreusable workflowを照合
+        if: inputs.operation != 'dispose'
+        run: |
+          git diff --exit-code "$GITHUB_SHA" HEAD -- .github/workflows/_tracking-run.yml .github/workflows/_tracking-observe.yml
+      - name: Node.jsを準備
+        if: inputs.operation != 'dispose'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+      - name: sandbox入力の依存関係を準備
+        if: inputs.operation != 'dispose'
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+      - name: sandbox通知portの入力を検証
+        id: recording_control
+        if: inputs.operation != 'dispose'
+        env:
+          SANDBOX_RECORDING_CONTROL: ${{ inputs.recording_control }}
+        run: node .github/scripts/parse-sandbox-recording-control.mjs
       - name: sandbox環境を準備
         id: prepare
         if: inputs.operation != 'dispose'
@@ -86,9 +126,40 @@ jobs:
           SANDBOX_FORCED_ELEMENTS: ${{ inputs.forced_elements }}
           SANDBOX_CONTEXT_PATH: ${{ runner.temp }}/sandbox-context.json
         run: .github/scripts/sandbox-lifecycle.sh prepare
-
+      - name: sandbox制御入力を保存
+        if: inputs.operation != 'dispose'
+        env:
+          SANDBOX_SCENARIO_ID: ${{ inputs.scenario_id }}
+          SANDBOX_NOTIFICATION_ACTION: ${{ inputs.notification_action }}
+          SANDBOX_RECORDING_OUTCOME: ${{ steps.recording_control.outputs.recording_outcome }}
+          SANDBOX_RECORDING_MESSAGE_INDEX: ${{ steps.recording_control.outputs.recording_message_index }}
+          SANDBOX_ENVIRONMENT_ID: ${{ steps.prepare.outputs.environment_id }}
+          SANDBOX_STATE_BRANCH: ${{ steps.prepare.outputs.state_branch }}
+          SANDBOX_BASE_STATE_REVISION: ${{ steps.prepare.outputs.base_state_revision }}
+          SANDBOX_CODE_REVISION: ${{ steps.prepare.outputs.code_revision }}
+        run: |
+          jq -cnS \
+            --arg scenarioId "$SANDBOX_SCENARIO_ID" \
+            --arg notificationAction "$SANDBOX_NOTIFICATION_ACTION" \
+            --arg recordingOutcome "$SANDBOX_RECORDING_OUTCOME" \
+            --argjson recordingMessageIndex "$SANDBOX_RECORDING_MESSAGE_INDEX" \
+            --arg environmentId "$SANDBOX_ENVIRONMENT_ID" \
+            --arg stateRef "$SANDBOX_STATE_BRANCH" \
+            --arg baseStateRevision "$SANDBOX_BASE_STATE_REVISION" \
+            --arg codeRevision "$SANDBOX_CODE_REVISION" \
+            '{schemaVersion: 1, scenarioId: $scenarioId, notificationAction: $notificationAction, recordingOutcome: $recordingOutcome, recordingMessageIndex: $recordingMessageIndex, environmentId: $environmentId, stateRef: $stateRef, baseStateRevision: $baseStateRevision, codeRevision: $codeRevision}' \
+            > "$RUNNER_TEMP/sandbox-control.json"
+      - name: sandbox contextとcoverage入力を保存
+        if: inputs.operation != 'dispose'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sandbox-context-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/sandbox-context.json
+            ${{ runner.temp }}/sandbox-control.json
+          if-no-files-found: error
+          retention-days: 30
       - name: sandbox環境を廃棄
-        id: dispose
         if: inputs.operation == 'dispose'
         env:
           SANDBOX_OPERATION: ${{ inputs.operation }}
@@ -96,111 +167,75 @@ jobs:
           SANDBOX_ENVIRONMENT_ID: ${{ inputs.environment_id }}
         run: .github/scripts/sandbox-lifecycle.sh dispose
 
-      - name: Node.jsを準備
-        if: inputs.operation != 'dispose'
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+  tracking:
+    needs: prepare
+    if: inputs.operation != 'dispose' && needs.prepare.result == 'success'
+    permissions:
+      contents: write
+      actions: read
+    uses: ./.github/workflows/_tracking-run.yml
+    with:
+      state_ref: ${{ needs.prepare.outputs.state_branch }}
+      pages_environment: sandbox-${{ needs.prepare.outputs.environment_id }}
+      effect_concurrency_key: sandbox-${{ github.repository }}-${{ needs.prepare.outputs.environment_id }}
+      effect_target: sandbox
+      config_path: config.yml
+      backfill: none
+      repository_filter: ""
+      notification_action: ${{ inputs.notification_action }}
+      source_code_revision: ${{ needs.prepare.outputs.code_revision }}
+      sandbox_context_artifact: sandbox-context-${{ github.run_id }}-${{ github.run_attempt }}
+      sandbox_scenario_id: ${{ inputs.scenario_id }}
+      recording_outcome: ${{ needs.prepare.outputs.recording_outcome }}
+      recording_message_index: ${{ fromJSON(needs.prepare.outputs.recording_message_index) }}
+      artifact_retention_days: 30
+    secrets: inherit
+
+  finalize:
+    needs: [prepare, tracking]
+    if: inputs.operation != 'dispose' && needs.tracking.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: forkのコードを取得
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          node-version-file: .node-version
-
-      - name: pnpmを準備
-        if: inputs.operation != 'dispose'
-        run: corepack enable
-
-      - name: 依存関係をインストール
-        if: inputs.operation != 'dispose'
-        run: pnpm install --frozen-lockfile
-
-      - name: Codex認証ファイルを配置
-        id: codex_auth_placement
-        if: inputs.operation != 'dispose'
-        env:
-          CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
-        run: |
-          if [[ -z "$CODEX_AUTH_JSON" ]]; then
-            echo "CODEX_AUTH_JSONが空のため認証ファイルを配置しません"
-            exit 0
-          fi
-          mkdir -p "${{ runner.temp }}/codex-home"
-          chmod 700 "${{ runner.temp }}/codex-home"
-          printf '%s' "$CODEX_AUTH_JSON" > "${{ runner.temp }}/codex-home/auth.json"
-          chmod 600 "${{ runner.temp }}/codex-home/auth.json"
-          sha256sum "${{ runner.temp }}/codex-home/auth.json" > "${{ runner.temp }}/codex-auth-fingerprint"
-          chmod 600 "${{ runner.temp }}/codex-auth-fingerprint"
-          .github/scripts/mask-codex-auth-values.sh "${{ runner.temp }}/codex-home/auth.json"
-          echo "placed=true" >> "$GITHUB_OUTPUT"
-
-      - name: sandbox日次処理を実行
-        if: inputs.operation != 'dispose'
-        env:
-          CODEX_AUTH_SYNC_TOKEN_PRESENT: ${{ secrets.CODEX_AUTH_SYNC_TOKEN != '' }}
-          CODEX_HOME: ${{ runner.temp }}/codex-home
-          GH_APP_ID: ${{ vars.GH_APP_ID }}
-          GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          SANDBOX_CONTEXT_PATH: ${{ steps.prepare.outputs.context_path }}
-          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-sandbox.jsonl
-        run: |
-          pnpm build
-          pnpm tracker:run --backfill none --sandbox-context "$SANDBOX_CONTEXT_PATH" --notification-action hold
-
-      - name: sandbox stateの完了publishを確認
-        id: finalize
-        if: success() && inputs.operation != 'dispose'
+          repository: ${{ github.repository }}
+          ref: ${{ needs.prepare.outputs.code_revision }}
+          fetch-depth: 0
+          persist-credentials: true
+      - name: sandbox stateの完了revisionをremoteから確認
+        id: final_state
         env:
           SANDBOX_OPERATION: ${{ inputs.operation }}
-          SANDBOX_ENVIRONMENT_ID: ${{ steps.prepare.outputs.environment_id }}
+          SANDBOX_ENVIRONMENT_ID: ${{ needs.prepare.outputs.environment_id }}
+          SANDBOX_EXPECTED_REVISION: ${{ needs.tracking.outputs.final_state_revision }}
         run: .github/scripts/sandbox-lifecycle.sh finalize
-
-      - name: run contextをartifactへ保存
-        if: always() && inputs.operation != 'dispose'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: sandbox-context-${{ steps.prepare.outputs.environment_id }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/sandbox-context.json
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: sandbox run reportをartifactへ保存
-        if: always() && inputs.operation != 'dispose'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: sandbox-output-${{ steps.prepare.outputs.environment_id }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            artifacts/run-reports/daily.json
-            artifacts/workflow/initial-pages-build.json
-            artifacts/workflow/initial-pages-deployment.json
-          if-no-files-found: warn
-          retention-days: 30
-
-      - name: sandbox Pages artifactを保存
-        if: success() && inputs.operation != 'dispose'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: sandbox-pages-${{ steps.prepare.outputs.environment_id }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: dist/web
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: 更新されたCodex認証ファイルをsecretへ書き戻す
-        if: always() && steps.codex_auth_placement.outputs.placed == 'true'
+      - name: sandbox完了情報を保存
         env:
-          CODEX_HOME: ${{ runner.temp }}/codex-home
-          GH_TOKEN: ${{ secrets.CODEX_AUTH_SYNC_TOKEN }}
+          SANDBOX_ENVIRONMENT_ID: ${{ needs.prepare.outputs.environment_id }}
+          SANDBOX_SCENARIO_ID: ${{ inputs.scenario_id }}
+          SANDBOX_NOTIFICATION_ACTION: ${{ inputs.notification_action }}
+          SANDBOX_RECORDING_OUTCOME: ${{ needs.prepare.outputs.recording_outcome }}
+          SANDBOX_TRACKING_RUN_ID: ${{ needs.tracking.outputs.tracking_run_id }}
+          SANDBOX_BASE_REVISION: ${{ needs.prepare.outputs.base_state_revision }}
+          SANDBOX_FINAL_REVISION: ${{ steps.final_state.outputs.state_revision }}
         run: |
-          .github/scripts/mask-codex-auth-values.sh "$CODEX_HOME/auth.json"
-          if sha256sum --check --status "${{ runner.temp }}/codex-auth-fingerprint"; then
-            echo "Codex認証ファイルは更新されていません"
-            exit 0
-          fi
-          if [[ -z "$GH_TOKEN" ]]; then
-            echo "CODEX_AUTH_SYNC_TOKENが空のためCodex認証ファイルをsecretへ書き戻せません" >&2
-            exit 1
-          fi
-          gh secret set CODEX_AUTH_JSON \
-            --repo "$GITHUB_REPOSITORY" \
-            < "$CODEX_HOME/auth.json"
-
-      - name: Codex認証関連ファイルを削除
-        if: always() && inputs.operation != 'dispose'
-        run: |
-          rm -rf "${{ runner.temp }}/codex-home"
-          rm -f "${{ runner.temp }}/codex-auth-fingerprint"
+          jq -cnS \
+            --arg environmentId "$SANDBOX_ENVIRONMENT_ID" \
+            --arg scenarioId "$SANDBOX_SCENARIO_ID" \
+            --arg notificationAction "$SANDBOX_NOTIFICATION_ACTION" \
+            --arg recordingOutcome "$SANDBOX_RECORDING_OUTCOME" \
+            --arg trackingRunId "$SANDBOX_TRACKING_RUN_ID" \
+            --arg baseStateRevision "$SANDBOX_BASE_REVISION" \
+            --arg finalStateRevision "$SANDBOX_FINAL_REVISION" \
+            '{schemaVersion: 1, environmentId: $environmentId, scenarioId: $scenarioId, notificationAction: $notificationAction, recordingOutcome: $recordingOutcome, trackingRunId: $trackingRunId, baseStateRevision: $baseStateRevision, finalStateRevision: $finalStateRevision, productionPagesDeployed: false, productionDiscordSent: false}' \
+            > "$RUNNER_TEMP/sandbox-result.json"
+      - name: sandbox完了情報をartifactへ保存
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sandbox-result-${{ needs.prepare.outputs.environment_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sandbox-result.json
+          if-no-files-found: error
+          retention-days: 30

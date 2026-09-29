@@ -6,6 +6,7 @@ import { decodeInitialPagesBuildArtifact } from "../initial-pages-build-artifact
 import {
   preflightInitialPagesDeployment,
   readInitialPagesDeploymentPreflight,
+  recordInitialPagesSequentialDeployment,
   recordInitialPagesWorkflowDeployment,
 } from "../initial-pages-deployment.js";
 import { isWorkflowPublicationReplay, workflowAdapterIdentity } from "../publication-runtime.js";
@@ -65,11 +66,15 @@ export async function preflightWorkflowPagesDeployment(
         adapters.environment,
       ),
     observedAt: adapters.now().toISOString(),
-    effectTarget: "production",
-    adapterIdentityDigest: await workflowAdapterIdentity(
-      adapters.repositoryPath,
-      nodeContentDigestPort,
-    ),
+    effectTarget: source.transaction.record.executionPolicy.effectTarget,
+    ...(source.transaction.record.executionPolicy.effectTarget === "production"
+      ? {
+          adapterIdentityDigest: await workflowAdapterIdentity(
+            adapters.repositoryPath,
+            nodeContentDigestPort,
+          ),
+        }
+      : {}),
   });
   await adapters.writeJsonArtifact(
     resolve(adapters.repositoryPath, command.preflightPath),
@@ -96,6 +101,43 @@ export async function recordWorkflowPagesDeployment(
   const preflight = await readInitialPagesDeploymentPreflight(
     resolve(adapters.repositoryPath, command.preflightPath),
   );
+  const effectTarget = adapters.environment["TRACKING_EFFECT_TARGET"];
+  if (effectTarget !== "production" && effectTarget !== "sandbox") {
+    throw new TypeError("Pages結果のeffect targetが不正です");
+  }
+  if (effectTarget === "sandbox") {
+    if (
+      adapters.environment["PAGES_DEPLOYMENT_OUTCOME"] !== "skipped" ||
+      (preflight.kind === "ready" && adapters.environment["PAGES_UPLOAD_OUTCOME"] !== "success") ||
+      (preflight.kind !== "ready" && adapters.environment["PAGES_UPLOAD_OUTCOME"] !== "skipped")
+    ) {
+      throw new TypeError("sandbox Pages artifactの結果が不正です");
+    }
+    let recordingId: string | undefined;
+    if (preflight.kind === "ready") {
+      const artifactId = optionalOutput(adapters.environment, "PAGES_ARTIFACT_ID");
+      const artifactName = optionalOutput(adapters.environment, "PAGES_ARTIFACT_NAME");
+      if (artifactId == null || artifactName == null) {
+        throw new TypeError("sandbox Pages artifactの識別情報がありません");
+      }
+      recordingId = `${artifactName}:${artifactId}`;
+    }
+    const outcome = recordInitialPagesSequentialDeployment({
+      artifact,
+      preflight,
+      target: "recording",
+      ...(recordingId == null ? {} : { recordingId }),
+      observedAt: adapters.now().toISOString(),
+    });
+    await adapters.writeJsonArtifact(
+      resolve(adapters.repositoryPath, command.outcomePath),
+      outcome,
+    );
+    if (outcome.kind === "failure") {
+      throw new TypeError(`sandbox Pages結果が確定しませんでした。種別: ${outcome.reason}`);
+    }
+    return;
+  }
   const outcome = recordInitialPagesWorkflowDeployment({
     artifact,
     preflight,

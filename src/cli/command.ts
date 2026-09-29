@@ -89,7 +89,6 @@ export type DailyCliCommand = OnlineCommandFields &
   NotificationActionCommandFields &
   Readonly<{
     kind: "daily";
-    sandboxContextPath: string | undefined;
   }>;
 
 /** 外部公開を行わない日次実行を表すCLI入力。 */
@@ -125,6 +124,7 @@ export type CollectAnalyzeCliCommand = OnlineCommandFields &
     mode: "none" | "linked" | "all-open";
     repositoryFilter: readonly string[];
     artifactPath: string;
+    sandboxContextPath: string | undefined;
   }>;
 
 /** 検証済みworkflow artifactをstate branchへ保存するCLI入力。 */
@@ -319,19 +319,12 @@ function parseOnlineFields(
 function parseDaily(args: readonly string[]): DailyCliCommand {
   const options = parseOptions(
     args,
-    new Set([
-      "--config",
-      "--notification-action",
-      "--report",
-      "--sandbox-context",
-      "--scheduled-for",
-    ]),
+    new Set(["--config", "--notification-action", "--report", "--scheduled-for"]),
   );
   return Object.freeze({
     kind: "daily",
     ...parseOnlineFields("daily", options),
     notificationAction: parseNotificationAction(options),
-    sandboxContextPath: optionalSingleOption(options, "--sandbox-context"),
   });
 }
 
@@ -390,6 +383,7 @@ function parseCollectAnalyze(args: readonly string[]): CollectAnalyzeCliCommand 
       "--notification-action",
       "--report",
       "--repository",
+      "--sandbox-context",
       "--scheduled-for",
     ]),
   );
@@ -397,6 +391,10 @@ function parseCollectAnalyze(args: readonly string[]): CollectAnalyzeCliCommand 
   const repositoryFilter = parseRepositoryFilter(options);
   if (mode === "none" && repositoryFilter.length !== 0) {
     throw usageError("--modeがnoneのとき--repositoryは指定できません");
+  }
+  const sandboxContextPath = optionalSingleOption(options, "--sandbox-context");
+  if (sandboxContextPath != null && mode !== "none") {
+    throw usageError("sandbox解析にbackfill範囲は指定できません");
   }
   const fields = parseOnlineFields("collect-analyze", options);
   const artifactPath = singleOption(options, "--artifact", DEFAULT_WORKFLOW_ARTIFACT_PATH);
@@ -408,6 +406,7 @@ function parseCollectAnalyze(args: readonly string[]): CollectAnalyzeCliCommand 
     mode,
     repositoryFilter,
     artifactPath,
+    sandboxContextPath,
   });
 }
 

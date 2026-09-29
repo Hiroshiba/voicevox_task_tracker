@@ -36,6 +36,7 @@ export type RunStageCliCommand = Readonly<{
   mode: "none" | "linked" | "all-open";
   repositoryFilter: readonly string[];
   manualResolutionReceiptPath: string | undefined;
+  sandboxContextPath: string | undefined;
 }>;
 
 /** remote stateから次の分割段階を選ぶCLI入力。 */
@@ -95,6 +96,7 @@ export function parseRunStage(args: readonly string[]): RunStageCliCommand {
       "--notification-action",
       "--mode",
       "--repository",
+      "--sandbox-context",
       "--manual-resolution-receipt",
     ]),
   );
@@ -122,6 +124,10 @@ export function parseRunStage(args: readonly string[]): RunStageCliCommand {
   if (mode === "none" && repositoryFilter.length !== 0) {
     throw usageError("--modeがnoneのとき--repositoryは指定できません");
   }
+  const sandboxContextPath = optionalSingleOption(options, "--sandbox-context");
+  if (sandboxContextPath != null && (stage.data !== "analyze" || mode !== "none")) {
+    throw usageError("--sandbox-contextは通常範囲の解析段階だけに指定してください");
+  }
   if (
     stage.data !== "analyze" &&
     (options.has("--scheduled-for") ||
@@ -146,5 +152,6 @@ export function parseRunStage(args: readonly string[]): RunStageCliCommand {
     mode,
     repositoryFilter,
     manualResolutionReceiptPath,
+    sandboxContextPath,
   });
 }

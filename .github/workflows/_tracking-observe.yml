@@ -30,8 +30,15 @@ on:
       workflow_kind:
         required: true
         type: string
+      artifact_retention_days:
+        required: true
+        type: number
 
 permissions: {}
+
+env:
+  TRACKING_EFFECT_TARGET: ${{ inputs.effect_target }}
+  TRACKING_STATE_REF: ${{ inputs.state_ref }}
 
 jobs:
   recovery-router:
@@ -59,27 +66,15 @@ jobs:
           effect-target: ${{ inputs.effect_target }}
           config-path: ${{ inputs.config_path }}
           run-id: ${{ inputs.run_id }}
-      - name: 診断JSONLを暗号化
+      - name: 診断と失敗を保存
         if: always()
-        env:
-          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 }}
-        run: |
-          if [[ -f "$RUNNER_TEMP/voicevox-task-tracker-diagnostics-$GITHUB_JOB.jsonl" ]]; then
-            .github/scripts/encrypt-diagnostics.sh artifacts/workflow/runtime/tracker-run.mjs
-          fi
-      - name: 暗号化済み診断artifactを保存
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: ./.github/actions/finalize-tracking-job
         with:
-          name: ${{ inputs.workflow_kind }}-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-          path: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.bundle
-          if-no-files-found: ignore
-          retention-days: 7
-      - name: 公開失敗artifactを保存
-        if: always()
-        uses: ./.github/actions/upload-failure-artifact
-        with:
-          artifact-name: ${{ inputs.workflow_kind }}-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          effect-target: ${{ inputs.effect_target }}
+          workflow-kind: ${{ inputs.workflow_kind }}
+          runtime-cli: artifacts/workflow/runtime/tracker-run.mjs
+          retention-days: ${{ inputs.artifact_retention_days }}
+          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
 
   notify-operations:
     needs: recovery-router
@@ -142,26 +137,18 @@ jobs:
           name: operations-alert-receipt-${{ github.run_id }}-${{ github.run_attempt }}
           path: artifacts/workflow/operations-alert-receipt.json
           if-no-files-found: warn
-          retention-days: 7
-      - name: 公開失敗artifactを保存
+          retention-days: ${{ inputs.artifact_retention_days }}
+      - name: 診断と失敗を保存
         if: always()
-        uses: ./.github/actions/upload-failure-artifact
+        uses: ./.github/actions/finalize-tracking-job
         with:
-          artifact-name: ${{ inputs.workflow_kind }}-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+          effect-target: ${{ inputs.effect_target }}
+          workflow-kind: ${{ inputs.workflow_kind }}
+          runtime-cli: dist/cli/tracker-run.js
+          retention-days: ${{ inputs.artifact_retention_days }}
+          diagnostics-key: ${{ secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 }}
+          diagnostics-required: ${{ steps.notify.outcome == 'success' || steps.notify.outcome == 'failure' }}
           failure-directory: artifacts/workflow/notify-failures
-      - name: 診断JSONLを暗号化
-        if: always() && (steps.notify.outcome == 'success' || steps.notify.outcome == 'failure')
-        env:
-          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 }}
-        run: .github/scripts/encrypt-diagnostics.sh dist/cli/tracker-run.js
-      - name: 暗号化済み診断artifactを保存
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ${{ inputs.workflow_kind }}-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-          path: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.bundle
-          if-no-files-found: ignore
-          retention-days: 7
 
   report-workflow:
     needs: [recovery-router, notify-operations]
@@ -227,21 +214,13 @@ jobs:
           path: artifacts/run-reports/workflow.json
           if-no-files-found: error
           retention-days: 30
-      - name: 公開失敗artifactを保存
+      - name: 診断と失敗を保存
         if: always()
-        uses: ./.github/actions/upload-failure-artifact
+        uses: ./.github/actions/finalize-tracking-job
         with:
-          artifact-name: ${{ inputs.workflow_kind }}-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-      - name: 診断JSONLを暗号化
-        if: always() && (steps.report.outcome == 'success' || steps.report.outcome == 'failure')
-        env:
-          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 }}
-        run: .github/scripts/encrypt-diagnostics.sh dist/cli/tracker-run.js
-      - name: 暗号化済み診断artifactを保存
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ${{ inputs.workflow_kind }}-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
-          path: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.bundle
-          if-no-files-found: ignore
-          retention-days: 7
+          effect-target: ${{ inputs.effect_target }}
+          workflow-kind: ${{ inputs.workflow_kind }}
+          runtime-cli: dist/cli/tracker-run.js
+          retention-days: ${{ inputs.artifact_retention_days }}
+          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
+          diagnostics-required: ${{ steps.report.outcome == 'success' || steps.report.outcome == 'failure' }}

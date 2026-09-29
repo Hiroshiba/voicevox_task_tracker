@@ -27,19 +27,6 @@ function resolveScheduledFor(command: OnlineCommand, startedAt: UtcIsoDateTime):
 function executionRequest(command: OnlineCommand): object {
   switch (command.kind) {
     case "daily":
-      if (command.sandboxContextPath != null) {
-        return {
-          requestKind: "sandbox_daily",
-          executionPolicy: {
-            kind: "sandbox_daily",
-            executionShape: "split_workflow",
-            effectTarget: "sandbox",
-            notificationAction: command.notificationAction,
-          },
-          sandboxContextPath: command.sandboxContextPath,
-          output: { kind: "publication" },
-        };
-      }
       return {
         requestKind: "sequential_daily",
         executionPolicy: {
@@ -63,6 +50,19 @@ function executionRequest(command: OnlineCommand): object {
       };
     case "backfill":
     case "collect-analyze": {
+      if (command.kind === "collect-analyze" && command.sandboxContextPath != null) {
+        return {
+          requestKind: "sandbox_daily",
+          executionPolicy: {
+            kind: "sandbox_daily",
+            executionShape: "split_workflow",
+            effectTarget: "sandbox",
+            notificationAction: command.notificationAction,
+          },
+          sandboxContextPath: command.sandboxContextPath,
+          output: { kind: "analysis_artifact", path: command.artifactPath },
+        };
+      }
       if (command.mode === "none") {
         if (command.kind === "backfill") {
           return {
