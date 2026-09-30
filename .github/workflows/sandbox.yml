@@ -507,6 +507,7 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
           git clone --quiet --no-checkout --no-hardlinks . "$RUNNER_TEMP/sandbox-state"
+          git -C "$RUNNER_TEMP/sandbox-state" checkout --quiet --detach "$SANDBOX_FINAL_REVISION"
           node dist/cli/tracker-run.js verify-state --state-directory "$RUNNER_TEMP/sandbox-state/state" \
             --state-revision "$SANDBOX_FINAL_REVISION" \
             > "$RUNNER_TEMP/state-verification.txt"

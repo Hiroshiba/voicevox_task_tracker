@@ -47,8 +47,10 @@ GitHub App、実Codex、Pages deploy、Discordの認証は不要です。
 | `build:web`              | `dist/web/`の静的サイト                                   |
 
 cacheは`node_modules/.cache/voicevox-task-tracker/`へ保存します。
-型検査はincremental、ESLintはcontent cache、Prettierとsource-lines・依存検査もcacheを使います。
-CIのcache keyはlockfile、Node version、各設定とcheckerのdigest・versionを含みます。
+型検査はincremental、Prettierとsource-lines・依存検査はcacheを使います。
+ESLintは参照先の型変更も検査するため、結果をcacheせず毎回全体を検査します。
+依存検査はsourceの一覧が変わると依存先を解決し直します。
+CIはこれらのcacheを復元し、keyにpackage manifest、lockfile、Node version、各設定とcheckerのdigest・versionを含めます。
 cacheを無効化して繰り返す確認は通常の手順にしません。
 新しいsourceが400行を超えたら責務分割を検討し、1000行超はerrorとして扱います。
 一時baselineや新しいignoreでsourceを例外化しません。
@@ -355,7 +357,7 @@ pnpm build:web
 ```
 
 `format:check`が失敗した場合は`pnpm format`で整形し、意図しないファイルまで変わっていないことを確認します。
-型情報を使うESLint規則を含むため、最終確認でもcacheを有効にしたまま`pnpm lint`を実行します。
+参照先の型を変更した場合も、`pnpm lint`で型情報を使うESLint規則を確認します。
 サンプル公開DTOを実データで上書きしたままにしていないかも確認してください。
 
 外部サービスを使った確認、sandboxの連続run、通知actionの確認結果は、実行IDと証拠artifactを別途レビューへ記載します。

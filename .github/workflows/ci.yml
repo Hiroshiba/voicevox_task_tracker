@@ -32,8 +32,13 @@ jobs:
       - name: 静的検査cacheを復元
         uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
         with:
-          path: node_modules/.cache/voicevox-task-tracker
-          key: static-source2-dependency1-${{ runner.os }}-node${{ steps.node.outputs.node-version }}-${{ hashFiles('pnpm-lock.yaml', '.node-version', 'eslint.config.js', '.prettierrc.json', '.prettierignore', 'tsconfig.json', 'tsconfig.build.json', 'web/tsconfig.json', 'config/source-line-policy.mjs', 'scripts/check-source-lines.mjs', 'scripts/check-dependencies.mjs') }}
+          path: |
+            node_modules/.cache/voicevox-task-tracker/typecheck-node.tsbuildinfo
+            node_modules/.cache/voicevox-task-tracker/typecheck-web.tsbuildinfo
+            node_modules/.cache/voicevox-task-tracker/dependency-graph.json
+            node_modules/.cache/voicevox-task-tracker/source-lines.json
+            node_modules/.cache/voicevox-task-tracker/prettier-check
+          key: static-source2-dependency2-${{ runner.os }}-node${{ steps.node.outputs.node-version }}-${{ hashFiles('package.json', 'pnpm-lock.yaml', '.node-version', 'eslint.config.js', '.prettierrc.json', '.prettierignore', 'tsconfig.json', 'tsconfig.build.json', 'web/tsconfig.json', 'config/source-line-policy.mjs', 'scripts/check-source-lines.mjs', 'scripts/check-dependencies.mjs') }}
       - name: 型を検査
         run: pnpm typecheck
       - name: lintを実行

@@ -5,7 +5,7 @@ import process from "node:process";
 
 import ts from "typescript";
 
-const CHECKER_VERSION = 1;
+const CHECKER_VERSION = 2;
 const CACHE_PATH = "node_modules/.cache/voicevox-task-tracker/dependency-graph.json";
 
 function digest(value) {
@@ -133,6 +133,12 @@ function main() {
       checkerVersion: CHECKER_VERSION,
       typescriptVersion: ts.version,
       nodeVersion: process.version,
+      sourceFiles: projects.map((project) =>
+        project.fileNames
+          .map(sourcePath)
+          .filter((path) => path != null)
+          .sort(),
+      ),
       configurations: ["tsconfig.json", "web/tsconfig.json", "scripts/check-dependencies.mjs"].map(
         (path) => [path, digest(readFileSync(path))],
       ),

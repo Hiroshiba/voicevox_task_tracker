@@ -541,7 +541,7 @@ semantic補正は候補1件の論理call内で行うため、追加世代を`aiC
 | `state/history/YYYY-MM-DD.jsonl`                 | schema version 7。前回snapshotとの差分と送信済み通知を持つ日次履歴。確認済み状態は記録しない                                 |
 | `state/ai-cache/<sha256>.json`                   | 汎用AIのcontent-addressed cache                                                                                              |
 | `state/personal-reminder-ai-cache/<sha256>.json` | 個人原因ごとの意味評価cache。`state.personalReminderAiCacheDirectory`で配置先を指定する                                      |
-| `state/notification-ledger.json`                 | schema version 8。予約期限、送信開始済み、送信済み、確認済みの記録を持つ通知管理記録                                         |
+| `state/notification-ledger.json`                 | schema version 10。予約期限、送信開始済み、送信済み、確認済みの記録を持つ通知管理記録                                        |
 | `state/run-reports/YYYY-MM-DD.json`              | 初回Pagesと通知の確定後、finalizationで保存する実績指標と診断                                                                |
 
 snapshot 21の各項目は、原因の列挙計画を表す`personalReminderCausePlanning`を必須で持ちます。`status`は`pending`、`completed`、`excluded`のいずれかとし、すべて`planningVersion`を保持します。`completed`には列挙に使った観測時刻`observedAt`、`excluded`には`reason: terminal_without_cause`を持たせます。
