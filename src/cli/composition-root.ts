@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { z } from "zod";
 
+import { PagesEffectNotStartedError } from "../application/tracking-run/pages-effect.js";
 import {
   executeCodexAnalysis,
   executeCodexAuthenticationPreflight,
@@ -18,18 +19,17 @@ import {
   enumerateGitHubItemsByIdentifiers,
   enumerateOpenGitHubItems,
 } from "../github/index.js";
+import {
+  writeCliJsonArtifact,
+  writeCliTextFile,
+} from "../infrastructure/tracking-run/file-output.js";
+import type { ProductionRuntimeAdapters } from "../infrastructure/tracking-run/runtime/adapters.js";
+import { parseSandboxContext } from "../infrastructure/tracking-run/sandbox-context.js";
 import { buildWebOutput, writePublicDataFiles } from "../pages/index.js";
 import { GitStateBranchAdapter, StatePersistenceSession } from "../persistence/index.js";
 import { type CliApplication } from "./application.js";
-import { writeCliJsonArtifact, writeCliTextFile } from "./file-output.js";
-import {
-  createProductionCliApplication,
-  type ProductionRuntimeAdapters,
-  type ProductionTypes,
-} from "./production-runtime.js";
+import { createProductionCliApplication } from "./create-application.js";
 import { verifyPersistentStateDirectory } from "./state-verification.js";
-import { parseSandboxContext } from "./sandbox-context.js";
-import { PagesEffectNotStartedError } from "../application/tracking-run/pages-effect.js";
 
 const DEFAULT_PAGES_OUTPUT_DIRECTORY = "web/public/data";
 const sandboxStateRefSchema = z.string().regex(/^sandbox-state\/env-[1-9][0-9]*-[1-9][0-9]*$/u);
@@ -108,9 +108,7 @@ export function createDefaultProductionRuntimeAdapters(
 }
 
 /** 注入済みの具体アダプターから全サブコマンドを実行するapplicationを組み立てる。 */
-export function createCliApplication(
-  adapters: CliCompositionAdapters,
-): CliApplication<ProductionTypes> {
+export function createCliApplication(adapters: CliCompositionAdapters): CliApplication {
   return createProductionCliApplication(createProductionAdapters(adapters));
 }
 
@@ -157,8 +155,6 @@ export function createDefaultCliCompositionAdapters(
 /** Node.js process向けの実アダプターでCLI applicationを組み立てる。 */
 export function createDefaultCliApplication(
   diagnosticsRecorder?: DiagnosticsJsonlRecorder,
-): CliApplication<ProductionTypes> {
+): CliApplication {
   return createCliApplication(createDefaultCliCompositionAdapters(diagnosticsRecorder));
 }
-
-export { type ProductionTypes } from "./production-runtime.js";

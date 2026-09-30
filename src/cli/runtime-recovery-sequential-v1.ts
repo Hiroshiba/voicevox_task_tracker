@@ -1,15 +1,15 @@
 import { resolve } from "node:path";
 
-import { serializeCanonicalJson } from "../canonical-json/value.js";
 import type {
   RuntimeRecoveryInputV1,
   RuntimeRecoveryOutputV1,
 } from "../application/tracking-run/contracts/runtime-recovery-v1.js";
 import {
-  receiptChainEnvelopeSchema,
   RECEIPT_CHAIN_SCHEMA_VERSION,
+  receiptChainEnvelopeSchema,
 } from "../application/tracking-run/receipt-chain-schema.js";
 import { verifyReceiptChain } from "../application/tracking-run/receipt-chain.js";
+import { serializeCanonicalJson } from "../canonical-json/value.js";
 import {
   createDiagnosticsRecorder,
   type DiagnosticsJsonlRecorder,
@@ -19,13 +19,13 @@ import {
   inspectRunState,
   type RunStateDecision,
 } from "../infrastructure/tracking-run/inspect-run-state.js";
+import type { ProductionRuntimeAdapters } from "../infrastructure/tracking-run/runtime/adapters.js";
+import { readSequentialReceipts } from "../infrastructure/tracking-run/runtime/daily-startup/launch.js";
+import { sequentialReceiptPath } from "../infrastructure/tracking-run/sequential-receipt-path.js";
+import { splitStagePaths } from "../infrastructure/tracking-run/split-stage-paths.js";
+import { restoreSplitReceipts } from "../infrastructure/tracking-run/split-stage-recovery.js";
 import { createDefaultProductionRuntimeAdapters } from "./composition-root.js";
-import { createProductionCliApplication } from "./production-runtime/create-application.js";
-import type { ProductionRuntimeAdapters } from "./production-runtime/adapters.js";
-import { readSequentialReceipts } from "./production-runtime/daily-startup/launch.js";
-import { restoreSplitReceipts } from "./split-stage-recovery.js";
-import { splitStagePaths } from "./split-stage-paths.js";
-import { sequentialReceiptPath } from "./sequential-receipt-path.js";
+import { createProductionCliApplication } from "./create-application.js";
 
 function exactAdapters(
   runId: string,

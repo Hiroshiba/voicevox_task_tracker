@@ -39,7 +39,7 @@ case "$kind" in
     protocol_version="$(jq -r '.recoveryInput.protocolVersion' "$RUNNER_TEMP/tracking-bootstrap.json")"
     expected_identity="$(jq -r '.recoveryInput.expectedWorkflowEffectAdapterIdentityDigest' "$RUNNER_TEMP/tracking-bootstrap.json")"
     if [[ "$protocol_version" == '1' ]]; then
-      current_identity="$(node --input-type=module -e "import { workflowAdapterIdentity } from './dist/cli/publication-runtime.js'; import { nodeContentDigestPort } from './dist/infrastructure/tracking-run/content-digest.js'; process.stdout.write(await workflowAdapterIdentity(process.cwd(), nodeContentDigestPort));")"
+      current_identity="$(node --input-type=module -e "import { workflowAdapterIdentity } from './dist/infrastructure/tracking-run/publication-runtime.js'; import { nodeContentDigestPort } from './dist/infrastructure/tracking-run/content-digest.js'; process.stdout.write(await workflowAdapterIdentity(process.cwd(), nodeContentDigestPort));")"
       if [[ "$current_identity" != "$expected_identity" ]]; then
         echo "実行中workflowの効果adapterが保留runの記録と一致しません" >&2
         exit 1

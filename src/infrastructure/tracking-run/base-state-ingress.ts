@@ -1,8 +1,9 @@
-import { parseSha256Hash } from "../../canonical-json/sha256.js";
 import type {
   AnalysisPreviousState,
   PreviousSnapshotProjection,
 } from "../../application/tracking-run/contracts/previous-state.js";
+import { parseSha256Hash } from "../../canonical-json/sha256.js";
+import type { AiCacheEntry } from "../../codex/cache.js";
 import {
   createPersonalReminderAiCacheEntry,
   type PersonalReminderAiCacheEntry,
@@ -17,12 +18,11 @@ import type {
   StatePersistenceConfiguration,
 } from "../../persistence/branch-adapter.js";
 import { StateBranchConflictError, StateFormatError } from "../../persistence/errors.js";
-import { StatePersistenceSession } from "../../persistence/state-persistence-session.js";
-import type { AiCacheEntry } from "../../codex/cache.js";
 import type { StateHistoryRecord } from "../../persistence/history.js";
-import type { StateSnapshotReadResult } from "../../persistence/state-persistence-session.js";
-import type { StateNotificationLedger } from "../../persistence/state-documents.js";
 import { snapshotEffectiveGraphStateByNodeId } from "../../persistence/snapshot-v21.js";
+import type { StateNotificationLedger } from "../../persistence/state-documents.js";
+import type { StateSnapshotReadResult } from "../../persistence/state-persistence-session.js";
+import { StatePersistenceSession } from "../../persistence/state-persistence-session.js";
 
 /** 旧下流が必要とするsessionと現行形式へ変換したbase state。 */
 export type BaseStateIngress = Readonly<{

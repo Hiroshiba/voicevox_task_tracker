@@ -1,16 +1,27 @@
-import { serializeCanonicalJson } from "../../canonical-json/value.js";
-import type { RuntimeRecoveryInputV1 } from "../../application/tracking-run/contracts/runtime-recovery-v1.js";
-import type { RuntimeRecoveryInputV2 } from "../../application/tracking-run/contracts/runtime-recovery-v2.js";
-import type { Receipt } from "../../application/tracking-run/receipt-schema.js";
-import type { ObservedStateCommitPosition } from "../../application/tracking-run/observed-state-commit.js";
-import { verifyReceiptChain } from "../../application/tracking-run/receipt-chain.js";
-import type { ReceiptChainEntry } from "../../application/tracking-run/receipt-chain-schema.js";
-import { readRunTransactionMarkerRecoveryBootstrap } from "../../application/tracking-run/recovery-bootstrap.js";
 import {
   DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
   RUN_TRANSACTION_MARKER_STATE_PATH_V1,
 } from "../../application/tracking-run/contracts/recovery-paths.js";
+import type { RuntimeRecoveryInputV1 } from "../../application/tracking-run/contracts/runtime-recovery-v1.js";
+import type { RuntimeRecoveryInputV2 } from "../../application/tracking-run/contracts/runtime-recovery-v2.js";
+import type { ObservedStateCommitPosition } from "../../application/tracking-run/observed-state-commit.js";
+import type { ReceiptChainEntry } from "../../application/tracking-run/receipt-chain-schema.js";
+import { verifyReceiptChain } from "../../application/tracking-run/receipt-chain.js";
+import type { Receipt } from "../../application/tracking-run/receipt-schema.js";
+import { readRunTransactionMarkerRecoveryBootstrap } from "../../application/tracking-run/recovery-bootstrap.js";
+import { serializeCanonicalJson } from "../../canonical-json/value.js";
+import {
+  validateStatePersistenceConfiguration,
+  type StateBranchAdapter,
+  type StateBranchHead,
+  type StateFileReadResult,
+  type StatePersistenceConfiguration,
+} from "../../persistence/branch-adapter.js";
 import { readExactStateTree } from "../../persistence/state-cas.js";
+import {
+  parseStateNotificationLedger,
+  type StateNotificationLedger,
+} from "../../persistence/state-documents.js";
 import {
   authorizeAdvanceAfterOrthogonalCommits,
   findInitialStateRevision,
@@ -20,20 +31,9 @@ import {
   verifyRunTransactionFiles,
   type VerifiedRunTransactionFiles,
 } from "../../persistence/state-transaction-files.js";
-import {
-  parseStateNotificationLedger,
-  type StateNotificationLedger,
-} from "../../persistence/state-documents.js";
-import {
-  validateStatePersistenceConfiguration,
-  type StateBranchAdapter,
-  type StateBranchHead,
-  type StateFileReadResult,
-  type StatePersistenceConfiguration,
-} from "../../persistence/branch-adapter.js";
-import { selectRecoveryStage, type RecoveryStageInput } from "./recovery-stage.js";
 import { inspectRunBootstrapState } from "./bootstrap-state.js";
 import { nodeContentDigestPort } from "./content-digest.js";
+import { selectRecoveryStage, type RecoveryStageInput } from "./recovery-stage.js";
 import { observeStateCommitAtRevision } from "./state-receipt-observation.js";
 
 /** 現行run開始と特定runのexact再開を区別する要求。 */

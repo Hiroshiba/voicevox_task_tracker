@@ -1,44 +1,43 @@
 import { type Dirent } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
-import { join } from "node:path";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import { z } from "zod";
-import type { loadConfig } from "../config/index.js";
-import {
-  validateStatePersistenceConfiguration,
-  type StatePersistenceConfiguration,
-  type StateFileReadResult,
-} from "../persistence/branch-adapter.js";
 import {
   DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
   INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1,
   RUN_TRANSACTION_MARKER_STATE_PATH_V1,
 } from "../application/tracking-run/contracts/recovery-paths.js";
+import type { loadConfig } from "../config/index.js";
+import {
+  validateStatePersistenceConfiguration,
+  type StateFileReadResult,
+  type StatePersistenceConfiguration,
+} from "../persistence/branch-adapter.js";
 import { verifyRunTransactionFiles } from "../persistence/state-transaction-files.js";
 
-import { createAiCacheEntry, type AiCacheKey } from "../codex/cache.js";
 import { serializeCanonicalJsonLine } from "../canonical-json/index.js";
+import { createAiCacheEntry, type AiCacheKey } from "../codex/cache.js";
+import { CliStateVerificationError } from "../infrastructure/tracking-run/errors.js";
 import {
-  createAiCacheMigrationPlan,
-  serializeStateHistoryRecords,
-  serializeStateNotificationLedger,
-  serializeStateSnapshot,
+  OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
   StateFormatError,
+  createAiCacheMigrationPlan,
+  createStateOperationsAlertLedger,
+  isCanonicalStateOperationsAlertLedgerSource,
   migrateStateSnapshot,
   parseStateHistoryRecords,
   parseStateNotificationLedger,
   parseStateOperationsAlertLedger,
-  isCanonicalStateOperationsAlertLedgerSource,
-  createStateOperationsAlertLedger,
-  OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
+  serializeStateHistoryRecords,
+  serializeStateNotificationLedger,
   serializeStateOperationsAlertLedger,
+  serializeStateSnapshot,
   type AiCacheMigrationFile,
   type AiCacheMigrationPlan,
   type LegacyAiCacheEntry,
 } from "../persistence/index.js";
 import { type VerifyStateCliCommand } from "./command.js";
-import { CliStateVerificationError } from "./errors.js";
 
 const HISTORY_FILE_PATTERN = /^(\d{4}-\d{2}-\d{2})\.jsonl$/u;
 const AI_CACHE_FILE_PATTERN = /^[0-9a-f]{64}\.json$/u;

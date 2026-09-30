@@ -1,9 +1,15 @@
-import { type UtcIsoDateTime } from "../domain/index.js";
 import { z } from "zod";
 import {
   notificationActionSchema,
   type NotificationAction,
 } from "../application/tracking-run/contracts/closed-values.js";
+import { type UtcIsoDateTime } from "../domain/index.js";
+import {
+  parseBackfillMode,
+  parseNotificationAction,
+  parseRepositoryFilter,
+  parseSchedule,
+} from "./command-online-options.js";
 import {
   optionalSingleOption,
   parseOptions,
@@ -12,11 +18,9 @@ import {
   type ParsedOptions,
 } from "./command-options.js";
 import {
-  parseBackfillMode,
-  parseNotificationAction,
-  parseRepositoryFilter,
-  parseSchedule,
-} from "./command-online-options.js";
+  parseNotifyOperations,
+  type NotifyOperationsCliCommand,
+} from "./operations-alert-command.js";
 import {
   parseRecoverRuntimeV2,
   parseRouteStage,
@@ -25,42 +29,29 @@ import {
   type RouteStageCliCommand,
   type RunStageCliCommand,
 } from "./split-stage-command.js";
-import {
-  parseNotifyOperations,
-  type NotifyOperationsCliCommand,
-} from "./operations-alert-command.js";
-import {
-  parsePrepareNotificationHistoryPages,
-  parsePreflightNotificationHistoryDeployment,
-  parseRecordNotificationHistoryDeployment,
-  type PrepareNotificationHistoryPagesCliCommand,
-  type PreflightNotificationHistoryDeploymentCliCommand,
-  type RecordNotificationHistoryDeploymentCliCommand,
-} from "./notification-history-deployment-command.js";
 
 export { formatCliUsage } from "./command-usage.js";
+export type {
+  PreflightNotificationHistoryDeploymentCliCommand,
+  PrepareNotificationHistoryPagesCliCommand,
+  RecordNotificationHistoryDeploymentCliCommand,
+} from "./notification-history-deployment-command.js";
+export type { NotifyOperationsCliCommand } from "./operations-alert-command.js";
+export type {
+  RecoverRuntimeV2CliCommand,
+  RouteStageCliCommand,
+  RunStageCliCommand,
+} from "./split-stage-command.js";
+export { notificationActionSchema, type NotificationAction };
 
 const DEFAULT_CONFIG_PATH = "config.yml";
 const DEFAULT_REPORT_DIRECTORY = "artifacts/run-reports";
 const DEFAULT_ARTIFACT_DIRECTORY = "artifacts";
 const DEFAULT_WORKFLOW_ARTIFACT_PATH = "artifacts/workflow/validated-run.json";
-const DEFAULT_INITIAL_STATE_RECEIPT_PATH = "artifacts/workflow/initial-state-commit-receipt.json";
-const DEFAULT_SETTLEMENT_RECEIPT_PATH = "artifacts/workflow/notification-settlement-receipt.json";
-const DEFAULT_FINALIZATION_RECEIPT_PATH = "artifacts/workflow/run-finalization-receipt.json";
 const DEFAULT_MANUAL_RESOLUTION_RECEIPT_PATH = "artifacts/workflow/manual-resolution-receipt.json";
 const DEFAULT_COLLECT_ANALYZE_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/collect-analyze.json`;
 const DEFAULT_WORKFLOW_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/workflow.json`;
 const DELIVERY_ID_PATTERN = /^discord-digest:v1:[0-9a-f]{24}:message:[1-9][0-9]*$/u;
-export { notificationActionSchema, type NotificationAction };
-export type {
-  PrepareNotificationHistoryPagesCliCommand,
-  PreflightNotificationHistoryDeploymentCliCommand,
-  RecordNotificationHistoryDeploymentCliCommand,
-} from "./notification-history-deployment-command.js";
-export type { RunStageCliCommand } from "./split-stage-command.js";
-export type { RouteStageCliCommand } from "./split-stage-command.js";
-export type { RecoverRuntimeV2CliCommand } from "./split-stage-command.js";
-export type { NotifyOperationsCliCommand } from "./operations-alert-command.js";
 const deliveryIdSchema = z.string().regex(DELIVERY_ID_PATTERN);
 const resolveDiscordDeliveryResolutionSchema = z.enum(["retry", "acknowledge"]);
 const runIdSchema = z.string().regex(/^tracker-run:[0-9a-f]{64}$/u);
@@ -272,15 +263,6 @@ export type CliCommand =
   | RouteStageCliCommand
   | RecoverRuntimeV2CliCommand
   | CollectAnalyzeCliCommand
-  | PersistStateCliCommand
-  | BuildPagesCliCommand
-  | PrepareNotificationHistoryPagesCliCommand
-  | PreflightNotificationHistoryDeploymentCliCommand
-  | RecordNotificationHistoryDeploymentCliCommand
-  | PreflightPagesDeploymentCliCommand
-  | RecordPagesDeploymentCliCommand
-  | SettleNotificationsCliCommand
-  | FinalizeRunCliCommand
   | ResolveDiscordDeliveryCliCommand
   | NotifyOperationsCliCommand
   | ReportWorkflowCliCommand
@@ -424,165 +406,6 @@ function parseRunSequential(args: readonly string[]): RunSequentialCliCommand {
       command.reportPath === `${DEFAULT_REPORT_DIRECTORY}/backfill.json`
         ? `${DEFAULT_REPORT_DIRECTORY}/run-sequential.json`
         : command.reportPath,
-  });
-}
-
-function parsePersistState(args: readonly string[]): PersistStateCliCommand {
-  const options = parseOptions(args, new Set(["--artifact", "--config", "--receipt"]));
-  const artifactPath = singleOption(options, "--artifact", DEFAULT_WORKFLOW_ARTIFACT_PATH);
-  const receiptPath = singleOption(options, "--receipt", DEFAULT_INITIAL_STATE_RECEIPT_PATH);
-  assertDifferentOutputPaths(artifactPath, receiptPath);
-  return Object.freeze({
-    kind: "persist-state",
-    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
-    artifactPath,
-    receiptPath,
-  });
-}
-
-function parseBuildPages(args: readonly string[]): BuildPagesCliCommand {
-  const options = parseOptions(
-    args,
-    new Set(["--receipt", "--build-artifact", "--config", "--output"]),
-  );
-  return Object.freeze({
-    kind: "build-pages",
-    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
-    initialStateReceiptPath: singleOption(options, "--receipt", DEFAULT_INITIAL_STATE_RECEIPT_PATH),
-    buildArtifactPath: singleOption(
-      options,
-      "--build-artifact",
-      "artifacts/workflow/initial-pages-build.json",
-    ),
-    outputDirectory: singleOption(options, "--output", "web/public/data"),
-  });
-}
-
-function parsePreflightPagesDeployment(
-  args: readonly string[],
-): PreflightPagesDeploymentCliCommand {
-  const options = parseOptions(
-    args,
-    new Set([
-      "--config",
-      "--receipt",
-      "--build-artifact",
-      "--previous-outcome",
-      "--preflight",
-      "--run-attempt",
-    ]),
-  );
-  const runAttempt = Number(singleOption(options, "--run-attempt", "1"));
-  if (!Number.isSafeInteger(runAttempt) || runAttempt < 1) {
-    throw usageError("--run-attemptには1以上の整数を指定してください");
-  }
-  return Object.freeze({
-    kind: "preflight-pages-deployment",
-    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
-    initialStateReceiptPath: singleOption(options, "--receipt", DEFAULT_INITIAL_STATE_RECEIPT_PATH),
-    buildArtifactPath: singleOption(
-      options,
-      "--build-artifact",
-      "artifacts/workflow/initial-pages-build.json",
-    ),
-    previousOutcomePath: singleOption(
-      options,
-      "--previous-outcome",
-      "artifacts/workflow/initial-pages-deployment.json",
-    ),
-    preflightPath: singleOption(
-      options,
-      "--preflight",
-      "artifacts/workflow/initial-pages-preflight.json",
-    ),
-    runAttempt,
-  });
-}
-
-function parseRecordPagesDeployment(args: readonly string[]): RecordPagesDeploymentCliCommand {
-  const options = parseOptions(args, new Set(["--build-artifact", "--preflight", "--outcome"]));
-  return Object.freeze({
-    kind: "record-pages-deployment",
-    buildArtifactPath: singleOption(
-      options,
-      "--build-artifact",
-      "artifacts/workflow/initial-pages-build.json",
-    ),
-    preflightPath: singleOption(
-      options,
-      "--preflight",
-      "artifacts/workflow/initial-pages-preflight.json",
-    ),
-    outcomePath: singleOption(
-      options,
-      "--outcome",
-      "artifacts/workflow/initial-pages-deployment.json",
-    ),
-  });
-}
-
-function parseSettleNotifications(args: readonly string[]): SettleNotificationsCliCommand {
-  const options = parseOptions(
-    args,
-    new Set([
-      "--receipt",
-      "--config",
-      "--build-artifact",
-      "--pages-deployment",
-      "--settlement-receipt",
-      "--manual-resolution-receipt",
-    ]),
-  );
-  return Object.freeze({
-    kind: "settle-notifications",
-    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
-    initialStateReceiptPath: singleOption(options, "--receipt", DEFAULT_INITIAL_STATE_RECEIPT_PATH),
-    buildArtifactPath: singleOption(
-      options,
-      "--build-artifact",
-      "artifacts/workflow/initial-pages-build.json",
-    ),
-    deploymentOutcomePath: singleOption(
-      options,
-      "--pages-deployment",
-      "artifacts/workflow/initial-pages-deployment.json",
-    ),
-    settlementReceiptPath: singleOption(
-      options,
-      "--settlement-receipt",
-      DEFAULT_SETTLEMENT_RECEIPT_PATH,
-    ),
-    ...(optionalSingleOption(options, "--manual-resolution-receipt") == null
-      ? {}
-      : {
-          manualResolutionReceiptPath: requiredSingleOption(
-            options,
-            "--manual-resolution-receipt",
-            "settle-notifications",
-          ),
-        }),
-  });
-}
-
-function parseFinalizeRun(args: readonly string[]): FinalizeRunCliCommand {
-  const options = parseOptions(
-    args,
-    new Set(["--config", "--receipt", "--settlement-receipt", "--finalization-receipt"]),
-  );
-  return Object.freeze({
-    kind: "finalize-run",
-    configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
-    initialStateReceiptPath: singleOption(options, "--receipt", DEFAULT_INITIAL_STATE_RECEIPT_PATH),
-    settlementReceiptPath: singleOption(
-      options,
-      "--settlement-receipt",
-      DEFAULT_SETTLEMENT_RECEIPT_PATH,
-    ),
-    finalizationReceiptPath: singleOption(
-      options,
-      "--finalization-receipt",
-      DEFAULT_FINALIZATION_RECEIPT_PATH,
-    ),
   });
 }
 
@@ -822,24 +645,6 @@ export function parseCliArguments(args: readonly string[]): CliCommand {
       return parseBackfill(options);
     case "collect-analyze":
       return parseCollectAnalyze(options);
-    case "persist-state":
-      return parsePersistState(options);
-    case "build-pages":
-      return parseBuildPages(options);
-    case "prepare-notification-history-pages":
-      return parsePrepareNotificationHistoryPages(options);
-    case "preflight-notification-history-deployment":
-      return parsePreflightNotificationHistoryDeployment(options);
-    case "record-notification-history-deployment":
-      return parseRecordNotificationHistoryDeployment(options);
-    case "preflight-pages-deployment":
-      return parsePreflightPagesDeployment(options);
-    case "record-pages-deployment":
-      return parseRecordPagesDeployment(options);
-    case "settle-notifications":
-      return parseSettleNotifications(options);
-    case "finalize-run":
-      return parseFinalizeRun(options);
     case "resolve-discord-delivery":
       return parseResolveDiscordDelivery(options);
     case "notify-operations":

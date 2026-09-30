@@ -1,19 +1,19 @@
+import type { ContentDigestPort } from "../application/tracking-run/ports.js";
 import { serializeCanonicalJson } from "../canonical-json/value.js";
 import type { DiscordNotificationSelection } from "../discord/index.js";
 import type { StateNotificationLedger, StateSnapshot } from "../persistence/index.js";
 import { assertNonNullable } from "../util/index.js";
-import type { ContentDigestPort } from "../application/tracking-run/ports.js";
-import type {
-  NotificationOutbox,
-  PublicationValidatedRun,
-  SelectedNotificationContext,
-} from "./publication-plan-contracts.js";
 import {
   canonicalEqual,
   canonicalSelection,
   normalNotificationLedgerValue,
   sortByKey,
 } from "./publication-order.js";
+import type {
+  NotificationOutbox,
+  PublicationValidatedRun,
+  SelectedNotificationContext,
+} from "./publication-plan-contracts.js";
 
 function assertSelectedContext(
   run: PublicationValidatedRun,

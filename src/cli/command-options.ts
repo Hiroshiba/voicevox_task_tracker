@@ -1,5 +1,5 @@
+import { CliUsageError } from "../infrastructure/tracking-run/errors.js";
 import { assertNonNullable } from "../util/index.js";
-import { CliUsageError } from "./errors.js";
 
 /** 重複optionも検出するCLI option集合。 */
 export type ParsedOptions = ReadonlyMap<string, readonly string[]>;

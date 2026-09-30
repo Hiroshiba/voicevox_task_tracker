@@ -1,34 +1,16 @@
 import {
-  type BuildPagesCliCommand,
-  type PrepareNotificationHistoryPagesCliCommand,
-  type PreflightNotificationHistoryDeploymentCliCommand,
-  type RecordNotificationHistoryDeploymentCliCommand,
-  type PreflightPagesDeploymentCliCommand,
-  type RecordPagesDeploymentCliCommand,
-  type SettleNotificationsCliCommand,
-  type FinalizeRunCliCommand,
+  type InspectRunStateCliCommand,
   type NotifyOperationsCliCommand,
-  type PersistStateCliCommand,
+  type ReportFailureCliCommand,
   type ReportWorkflowCliCommand,
   type ResolveDiscordDeliveryCliCommand,
   type VerifyCheckpointCliCommand,
-  type VerifyRuntimeRecoveryCliCommand,
   type VerifyReceiptChainCliCommand,
-  type ReportFailureCliCommand,
-  type InspectRunStateCliCommand,
+  type VerifyRuntimeRecoveryCliCommand,
 } from "./command.js";
 
 /** 日次workflowの後続stageで受け付けるCLI入力。 */
-export type WorkflowStageCliCommand =
-  | PersistStateCliCommand
-  | BuildPagesCliCommand
-  | PrepareNotificationHistoryPagesCliCommand
-  | PreflightNotificationHistoryDeploymentCliCommand
-  | RecordNotificationHistoryDeploymentCliCommand
-  | PreflightPagesDeploymentCliCommand
-  | RecordPagesDeploymentCliCommand
-  | SettleNotificationsCliCommand
-  | FinalizeRunCliCommand
+export type WorkflowCliCommand =
   | ResolveDiscordDeliveryCliCommand
   | NotifyOperationsCliCommand
   | ReportWorkflowCliCommand
@@ -39,22 +21,7 @@ export type WorkflowStageCliCommand =
   | ReportFailureCliCommand;
 
 /** workflow stageの外部副作用を注入する境界。 */
-export type WorkflowStageDependencies = Readonly<{
-  persistState: (command: PersistStateCliCommand) => Promise<void>;
-  buildPages: (command: BuildPagesCliCommand) => Promise<void>;
-  prepareNotificationHistoryPages: (
-    command: PrepareNotificationHistoryPagesCliCommand,
-  ) => Promise<void>;
-  preflightNotificationHistoryDeployment: (
-    command: PreflightNotificationHistoryDeploymentCliCommand,
-  ) => Promise<void>;
-  recordNotificationHistoryDeployment: (
-    command: RecordNotificationHistoryDeploymentCliCommand,
-  ) => Promise<void>;
-  preflightPagesDeployment: (command: PreflightPagesDeploymentCliCommand) => Promise<void>;
-  recordPagesDeployment: (command: RecordPagesDeploymentCliCommand) => Promise<void>;
-  settleNotifications: (command: SettleNotificationsCliCommand) => Promise<void>;
-  finalizeRun: (command: FinalizeRunCliCommand) => Promise<void>;
+export type WorkflowCommandDependencies = Readonly<{
   resolveDiscordDelivery: (command: ResolveDiscordDeliveryCliCommand) => Promise<void>;
   notifyOperations: (command: NotifyOperationsCliCommand) => Promise<void>;
   reportWorkflow: (command: ReportWorkflowCliCommand) => Promise<void>;
@@ -66,43 +33,16 @@ export type WorkflowStageDependencies = Readonly<{
 }>;
 
 /** 日次workflowの後続stageを振り分ける。 */
-export class WorkflowStageRunner {
-  readonly #dependencies: WorkflowStageDependencies;
+export class WorkflowCommandRunner {
+  readonly #dependencies: WorkflowCommandDependencies;
 
-  public constructor(dependencies: WorkflowStageDependencies) {
+  public constructor(dependencies: WorkflowCommandDependencies) {
     this.#dependencies = dependencies;
   }
 
   /** 指定された一つのworkflow stageを実行する。 */
-  public async run(command: WorkflowStageCliCommand): Promise<void> {
+  public async run(command: WorkflowCliCommand): Promise<void> {
     switch (command.kind) {
-      case "persist-state":
-        await this.#dependencies.persistState(command);
-        return;
-      case "build-pages":
-        await this.#dependencies.buildPages(command);
-        return;
-      case "prepare-notification-history-pages":
-        await this.#dependencies.prepareNotificationHistoryPages(command);
-        return;
-      case "preflight-notification-history-deployment":
-        await this.#dependencies.preflightNotificationHistoryDeployment(command);
-        return;
-      case "record-notification-history-deployment":
-        await this.#dependencies.recordNotificationHistoryDeployment(command);
-        return;
-      case "preflight-pages-deployment":
-        await this.#dependencies.preflightPagesDeployment(command);
-        return;
-      case "record-pages-deployment":
-        await this.#dependencies.recordPagesDeployment(command);
-        return;
-      case "settle-notifications":
-        await this.#dependencies.settleNotifications(command);
-        return;
-      case "finalize-run":
-        await this.#dependencies.finalizeRun(command);
-        return;
       case "resolve-discord-delivery":
         await this.#dependencies.resolveDiscordDelivery(command);
         return;

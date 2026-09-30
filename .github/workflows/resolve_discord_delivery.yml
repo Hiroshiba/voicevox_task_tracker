@@ -126,7 +126,7 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
           pnpm build:workflow-cli
-          node --input-type=module -e "import { writeWorkflowRuntimeManifest } from './dist/cli/publication-runtime.js'; await writeWorkflowRuntimeManifest(process.cwd());"
+          node --input-type=module -e "import { writeWorkflowRuntimeManifest } from './dist/infrastructure/tracking-run/publication-runtime.js'; await writeWorkflowRuntimeManifest(process.cwd());"
       - name: 元runのstateを取得
         working-directory: artifacts/exact-runtime
         run: git fetch --no-tags origin refs/heads/tracker-state:refs/heads/tracker-state

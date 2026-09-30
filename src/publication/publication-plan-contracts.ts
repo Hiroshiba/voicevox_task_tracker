@@ -1,3 +1,5 @@
+import type { PublicationInputs } from "../application/tracking-run/contracts/publication-inputs.js";
+import type { ValidatedRun } from "../application/tracking-run/stages/validate-run.js";
 import type { Sha256Hash } from "../canonical-json/sha256.js";
 import type { AiCacheEntry, PersonalReminderAiCacheEntry } from "../codex/index.js";
 import type { DiscordNotificationSelection } from "../discord/index.js";
@@ -7,9 +9,7 @@ import type {
   StateNotificationLedger,
   StateSnapshot,
 } from "../persistence/index.js";
-import type { RunMetrics } from "../cli/run-report.js";
-import type { ValidatedRun } from "../application/tracking-run/stages/validate-run.js";
-import type { PublicationInputs } from "../application/tracking-run/contracts/publication-inputs.js";
+import type { RunMetrics } from "./run-report.js";
 
 /** 公開計画へ渡せる具体的な証明付きrun。 */
 export type PublicationValidatedRun = ValidatedRun<

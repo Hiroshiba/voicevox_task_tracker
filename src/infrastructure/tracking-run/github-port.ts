@@ -1,24 +1,26 @@
-import type { RepositoryInventoryPort } from "../../application/tracking-run/stages/inventory.js";
-import type { InventoryCollectedRun } from "../../application/tracking-run/stages/inventory.js";
 import type { GitHubReadPort } from "../../application/tracking-run/ports.js";
+import type {
+  InventoryCollectedRun,
+  RepositoryInventoryPort,
+} from "../../application/tracking-run/stages/inventory.js";
 import type { Repository } from "../../domain/index.js";
-import type { GitHubClient, CreateGitHubClientOptions } from "../../github/client.js";
+import type { CreateGitHubClientOptions, GitHubClient } from "../../github/client.js";
 import type { GitHubAppCredentials } from "../../github/credentials.js";
 import type { GitHubRateLimitSnapshot } from "../../github/errors.js";
-import { createPublicRepositoryAllowlist } from "../../github/public-repository-allowlist.js";
 import { GitHubPublicBoundaryViolationError } from "../../github/errors.js";
-import { containsPrivateRepositoryReference } from "../../github/private-repository-reference.js";
-import {
-  type enumerateGitHubItemsByIdentifiers,
-  type enumerateOpenGitHubItems,
-  type EnumeratedGitHubItem,
-} from "../../github/item-enumeration.js";
 import type { collectGitHubItemDetails } from "../../github/item-detail-collection.js";
 import type { GitHubItemDetail } from "../../github/item-detail-types.js";
+import {
+  type EnumeratedGitHubItem,
+  type enumerateGitHubItemsByIdentifiers,
+  type enumerateOpenGitHubItems,
+} from "../../github/item-enumeration.js";
 import {
   normalizeObservedGitHubItems,
   type FreshObservedGitHubItem,
 } from "../../github/item-normalization.js";
+import { containsPrivateRepositoryReference } from "../../github/private-repository-reference.js";
+import { createPublicRepositoryAllowlist } from "../../github/public-repository-allowlist.js";
 import type { discoverRepositoryInventory } from "../../github/repository-inventory.js";
 
 type GitHubInventoryDependencies = Readonly<{

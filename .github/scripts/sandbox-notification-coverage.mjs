@@ -4,7 +4,7 @@ import process from "node:process";
 
 import { z } from "zod";
 
-import { sandboxPendingNotificationSchema } from "../../dist/cli/sandbox-notification-contract.js";
+import { sandboxPendingNotificationSchema } from "../../dist/publication/sandbox-pending-evidence-schema.js";
 import { sha256 } from "./sandbox-continuity-result.mjs";
 import {
   countApplications,

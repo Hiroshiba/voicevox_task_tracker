@@ -51,7 +51,7 @@ runs:
       run: |
         pnpm build
         pnpm build:workflow-cli
-        node --input-type=module -e "import { writeWorkflowRuntimeManifest } from './dist/cli/publication-runtime.js'; await writeWorkflowRuntimeManifest(process.cwd());"
+        node --input-type=module -e "import { writeWorkflowRuntimeManifest } from './dist/infrastructure/tracking-run/publication-runtime.js'; await writeWorkflowRuntimeManifest(process.cwd());"
     - name: remote stateから次段階を判定
       id: route
       shell: bash

@@ -291,7 +291,7 @@ jobs:
           SANDBOX_RESOLUTION_DECISION: ${{ needs.prepare.outputs.notification_decision }}
           SANDBOX_PENDING_REPORT_PATH: ${{ runner.temp }}/pending/sandbox-pending.json
           SANDBOX_TARGET_OUTPUT_PATH: ${{ runner.temp }}/manual-target.json
-        run: node dist/cli/sandbox-notification-state.js target
+        run: node dist/cli/sandbox-notification-evidence.js target
       - name: 手動判断を同じrunへCAS保存
         env:
           TRACKING_EFFECT_TARGET: sandbox
@@ -313,7 +313,7 @@ jobs:
           SANDBOX_RESOLUTION_DECISION: ${{ needs.prepare.outputs.notification_decision }}
           SANDBOX_PENDING_REPORT_PATH: ${{ runner.temp }}/pending/sandbox-pending.json
           SANDBOX_MANUAL_RECEIPT_PATH: artifacts/workflow/manual-resolution-receipt.json
-        run: node dist/cli/sandbox-notification-state.js resolved
+        run: node dist/cli/sandbox-notification-evidence.js resolved
       - name: 同じrunの手動解決receiptを保存
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -403,7 +403,7 @@ jobs:
           SANDBOX_SIDECAR_PATH: ${{ runner.temp }}/checkpoint/validated-run.json.sidecar.json
           SANDBOX_INITIAL_RECEIPT_CHAIN_ROOT: ${{ runner.temp }}/initial-pages
           SANDBOX_PENDING_OUTPUT_PATH: ${{ runner.temp }}/sandbox-pending.json
-        run: node dist/cli/sandbox-notification-state.js pending
+        run: node dist/cli/sandbox-notification-evidence.js pending
       - name: pending coverageと停止証拠を保存
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -588,7 +588,7 @@ jobs:
         run: |
           run_suffix="${SANDBOX_TRACKING_RUN_ID#tracker-run:}"
           if [[ "$SANDBOX_NOTIFICATION_PHASE" == 'resolution' ]]; then
-            node dist/cli/sandbox-notification-state.js completed
+            node dist/cli/sandbox-notification-evidence.js completed
           fi
           SANDBOX_RECEIPT_CHAIN_PATH="$RUNNER_TEMP/complete/$run_suffix/receipt-chain.json" \
           SANDBOX_RECORD_PATH="$RUNNER_TEMP/sandbox-state/state/durable-publication-record-v1.json" \

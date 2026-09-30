@@ -1,14 +1,13 @@
-import { formatCliUsage, parseCliArguments, type CliCommand } from "./command.js";
+import type { CoordinatedRunResult } from "../infrastructure/tracking-run/run-coordinator.js";
 import {
-  DailyTransactionRunner,
+  SequentialRunRunner,
   type DailyRunExecutionResult,
-  type DailyTransactionTypeMap,
-} from "./daily-transaction.js";
-import { StateVerificationRunner } from "./state-verification.js";
-import { WorkflowStageRunner } from "./workflow-stage.js";
-import { SplitStageRunner } from "./split-stage-runner.js";
+} from "../infrastructure/tracking-run/sequential-run.js";
+import { SplitStageRunner } from "../infrastructure/tracking-run/split-stage-runner.js";
 import type { DryRunCliCommand } from "./command.js";
-import type { CoordinatedRunResult } from "./run-coordinator.js";
+import { formatCliUsage, parseCliArguments, type CliCommand } from "./command.js";
+import { StateVerificationRunner } from "./state-verification.js";
+import type { WorkflowCommandRunner } from "./workflow-stage.js";
 
 /** CLI実行後の終了codeとreport種別。 */
 export type CliExecutionResult =
@@ -25,15 +24,6 @@ export type CliExecutionResult =
     }>
   | Readonly<{
       command:
-        | "persist-state"
-        | "build-pages"
-        | "prepare-notification-history-pages"
-        | "preflight-notification-history-deployment"
-        | "record-notification-history-deployment"
-        | "preflight-pages-deployment"
-        | "record-pages-deployment"
-        | "settle-notifications"
-        | "finalize-run"
         | "resolve-discord-delivery"
         | "notify-operations"
         | "report-workflow"
@@ -53,14 +43,14 @@ export type CliExecutionResult =
     }>;
 
 /** CLI applicationへ注入するonline、標準出力境界。 */
-export type CliApplicationDependencies<Types extends DailyTransactionTypeMap> = Readonly<{
-  dailyRunner: DailyTransactionRunner<Types>;
+export type CliApplicationDependencies = Readonly<{
+  dailyRunner: SequentialRunRunner;
   runDryRun: (
     command: DryRunCliCommand,
     invocationId: string,
   ) => Promise<CoordinatedRunResult<DailyRunExecutionResult>>;
   splitStageRunner: SplitStageRunner;
-  workflowStageRunner: WorkflowStageRunner;
+  workflowStageRunner: WorkflowCommandRunner;
   stateVerificationRunner: StateVerificationRunner;
   writeStandardOutput: (source: string) => Promise<void>;
 }>;
@@ -70,10 +60,10 @@ function exitCodeForStatus(status: "success" | "fallback" | "failure"): 0 | 1 {
 }
 
 /** 検証済みサブコマンドを対応する実行器へ振り分ける。 */
-export class CliApplication<Types extends DailyTransactionTypeMap> {
-  readonly #dependencies: CliApplicationDependencies<Types>;
+export class CliApplication {
+  readonly #dependencies: CliApplicationDependencies;
 
-  public constructor(dependencies: CliApplicationDependencies<Types>) {
+  public constructor(dependencies: CliApplicationDependencies) {
     this.#dependencies = dependencies;
   }
 
@@ -124,15 +114,6 @@ export class CliApplication<Types extends DailyTransactionTypeMap> {
       case "runtime-recovery-v2":
         await this.#dependencies.splitStageRunner.recover(command, invocationId);
         return Object.freeze({ command: "runtime-recovery-v2", exitCode: 0 });
-      case "persist-state":
-      case "build-pages":
-      case "prepare-notification-history-pages":
-      case "preflight-notification-history-deployment":
-      case "record-notification-history-deployment":
-      case "preflight-pages-deployment":
-      case "record-pages-deployment":
-      case "settle-notifications":
-      case "finalize-run":
       case "resolve-discord-delivery":
       case "notify-operations":
       case "report-workflow":

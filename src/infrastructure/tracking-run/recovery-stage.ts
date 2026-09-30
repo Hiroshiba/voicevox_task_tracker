@@ -1,16 +1,16 @@
-import type { DurablePublicationRecord } from "../../cli/durable-record-schema.js";
+import type { InitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence.js";
+import type { StateCommitReceiptEvidence } from "../../application/tracking-run/observed-state-commit.js";
+import type { ContentDigestPort } from "../../application/tracking-run/ports.js";
 import type {
-  Receipt,
   NotificationMessageReceipt,
   PagesBuildReceipt,
   PagesDeploymentReceipt,
+  Receipt,
 } from "../../application/tracking-run/receipt-schema.js";
-import type { StateCommitReceiptEvidence } from "../../application/tracking-run/observed-state-commit.js";
-import type { InitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence.js";
 import type { RunTransactionMarker } from "../../application/tracking-run/run-transaction-marker.js";
-import type { ContentDigestPort } from "../../application/tracking-run/ports.js";
 import type { StateNotificationLedger } from "../../persistence/state-documents.js";
-import type { ExactPublicationStateView } from "../../cli/publication-resume-contracts.js";
+import type { DurablePublicationRecord } from "../../publication/durable-record-schema.js";
+import type { ExactPublicationStateView } from "./publication-resume-contracts.js";
 import {
   resumeFinalization,
   resumeInitialPagesBuild,
@@ -24,7 +24,7 @@ import {
   type NotificationHistoryPagesDeployInput,
   type NotificationsInput,
   type RunFinalizationInput,
-} from "../../cli/publication-resume-inputs.js";
+} from "./publication-resume-inputs.js";
 
 type RecoveryStageBase = Readonly<{
   record: DurablePublicationRecord;

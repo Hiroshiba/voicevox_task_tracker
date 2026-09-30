@@ -3,19 +3,19 @@ import {
   RUN_TRANSACTION_MARKER_STATE_PATH_V1,
 } from "../../application/tracking-run/contracts/recovery-paths.js";
 import {
+  runtimeRecoveryInputV1Schema,
+  type RuntimeRecoveryInputV1,
+} from "../../application/tracking-run/contracts/runtime-recovery-v1.js";
+import {
+  readDurablePublicationRecordSchemaVersion,
   readDurablePublicationRecoveryBootstrap,
   readDurablePublicationRecoveryBootstrapV2,
-  readDurablePublicationRecordSchemaVersion,
   readRunTransactionMarkerRecoveryBootstrap,
   type DurablePublicationRecoveryBootstrapV1,
   type DurablePublicationRecoveryBootstrapV2,
   type RunTransactionMarkerRecoveryBootstrapV1,
 } from "../../application/tracking-run/recovery-bootstrap.js";
 import type { StateBranchAdapter, StateBranchHead } from "../../persistence/branch-adapter.js";
-import {
-  runtimeRecoveryInputV1Schema,
-  type RuntimeRecoveryInputV1,
-} from "../../application/tracking-run/contracts/runtime-recovery-v1.js";
 import { nodeContentDigestPort } from "./content-digest.js";
 
 /** 同じstate revisionのbootstrapだけから選ぶ起動経路。 */

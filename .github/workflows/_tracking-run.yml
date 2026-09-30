@@ -169,7 +169,7 @@ jobs:
         env:
           TRACKING_EXPECTED_ADAPTER_IDENTITY: ${{ steps.inspect.outputs.expected_identity }}
         run: |
-          node --input-type=module -e 'import { resolve } from "node:path"; import { assertWorkflowV2AdapterCompatibility } from "./dist/cli/publication-runtime.js"; import { nodeContentDigestPort } from "./dist/infrastructure/tracking-run/content-digest.js"; await assertWorkflowV2AdapterCompatibility(process.cwd(), resolve("artifacts/adapter-source"), process.env.TRACKING_EXPECTED_ADAPTER_IDENTITY, nodeContentDigestPort);'
+          node --input-type=module -e 'import { resolve } from "node:path"; import { assertWorkflowV2AdapterCompatibility } from "./dist/infrastructure/tracking-run/publication-runtime.js"; import { nodeContentDigestPort } from "./dist/infrastructure/tracking-run/content-digest.js"; await assertWorkflowV2AdapterCompatibility(process.cwd(), resolve("artifacts/adapter-source"), process.env.TRACKING_EXPECTED_ADAPTER_IDENTITY, nodeContentDigestPort);'
       - name: bootstrap結果を保存
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -226,7 +226,7 @@ jobs:
         run: |
           pnpm build
           pnpm build:workflow-cli
-          node --input-type=module -e "import { writeWorkflowRuntimeManifest } from './dist/cli/publication-runtime.js'; await writeWorkflowRuntimeManifest(process.cwd());"
+          node --input-type=module -e "import { writeWorkflowRuntimeManifest } from './dist/infrastructure/tracking-run/publication-runtime.js'; await writeWorkflowRuntimeManifest(process.cwd());"
       - name: exact runtimeとremote stageを検査
         env:
           TRACKING_CONFIG_PATH: ${{ inputs.config_path }}

@@ -1,41 +1,41 @@
-import { hashCanonicalJson } from "../../canonical-json/index.js";
+import { RUN_TRANSACTION_MARKER_STATE_PATH_V1 } from "../../application/tracking-run/contracts/recovery-paths.js";
 import {
   observeStateCommitReceipt,
   type ObservedStateCommitPosition,
   type StateCommitReceiptEvidence,
 } from "../../application/tracking-run/observed-state-commit.js";
+import { verifyReceiptChain } from "../../application/tracking-run/receipt-chain.js";
 import type {
   InitialStateCommitReceipt,
   NotificationSettlementReceipt,
   RunFinalizationReceipt,
 } from "../../application/tracking-run/receipt-schema.js";
-import { verifyReceiptChain } from "../../application/tracking-run/receipt-chain.js";
 import { assertRunTransactionMarkerTransition } from "../../application/tracking-run/run-transaction-marker.js";
-import { RUN_TRANSACTION_MARKER_STATE_PATH_V1 } from "../../application/tracking-run/contracts/recovery-paths.js";
+import { hashCanonicalJson } from "../../canonical-json/index.js";
+import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import {
+  joinStatePath,
   type StateBranchAdapter,
   type StateFileReadResult,
   type StatePersistenceConfiguration,
-  joinStatePath,
 } from "../../persistence/branch-adapter.js";
 import {
   parseStateHistoryRecords,
   serializeStateHistoryRecords,
 } from "../../persistence/history.js";
 import {
-  createStateRunReport,
-  serializeStateRunReport,
-} from "../../persistence/state-run-report.js";
-import {
   authorizeAdvanceAfterOrthogonalCommits,
   MAX_INTERVENING_COMMITS,
 } from "../../persistence/state-orthogonal-advance.js";
+import {
+  createStateRunReport,
+  serializeStateRunReport,
+} from "../../persistence/state-run-report.js";
 import {
   verifyRunTransactionFiles,
   type VerifiedRunTransactionFiles,
 } from "../../persistence/state-transaction-files.js";
 import { nodeContentDigestPort } from "./content-digest.js";
-import { serializeCanonicalJson } from "../../canonical-json/value.js";
 
 type ObservedCommit<T> = Readonly<{
   receipt: T;

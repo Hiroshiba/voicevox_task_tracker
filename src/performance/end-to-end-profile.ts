@@ -5,11 +5,9 @@ import { performance } from "node:perf_hooks";
 import { z } from "zod";
 
 import { serializeCanonicalJson } from "../canonical-json/index.js";
-import {
-  createProductionCliApplication,
-  type ProductionRuntimeAdapters,
-} from "../cli/production-runtime.js";
-import { type CliExecutionResult } from "../cli/index.js";
+import { createProductionCliApplication } from "../cli/create-application.js";
+import type { ProductionRuntimeAdapters } from "../infrastructure/tracking-run/runtime/adapters.js";
+import { type CliExecutionResult } from "../cli/application.js";
 import {
   CODEX_ELEMENT_OUTPUT_SCHEMA_VERSION,
   type CodexAnalysisInput,

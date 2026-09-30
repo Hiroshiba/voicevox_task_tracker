@@ -6,32 +6,35 @@ import { pathToFileURL } from "node:url";
 
 import { z } from "zod";
 
-import { serializeCanonicalJsonLine } from "../canonical-json/value.js";
-import { decodePublicFailureArtifact } from "../application/tracking-run/failure-artifact.js";
 import { runtimeRecoveryInputV1Schema } from "../application/tracking-run/contracts/runtime-recovery-v1.js";
 import { runtimeRecoveryInputV2Schema } from "../application/tracking-run/contracts/runtime-recovery-v2.js";
+import { decodePublicFailureArtifact } from "../application/tracking-run/failure-artifact.js";
 import { runtimeRecoveryPlanV2Schema } from "../application/tracking-run/recovery-bootstrap.js";
+import { serializeCanonicalJsonLine } from "../canonical-json/value.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
-import { writeCliTextFile } from "./file-output.js";
 import {
-  assertWorkflowV2AdapterCompatibility,
-  verifyRecoveryBundle,
-} from "./publication-runtime.js";
-import { verifyRuntimeRecoveryV2 } from "./runtime-recovery-launcher-v2.js";
-import { resolveSelectedManualRuntimeV2 } from "./manual-exact-v2.js";
-import { observeBootstrap, type BootstrapFailureObservation } from "./failure-context-state.js";
-import { encryptManualDiagnostics } from "./manual-diagnostics-encryption.js";
+  observeBootstrap,
+  type BootstrapFailureObservation,
+} from "../infrastructure/tracking-run/failure-context-state.js";
+import { writeCliTextFile } from "../infrastructure/tracking-run/file-output.js";
+import { encryptManualDiagnostics } from "../infrastructure/tracking-run/manual-diagnostics-encryption.js";
 import {
   assertManualPagesOutcomeAbsent,
   type ManualPagesRecordPaths,
-} from "./manual-exact-evidence.js";
+} from "../infrastructure/tracking-run/manual-exact-evidence.js";
 import {
   isExpectedCheckpoint,
   reportManualExactFailure,
   revision,
-} from "./manual-exact-failure.js";
+} from "../infrastructure/tracking-run/manual-exact-failure.js";
+import { resolveSelectedManualRuntimeV2 } from "../infrastructure/tracking-run/manual-exact-v2.js";
+import { readPreviousNotificationHistoryOutcome } from "../infrastructure/tracking-run/previous-notification-history-outcome.js";
+import {
+  assertWorkflowV2AdapterCompatibility,
+  verifyRecoveryBundle,
+} from "../infrastructure/tracking-run/publication-runtime.js";
+import { verifyRuntimeRecoveryV2 } from "../infrastructure/tracking-run/runtime-recovery-launcher-v2.js";
 import { parseRecordNotificationHistoryDeployment } from "./notification-history-deployment-command.js";
-import { readPreviousNotificationHistoryOutcome } from "./previous-notification-history-outcome.js";
 
 const commandSchema = z.enum([
   "verify-checkpoint",

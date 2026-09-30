@@ -15,7 +15,7 @@ import {
 import {
   decodeDurablePublicationRecord,
   type DurablePublicationRecord,
-} from "../cli/durable-record-schema.js";
+} from "../publication/durable-record-schema.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
 import { normalNotificationLedgerValue } from "../publication/publication-order.js";
 import { type StateFileReadResult, type StatePersistenceConfiguration } from "./branch-adapter.js";
