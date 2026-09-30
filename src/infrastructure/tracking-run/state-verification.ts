@@ -36,6 +36,7 @@ import {
   type LegacyAiCacheEntry,
 } from "../../persistence/index.js";
 import { CliStateVerificationError } from "./errors.js";
+import { withVerifiedStateRevision } from "./state-verification-ingress.js";
 
 const HISTORY_FILE_PATTERN = /^(\d{4}-\d{2}-\d{2})\.jsonl$/u;
 const AI_CACHE_FILE_PATTERN = /^[0-9a-f]{64}\.json$/u;
@@ -443,13 +444,28 @@ async function verifyAiCache(
   });
 }
 
-/** 指定したディレクトリのsnapshot、通知ledger、履歴を検証する。 */
+/** 指定したGit revisionのsnapshot、通知ledger、履歴を現行ingressで検証する。 */
 export async function verifyPersistentStateDirectory(
   stateDirectory: string,
   timezone: string,
   configuration: StatePersistenceConfiguration,
+  stateRevision: string,
 ): Promise<StateVerificationResult> {
   validateStatePersistenceConfiguration(configuration);
+  return await withVerifiedStateRevision(
+    stateDirectory,
+    stateRevision,
+    timezone,
+    configuration,
+    (directory) => verifyStateFiles(directory, timezone, configuration),
+  );
+}
+
+async function verifyStateFiles(
+  stateDirectory: string,
+  timezone: string,
+  configuration: StatePersistenceConfiguration,
+): Promise<StateVerificationResult> {
   const verifiedAiCache = await verifyAiCache(stateDirectory, configuration.aiCacheDirectory);
   const [snapshot, notificationLedger, operationsAlertLedger, runTransaction, history] =
     await Promise.all([

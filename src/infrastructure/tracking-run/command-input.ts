@@ -101,6 +101,7 @@ export type ReportWorkflowCliCommand = Readonly<{
 export type VerifyStateCliCommand = Readonly<{
   kind: "verify-state";
   stateDirectory: string;
+  stateRevision: string;
   configPath: string;
 }>;
 

@@ -15,6 +15,7 @@ export type StateVerificationDependencies = Readonly<{
     stateDirectory: string,
     timezone: string,
     configuration: StatePersistenceConfiguration,
+    stateRevision: string,
   ) => Promise<StateVerificationResult>;
   writeStandardOutput: (source: string) => Promise<void>;
 }>;
@@ -36,6 +37,7 @@ export class StateVerificationRunner {
       command.stateDirectory,
       config.staleness.timezone,
       config.state,
+      command.stateRevision,
     );
     await this.#dependencies.writeStandardOutput(`${formatStateVerificationResult(result)}\n`);
   }

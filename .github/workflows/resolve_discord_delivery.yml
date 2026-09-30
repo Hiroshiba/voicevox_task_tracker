@@ -87,6 +87,7 @@ jobs:
           node --enable-source-maps dist/cli/tracker-run.js inspect-run-state --config config.yml --state-ref tracker-state > "$RUNNER_TEMP/manual-bootstrap.json"
           jq -e --arg source "$MANUAL_SOURCE_RUN_ID" --arg revision "$MANUAL_CODE_REVISION" --arg run_id "$MANUAL_RUN_ID" '
             .kind == "resume_with_exact_runtime" and
+            .recoveryInput.protocolVersion == 2 and
             .recoveryInput.runId == $run_id and
             .recoveryInput.runtimeRecoveryPlan.kind == "workflow_bundle" and
             .recoveryInput.runtimeRecoveryPlan.workflowRunId == $source and
@@ -105,10 +106,7 @@ jobs:
           node-version: ${{ steps.inspect.outputs.node_version }}
       - name: V2手動検証に必要な依存関係を準備
         working-directory: artifacts/exact-runtime
-        run: |
-          if [[ "$(jq -r '.recoveryInput.protocolVersion' "$RUNNER_TEMP/manual-bootstrap.json")" == '2' ]]; then
-            pnpm install --frozen-lockfile
-          fi
+        run: pnpm install --frozen-lockfile
       - name: 元runの固定bundleを取得
         id: source_runtime
         continue-on-error: true

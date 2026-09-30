@@ -24,7 +24,7 @@ import type { StateNotificationLedger } from "../../persistence/state-documents.
 import type { StateSnapshotReadResult } from "../../persistence/state-persistence-session.js";
 import { StatePersistenceSession } from "../../persistence/state-persistence-session.js";
 
-/** 旧下流が必要とするsessionと現行形式へ変換したbase state。 */
+/** 現行形式へ変換したbase stateと保存session。 */
 export type BaseStateIngress = Readonly<{
   session: StatePersistenceSession;
   snapshot: StateSnapshotReadResult;

@@ -45,6 +45,7 @@ const resolveDiscordDeliveryResolutionSchema = z.enum(["retry", "acknowledge"]);
 const runIdSchema = z.string().regex(/^tracker-run:[0-9a-f]{64}$/u);
 const checkpointDigestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const attemptIdSchema = z.string().regex(/^attempt:v1:[0-9a-f]{64}$/u);
+const stateRevisionSchema = z.string().regex(/^[0-9a-f]{40}$/u);
 
 function requiredSingleOption(options: ParsedOptions, name: string, commandName: string): string {
   const value = optionalSingleOption(options, name);
@@ -314,10 +315,20 @@ function parseReportWorkflow(args: readonly string[]): ReportWorkflowCliCommand 
 }
 
 function parseVerifyState(args: readonly string[]): VerifyStateCliCommand {
-  const options = parseOptions(args, new Set(["--state-directory", "--config"]));
+  const options = parseOptions(
+    args,
+    new Set(["--state-directory", "--state-revision", "--config"]),
+  );
+  const stateRevision = stateRevisionSchema.safeParse(
+    requiredSingleOption(options, "--state-revision", "verify-state"),
+  );
+  if (!stateRevision.success) {
+    throw usageError("--state-revisionには40桁のGit commit SHAを指定してください");
+  }
   return Object.freeze({
     kind: "verify-state",
     stateDirectory: requiredSingleOption(options, "--state-directory", "verify-state"),
+    stateRevision: stateRevision.data,
     configPath: singleOption(options, "--config", DEFAULT_CONFIG_PATH),
   });
 }
