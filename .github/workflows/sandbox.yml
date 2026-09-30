@@ -506,9 +506,9 @@ jobs:
           corepack enable
           pnpm install --frozen-lockfile
           pnpm build
-          mkdir -p "$RUNNER_TEMP/sandbox-state"
-          git archive "$SANDBOX_FINAL_REVISION" state | tar -x -C "$RUNNER_TEMP/sandbox-state"
+          git clone --quiet --no-checkout --no-hardlinks . "$RUNNER_TEMP/sandbox-state"
           node dist/cli/tracker-run.js verify-state --state-directory "$RUNNER_TEMP/sandbox-state/state" \
+            --state-revision "$SANDBOX_FINAL_REVISION" \
             > "$RUNNER_TEMP/state-verification.txt"
           run_suffix="${SANDBOX_TRACKING_RUN_ID#tracker-run:}"
           node dist/cli/tracker-run.js verify-receipt-chain \

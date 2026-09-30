@@ -226,7 +226,27 @@ jobs:
         run: |
           pnpm build
           pnpm build:workflow-cli
-          node --input-type=module -e "import { writeWorkflowRuntimeManifest } from './dist/infrastructure/tracking-run/publication-runtime.js'; await writeWorkflowRuntimeManifest(process.cwd());"
+          node --input-type=module <<'NODE'
+          import { lstatSync } from "node:fs";
+          const modules = [];
+          for (const [source, module] of [
+            ["src/infrastructure/tracking-run/publication-runtime.ts", "./dist/infrastructure/tracking-run/publication-runtime.js"],
+            ["src/cli/publication-runtime.ts", "./dist/cli/publication-runtime.js"],
+          ]) {
+            try {
+              if (!lstatSync(source).isFile()) throw new TypeError("runtimeのsourceは通常fileである必要があります");
+              modules.push(module);
+            } catch (error) {
+              if (error instanceof Error && "code" in error && error.code === "ENOENT") continue;
+              throw error;
+            }
+          }
+          if (modules.length !== 1) throw new TypeError("exact runtimeのsource配置を一意に識別できません");
+          const [module] = modules;
+          if (module == null) throw new TypeError("manifest writerを取得できません");
+          const { writeWorkflowRuntimeManifest } = await import(module);
+          await writeWorkflowRuntimeManifest(process.cwd());
+          NODE
       - name: exact runtimeとremote stageを検査
         env:
           TRACKING_CONFIG_PATH: ${{ inputs.config_path }}

@@ -148,6 +148,7 @@ secret、API client、installation token、Codex認証、Webhookを含めませ�
 `workflow-cli-runtime` artifactには自己完結bundle、固定V1/V2 entrypointとruntime manifestを保存します。
 manifestはcode revision、lockfile digest、Node・pnpmのtoolchain、全fileの相対path・byte数・digest、回復protocol、adapter identityを固定します。
 再開時は元runのbundleを取得し、消失していたら同じsourceから再生成して記録値と完全一致する場合だけ使います。
+再生成時のmanifest writerは、取得したexact sourceの配置から一意に選びます。
 現行制御runtimeはbootstrapだけを読み、未完了payloadの検証とeffectはexact runtimeで行います。
 
 各stageのreceiptとcheckpointは`tracking-stage-<stage>` artifactへ、公開failureは独立したfailure artifactへ保存します。

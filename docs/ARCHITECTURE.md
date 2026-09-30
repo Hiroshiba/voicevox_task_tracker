@@ -109,6 +109,9 @@ V2は二段階で起動します。
 exact runtimeの`inspect`がcheckpointとstateを検証して次stageを返し、`execute_stage`、Pages action後の`record_pages`を一段ずつ呼びます。
 再開時にGitHub再収集やAI再計画を行いません。
 bundleが消失した場合は同じsourceから再生成し、記録されたdigestに一致した場合だけ使用します。
+現行Pages YAMLの実効job条件、権限、外部actionのSHAを記録元と比較します。
+両Pages jobは先頭で記録されたsourceをcheckoutし、local actionと参照scriptはそのexact sourceのbyte列で照合します。
+checkoutのref、配置先、取得元、実行条件、後続checkoutがこの経路を変える場合はeffect前に停止します。
 
 V1は固定input/outputとentrypointを持つ回復protocolとして扱います。
 静的action adapterへ対応付ける前に、adapter identityとaction SHAが登録値に一致することを検証します。

@@ -4,6 +4,8 @@ import { resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
 
+import { assertNonNullable } from "../../util/assert-non-nullable.js";
+
 const deployAction = "actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e";
 const uploadAction = "actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa";
 const stepSchema = z.looseObject({
@@ -11,6 +13,7 @@ const stepSchema = z.looseObject({
   name: z.string().optional(),
   run: z.string().optional(),
   uses: z.string().optional(),
+  with: z.record(z.string(), z.unknown()).optional(),
   if: z.string().optional(),
   "continue-on-error": z.boolean().optional(),
 });
@@ -132,6 +135,22 @@ function assertPagesSteps(
   }
 }
 
+function assertExactSourceCheckout(steps: readonly z.output<typeof stepSchema>[]): void {
+  const checkout = steps[0];
+  if (
+    checkout?.uses == null ||
+    !/^actions\/checkout@[0-9a-f]{40}$/u.test(checkout.uses) ||
+    checkout.with?.["ref"] !== "${{ inputs.code_revision }}" ||
+    checkout.with["path"] != null ||
+    checkout.with["repository"] != null ||
+    checkout.if != null ||
+    checkout["continue-on-error"] === true ||
+    steps.slice(1).some((step) => step.uses?.startsWith("actions/checkout@") === true)
+  ) {
+    throw new TypeError("V2 Pagesのlocal actionは先頭のexact source checkoutで固定してください");
+  }
+}
+
 async function readWorkflowV2AdapterCurrentProjection(repositoryPath: string): Promise<{
   projection: object;
   deploy: z.output<typeof jobSchema>;
@@ -206,16 +225,16 @@ export async function readWorkflowV2Adapter(repositoryPath: string): Promise<obj
     await readWorkflowV2AdapterCurrentProjection(repositoryPath);
   for (const job of [deploy, record]) {
     const steps = job.steps;
-    const prior = steps?.findIndex(
+    assertNonNullable(steps, "V2 Pages jobのstepがありません");
+    assertExactSourceCheckout(steps);
+    const prior = steps.findIndex(
       (step) => step.uses === "./.github/actions/download-prior-initial-pages-outcome",
     );
-    const preflight = steps?.findIndex((step) => step.id === "preflight");
+    const preflight = steps.findIndex((step) => step.id === "preflight");
     if (
-      prior == null ||
-      preflight == null ||
       prior < 0 ||
       preflight <= prior ||
-      steps?.[prior]?.id !== "prior_initial" ||
+      steps[prior]?.id !== "prior_initial" ||
       steps[preflight]?.if?.includes("steps.prior_initial.outcome == 'success'") !== true
     ) {
       throw new TypeError("V2初回Pagesの保存済み結果取得とpreflightが接続されていません");

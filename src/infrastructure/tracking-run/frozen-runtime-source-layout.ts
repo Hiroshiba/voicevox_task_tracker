@@ -29,6 +29,14 @@ async function identifyLayout(repositoryPath: string): Promise<RuntimeSourceLayo
   return infrastructure ? "infrastructure" : "frozen_cli";
 }
 
+/** 選択元の固定source配置に対応するmanifest writerのmodule pathを返す。 */
+export async function workflowRuntimeManifestModulePath(repositoryPath: string): Promise<string> {
+  const layout = await identifyLayout(repositoryPath);
+  return layout === "infrastructure"
+    ? "./dist/infrastructure/tracking-run/publication-runtime.js"
+    : "./dist/cli/publication-runtime.js";
+}
+
 /** 選択元の固定source配置に対応するV2 digestのpath列を返す。 */
 export async function workflowV2AdapterSourcePaths(
   repositoryPath: string,

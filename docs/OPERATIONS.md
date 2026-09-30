@@ -103,13 +103,15 @@ V2の再開は、制御側のbundle検証とexact側のstage実行の二段階�
 制御側でlockfile、toolchain、manifestの全file digest、固定entrypoint、adapter identityを照合し、exact側のinspectが次stageを選びます。
 execute_stageが一段を進め、Pages action後はrecord_pagesが観測結果を検証します。
 元artifactの消失時は同じsourceから再生成し、記録されたdigestと一致した場合だけ使用します。
+Pagesの現行YAMLの実効条件と外部actionのSHA、exact sourceから起動するlocal actionとscriptのbyte列を照合します。
+記録されたsourceを先頭でcheckoutする経路が変わった場合はeffect前に停止します。
 GitHub再収集、AI再計画、固定outboxの選び直しを再開手段にしません。
 
 V1は固定entrypointとinput/outputの回復protocolを維持し、静的action adapterとaction SHAの登録値を照合します。
 未知のadapter、identity不一致、manifest欠落、実行できないready-only bundleは通常の自動復旧対象として扱いません。
 ready-onlyのimmutable V1 runは、state revision、record/marker digest、元sourceとbundle、実送達の証拠を保存して手動停止し、現行CLIの業務commandで代替しません。
 停止対象のstateを通常の再開やsandbox連続runの証拠に使いません。
-新規のV2 bundleは、この固定protocolで未完stageから自動再開します。
+V2 bundleは生成時期にかかわらず、記録されたexact runtimeと同じadapterを検証できれば、安全な未完stageから自動再開します。
 
 ## 失敗したoperationのeffect certaintyを確認する
 

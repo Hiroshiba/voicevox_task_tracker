@@ -21,6 +21,7 @@ import {
 import { verifyReceiptChain } from "../../application/tracking-run/receipt-chain.js";
 import { serializeCanonicalJsonLine } from "../../canonical-json/value.js";
 import { nodeContentDigestPort } from "./content-digest.js";
+import { workflowRuntimeManifestModulePath } from "./frozen-runtime-source-layout.js";
 import {
   assertRecoveryToolchain,
   assertWorkflowV2AdapterCompatibility,
@@ -132,7 +133,8 @@ async function rebuildWorkflowBundle(
     [
       "--input-type=module",
       "-e",
-      "import { writeWorkflowRuntimeManifest } from './dist/infrastructure/tracking-run/publication-runtime.js'; await writeWorkflowRuntimeManifest(process.cwd());",
+      "const { writeWorkflowRuntimeManifest } = await import(process.argv[1]); await writeWorkflowRuntimeManifest(process.cwd());",
+      await workflowRuntimeManifestModulePath(checkoutPath),
     ],
     checkoutPath,
   );

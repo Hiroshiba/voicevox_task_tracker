@@ -187,25 +187,30 @@ export async function workflowAdapterIdentityV2(
   );
   return digest.sha256Utf8(
     serializeCanonicalJson({
-      selection: await workflowAdapterSelectionV2(repositoryPath, digest),
+      selection: await workflowAdapterSelectionV2(repositoryPath, repositoryPath, digest),
       adapterSourcesDigest,
     }),
   );
 }
 
 async function workflowAdapterSelectionV2(
-  repositoryPath: string,
+  workflowRepositoryPath: string,
+  actionRepositoryPath: string,
   digest: ContentDigestPort,
 ): Promise<object> {
   const pagesWorkflowSource = await readFile(
-    resolve(repositoryPath, ".github/workflows/_tracking-pages.yml"),
+    resolve(workflowRepositoryPath, ".github/workflows/_tracking-pages.yml"),
     "utf8",
   );
-  const actionSources = await workflowActionSources(repositoryPath, [pagesWorkflowSource], digest);
+  const actionSources = await workflowActionSources(
+    actionRepositoryPath,
+    [pagesWorkflowSource],
+    digest,
+  );
   const scriptSources = [pagesWorkflowSource];
   for (const file of actionSources.localActionFiles) {
     if (/\/action\.ya?ml$/u.test(file.path)) {
-      scriptSources.push(await readFile(resolve(repositoryPath, file.path), "utf8"));
+      scriptSources.push(await readFile(resolve(actionRepositoryPath, file.path), "utf8"));
     }
   }
   const referencedScripts = [
@@ -216,9 +221,9 @@ async function workflowAdapterSelectionV2(
     ),
   ].sort();
   return {
-    adapter: await readWorkflowV2Adapter(repositoryPath),
+    adapter: await readWorkflowV2Adapter(workflowRepositoryPath),
     actionSources,
-    referencedScriptsDigest: await hashSources(repositoryPath, referencedScripts, digest),
+    referencedScriptsDigest: await hashSources(actionRepositoryPath, referencedScripts, digest),
   };
 }
 
@@ -363,7 +368,7 @@ export async function assertRecordedWorkflowAdapterIdentityV2(
   throw new TypeError("V2 Pages adapterの記録済みidentityが選択元と一致しません");
 }
 
-/** 現行YAMLのPages選択が記録済みV2 adapterと同じか検証する。 */
+/** 現行YAMLとexact checkout上のactionが記録済みV2 adapterと同じか検証する。 */
 export async function assertWorkflowV2AdapterCompatibility(
   currentRepositoryPath: string,
   exactRepositoryPath: string,
@@ -372,8 +377,8 @@ export async function assertWorkflowV2AdapterCompatibility(
 ): Promise<void> {
   await assertRecordedWorkflowAdapterIdentityV2(exactRepositoryPath, expectedIdentity, digest);
   const [current, exact] = await Promise.all([
-    workflowAdapterSelectionV2(currentRepositoryPath, digest),
-    workflowAdapterSelectionV2(exactRepositoryPath, digest),
+    workflowAdapterSelectionV2(currentRepositoryPath, exactRepositoryPath, digest),
+    workflowAdapterSelectionV2(exactRepositoryPath, exactRepositoryPath, digest),
   ]);
   if (serializeCanonicalJson(current) !== serializeCanonicalJson(exact)) {
     throw new TypeError("現行YAMLのV2 Pages adapterが記録済みrunと一致しません");
