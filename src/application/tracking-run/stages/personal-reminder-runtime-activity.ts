@@ -16,7 +16,7 @@ import type {
   PersonalReminderCauseSeedOrigin,
 } from "../../../domain/personal-reminder-planning.js";
 import { createPersonalReminderCauseProjectionSeed } from "../../../domain/personal-reminder-planning.js";
-import { isPullRequestRevisionResponsibilityResolved } from "../../../domain/pull-request-state-machine.js";
+import { isPullRequestRevisionResponsibilityResolved } from "../../../domain/pull-request-state-owner.js";
 import type { SourceId } from "../../../domain/source-id.js";
 import type {
   Evidence,

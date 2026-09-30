@@ -1,6 +1,10 @@
-import { type IssueTransitionBasis } from "./issue-state-machine.js";
-import { type PullRequestTransitionBasis } from "./pull-request-state-machine.js";
-import { type StalenessWaitClass } from "./staleness.js";
+import { UnreachableError, assertNonNullable } from "../util/index.js";
+import {
+  aiAnalysisDependencyForApplication,
+  type AiAnalysisDependency,
+} from "./ai-analysis-dependencies.js";
+import { type AiAnalysisElement } from "./ai-analysis-elements.js";
+import type { IssueTransitionBasis } from "./issue-state-contracts.js";
 import {
   personalReminderResponsibilitySchema,
   type PersonalReminderCauseSeed,
@@ -9,24 +13,20 @@ import {
   type PersonalReminderResponsibility,
   type PersonalReminderResponsible,
 } from "./personal-reminder-causes.js";
-import { type SourceId } from "./source-id.js";
-import {
-  type GitHubNodeId,
-  type TrackedItemAiAnalysisApplications,
-  type UtcIsoDateTime,
-} from "./types.js";
-import { UnreachableError, assertNonNullable } from "../util/index.js";
 import {
   type PersonalReminderCauseDraftUnavailable,
   type PersonalReminderCauseDraftUnavailableReason,
   type PersonalReminderItem,
   type PersonalReminderLocalDecision,
 } from "./personal-reminder-planning.js";
-import { type AiAnalysisElement } from "./ai-analysis-elements.js";
+import type { PullRequestTransitionBasis } from "./pull-request-state-contracts.js";
+import { type SourceId } from "./source-id.js";
+import { type StalenessWaitClass } from "./staleness.js";
 import {
-  aiAnalysisDependencyForApplication,
-  type AiAnalysisDependency,
-} from "./ai-analysis-dependencies.js";
+  type GitHubNodeId,
+  type TrackedItemAiAnalysisApplications,
+  type UtcIsoDateTime,
+} from "./types.js";
 
 export type PersonalReminderResponsibilityBasis = IssueTransitionBasis | PullRequestTransitionBasis;
 

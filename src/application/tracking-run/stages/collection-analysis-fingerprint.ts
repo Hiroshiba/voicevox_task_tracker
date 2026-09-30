@@ -4,8 +4,8 @@ import type { AiAnalysisRunIdentity } from "../../../codex/analysis-selection.js
 import { CODEX_BACKEND_VERSION } from "../../../codex/backend-version.js";
 import type { Config } from "../../../config/schema.js";
 import { AI_ANALYSIS_ELEMENT_SCHEMA_VERSION } from "../../../domain/ai-analysis-elements.js";
-import { ISSUE_DETERMINISTIC_RULES_VERSION } from "../../../domain/issue-state-machine.js";
-import { PULL_REQUEST_DETERMINISTIC_RULES_VERSION } from "../../../domain/pull-request-state-machine.js";
+import { ISSUE_DETERMINISTIC_RULES_VERSION } from "../../../domain/issue-state-contracts.js";
+import { PULL_REQUEST_DETERMINISTIC_RULES_VERSION } from "../../../domain/pull-request-state-contracts.js";
 import type { EnumeratedGitHubItem, Sha256Fingerprint } from "../../../github/item-enumeration.js";
 import type { ContentDigestPort } from "../ports.js";
 

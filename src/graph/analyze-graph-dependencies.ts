@@ -4,20 +4,7 @@ import {
   type AiAnalysisDependency,
   type GraphNodeId,
 } from "../domain/index.js";
-import {
-  type BlockerNodeAiDependency,
-  type BlockerSetAiDependency,
-  type GraphAnalysisNode,
-  type NegativeBlockerAiDependency,
-  type RelationSetAiDependency,
-} from "./analyze-graph-types.js";
-import {
-  compareStrings,
-  type ActiveGraphEdge,
-  type BlocksArc,
-  type ImpactAnalysis,
-  type PotentialBlocksArc,
-} from "./analyze-graph-core.js";
+import { assertNonNullable } from "../util/index.js";
 import {
   analyzeNegativeImpactContributors,
   analyzePositiveImpactContributors,
@@ -26,8 +13,21 @@ import {
   interactionNodeIds,
   mergeImpactContributorAnalysis,
 } from "./analyze-graph-contributors.js";
+import {
+  compareStrings,
+  type ActiveGraphEdge,
+  type BlocksArc,
+  type ImpactAnalysis,
+  type PotentialBlocksArc,
+} from "./analyze-graph-core.js";
 import { blocksArcKey, preferIndependentAiDependencies } from "./analyze-graph-support-arcs.js";
-import { assertNonNullable } from "../util/index.js";
+import {
+  type BlockerNodeAiDependency,
+  type BlockerSetAiDependency,
+  type GraphAnalysisNode,
+  type NegativeBlockerAiDependency,
+  type RelationSetAiDependency,
+} from "./analyze-graph-types.js";
 import {
   type ReconciledGraphEdge,
   type RelationCandidateDecisionProof,

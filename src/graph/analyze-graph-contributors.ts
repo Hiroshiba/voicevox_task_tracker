@@ -3,6 +3,7 @@ import {
   type AiAnalysisDependency,
   type GraphNodeId,
 } from "../domain/index.js";
+import { assertNonNullable } from "../util/index.js";
 import {
   compareStrings,
   type ActiveGraphEdge,
@@ -21,7 +22,6 @@ import {
 } from "./analyze-graph-impact.js";
 import { normalizePositiveSupportArcs, uniqueBlocksArcs } from "./analyze-graph-support-arcs.js";
 import type { GraphAnalysisNode } from "./analyze-graph-types.js";
-import { assertNonNullable } from "../util/index.js";
 
 /** nodeのAI依存一覧へ根拠を追加する。 */
 export function appendDependency(

@@ -1,11 +1,5 @@
 import { type Evidence, type GraphNodeId } from "../domain/index.js";
-import {
-  type ConnectedComponent,
-  type GraphAnalysisNode,
-  type ReclassificationReason,
-  type ReclassificationTarget,
-  type TrackedGraphAnalysisNode,
-} from "./analyze-graph-types.js";
+import { assertNonNullable } from "../util/index.js";
 import {
   compareGraphEdges,
   compareStrings,
@@ -21,7 +15,13 @@ import {
   type ActiveGraphEdge,
   type IndexedSnapshot,
 } from "./analyze-graph-core.js";
-import { assertNonNullable } from "../util/index.js";
+import {
+  type ConnectedComponent,
+  type GraphAnalysisNode,
+  type ReclassificationReason,
+  type ReclassificationTarget,
+  type TrackedGraphAnalysisNode,
+} from "./analyze-graph-types.js";
 import { type ReconciledGraphEdge } from "./reconcile-graph-types.js";
 
 /** 連結成分をgraph結果へ投影する。 */

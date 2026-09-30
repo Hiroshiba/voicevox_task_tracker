@@ -1,3 +1,5 @@
+import { sha256Hex } from "../canonical-json/sha256-hex.js";
+import { assertNonNullable } from "../util/index.js";
 import {
   personalReminderCauseIdSchema,
   personalReminderCauseSeedSchema,
@@ -24,15 +26,13 @@ import {
   sortedExecutionSurfaces,
   surfaceSignature,
 } from "./personal-reminder-planning-common.js";
-import { sha256Hex } from "../canonical-json/sha256-hex.js";
 import {
   type PersonalReminderCauseDraft,
   type PersonalReminderCauseSeedReconciliation,
   type PersonalReminderItem,
 } from "./personal-reminder-planning.js";
-import { type NormalizedEvent, type UtcIsoDateTime } from "./types.js";
 import { type SourceId } from "./source-id.js";
-import { assertNonNullable } from "../util/index.js";
+import { type NormalizedEvent, type UtcIsoDateTime } from "./types.js";
 
 export type ResponsibilityValue = Readonly<{
   authority: "fixed" | "semantic";

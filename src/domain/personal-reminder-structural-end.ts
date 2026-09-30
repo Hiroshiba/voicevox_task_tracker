@@ -1,21 +1,10 @@
-import {
-  type PersonalReminderCauseDraft,
-  type PersonalReminderItem,
-  type PersonalReminderLocalDecision,
-  type PersonalReminderReviewRequestTarget,
-  type PersonalReminderStructuralEndInput,
-} from "./personal-reminder-planning.js";
+import { UnreachableError } from "../util/index.js";
 import {
   type PersonalReminderCause,
   type PersonalReminderCauseSeed,
   type PersonalReminderResponsible,
 } from "./personal-reminder-causes.js";
-import {
-  type GitHubNodeId,
-  type GraphNodeId,
-  type Relation,
-  type UtcIsoDateTime,
-} from "./types.js";
+import { createSourceIds, sameResponsible } from "./personal-reminder-planning-common.js";
 import {
   assigneeMatches,
   eventAfter,
@@ -23,9 +12,20 @@ import {
   responsibilityEpisodeContinues,
   type ResponsibilityValue,
 } from "./personal-reminder-planning-continuity.js";
-import { createSourceIds, sameResponsible } from "./personal-reminder-planning-common.js";
-import { UnreachableError } from "../util/index.js";
-import { isPullRequestRevisionResponsibilityResolved } from "./pull-request-state-machine.js";
+import {
+  type PersonalReminderCauseDraft,
+  type PersonalReminderItem,
+  type PersonalReminderLocalDecision,
+  type PersonalReminderReviewRequestTarget,
+  type PersonalReminderStructuralEndInput,
+} from "./personal-reminder-planning.js";
+import { isPullRequestRevisionResponsibilityResolved } from "./pull-request-state-owner.js";
+import {
+  type GitHubNodeId,
+  type GraphNodeId,
+  type Relation,
+  type UtcIsoDateTime,
+} from "./types.js";
 
 function targetMatchesResponsible(
   target: PersonalReminderReviewRequestTarget,

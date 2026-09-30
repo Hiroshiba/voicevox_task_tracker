@@ -1,4 +1,4 @@
-import { ISSUE_DETERMINISTIC_RULES_VERSION } from "../../../domain/issue-state-machine.js";
+import { ISSUE_DETERMINISTIC_RULES_VERSION } from "../../../domain/issue-state-contracts.js";
 import type { AiAnalysisDependencyReconciliationContext } from "../../../domain/ai-analysis-dependencies.js";
 import type { Evidence, GitHubNodeId, GraphNodeId, SourceId } from "../../../domain/index.js";
 import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";

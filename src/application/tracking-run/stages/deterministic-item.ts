@@ -1,17 +1,19 @@
 import {
   determineIssueLocalResponsibility,
   determineIssueState,
-  type IssueBlocker,
-  type IssueStateDecision,
-  type IssueStateMachineInput,
 } from "../../../domain/issue-state-machine.js";
+import type {
+  IssueBlocker,
+  IssueStateDecision,
+  IssueStateMachineInput,
+} from "../../../domain/issue-state-contracts.js";
 import type { ResolvedLabelEffects } from "../../../domain/label-resolution.js";
 import type { SourceId } from "../../../domain/source-id.js";
 import {
   determinePullRequestLocalResponsibility,
   determinePullRequestState,
-  type PullRequestStateDecision,
 } from "../../../domain/pull-request-state-machine.js";
+import type { PullRequestStateDecision } from "../../../domain/pull-request-state-contracts.js";
 import type { TrackingNotificationClass, UtcIsoDateTime } from "../../../domain/types.js";
 import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";
 import type { GitHubItemDetail } from "../../../github/item-detail-types.js";

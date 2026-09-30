@@ -1,24 +1,24 @@
 import { z } from "zod";
 
 import {
-  aiAnalysisElementFingerprintSchema,
-  aiAnalysisElementMetadataSchema,
-} from "./ai-analysis-elements.js";
-import {
-  aiAnalysisDependencySchema,
   aiAnalysisDependencyMayContainProducerlessUnrecordedInput,
+  aiAnalysisDependencySchema,
   combineAiAnalysisDependencies,
   migratedAiAnalysisDependency,
   type AiAnalysisDependency,
 } from "./ai-analysis-dependencies.js";
 import {
+  aiAnalysisElementFingerprintSchema,
+  aiAnalysisElementMetadataSchema,
+} from "./ai-analysis-elements.js";
+import { type NotificationTimeReasonCode } from "./notification-reason.js";
+import {
+  createUtcIsoDateTime,
   type AiCacheEntryId,
   type GitHubNodeId,
   type GraphNodeId,
-  createUtcIsoDateTime,
   type WaitingOnRole,
 } from "./types.js";
-import { type NotificationTimeReasonCode } from "./notification-reason.js";
 
 /** 個人催促AI入力のschema version。 */
 export const PERSONAL_REMINDER_AI_INPUT_SCHEMA_VERSION = "1";

@@ -1,11 +1,23 @@
 import { z } from "zod";
 
+import type {
+  AiAnalysisDependency,
+  TrackedItemAiDependencies,
+} from "./ai-analysis-dependencies.js";
+import type {
+  AiAnalysisElement,
+  AiAnalysisElementApplications,
+  AiAnalysisElementMetadata,
+  AiAnalysisElementMigrationResult,
+  AiAnalysisElementReuseProof,
+} from "./ai-analysis-elements.js";
+import type { AiAnalysisElementSourceGeneration } from "./ai-analysis-source-generations.js";
 import { type Importance } from "./importance.js";
-import { notificationReasonSchema, type NotificationReason } from "./notification-reason.js";
 import type {
   NotificationDeliveryAttempt,
   NotificationManualResolution,
 } from "./notification-delivery-attempt.js";
+import { notificationReasonSchema, type NotificationReason } from "./notification-reason.js";
 import type {
   PersonalReminderCause,
   PersonalReminderCauseId,
@@ -15,23 +27,11 @@ import type {
 } from "./personal-reminder-causes.js";
 import { type SourceId } from "./source-id.js";
 import type { StalenessWaitClass } from "./staleness.js";
-import type {
-  AiAnalysisElement,
-  AiAnalysisElementApplications,
-  AiAnalysisElementMetadata,
-  AiAnalysisElementMigrationResult,
-  AiAnalysisElementReuseProof,
-} from "./ai-analysis-elements.js";
-import type { AiAnalysisElementSourceGeneration } from "./ai-analysis-source-generations.js";
-import type {
-  TrackedItemAiDependencies,
-  AiAnalysisDependency,
-} from "./ai-analysis-dependencies.js";
 
 export type {
   AiAnalysisElement,
-  AiAnalysisElementMetadata,
   AiAnalysisElementGeneration,
+  AiAnalysisElementMetadata,
 } from "./ai-analysis-elements.js";
 export type { AiAnalysisElementSourceGeneration } from "./ai-analysis-source-generations.js";
 

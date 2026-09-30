@@ -1,3 +1,5 @@
+import { type GraphNodeId } from "../domain/index.js";
+import { assertNonNullable } from "../util/index.js";
 import {
   containsOtherRepositoryNode,
   popcount,
@@ -18,8 +20,6 @@ import {
   type Reachability,
   type StronglyConnectedGraph,
 } from "./analyze-graph-core.js";
-import { assertNonNullable } from "../util/index.js";
-import { type GraphNodeId } from "../domain/index.js";
 import { type DownstreamImpact, type GraphAnalysisNode } from "./analyze-graph-types.js";
 
 /** 強連結成分を縮約したgraphの出辺を作る。 */

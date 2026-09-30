@@ -1,6 +1,6 @@
 import { aiAnalysisDependencyForRelation, type AiAnalysisDependency } from "../domain/index.js";
-import { candidateDecisionProofSchema } from "./analyze-graph-schema.js";
 import { compareStrings, indexSnapshot, type IndexedSnapshot } from "./analyze-graph-core.js";
+import { candidateDecisionProofSchema } from "./analyze-graph-schema.js";
 import type { RelationCandidateDecisionProof } from "./reconcile-graph-types.js";
 
 function aiDependencySignature(dependency: AiAnalysisDependency): string {

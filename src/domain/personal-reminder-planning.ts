@@ -1,16 +1,10 @@
+import { UnreachableError, assertNonNullable } from "../util/index.js";
+import { combineAiAnalysisDependencies } from "./ai-analysis-dependencies.js";
 import {
   type FreshObservedGitHubIssue,
   type FreshObservedGitHubPullRequest,
 } from "./github-item-observation.js";
-import { type IssueStateDecision } from "./issue-state-machine.js";
-import { type PullRequestStateDecision } from "./pull-request-state-machine.js";
-import {
-  type GitHubNodeId,
-  type GraphNodeId,
-  type Relation,
-  type TrackedItemAiAnalysisApplications,
-  type UtcIsoDateTime,
-} from "./types.js";
+import type { IssueStateDecision } from "./issue-state-contracts.js";
 import {
   personalReminderReasonCodeSchema,
   type PersonalReminderCause,
@@ -21,7 +15,6 @@ import {
   type PersonalReminderResponsibility,
   type PersonalReminderResponsible,
 } from "./personal-reminder-causes.js";
-import { type SourceId } from "./source-id.js";
 import {
   actionKindForReason,
   assessmentTraceDependency,
@@ -34,7 +27,6 @@ import {
   sourceIdsFromDecision,
   type PersonalReminderResponsibilityBasis,
 } from "./personal-reminder-planning-common.js";
-import { combineAiAnalysisDependencies } from "./ai-analysis-dependencies.js";
 import {
   createSeed,
   createSeedFromDraft,
@@ -46,14 +38,22 @@ import {
   type PersonalReminderCauseSeedMultipleContinuationConflict,
   type PersonalReminderCauseSeedNewDraftIdCollision,
 } from "./personal-reminder-planning-continuity.js";
-import { UnreachableError, assertNonNullable } from "../util/index.js";
-import { determineStalenessWaitClass } from "./staleness.js";
-import { isTerminalStatus } from "./status.js";
 import { draftKey, projectionKey } from "./personal-reminder-planning-seeds.js";
 import {
   relationTouchesCauseScope,
   structuralCauseEnded,
 } from "./personal-reminder-structural-end.js";
+import type { PullRequestStateDecision } from "./pull-request-state-contracts.js";
+import { type SourceId } from "./source-id.js";
+import { determineStalenessWaitClass } from "./staleness.js";
+import { isTerminalStatus } from "./status.js";
+import {
+  type GitHubNodeId,
+  type GraphNodeId,
+  type Relation,
+  type TrackedItemAiAnalysisApplications,
+  type UtcIsoDateTime,
+} from "./types.js";
 
 /** 個人催促原因の判定対象項目。 */
 export type PersonalReminderItem = FreshObservedGitHubIssue | FreshObservedGitHubPullRequest;

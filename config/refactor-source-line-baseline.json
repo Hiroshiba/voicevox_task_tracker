@@ -17,16 +17,6 @@
       "sha256": "682d6e6dd8fba6717a30a140915961507ee6a3a4d1bcaa8dc3f22aa5eb5360b3"
     },
     {
-      "path": "src/domain/issue-state-machine.ts",
-      "lineCount": 1372,
-      "sha256": "83f08391f25c9d4b8cd9a8d0749edd7e0462c5a7506e34c9a1226803730c2153"
-    },
-    {
-      "path": "src/domain/pull-request-state-machine.ts",
-      "lineCount": 2078,
-      "sha256": "e16fc18367d33e7b780cb3356109bb50ee3269399a0ab0b80e41901591c4dd50"
-    },
-    {
       "path": "src/github/item-detail-collection.ts",
       "lineCount": 2536,
       "sha256": "cf6f5cf6802bcf81e4e3c311f9a10aa817e46d377b0907f9e928616678e2307b"
@@ -35,11 +25,6 @@
       "path": "src/github/item-detail-queries.ts",
       "lineCount": 1078,
       "sha256": "2d86d09e17ed8eb9e756bf6f100ebe7af3294e8417f65ba02108969d102e406d"
-    },
-    {
-      "path": "src/graph/reconcile-graph.ts",
-      "lineCount": 1082,
-      "sha256": "e533ba1e70a5e56abc5e0a469bc2dc0c313319dfade5069d9fd294f1061493e9"
     },
     {
       "path": "src/pages/public-dto.ts",

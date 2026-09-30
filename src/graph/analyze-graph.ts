@@ -1,12 +1,4 @@
-import { normalizePositiveSupportArcs, potentialBlocksArcs } from "./analyze-graph-support-arcs.js";
 import { downstreamImpactAiDependency } from "./analyze-graph-contributors.js";
-import { validateInput } from "./analyze-graph-schema.js";
-import {
-  type AnalyzeGraphAiDependenciesInput,
-  type AnalyzeGraphAiDependenciesResult,
-  type AnalyzeGraphInput,
-  type AnalyzeGraphResult,
-} from "./analyze-graph-types.js";
 import {
   createActionableFrontier,
   createDependencyCycles,
@@ -15,23 +7,31 @@ import {
   stronglyConnectedComponents,
 } from "./analyze-graph-core.js";
 import {
+  blocksArcDependencies,
+  downstreamImpactAiDependenciesWithCandidates,
+  relationSetAiDependencies,
+} from "./analyze-graph-dependencies.js";
+import {
   createDownstreamImpacts,
   createImpactAnalysis,
   createReachability,
 } from "./analyze-graph-impact.js";
 import {
-  createConnectedComponents,
-  createReclassificationTargets,
-} from "./analyze-graph-reclassification.js";
-import {
   createPublicValueSensitivityIndex,
   validateCandidateDecisionProofs,
 } from "./analyze-graph-proof.js";
 import {
-  blocksArcDependencies,
-  downstreamImpactAiDependenciesWithCandidates,
-  relationSetAiDependencies,
-} from "./analyze-graph-dependencies.js";
+  createConnectedComponents,
+  createReclassificationTargets,
+} from "./analyze-graph-reclassification.js";
+import { validateInput } from "./analyze-graph-schema.js";
+import { normalizePositiveSupportArcs, potentialBlocksArcs } from "./analyze-graph-support-arcs.js";
+import {
+  type AnalyzeGraphAiDependenciesInput,
+  type AnalyzeGraphAiDependenciesResult,
+  type AnalyzeGraphInput,
+  type AnalyzeGraphResult,
+} from "./analyze-graph-types.js";
 
 /** 確定graphからcycle、frontier、impact、component、隣接変化を算出する。 */
 export function analyzeGraph(input: AnalyzeGraphInput): AnalyzeGraphResult {

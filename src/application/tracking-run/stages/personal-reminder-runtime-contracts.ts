@@ -14,7 +14,7 @@ import type {
   AiAnalysisDependencyInput,
   AiAnalysisDependencyReconciliationContext,
 } from "../../../domain/ai-analysis-dependencies.js";
-import type { IssueStateDecision } from "../../../domain/issue-state-machine.js";
+import type { IssueStateDecision } from "../../../domain/issue-state-contracts.js";
 import type {
   PersonalReminderActionKind,
   PersonalReminderCause,
@@ -37,7 +37,7 @@ import type {
   PreviousPersonalReminderCauses,
 } from "../../../domain/personal-reminder-planning.js";
 import { reconcilePersonalReminderCauseSeeds } from "../../../domain/personal-reminder-planning.js";
-import type { PullRequestStateDecision } from "../../../domain/pull-request-state-machine.js";
+import type { PullRequestStateDecision } from "../../../domain/pull-request-state-contracts.js";
 import type { SourceId } from "../../../domain/source-id.js";
 import type {
   Evidence,

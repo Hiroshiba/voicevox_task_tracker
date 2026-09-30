@@ -3,6 +3,7 @@ import {
   combineAiAnalysisDependencies,
   type AiAnalysisDependency,
 } from "../domain/index.js";
+import { UnreachableError, assertNonNullable } from "../util/index.js";
 import {
   compareGraphEdges,
   compareStrings,
@@ -13,7 +14,6 @@ import {
   type PotentialBlocksArc,
 } from "./analyze-graph-core.js";
 import type { RelationCandidateDecisionProof } from "./reconcile-graph-types.js";
-import { UnreachableError, assertNonNullable } from "../util/index.js";
 
 /** block関係の端点から同一性keyを作る。 */
 export function blocksArcKey(arc: BlocksArc): string {

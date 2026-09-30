@@ -1,12 +1,10 @@
-import {
-  type ReconciledGraphEdge,
-  type RelationCandidateDecisionProof,
-} from "./reconcile-graph-types.js";
+import { sha256Hex } from "../canonical-json/sha256-hex.js";
 import {
   type AiAnalysisDependency,
   type GraphNodeId,
   type UtcIsoDateTime,
 } from "../domain/index.js";
+import { assertNonNullable } from "../util/index.js";
 import {
   type ConnectedComponentId,
   type DependencyCycle,
@@ -18,8 +16,10 @@ import {
   type ReclassificationReason,
   type TrackedGraphAnalysisNode,
 } from "./analyze-graph-types.js";
-import { assertNonNullable } from "../util/index.js";
-import { sha256Hex } from "../canonical-json/sha256-hex.js";
+import {
+  type ReconciledGraphEdge,
+  type RelationCandidateDecisionProof,
+} from "./reconcile-graph-types.js";
 
 export type ActiveGraphEdge = ReconciledGraphEdge & Readonly<{ active: true }>;
 
