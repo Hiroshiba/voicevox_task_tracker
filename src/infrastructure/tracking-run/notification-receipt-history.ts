@@ -10,7 +10,7 @@ import type {
   Receipt,
 } from "../../application/tracking-run/receipt-schema.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
-import type { PreparedDiscordDigestMessage } from "../../discord/payload.js";
+import type { PreparedDiscordDigestMessage } from "../../discord/payload-contracts.js";
 import type { StateBranchAdapter, StatePersistenceConfiguration } from "../../persistence/index.js";
 import { createStateCommitOperationId } from "../../persistence/state-commit-metadata.js";
 import {

@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { parseSha256Hash } from "../canonical-json/sha256.js";
+import { type ReasoningEffort } from "../domain/index.js";
 import {
   AI_ANALYSIS_ELEMENTS,
   AI_ANALYSIS_ELEMENT_SCHEMA_VERSION,
@@ -12,7 +13,6 @@ import {
   type AiAnalysisElementSelectionCandidate,
 } from "./element-selection.js";
 import { serializeCodexAnalysisInput, type CodexAnalysisInput } from "./input.js";
-import { type ReasoningEffort } from "../domain/index.js";
 
 const aiAnalysisTargetSchema = z
   .strictObject({

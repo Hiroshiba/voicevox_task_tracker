@@ -8,19 +8,19 @@ import { z } from "zod";
 import { serializeCanonicalJson } from "../canonical-json/index.js";
 import type { DiagnosticsJsonValue } from "../diagnostics/error-serializer.js";
 import { UnreachableError } from "../util/index.js";
-import {
-  CodexInvalidJsonError,
-  CodexResourceError,
-  CodexTemporaryWorkspaceError,
-} from "./errors.js";
-import type { CodexApiErrorDiagnostic, CodexProcessRequest } from "./process-runner.js";
-import { CODEX_AUTHENTICATION_PREFLIGHT_PROMPT } from "./preflight.js";
-import { listCodexSemanticValidationIssueGlossary } from "./semantic-validation-issues.js";
 import type {
   CodexAdapterConfiguration,
   CodexAdapterDependencies,
   CodexAuthentication,
 } from "./adapter.js";
+import {
+  CodexInvalidJsonError,
+  CodexResourceError,
+  CodexTemporaryWorkspaceError,
+} from "./errors.js";
+import { CODEX_AUTHENTICATION_PREFLIGHT_PROMPT } from "./preflight.js";
+import type { CodexApiErrorDiagnostic, CodexProcessRequest } from "./process-runner.js";
+import { listCodexSemanticValidationIssueGlossary } from "./semantic-validation-issues.js";
 
 export const CODEX_COMMAND = "codex";
 const CODEX_TEMPORARY_DIRECTORY_PREFIX = "voicevox-task-tracker-codex-";

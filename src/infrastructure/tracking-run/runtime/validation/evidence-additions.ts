@@ -5,7 +5,7 @@ import type { PersonalReminderFinalizedRun } from "../../../../application/track
 import { serializeCanonicalJson } from "../../../../canonical-json/value.js";
 import type { AiCacheEntry } from "../../../../codex/cache.js";
 import type { PersonalReminderAiCacheEntry } from "../../../../codex/personal-reminder-cache.js";
-import type { DiscordNotificationItem } from "../../../../discord/notification-selection.js";
+import type { DiscordNotificationItem } from "../../../../discord/notification-selection-contracts.js";
 import { createGitHubNodeId } from "../../../../domain/types.js";
 import { assertNonNullable } from "../../../../util/index.js";
 

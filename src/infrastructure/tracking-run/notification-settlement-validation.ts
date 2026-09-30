@@ -5,10 +5,8 @@ import type {
 } from "../../application/tracking-run/receipt-schema.js";
 import { hashCanonicalJson } from "../../canonical-json/index.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
-import {
-  buildDiscordDigestPlan,
-  type PreparedDiscordDigestMessage,
-} from "../../discord/payload.js";
+import { buildDiscordDigestPlan } from "../../discord/payload.js";
+import type { PreparedDiscordDigestMessage } from "../../discord/payload-contracts.js";
 import type { StatePersistenceConfiguration } from "../../persistence/branch-adapter.js";
 import { joinStatePath } from "../../persistence/branch-adapter.js";
 import {

@@ -1,5 +1,5 @@
-import type { PersonalReminderCauseSemanticInput } from "./personal-reminder-input-contracts.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
+import type { PersonalReminderCauseSemanticInput } from "./personal-reminder-input-contracts.js";
 import {
   createPersonalReminderCauseInputFingerprint as createFingerprintWithDigest,
   planPersonalReminderCauseEvaluation as planEvaluationWithDigest,

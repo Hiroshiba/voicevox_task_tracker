@@ -1,19 +1,19 @@
-import { AI_ANALYSIS_ELEMENTS } from "./analysis-elements.js";
+import type {
+  GenericAiItemPlan,
+  GenericAiPlan,
+} from "../application/tracking-run/stages/generic-ai-plan.js";
 import { createAnalysisElementExactInput } from "./analysis-element-dependencies.js";
+import { AI_ANALYSIS_ELEMENTS } from "./analysis-elements.js";
+import type {
+  AiAnalysisRunElementResult,
+  AiAnalysisRunResult,
+} from "./analysis-runner-contracts.js";
+import { createRunElementResult } from "./analysis-runner-results.js";
 import type {
   AiAnalysisSkipReason,
   AiAnalysisTarget,
   PreparedAiAnalysisCandidate,
 } from "./analysis-selection.js";
-import type {
-  GenericAiItemPlan,
-  GenericAiPlan,
-} from "../application/tracking-run/stages/generic-ai-plan.js";
-import { createRunElementResult } from "./analysis-runner-results.js";
-import type {
-  AiAnalysisRunElementResult,
-  AiAnalysisRunResult,
-} from "./analysis-runner-contracts.js";
 
 /** 計画済みのcache結果と項目を実行へ渡す。 */
 export type CandidateCacheState = Readonly<{

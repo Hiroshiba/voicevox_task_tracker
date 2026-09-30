@@ -1,9 +1,9 @@
-import { hashCanonicalJson } from "../canonical-json/index.js";
 import type { PersonalReminderBatchCauseResult } from "../application/tracking-run/stages/personal-reminder-execution.js";
 import type {
   PersonalReminderCauseDecision,
   PersonalReminderPlannedBatch,
 } from "../application/tracking-run/stages/personal-reminder-plan-contracts.js";
+import { hashCanonicalJson } from "../canonical-json/index.js";
 import {
   PERSONAL_REMINDER_AI_GENERATION_SCHEMA_VERSION,
   PERSONAL_REMINDER_AI_PROMPT_VERSION,
@@ -16,7 +16,15 @@ import {
 } from "../domain/personal-reminder-causes.js";
 import type { ReasoningEffort, UtcIsoDateTime } from "../domain/types.js";
 import { assertNonNullable } from "../util/index.js";
+import { CodexAttemptBudgetExceededError } from "./attempt-budget.js";
 import type { AiBudgetUsage } from "./budget.js";
+import { recordCodexDiagnostic, type CodexDiagnosticsContext } from "./diagnostics.js";
+import {
+  CodexAttemptError,
+  CodexOutputSchemaValidationError,
+  CodexOutputSemanticValidationError,
+  CodexOutputValidationError,
+} from "./errors.js";
 import {
   createPersonalReminderAiCacheEntry,
   createPersonalReminderAiCacheKey,
@@ -30,14 +38,6 @@ import {
   type PersonalReminderCauseSemanticIssue,
   type PersonalReminderCauseSemanticValidation,
 } from "./personal-reminder-semantic-validation.js";
-import { recordCodexDiagnostic, type CodexDiagnosticsContext } from "./diagnostics.js";
-import {
-  CodexAttemptError,
-  CodexOutputSchemaValidationError,
-  CodexOutputSemanticValidationError,
-  CodexOutputValidationError,
-} from "./errors.js";
-import { CodexAttemptBudgetExceededError } from "./attempt-budget.js";
 
 const CODEX_OUTPUT_VALIDATION_ISSUE_DETAIL_LIMIT = 5;
 

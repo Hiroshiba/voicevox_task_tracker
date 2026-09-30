@@ -1,3 +1,4 @@
+import { assertNonNullable } from "../util/index.js";
 import {
   AI_ANALYSIS_ELEMENTS,
   type AnalysisElement,
@@ -7,15 +8,14 @@ import {
   type AnalysisElementReuseRecord,
   type AnalysisElementSourceGeneration,
 } from "./analysis-elements.js";
+import { determineAnalysisElementReuse } from "./analysis-reuse.js";
+import type { AiAnalysisTarget } from "./analysis-selection.js";
 import {
   selectAnalysisElements,
   type AnalysisElementSelection,
   type AnalysisElementSelectionCandidate,
   type AnalysisElementSelectionCandidates,
 } from "./element-selection.js";
-import type { AiAnalysisTarget } from "./analysis-selection.js";
-import { determineAnalysisElementReuse } from "./analysis-reuse.js";
-import { assertNonNullable } from "../util/index.js";
 import {
   GENERIC_AI_ELEMENT_DEFINITIONS,
   type AnalysisElementNecessityInput,

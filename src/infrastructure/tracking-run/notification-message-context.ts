@@ -4,11 +4,9 @@ import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import type {
   DiscordNotificationCandidate,
   DiscordNotificationSelection,
-} from "../../discord/notification-selection.js";
-import {
-  buildDiscordDigestPlan,
-  type PreparedDiscordDigestMessage,
-} from "../../discord/payload.js";
+} from "../../discord/notification-selection-contracts.js";
+import { buildDiscordDigestPlan } from "../../discord/payload.js";
+import type { PreparedDiscordDigestMessage } from "../../discord/payload-contracts.js";
 import type { StateSnapshot } from "../../persistence/snapshot-v21.js";
 import type { StateNotificationLedger } from "../../persistence/state-documents.js";
 import type { DurablePublicationRecord } from "../../publication/durable-record-schema.js";

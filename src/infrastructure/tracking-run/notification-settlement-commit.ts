@@ -16,7 +16,7 @@ import {
   serializeRunTransactionMarker,
 } from "../../application/tracking-run/run-transaction-marker.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
-import type { PreparedDiscordDigestMessage } from "../../discord/payload.js";
+import type { PreparedDiscordDigestMessage } from "../../discord/payload-contracts.js";
 import { createGitHubRepositoryId } from "../../domain/index.js";
 import { assertStatePublicSafety } from "../../persistence/public-safety.js";
 import { writeStateCas, type StateCasCommitRequestFactory } from "../../persistence/state-cas.js";

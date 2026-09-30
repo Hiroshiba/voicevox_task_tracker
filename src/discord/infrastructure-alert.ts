@@ -5,17 +5,18 @@ import {
   type OperationsAlertLedgerEntry,
   type UtcIsoDateTime,
 } from "../domain/index.js";
-import {
-  DiscordLedgerError,
-  DiscordOperationsPostSendError,
-  DiscordPayloadError,
-} from "./errors.js";
 import type {
   DiscordDeliveryDependencies,
   DiscordDeliverySettings,
   DiscordOperationsAlertDelivery,
 } from "./delivery.js";
-import { assertDiscordWebhookPayloadWithinLimits, type DiscordWebhookPayload } from "./payload.js";
+import {
+  DiscordLedgerError,
+  DiscordOperationsPostSendError,
+  DiscordPayloadError,
+} from "./errors.js";
+import type { DiscordWebhookPayload } from "./payload-contracts.js";
+import { assertDiscordWebhookPayloadWithinLimits } from "./payload-packing.js";
 import { executeDiscordWebhook } from "./webhook.js";
 
 const INCIDENT_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/u;

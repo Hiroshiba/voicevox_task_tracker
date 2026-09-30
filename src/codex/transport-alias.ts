@@ -1,26 +1,31 @@
-import {
-  type CodexAnalysisInput,
-  createCodexAnalysisInput,
-  serializeCodexAnalysisInput,
-  transformCodexSourceReferences,
-} from "./input.js";
 import { z } from "zod";
+import { serializeCanonicalJson } from "../canonical-json/index.js";
+import {
+  validateCodexElementOutputSchema,
+  type CodexElementEvidence,
+  type SchemaValidCodexElementOutput,
+} from "./element-output.js";
 import {
   CodexOutputSemanticValidationError,
   CodexTransportAliasError,
   type CodexOutputValidationIssue,
 } from "./errors.js";
-import { validateCodexElementOutputSchema } from "./element-output.js";
-import { validateCodexAnalysisOutput } from "./output-validation.js";
-import { validateCodexAnalysisSemanticConstraints } from "./semantic-validation.js";
-import { type CodexElementOutput } from "./semantic-validation.js";
-import { type CodexElementEvidence, type SchemaValidCodexElementOutput } from "./element-output.js";
 import {
-  isCodexSemanticCorrectionEligible,
+  createCodexAnalysisInput,
+  serializeCodexAnalysisInput,
+  transformCodexSourceReferences,
+  type CodexAnalysisInput,
+} from "./input.js";
+import { validateCodexAnalysisOutput } from "./output-validation.js";
+import {
   codexSemanticValidationIssueCodeSchema,
+  isCodexSemanticCorrectionEligible,
   type CodexSemanticValidationIssueCode,
 } from "./semantic-validation-issues.js";
-import { serializeCanonicalJson } from "../canonical-json/index.js";
+import {
+  validateCodexAnalysisSemanticConstraints,
+  type CodexElementOutput,
+} from "./semantic-validation.js";
 
 const SOURCE_ALIAS_PREFIX = "codex_source:";
 const RELATION_ALIAS_PREFIX = "rel:codex-";

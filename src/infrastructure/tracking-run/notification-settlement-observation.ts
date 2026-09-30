@@ -8,7 +8,7 @@ import type {
   NotificationMessageReceipt,
   Receipt,
 } from "../../application/tracking-run/receipt-schema.js";
-import type { PreparedDiscordDigestMessage } from "../../discord/payload.js";
+import type { PreparedDiscordDigestMessage } from "../../discord/payload-contracts.js";
 import {
   MAX_INTERVENING_COMMITS,
   authorizeAdvanceAfterOrthogonalCommits,

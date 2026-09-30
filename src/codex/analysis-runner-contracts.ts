@@ -1,12 +1,12 @@
 import type { AiAnalysisElement, AiAnalysisElementGeneration } from "./analysis-elements.js";
 import type { AiAnalysisRunIdentity, AiAnalysisSkipReason } from "./analysis-selection.js";
-import type { AiAnalysisDeferReason, AiBudgetUsage, AiPreflightBudget } from "./budget.js";
 import type { CodexAttemptBudget, CodexInitialAttemptTicket } from "./attempt-budget.js";
+import type { AiAnalysisDeferReason, AiBudgetUsage, AiPreflightBudget } from "./budget.js";
 import type { AiCacheKey, AiCacheStore } from "./cache.js";
-import type { CodexNonZeroExitDiagnostic, CodexOutputValidationDiagnostic } from "./errors.js";
 import type { CodexDiagnosticsContext } from "./diagnostics.js";
+import type { CodexNonZeroExitDiagnostic, CodexOutputValidationDiagnostic } from "./errors.js";
 import type { CodexAnalysisInput } from "./input.js";
-import type { CodexUnavailableReason } from "./reducer.js";
+import type { CodexUnavailableReason } from "./reducer-contracts.js";
 
 /** 1 runのAI cache、予算、実行方針の設定。 */
 export type AiAnalysisRunConfiguration = Readonly<{

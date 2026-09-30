@@ -1,5 +1,5 @@
-import { parseSha256Hash } from "../canonical-json/sha256.js";
 import { sha256Hex } from "../canonical-json/sha256-hex.js";
+import { parseSha256Hash } from "../canonical-json/sha256.js";
 import { serializeCanonicalJson } from "../canonical-json/value.js";
 import {
   aiAnalysisElementReuseProofSchema,
@@ -24,8 +24,8 @@ import {
   type AnalysisImpactValue,
   type AnalysisImpactVersion,
 } from "./analysis-impact.js";
-import { type CodexAnalysisInput } from "./input.js";
 import { GENERIC_AI_ELEMENT_DEFINITIONS } from "./generic-ai-definition.js";
+import { type CodexAnalysisInput } from "./input.js";
 
 function hashCanonicalJson(value: unknown): AiAnalysisElementInputFingerprint {
   return parseSha256Hash(`sha256:${sha256Hex(serializeCanonicalJson(value))}`);

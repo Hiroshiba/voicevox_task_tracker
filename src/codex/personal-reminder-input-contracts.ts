@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { AiAnalysisElementInputFingerprint } from "../domain/ai-analysis-elements.js";
 import type { PersonalReminderCauseId } from "../domain/personal-reminder-causes.js";
 import {
@@ -13,7 +14,6 @@ import type { SourceId } from "../domain/source-id.js";
 import { parseSourceId } from "../domain/source-id.js";
 import type { GitHubNodeId, GraphNodeId } from "../domain/types.js";
 import { createUtcIsoDateTime } from "../domain/types.js";
-import { z } from "zod";
 
 /** 個人催促AIが根拠へ付与する役割。 */
 export const personalReminderEvidenceRoleSchema = z.enum([

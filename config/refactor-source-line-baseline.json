@@ -2,21 +2,6 @@
   "baselineCommit": "2facf26033517ee7138a95b70ee1c0116028bc9a",
   "entries": [
     {
-      "path": "src/codex/reducer.ts",
-      "lineCount": 1372,
-      "sha256": "faf8ad553742609545f91cfafc4d099f4e1260f134a4fd481c43eb7bdcb76f01"
-    },
-    {
-      "path": "src/discord/notification-selection.ts",
-      "lineCount": 2727,
-      "sha256": "8cdf91885c120a19cade208874716519f0e8cce1c27debafe8cf271e8c103d6c"
-    },
-    {
-      "path": "src/discord/payload.ts",
-      "lineCount": 1475,
-      "sha256": "682d6e6dd8fba6717a30a140915961507ee6a3a4d1bcaa8dc3f22aa5eb5360b3"
-    },
-    {
       "path": "src/github/item-detail-collection.ts",
       "lineCount": 2536,
       "sha256": "cf6f5cf6802bcf81e4e3c311f9a10aa817e46d377b0907f9e928616678e2307b"

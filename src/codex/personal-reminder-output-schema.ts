@@ -1,8 +1,8 @@
 import { z } from "zod";
 
 import {
-  personalReminderCauseIdSchema,
   PERSONAL_REMINDER_AI_OUTPUT_SCHEMA_VERSION,
+  personalReminderCauseIdSchema,
 } from "../domain/personal-reminder-causes.js";
 import {
   personalReminderItemRefSchema,

@@ -8,8 +8,8 @@ import {
   type AiBudgetLedgerSnapshot,
   type AiBudgetReservationId,
 } from "../application/tracking-run/contracts/ai-budget-ledger.js";
-import type { AiBudgetCandidate, AiPreflightBudget } from "./budget.js";
 import { TaskTrackerError } from "../util/task-tracker-error.js";
+import type { AiBudgetCandidate, AiPreflightBudget } from "./budget.js";
 
 /** Codex execの初回試行用に予約した枠。 */
 export type CodexInitialAttemptTicket = Readonly<{ id: AiBudgetReservationId }>;

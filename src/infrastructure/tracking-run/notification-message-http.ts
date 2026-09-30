@@ -5,7 +5,7 @@ import {
   DiscordWebhookSecretMissingError,
   DiscordWebhookSecretReadError,
 } from "../../discord/errors.js";
-import type { DiscordWebhookPayload } from "../../discord/payload.js";
+import type { DiscordWebhookPayload } from "../../discord/payload-contracts.js";
 import {
   executeDiscordWebhook,
   type DiscordSecretProvider,

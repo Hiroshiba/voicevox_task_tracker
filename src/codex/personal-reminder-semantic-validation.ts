@@ -1,9 +1,9 @@
+import { type AiAnalysisElementInputFingerprint } from "../domain/ai-analysis-elements.js";
 import {
   personalReminderCauseAssessmentSchema,
   type PersonalReminderCauseAssessment,
   type PersonalReminderResponsible,
 } from "../domain/personal-reminder-causes.js";
-import { type AiAnalysisElementInputFingerprint } from "../domain/ai-analysis-elements.js";
 import { assertNonNullable } from "../util/index.js";
 import {
   type PersonalReminderAiInput,

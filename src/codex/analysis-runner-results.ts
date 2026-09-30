@@ -1,35 +1,35 @@
+import { hashCanonicalJson, parseSha256Hash } from "../canonical-json/index.js";
+import type { DiagnosticsJsonValue } from "../diagnostics/error-serializer.js";
+import { createUtcIsoDateTime, type AnalysisMetadata } from "../domain/index.js";
+import { assertNonNullable } from "../util/index.js";
 import {
   AI_ANALYSIS_ELEMENT_REVISIONS,
+  aiAnalysisElementGenerationSchema,
   type AiAnalysisElement,
   type AiAnalysisElementGeneration,
   type AiAnalysisElementResult,
 } from "./analysis-elements.js";
-import type { AiAnalysisRunIdentity, PreparedAiAnalysisCandidate } from "./analysis-selection.js";
-import { type AiCacheIdentity, type AiCacheKey } from "./cache.js";
-import { hashCanonicalJson, parseSha256Hash } from "../canonical-json/index.js";
-import {
-  CodexAttemptError,
-  CodexOutputSchemaValidationError,
-  CodexOutputSemanticValidationError,
-  CodexOutputValidationError,
-  CodexNonZeroExitError,
-} from "./errors.js";
-import { recordCodexDiagnostic, type CodexDiagnosticsContext } from "./diagnostics.js";
-import type { DiagnosticsJsonValue } from "../diagnostics/error-serializer.js";
-import type { CodexAnalysisInput } from "./input.js";
-import type { SchemaValidCodexElementOutput } from "./element-output.js";
-import { CODEX_ELEMENT_OUTPUT_SCHEMA_VERSION } from "./element-output-schema.js";
-import { aiAnalysisElementGenerationSchema } from "./analysis-elements.js";
-import { classifyCodexUnavailableReason } from "./reducer.js";
-import { validateCodexAnalysisSemantics } from "./semantic-validation.js";
-import type { CodexSemanticValidationIssueCode } from "./semantic-validation-issues.js";
-import { createUtcIsoDateTime, type AnalysisMetadata } from "../domain/index.js";
-import { assertNonNullable } from "../util/index.js";
 import type {
   AiAnalysisRunElementResult,
   AiAnalysisRunFailure,
   AiAnalysisRunItemResult,
 } from "./analysis-runner-contracts.js";
+import type { AiAnalysisRunIdentity, PreparedAiAnalysisCandidate } from "./analysis-selection.js";
+import { type AiCacheIdentity, type AiCacheKey } from "./cache.js";
+import { recordCodexDiagnostic, type CodexDiagnosticsContext } from "./diagnostics.js";
+import { CODEX_ELEMENT_OUTPUT_SCHEMA_VERSION } from "./element-output-schema.js";
+import type { SchemaValidCodexElementOutput } from "./element-output.js";
+import {
+  CodexAttemptError,
+  CodexNonZeroExitError,
+  CodexOutputSchemaValidationError,
+  CodexOutputSemanticValidationError,
+  CodexOutputValidationError,
+} from "./errors.js";
+import type { CodexAnalysisInput } from "./input.js";
+import { classifyCodexUnavailableReason } from "./reducer-execution.js";
+import type { CodexSemanticValidationIssueCode } from "./semantic-validation-issues.js";
+import { validateCodexAnalysisSemantics } from "./semantic-validation.js";
 
 const CODEX_OUTPUT_VALIDATION_ISSUE_DETAIL_LIMIT = 5;
 

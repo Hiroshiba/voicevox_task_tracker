@@ -1,35 +1,4 @@
 export {
-  createNotificationCauses,
-  type NotificationCause,
-  type NotificationCauseEvidence,
-  type NotificationCauses,
-  type NotificationDependencyCause,
-} from "./notification-cause.js";
-export {
-  assertDiscordPersonalReminderSelectionMatchesSnapshot,
-  calculateDiscordNotificationCandidateSeverity,
-  createAcknowledgedNotificationLedgerEntries,
-  selectDiscordNotifications,
-  type DiscordNotificationCandidate,
-  type DiscordNotificationCurrentState,
-  type DiscordNotificationDecisionBasis,
-  type DiscordNotificationGraphContext,
-  type DiscordNotificationItem,
-  type DiscordPersonalReminderSelectionValidationItem,
-  type DiscordNotificationLatestChange,
-  type DiscordNotificationPrevious,
-  type DiscordNotificationPreviousState,
-  type DiscordNotificationRecommendation,
-  type DiscordNotificationReasonCode,
-  type DiscordNotificationReasonSource,
-  type DiscordNotificationSelection,
-  type DiscordNotificationSelectionSettings,
-  type DiscordPersonalReminderInput,
-  type DiscordPersonalReminderNotificationContext,
-  type SelectDiscordNotificationsInput,
-  type SelectedDiscordNotificationReason,
-} from "./notification-selection.js";
-export {
   sendDiscordDigest,
   sendDiscordOperationsAlert,
   type DiscordDeliveryDependencies,
@@ -55,23 +24,57 @@ export {
   DiscordWebhookSecretReadError,
 } from "./errors.js";
 export {
+  createNotificationCauses,
+  type NotificationCause,
+  type NotificationCauseEvidence,
+  type NotificationCauses,
+  type NotificationDependencyCause,
+} from "./notification-cause.js";
+export type {
+  DiscordNotificationCandidate,
+  DiscordNotificationCurrentState,
+  DiscordNotificationDecisionBasis,
+  DiscordNotificationGraphContext,
+  DiscordNotificationItem,
+  DiscordNotificationLatestChange,
+  DiscordNotificationPrevious,
+  DiscordNotificationPreviousState,
+  DiscordNotificationReasonCode,
+  DiscordNotificationReasonSource,
+  DiscordNotificationRecommendation,
+  DiscordNotificationSelection,
+  DiscordNotificationSelectionSettings,
+  DiscordPersonalReminderInput,
+  DiscordPersonalReminderNotificationContext,
+  DiscordPersonalReminderSelectionValidationItem,
+  SelectDiscordNotificationsInput,
+  SelectedDiscordNotificationReason,
+} from "./notification-selection-contracts.js";
+export { assertDiscordPersonalReminderSelectionMatchesSnapshot } from "./notification-selection-key.js";
+export {
+  calculateDiscordNotificationCandidateSeverity,
+  createAcknowledgedNotificationLedgerEntries,
+  selectDiscordNotifications,
+} from "./notification-selection.js";
+export type {
+  BuildDiscordDigestPlanInput,
+  DiscordAllowedMentions,
+  DiscordDigestPlan,
+  DiscordEmbed,
+  DiscordEmbedField,
+  DiscordMentionSettings,
+  DiscordOperationsAlertPlan,
+  DiscordOperationsIncident,
+  DiscordPayloadSize,
+  DiscordWebhookPayload,
+  PreparedDiscordDigestMessage,
+} from "./payload-contracts.js";
+export {
   assertDiscordWebhookPayloadWithinLimits,
-  assertDiscordPersonalReminderSelectionMatchesItems,
-  buildDiscordDigestPlan,
-  buildDiscordOperationsAlertPlan,
   calculateDiscordPayloadSize,
-  type BuildDiscordDigestPlanInput,
-  type DiscordAllowedMentions,
-  type DiscordDigestPlan,
-  type DiscordEmbed,
-  type DiscordEmbedField,
-  type DiscordMentionSettings,
-  type DiscordOperationsAlertPlan,
-  type DiscordOperationsIncident,
-  type DiscordPayloadSize,
-  type DiscordWebhookPayload,
-  type PreparedDiscordDigestMessage,
-} from "./payload.js";
+} from "./payload-packing.js";
+export { assertDiscordPersonalReminderSelectionMatchesItems } from "./payload-personal-reminder-validation.js";
+export { buildDiscordDigestPlan, buildDiscordOperationsAlertPlan } from "./payload.js";
 export {
   createFetchDiscordWebhookHttpClient,
   executeDiscordWebhook,

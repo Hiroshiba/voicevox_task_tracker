@@ -1,8 +1,8 @@
-import type { DiagnosticsJsonlRecorder } from "../diagnostics/recorder.js";
 import type {
   DiagnosticsJsonObject,
   DiagnosticsJsonValue,
 } from "../diagnostics/error-serializer.js";
+import type { DiagnosticsJsonlRecorder } from "../diagnostics/recorder.js";
 
 /** Codex診断へ付与するrunと候補の識別情報。 */
 export type CodexDiagnosticsContext = Readonly<{

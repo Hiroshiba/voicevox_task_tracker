@@ -1,14 +1,19 @@
-import type { AiAnalysisRunIdentity } from "./analysis-selection.js";
-import type { GenericAiPlan } from "../application/tracking-run/stages/generic-ai-plan.js";
 import { summarizeAiBudgetLedger } from "../application/tracking-run/contracts/ai-budget-ledger.js";
-import {
-  CodexAttemptBudgetExceededError,
-  type CodexInitialAttemptTicket,
-} from "./attempt-budget.js";
-import { createAiCacheEntry, createAiCacheKey, type AiCacheEntry } from "./cache.js";
-import { CodexAttemptError, CodexOutputValidationError } from "./errors.js";
-import { validateCodexAnalysisSemantics } from "./semantic-validation.js";
+import type { GenericAiPlan } from "../application/tracking-run/stages/generic-ai-plan.js";
 import { assertNonNullable } from "../util/index.js";
+import type {
+  AiAnalysisRunConfiguration,
+  AiAnalysisRunDependencies,
+  AiAnalysisRunElementResult,
+  AiAnalysisRunFailure,
+  AiAnalysisRunItemResult,
+  AiAnalysisRunResult,
+} from "./analysis-runner-contracts.js";
+import {
+  assertTargetWasExecuted,
+  selectPlannedCandidates,
+  type CandidateCacheState,
+} from "./analysis-runner-planning.js";
 import {
   assertOutputItemMatchesInput,
   createCacheIdentity,
@@ -20,19 +25,14 @@ import {
   resultForElement,
   validateComposedOutput,
 } from "./analysis-runner-results.js";
+import type { AiAnalysisRunIdentity } from "./analysis-selection.js";
 import {
-  assertTargetWasExecuted,
-  selectPlannedCandidates,
-  type CandidateCacheState,
-} from "./analysis-runner-planning.js";
-import type {
-  AiAnalysisRunConfiguration,
-  AiAnalysisRunDependencies,
-  AiAnalysisRunElementResult,
-  AiAnalysisRunFailure,
-  AiAnalysisRunItemResult,
-  AiAnalysisRunResult,
-} from "./analysis-runner-contracts.js";
+  CodexAttemptBudgetExceededError,
+  type CodexInitialAttemptTicket,
+} from "./attempt-budget.js";
+import { createAiCacheEntry, createAiCacheKey, type AiCacheEntry } from "./cache.js";
+import { CodexAttemptError, CodexOutputValidationError } from "./errors.js";
+import { validateCodexAnalysisSemantics } from "./semantic-validation.js";
 
 export type {
   AiAnalysisExecutionContext,

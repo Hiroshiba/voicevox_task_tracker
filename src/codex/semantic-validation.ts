@@ -1,3 +1,9 @@
+import type {
+  AiAnalysisElement,
+  AiAnalysisElementMigrationResult,
+  AiAnalysisRelation,
+  AiAnalysisWaitingOn,
+} from "../domain/ai-analysis-elements.js";
 import {
   buildSourceId,
   isTerminalStatus,
@@ -5,20 +11,14 @@ import {
   validateDeadlineDate,
   type SourceId,
 } from "../domain/index.js";
-import type {
-  AiAnalysisElement,
-  AiAnalysisElementMigrationResult,
-  AiAnalysisRelation,
-  AiAnalysisWaitingOn,
-} from "../domain/ai-analysis-elements.js";
 import type { RelationAssessmentVerdict } from "../graph/index.js";
-import { CodexOutputSemanticValidationError, type CodexOutputValidationIssue } from "./errors.js";
-import { type CodexAnalysisInput } from "./input.js";
 import {
   validateCodexElementOutputSchema,
   validateCodexElementOutputSemantics,
   type SchemaValidCodexElementOutput,
 } from "./element-output.js";
+import { CodexOutputSemanticValidationError, type CodexOutputValidationIssue } from "./errors.js";
+import { type CodexAnalysisInput } from "./input.js";
 import { type CodexSemanticValidationIssueCode } from "./semantic-validation-issues.js";
 
 const TARGET_ORGANIZATION = "VOICEVOX";

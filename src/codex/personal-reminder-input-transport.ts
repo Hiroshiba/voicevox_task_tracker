@@ -1,5 +1,6 @@
-import { serializeCanonicalJson } from "../canonical-json/value.js";
+import { z } from "zod";
 import type { ContentDigestPort } from "../application/tracking-run/ports.js";
+import { serializeCanonicalJson } from "../canonical-json/value.js";
 import type { AiAnalysisElementInputFingerprint } from "../domain/ai-analysis-elements.js";
 import type {
   PersonalReminderCause,
@@ -53,7 +54,6 @@ import {
   validateOptionTargetScope,
   validateUniqueStrings,
 } from "./personal-reminder-input-core.js";
-import { z } from "zod";
 
 /** 個人催促原因の意味入力fingerprintを作成する。 */
 export function createPersonalReminderCauseInputFingerprint(

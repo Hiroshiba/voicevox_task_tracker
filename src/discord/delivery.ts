@@ -1,28 +1,4 @@
 import {
-  DiscordDigestDeliveryError,
-  DiscordLedgerError,
-  DiscordOperationsPostSendError,
-  DiscordWebhookDeliveryUnknownError,
-  DiscordWebhookRequestError,
-  DiscordWebhookRetryExhaustedError,
-} from "./errors.js";
-import {
-  assertDiscordWebhookPayloadWithinLimits,
-  buildDiscordDigestPlan,
-  buildDiscordOperationsAlertPlan,
-  type DiscordMentionSettings,
-  type DiscordOperationsIncident,
-  type DiscordWebhookPayload,
-} from "./payload.js";
-import { type DiscordNotificationCandidate } from "./notification-selection.js";
-import {
-  executeDiscordWebhook,
-  type DiscordSecretProvider,
-  type DiscordWebhookHttpClient,
-  type DiscordWebhookRetrySettings,
-  type DiscordWebhookRuntime,
-} from "./webhook.js";
-import {
   createUtcIsoDateTime,
   type NotificationLedgerEntry,
   type OperationsAlertLedgerEntry,
@@ -30,6 +6,29 @@ import {
   type UtcIsoDateTime,
 } from "../domain/index.js";
 import { assertNonNullable } from "../util/index.js";
+import {
+  DiscordDigestDeliveryError,
+  DiscordLedgerError,
+  DiscordOperationsPostSendError,
+  DiscordWebhookDeliveryUnknownError,
+  DiscordWebhookRequestError,
+  DiscordWebhookRetryExhaustedError,
+} from "./errors.js";
+import type { DiscordNotificationCandidate } from "./notification-selection-contracts.js";
+import type {
+  DiscordMentionSettings,
+  DiscordOperationsIncident,
+  DiscordWebhookPayload,
+} from "./payload-contracts.js";
+import { assertDiscordWebhookPayloadWithinLimits } from "./payload-packing.js";
+import { buildDiscordDigestPlan, buildDiscordOperationsAlertPlan } from "./payload.js";
+import {
+  executeDiscordWebhook,
+  type DiscordSecretProvider,
+  type DiscordWebhookHttpClient,
+  type DiscordWebhookRetrySettings,
+  type DiscordWebhookRuntime,
+} from "./webhook.js";
 
 export type DiscordDeliverySettings = Readonly<{
   enabled: boolean;
