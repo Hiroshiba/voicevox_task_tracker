@@ -181,6 +181,59 @@ export async function workflowAdapterIdentityV2(
   repositoryPath: string,
   digest: ContentDigestPort,
 ): Promise<ReturnType<ContentDigestPort["sha256Utf8"]>> {
+  const adapterSourcesDigest = await hashSources(
+    repositoryPath,
+    [
+      "src/application/tracking-run/contracts/runtime-recovery-v2.ts",
+      "src/cli/runtime-recovery-launcher-v2.ts",
+      "src/cli/initial-pages-deployment.ts",
+      "src/cli/notification-history-pages-deployment-record.ts",
+    ],
+    digest,
+  );
+  return digest.sha256Utf8(
+    serializeCanonicalJson({
+      selection: await workflowAdapterSelectionV2(repositoryPath, digest),
+      adapterSourcesDigest,
+    }),
+  );
+}
+
+async function workflowAdapterSelectionV2(
+  repositoryPath: string,
+  digest: ContentDigestPort,
+): Promise<object> {
+  const pagesWorkflowSource = await readFile(
+    resolve(repositoryPath, ".github/workflows/_tracking-pages.yml"),
+    "utf8",
+  );
+  const actionSources = await workflowActionSources(repositoryPath, [pagesWorkflowSource], digest);
+  const pageActionPaths = [
+    ".github/actions/download-prior-notification-history-outcome/",
+    ".github/actions/observe-pages-deployment/",
+    ".github/actions/route-tracking-stage/",
+  ];
+  return {
+    adapter: await readWorkflowV2Adapter(repositoryPath),
+    actionSources: {
+      effectActions: actionSources.effectActions,
+      localActionFiles: actionSources.localActionFiles.filter(({ path }) =>
+        pageActionPaths.some((prefix) => path.startsWith(prefix)),
+      ),
+      localWorkflowFiles: actionSources.localWorkflowFiles,
+    },
+    routeScriptDigest: await hashSources(
+      repositoryPath,
+      [".github/scripts/route-tracking-stage.sh"],
+      digest,
+    ),
+  };
+}
+
+async function workflowAdapterIdentityV2Legacy(
+  repositoryPath: string,
+  digest: ContentDigestPort,
+): Promise<ReturnType<ContentDigestPort["sha256Utf8"]>> {
   const workflowSource = await readFile(
     resolve(repositoryPath, ".github/workflows/_tracking-run.yml"),
     "utf8",
@@ -207,6 +260,38 @@ export async function workflowAdapterIdentityV2(
       adapterSourcesDigest,
     }),
   );
+}
+
+/** 記録済みV2 identityを選択元の静的adapterと照合する。 */
+export async function assertRecordedWorkflowAdapterIdentityV2(
+  repositoryPath: string,
+  expectedIdentity: string,
+  digest: ContentDigestPort,
+): Promise<void> {
+  if ((await workflowAdapterIdentityV2(repositoryPath, digest)) === expectedIdentity) {
+    return;
+  }
+  if ((await workflowAdapterIdentityV2Legacy(repositoryPath, digest)) === expectedIdentity) {
+    return;
+  }
+  throw new TypeError("V2 Pages adapterの記録済みidentityが選択元と一致しません");
+}
+
+/** 現行YAMLのPages選択が記録済みV2 adapterと同じか検証する。 */
+export async function assertWorkflowV2AdapterCompatibility(
+  currentRepositoryPath: string,
+  exactRepositoryPath: string,
+  expectedIdentity: string,
+  digest: ContentDigestPort,
+): Promise<void> {
+  await assertRecordedWorkflowAdapterIdentityV2(exactRepositoryPath, expectedIdentity, digest);
+  const [current, exact] = await Promise.all([
+    workflowAdapterSelectionV2(currentRepositoryPath, digest),
+    workflowAdapterSelectionV2(exactRepositoryPath, digest),
+  ]);
+  if (serializeCanonicalJson(current) !== serializeCanonicalJson(exact)) {
+    throw new TypeError("現行YAMLのV2 Pages adapterが記録済みrunと一致しません");
+  }
 }
 
 async function codeRevision(repositoryPath: string, filesDigest: string): Promise<string> {

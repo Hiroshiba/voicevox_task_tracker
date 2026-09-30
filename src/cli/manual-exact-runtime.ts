@@ -1,16 +1,28 @@
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { z } from "zod";
 
-import { serializeCanonicalJsonLine } from "../canonical-json/value.js";
+import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../canonical-json/value.js";
 import { decodePublicFailureArtifact } from "../application/tracking-run/failure-artifact.js";
 import { runtimeRecoveryInputV1Schema } from "../application/tracking-run/contracts/runtime-recovery-v1.js";
+import { runtimeRecoveryInputV2Schema } from "../application/tracking-run/contracts/runtime-recovery-v2.js";
+import { runtimeRecoveryPlanV2Schema } from "../application/tracking-run/recovery-bootstrap.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
 import { writeCliTextFile } from "./file-output.js";
-import { verifyRecoveryBundle } from "./publication-runtime.js";
+import {
+  assertWorkflowV2AdapterCompatibility,
+  verifyRecoveryBundle,
+} from "./publication-runtime.js";
+import {
+  launchRuntimeRecoveryV2,
+  verifyRuntimeRecoveryV2,
+} from "./runtime-recovery-launcher-v2.js";
+import { splitStagePaths } from "./split-stage-paths.js";
+import { readSplitReceiptChain } from "./split-stage-receipts.js";
 import { observeBootstrap, type BootstrapFailureObservation } from "./failure-context-state.js";
 import { encryptManualDiagnostics } from "./manual-diagnostics-encryption.js";
 import {
@@ -47,6 +59,17 @@ const environmentSchema = z.strictObject({
 const reportingEnvironmentSchema = environmentSchema.pick({
   diagnosticsPath: true,
   failureDirectory: true,
+});
+const v2SelectionSchema = z.strictObject({
+  protocolVersion: z.literal(2),
+  exactStateRevision: z.string().regex(/^[0-9a-f]{40}$/u),
+  runId: environmentSchema.shape.runId,
+  checkpointDigest: environmentSchema.shape.checkpointDigest,
+  checkpointFileDigest: environmentSchema.shape.checkpointDigest,
+  expectedRecordDigest: environmentSchema.shape.checkpointDigest,
+  expectedRuntimeIdentityDigest: environmentSchema.shape.checkpointDigest,
+  expectedWorkflowEffectAdapterIdentityDigest: environmentSchema.shape.checkpointDigest,
+  runtimeRecoveryPlan: runtimeRecoveryPlanV2Schema,
 });
 
 export type ManualExactCommand = z.output<typeof commandSchema>;
@@ -98,7 +121,7 @@ async function runExactCli(
   const result = await new Promise<{ code: number | null; signal: string | null }>(
     (resolveExit, rejectExit) => {
       child.on("error", rejectExit);
-      child.on("exit", (code, signal) => {
+      child.on("close", (code, signal) => {
         resolveExit({ code, signal });
       });
     },
@@ -111,7 +134,12 @@ async function runExactCli(
 
 async function selectRuntime(
   controlEntrypoint: string,
+  controlRepositoryPath: string,
+  checkout: string,
   runId: string,
+  checkpointDigest: string,
+  checkpointFileDigest: string,
+  runtimeIdentityDigest: string,
   codeRevision: string,
   stateRevision: string,
 ): Promise<void> {
@@ -124,26 +152,79 @@ async function selectRuntime(
   const decision = z
     .looseObject({
       kind: z.literal("resume_with_exact_runtime"),
-      recoveryInput: runtimeRecoveryInputV1Schema,
+      recoveryInput: z.union([runtimeRecoveryInputV1Schema, v2SelectionSchema]),
     })
     .parse(value);
   const input = decision.recoveryInput;
-  if (
-    input.runId !== runId ||
-    input.exactStateRevision !== stateRevision ||
-    input.runtimeRecoveryPlan.kind === "not_reproducible" ||
-    input.runtimeRecoveryPlan.codeRevision !== codeRevision
-  ) {
+  if (input.runId !== runId || input.exactStateRevision !== stateRevision) {
     throw new TypeError("旧runのruntime選択が指定したrunとcode revisionに一致しません");
+  }
+  const plan = input.runtimeRecoveryPlan;
+  if (plan.kind !== "workflow_bundle" || plan.codeRevision !== codeRevision) {
+    throw new TypeError("手動復旧のworkflow bundleを選べません");
+  }
+  const bundleRoot = resolve("artifacts/workflow/runtime");
+  if (input.protocolVersion === 2) {
+    if (
+      input.checkpointDigest !== checkpointDigest ||
+      input.checkpointFileDigest !== checkpointFileDigest ||
+      input.expectedRuntimeIdentityDigest !== runtimeIdentityDigest ||
+      input.expectedWorkflowEffectAdapterIdentityDigest !==
+        plan.recoveryProtocol.workflowEffectAdapterIdentityDigest
+    ) {
+      throw new TypeError("V2手動解決のrun、record、checkpoint結合が一致しません");
+    }
+    await assertWorkflowV2AdapterCompatibility(
+      controlRepositoryPath,
+      checkout,
+      input.expectedWorkflowEffectAdapterIdentityDigest,
+      nodeContentDigestPort,
+    );
+    const fixedInput = runtimeRecoveryInputV2Schema.parse({
+      protocolVersion: 2,
+      inputContract: "tracking-run-recovery-input-v2",
+      operation: "inspect",
+      invocationId: randomUUID(),
+      configPath: "config.yml",
+      stateRef: "tracker-state",
+      exactStateRevision: stateRevision,
+      runId,
+      runAttempt: z.coerce.number().int().positive().parse(process.env["GITHUB_RUN_ATTEMPT"]),
+      expectedRecordDigest: input.expectedRecordDigest,
+      expectedRuntimeIdentityDigest: input.expectedRuntimeIdentityDigest,
+      expectedWorkflowEffectAdapterIdentityDigest:
+        input.expectedWorkflowEffectAdapterIdentityDigest,
+      runtimeRecoveryPlan: plan,
+    });
+    await verifyRuntimeRecoveryV2(checkout, bundleRoot, fixedInput);
+    const result = await launchRuntimeRecoveryV2(checkout, bundleRoot, fixedInput);
+    const entries = await readSplitReceiptChain(
+      splitStagePaths(checkout, runId).receiptChain,
+      runId,
+    );
+    if (
+      result.status !== "inspected" ||
+      result.runId !== runId ||
+      result.stateRevision !== stateRevision ||
+      result.nextStage !== "settle-notifications" ||
+      result.receiptChainDigest !==
+        nodeContentDigestPort.sha256Utf8(serializeCanonicalJson(entries)) ||
+      result.workflowEffectAdapterIdentityDigest !==
+        input.expectedWorkflowEffectAdapterIdentityDigest
+    ) {
+      throw new TypeError("V2固定入口の手動解決前の結果が永続runと一致しません");
+    }
+    await writeCliTextFile(
+      "artifacts/workflow/manual-recovery-input.json",
+      serializeCanonicalJsonLine(fixedInput),
+    );
+    return;
   }
   await writeCliTextFile(
     "artifacts/workflow/manual-recovery-input.json",
     serializeCanonicalJsonLine(input),
   );
-  if (input.runtimeRecoveryPlan.kind !== "workflow_bundle") {
-    throw new TypeError("手動復旧のworkflow bundleを選べません");
-  }
-  await verifyRecoveryBundle(resolve("artifacts/workflow/runtime"), input.runtimeRecoveryPlan);
+  await verifyRecoveryBundle(bundleRoot, plan);
 }
 
 /** 手動workflowの現行制御CLIを実行し、未報告の失敗を記録する。 */
@@ -168,6 +249,7 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
     command = commandSchema.parse(args[0]);
     input = environmentSchema.parse(environment);
     inputValidated = true;
+    const controlRepositoryPath = process.cwd();
     const checkout = resolve(input.checkout);
     const controlEntrypoint = resolve("dist/cli/tracker-run.js");
     const entrypoint = resolve(checkout, "artifacts/workflow/runtime/tracker-run.mjs");
@@ -186,11 +268,25 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
     }
     if (command === "select-runtime") {
       const stateRevision = revision(before);
-      if (stateRevision == null) {
+      if (
+        before == null ||
+        stateRevision == null ||
+        before.evidence?.bindingKind !== "checkpoint"
+      ) {
         throw new TypeError("旧runtime選択に必要なstate revisionがありません");
       }
       childStarted = true;
-      await selectRuntime(controlEntrypoint, input.runId, input.codeRevision, stateRevision);
+      await selectRuntime(
+        controlEntrypoint,
+        controlRepositoryPath,
+        checkout,
+        input.runId,
+        input.checkpointDigest,
+        before.evidence.checkpointFileDigest,
+        before.evidence.runtimeIdentityDigest,
+        input.codeRevision,
+        stateRevision,
+      );
     } else {
       if (command === "preflight-notification-history-deployment") {
         await readPreviousNotificationHistoryOutcome(

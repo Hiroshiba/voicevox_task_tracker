@@ -22,9 +22,9 @@ import { readInitialPagesDeploymentPreflight } from "./initial-pages-deployment.
 import { decodeNotificationHistoryPagesBuildArtifact } from "./notification-history-pages-build-artifact.js";
 import { parseNotificationHistoryPagesDeploymentPreflight } from "./notification-history-pages-deployment.js";
 import {
+  assertRecordedWorkflowAdapterIdentityV2,
   assertRecoveryToolchain,
   verifyRecoveryBundle,
-  workflowAdapterIdentityV2,
 } from "./publication-runtime.js";
 import { splitStagePaths } from "./split-stage-paths.js";
 import { readSplitReceiptChain } from "./split-stage-receipts.js";
@@ -87,14 +87,14 @@ async function assertRuntime(
       },
     ),
   ]);
-  if (
-    revision.stdout.trim() !== plan.codeRevision ||
-    status.stdout.length !== 0 ||
-    (await workflowAdapterIdentityV2(repositoryPath, digest)) !==
-      plan.recoveryProtocol.workflowEffectAdapterIdentityDigest
-  ) {
+  if (revision.stdout.trim() !== plan.codeRevision || status.stdout.length !== 0) {
     throw new TypeError("V2 exact checkoutと静的adapterが回復計画と一致しません");
   }
+  await assertRecordedWorkflowAdapterIdentityV2(
+    repositoryPath,
+    plan.recoveryProtocol.workflowEffectAdapterIdentityDigest,
+    digest,
+  );
   await verifyRecoveryBundle(bundleRoot, plan);
   const root = await realpath(bundleRoot);
   const entrypoint = await realpath(resolve(root, plan.recoveryProtocol.entrypointRelativePath));

@@ -52,7 +52,6 @@ import {
   assertRecoveryToolchain,
   readPublicationRuntimeContext,
   verifyRecoveryBundle,
-  workflowAdapterIdentityV2,
 } from "./publication-runtime.js";
 import { projectPublicationSettings } from "./run-publication/settings.js";
 import { DURABLE_PUBLICATION_RECORD_SCHEMA_VERSION } from "./durable-record-schema.js";
@@ -420,12 +419,6 @@ export class SplitStageRunner {
       throw new TypeError("V2固定入口を持つ未完了runを選べません");
     }
     const plan = bootstrap.record.runtimeRecoveryPlan;
-    if (
-      (await workflowAdapterIdentityV2(this.#adapters.repositoryPath, digest)) !==
-      plan.recoveryProtocol.workflowEffectAdapterIdentityDigest
-    ) {
-      throw new TypeError("現行V2 Pages adapterが永続recordと一致しません");
-    }
     let observation: unknown;
     if (command.operation === "record_pages") {
       assertNonNullable(command.observationPath, "V2 Pages観測fileがありません");

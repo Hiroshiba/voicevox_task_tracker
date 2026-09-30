@@ -53,6 +53,8 @@ jobs:
       contents: write
       actions: read
     env:
+      TRACKING_EFFECT_TARGET: production
+      TRACKING_STATE_REF: tracker-state
       VOICEVOX_EXPECTED_RUN_ID: ${{ inputs.run_id }}
       VOICEVOX_MANUAL_CHECKPOINT_DIGEST: ${{ inputs.checkpoint_digest }}
       VOICEVOX_MANUAL_CODE_REVISION: ${{ inputs.code_revision }}
@@ -213,4 +215,5 @@ jobs:
       stage_results_json: ${{ toJSON(needs) }}
       has_failed_stage: true
       workflow_kind: manual
+      artifact_retention_days: 7
     secrets: inherit

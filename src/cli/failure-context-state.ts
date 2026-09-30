@@ -4,6 +4,8 @@ import type {
 } from "../application/tracking-run/failure-artifact.js";
 import {
   readDurablePublicationRecoveryBootstrap,
+  readDurablePublicationRecoveryBootstrapV2,
+  readDurablePublicationRecordSchemaVersion,
   readRunTransactionMarkerRecoveryBootstrap,
 } from "../application/tracking-run/recovery-bootstrap.js";
 import {
@@ -65,7 +67,15 @@ export async function observeBootstrap(
       throw new TypeError("markerとrecordの片方がありません");
     }
     const marker = readRunTransactionMarkerRecoveryBootstrap(markerFile.bytes);
-    const record = readDurablePublicationRecoveryBootstrap(recordFile.bytes, nodeContentDigestPort);
+    const recordVersion = readDurablePublicationRecordSchemaVersion(recordFile.bytes);
+    let record;
+    if (recordVersion === 1) {
+      record = readDurablePublicationRecoveryBootstrap(recordFile.bytes, nodeContentDigestPort);
+    } else if (recordVersion === 2) {
+      record = readDurablePublicationRecoveryBootstrapV2(recordFile.bytes, nodeContentDigestPort);
+    } else {
+      throw new TypeError("未対応のdurable record schemaです");
+    }
     if (
       marker.runId !== record.runId ||
       marker.checkpointDigest !== record.checkpointDigest ||

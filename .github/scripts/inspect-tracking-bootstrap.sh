@@ -38,14 +38,12 @@ case "$kind" in
     run_id="$(jq -r '.recoveryInput.runId' "$RUNNER_TEMP/tracking-bootstrap.json")"
     protocol_version="$(jq -r '.recoveryInput.protocolVersion' "$RUNNER_TEMP/tracking-bootstrap.json")"
     expected_identity="$(jq -r '.recoveryInput.expectedWorkflowEffectAdapterIdentityDigest' "$RUNNER_TEMP/tracking-bootstrap.json")"
-    if [[ "$protocol_version" == '2' ]]; then
-      current_identity="$(node --input-type=module -e "import { workflowAdapterIdentityV2 } from './dist/cli/publication-runtime.js'; import { nodeContentDigestPort } from './dist/infrastructure/tracking-run/content-digest.js'; process.stdout.write(await workflowAdapterIdentityV2(process.cwd(), nodeContentDigestPort));")"
-    else
+    if [[ "$protocol_version" == '1' ]]; then
       current_identity="$(node --input-type=module -e "import { workflowAdapterIdentity } from './dist/cli/publication-runtime.js'; import { nodeContentDigestPort } from './dist/infrastructure/tracking-run/content-digest.js'; process.stdout.write(await workflowAdapterIdentity(process.cwd(), nodeContentDigestPort));")"
-    fi
-    if [[ "$current_identity" != "$expected_identity" ]]; then
-      echo "実行中workflowの効果adapterが保留runの記録と一致しません" >&2
-      exit 1
+      if [[ "$current_identity" != "$expected_identity" ]]; then
+        echo "実行中workflowの効果adapterが保留runの記録と一致しません" >&2
+        exit 1
+      fi
     fi
     ;;
   *)
@@ -63,4 +61,7 @@ fi
   echo "source_run_id=$source_run_id"
   echo "run_id=$run_id"
   echo "protocol_version=$protocol_version"
+  if [[ "$kind" == 'resume_with_exact_runtime' ]]; then
+    echo "expected_identity=$expected_identity"
+  fi
 } >> "$GITHUB_OUTPUT"

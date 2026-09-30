@@ -22,6 +22,7 @@ import {
   type RuntimeRecoveryOutputV2,
 } from "../application/tracking-run/contracts/runtime-recovery-v2.js";
 import {
+  assertWorkflowV2AdapterCompatibility,
   assertRecoveryToolchain,
   verifyRebuiltRuntime,
   verifyRecoveryBundle,
@@ -291,6 +292,12 @@ export async function recoverSplitRuntimeV2(
   }
   await assertRecoveryToolchain(repositoryPath, plan);
   return withExactWorktree(repositoryPath, plan.codeRevision, async (checkoutPath) => {
+    await assertWorkflowV2AdapterCompatibility(
+      repositoryPath,
+      checkoutPath,
+      plan.recoveryProtocol.workflowEffectAdapterIdentityDigest,
+      nodeContentDigestPort,
+    );
     await installExactDependencies(checkoutPath, plan.lockfileSha256);
     const current = splitStagePaths(repositoryPath, input.runId);
     const exact = splitStagePaths(checkoutPath, input.runId);

@@ -54,7 +54,7 @@ export async function verifyRuntimeRecoveryCommand(
   await adapters.writeStandardOutput("固定V1 runtimeの検証に成功しました\n");
 }
 
-/** state refのV1 bootstrapから起動runtimeと固定回復入力を判定する。 */
+/** state refのbootstrapから起動runtimeと固定回復入力を判定する。 */
 export async function inspectRunStateCommand(
   adapters: ProductionRuntimeAdapters,
   command: InspectRunStateCliCommand,
@@ -78,7 +78,12 @@ export async function inspectRunStateCommand(
           kind: decision.kind,
           recoveryInput: {
             protocolVersion: 2,
+            exactStateRevision: decision.observedStateHead.revision,
             runId: decision.record.runId,
+            checkpointDigest: decision.record.checkpointDigest,
+            checkpointFileDigest: decision.record.checkpointFileDigest,
+            expectedRecordDigest: decision.record.recordDigest,
+            expectedRuntimeIdentityDigest: decision.record.runtimeIdentityDigest,
             runtimeRecoveryPlan: plan,
             expectedWorkflowEffectAdapterIdentityDigest:
               plan.recoveryProtocol.workflowEffectAdapterIdentityDigest,

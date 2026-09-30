@@ -157,6 +157,19 @@ jobs:
           TRACKING_STATE_REF: ${{ inputs.state_ref }}
           VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH: ${{ runner.temp }}/voicevox-task-tracker-diagnostics-${{ github.job }}.jsonl
         run: bash .github/scripts/inspect-tracking-bootstrap.sh
+      - name: V2 Pages adapterの記録元を取得
+        if: steps.inspect.outputs.protocol_version == '2'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ steps.inspect.outputs.code_revision }}
+          path: artifacts/adapter-source
+          persist-credentials: false
+      - name: V2 Pages adapterを記録済みrunと照合
+        if: steps.inspect.outputs.protocol_version == '2'
+        env:
+          TRACKING_EXPECTED_ADAPTER_IDENTITY: ${{ steps.inspect.outputs.expected_identity }}
+        run: |
+          node --input-type=module -e 'import { resolve } from "node:path"; import { assertWorkflowV2AdapterCompatibility } from "./dist/cli/publication-runtime.js"; import { nodeContentDigestPort } from "./dist/infrastructure/tracking-run/content-digest.js"; await assertWorkflowV2AdapterCompatibility(process.cwd(), resolve("artifacts/adapter-source"), process.env.TRACKING_EXPECTED_ADAPTER_IDENTITY, nodeContentDigestPort);'
       - name: bootstrap結果を保存
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
