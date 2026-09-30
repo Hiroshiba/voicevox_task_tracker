@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import process from "node:process";
 import { setTimeout } from "node:timers/promises";
@@ -169,43 +169,6 @@ function chainHasDeployment(bytes) {
   );
 }
 
-function sameFiles(left, right) {
-  if (left.size !== right.size) return false;
-  return [...left].every(([name, bytes]) => right.get(name)?.equals(bytes) === true);
-}
-
-function pagesReference(reference, pageArtifacts) {
-  if (reference == null) return undefined;
-  let page;
-  if (reference?.kind === "github_pages_actions") {
-    const actions = reference.actionsArtifact;
-    if (actions?.kind === "not_exposed") {
-      page = pageArtifacts.filter((candidate) => candidate.name === actions.artifactName);
-    } else if (actions?.kind === "identified" || actions?.kind === "identified_without_digest") {
-      page = pageArtifacts.filter((candidate) => String(candidate.id) === actions.artifactId);
-    }
-  } else if (reference?.kind === "recording") {
-    page = pageArtifacts.filter(
-      (candidate) => `${candidate.name}:${candidate.id}` === reference.recordingId,
-    );
-  }
-  if (page?.length !== 1)
-    throw new TypeError("保存済み初回PagesのActions artifactを特定できません");
-  const found = page[0];
-  const match = /^(?:tracking|sandbox)-pages-([1-9][0-9]*)-([1-9][0-9]*)-initial$/u.exec(
-    found.name,
-  );
-  if (match == null || Number(match[1]) !== found.workflowRunId) {
-    throw new TypeError("初回Pages artifact名とActions runが一致しません");
-  }
-  return {
-    id: found.id,
-    name: found.name,
-    workflowRunId: found.workflowRunId,
-    runAttempt: Number(match[2]),
-  };
-}
-
 async function main() {
   const apiUrl = requiredEnvironment("GITHUB_API_URL");
   const repository = requiredEnvironment("GITHUB_REPOSITORY");
@@ -226,7 +189,7 @@ async function main() {
     throw new TypeError("Actions runまたはtracking runの指定が不正です");
   }
   const suffix = match[1];
-  const root = resolve("artifacts/workflow/runs", suffix);
+  const root = resolve(dirname(outputPath), phase);
   const artifacts = await listArtifacts(apiUrl, repository, token);
   const pages = artifacts.filter((artifact) =>
     /^(?:tracking|sandbox)-pages-[1-9][0-9]*-[1-9][0-9]*-initial$/u.test(artifact.name),
@@ -249,10 +212,6 @@ async function main() {
       stageCandidates.push({ artifact, files: selected });
     }
   }
-  if (stageCandidates.some((candidate) => !sameFiles(candidate.files, stageCandidates[0].files))) {
-    throw new TypeError("保存済み初回Pagesの通常artifactが一致しません");
-  }
-  const stage = stageCandidates[0];
   const outcomeCandidates = [];
   for (const artifact of artifacts.filter((candidate) => candidate.name === outcomeName)) {
     const zip = extractFiles(await archiveBytes(apiUrl, repository, artifact.id, token));
@@ -262,77 +221,50 @@ async function main() {
     const bytes = zip.get("initial-pages-deployment.json");
     if (artifactRunId(bytes) === trackingRunId) outcomeCandidates.push({ artifact, bytes });
   }
-  if (outcomeCandidates.some((candidate) => !candidate.bytes.equals(outcomeCandidates[0].bytes))) {
-    throw new TypeError("保存済み初回Pagesの個別artifactが一致しません");
-  }
-  const individual = outcomeCandidates[0];
-  const stageOutcome = stage?.files.get("initial-pages-deployment.json");
-  if (stageOutcome != null && individual != null && !stageOutcome.equals(individual.bytes)) {
-    throw new TypeError("通常artifactと個別artifactの初回Pages結果が一致しません");
-  }
-  const outcome = stageOutcome ?? individual?.bytes;
-  if (outcome != null && stage == null) {
-    throw new TypeError("初回Pagesの元buildが失われたため自動再開できません");
-  }
-  const chain = stage?.files.get("receipt-chain.json");
-  const chainReceipt =
-    chain == null
-      ? undefined
-      : JSON.parse(chain.toString("utf8")).entries?.findLast(
-          (entry) =>
-            entry.receipt?.receiptType === "pages_deployment" && entry.receipt.phase === phase,
-        )?.receipt;
-  const parsedOutcome = outcome == null ? undefined : JSON.parse(outcome.toString("utf8"));
-  const reference =
-    parsedOutcome?.kind === "success"
-      ? parsedOutcome.evidence?.externalReference
-      : parsedOutcome?.kind === "deployed"
-        ? parsedOutcome.receipt?.result?.externalReference
-        : chainReceipt?.result?.externalReference;
-  const page = pagesReference(reference, pages);
-  const relevantRuns = new Set([
-    ...commitRuns,
-    ...stageCandidates.map((candidate) => candidate.artifact.workflowRunId),
-  ]);
-  for (const artifact of pages) {
+  const pageArtifacts = pages.map((artifact) => {
     const match = /^(?:tracking|sandbox)-pages-([1-9][0-9]*)-([1-9][0-9]*)-initial$/u.exec(
       artifact.name,
     );
     if (match == null || Number(match[1]) !== artifact.workflowRunId) {
       throw new TypeError("初回Pages artifact名とActions runが一致しません");
     }
-    const isCurrent = match[1] === currentRunId && match[2] === currentAttempt;
-    if (isCurrent && page != null && artifact.id !== page.id) {
-      throw new TypeError("今回の初回Pages deploy開始と別の保存済み成功結果が競合しています");
-    }
-    if (relevantRuns.has(artifact.workflowRunId) && !isCurrent && artifact.id !== page?.id) {
-      throw new TypeError("結果が不明な初回Pages deployの開始証拠があります");
-    }
-  }
-  if (stage != null) {
-    await mkdir(root, { recursive: true });
-    for (const [filename, bytes] of stage.files) {
-      await writeFile(resolve(root, filename), bytes);
+    return { ...artifact, runAttempt: Number(match[2]) };
+  });
+  for (const candidate of stageCandidates) {
+    const directory = resolve(root, String(candidate.artifact.id));
+    await mkdir(directory, { recursive: true });
+    for (const [filename, bytes] of candidate.files) {
+      await writeFile(resolve(directory, filename), bytes);
     }
   }
-  if (individual != null && stageOutcome == null) {
-    await mkdir(root, { recursive: true });
-    await writeFile(resolve(root, "initial-pages-deployment.json"), individual.bytes);
+  for (const candidate of outcomeCandidates) {
+    const directory = resolve(root, String(candidate.artifact.id));
+    await mkdir(directory, { recursive: true });
+    await writeFile(resolve(directory, "initial-pages-deployment.json"), candidate.bytes);
   }
   const status =
-    outcome != null || chainHasDeployment(stage?.files.get("receipt-chain.json"))
+    outcomeCandidates.length > 0 ||
+    stageCandidates.some(
+      (candidate) =>
+        candidate.files.has("initial-pages-deployment.json") ||
+        chainHasDeployment(candidate.files.get("receipt-chain.json")),
+    )
       ? "downloaded"
       : "no_previous";
   await mkdir(dirname(outputPath), { recursive: true });
+  await rm(`${outputPath}.selected`, { force: true });
   await writeFile(
     outputPath,
     JSON.stringify({
       phase,
       trackingRunId,
       status,
-      stageArtifact: stage == null ? null : stage.artifact,
-      individualArtifact: individual == null ? null : individual.artifact,
-      pagesArtifact: page ?? null,
+      stageArtifacts: stageCandidates.map((candidate) => candidate.artifact),
+      individualArtifacts: outcomeCandidates.map((candidate) => candidate.artifact),
+      pagesArtifacts: pageArtifacts,
+      commitWorkflowRunIds: [...commitRuns],
+      currentWorkflowRunId: Number(currentRunId),
+      currentRunAttempt: Number(currentAttempt),
     }),
   );
   await appendFile(githubOutput, `status=${status}\n`);

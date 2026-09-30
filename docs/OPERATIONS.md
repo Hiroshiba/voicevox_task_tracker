@@ -256,6 +256,12 @@ pnpm tracker:run build-pages --output web/public/data
 Actionsの`deploy-pages` jobはWeb出力とbuild recordを取得し、`preflight-pages-deployment`でremote stateと出力全fileを照合します。
 公式のPages uploadとdeploy actionの後、`record-pages-deployment`が実行結果をreceiptへ保存します。
 
+初回Pagesと通知履歴Pagesの再開では、通常artifactと個別結果を保存時点ごとに検証します。
+同じrun、checkpoint、source revision、contentの成功receiptがあれば、先行する未実行結果より優先して再deployを省略します。
+成功receiptの検証にPages upload artifactの現存は要求しません。
+異なる成功結果、破損、API取得失敗、元buildとchainを復元できない個別結果、成功結果を伴わない過去のupload証拠がある場合は停止します。
+証拠をすべて失った場合は、永続stateと同じcontentを照合する既存の再公開規則に従います。
+
 `notify-discord`が成功して通知候補がある場合は、`publish-notification-history`が通知後の最新stateを取得し、送信済み通知を含むPagesを再生成してdeployします。候補がない場合、`hold`、`acknowledge-current`ではこのjobを実行しません。
 
 GitHub Pagesへのdeployが成功した後だけ、build recordとdeployment receiptを検証してDiscord stageを実行します。

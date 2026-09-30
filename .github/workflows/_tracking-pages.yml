@@ -384,7 +384,7 @@ jobs:
           retention-days: ${{ inputs.artifact_retention_days }}
       - name: 初回Pages結果の保存要否を判定
         id: initial_record
-        if: always() && inputs.phase == 'initial' && steps.record.outcome != 'skipped' && steps.prior_initial.outputs.status == 'no_previous'
+        if: always() && inputs.phase == 'initial' && steps.record.outcome != 'skipped'
         env:
           TRACKING_RUN_SUFFIX: ${{ steps.route.outputs.run_suffix }}
         run: |
@@ -397,7 +397,27 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: initial-pages-deployment-record
+          overwrite: true
           path: artifacts/workflow/runs/${{ steps.route.outputs.run_suffix }}/initial-pages-deployment.json
+          if-no-files-found: error
+          retention-days: ${{ inputs.artifact_retention_days }}
+      - name: 通知履歴Pages結果の保存要否を判定
+        id: history_record
+        if: always() && inputs.phase == 'notification_history' && steps.record.outcome != 'skipped'
+        env:
+          TRACKING_RUN_SUFFIX: ${{ steps.route.outputs.run_suffix }}
+        run: |
+          outcome="artifacts/workflow/runs/$TRACKING_RUN_SUFFIX/notification-history-pages-deployment.json"
+          if [[ -f "$outcome" ]] && jq -e '.kind == "deployed" or .kind == "not_required" or (.kind == "failure" and (.failedOperationEffectCertainty == "ambiguous" or .failedOperationEffectCertainty == "committed"))' "$outcome" >/dev/null; then
+            echo 'upload=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: 通知履歴Pages公開結果を個別保存
+        if: always() && steps.history_record.outputs.upload == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: notification-history-pages-deployment-record
+          overwrite: true
+          path: artifacts/workflow/runs/${{ steps.route.outputs.run_suffix }}/notification-history-pages-deployment.json
           if-no-files-found: error
           retention-days: ${{ inputs.artifact_retention_days }}
       - name: 診断と失敗を保存

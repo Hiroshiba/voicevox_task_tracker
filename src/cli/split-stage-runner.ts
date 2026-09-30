@@ -72,6 +72,7 @@ import { splitStagePaths, type SplitStagePaths } from "./split-stage-paths.js";
 import { needsReceiptRestoration } from "./split-stage-artifact-state.js";
 import { reconcileSplitPagesOutcomes } from "./split-stage-pages-recovery.js";
 import { validateRetainedPages } from "./prior-pages-witness.js";
+import { selectPriorPagesArtifacts } from "./prior-pages-artifacts.js";
 
 type SplitState = Readonly<{
   config: Awaited<ReturnType<ProductionRuntimeAdapters["loadConfig"]>>;
@@ -250,6 +251,7 @@ async function priorReceipts(
   state: SplitState,
   configPath: string,
 ): Promise<readonly ReceiptChainEntry[]> {
+  await selectPriorPagesArtifacts(adapters, paths, runId);
   let entries: readonly ReceiptChainEntry[] | undefined;
   let chainMissing = false;
   try {

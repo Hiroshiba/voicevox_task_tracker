@@ -2,11 +2,10 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { z } from "zod";
-
 import { serializeCanonicalJson } from "../canonical-json/value.js";
 import { decodeReceipt } from "../application/tracking-run/receipt-codec.js";
 import type { ReceiptChainEntry } from "../application/tracking-run/receipt-chain-schema.js";
+import type { PagesDeploymentExternalReference } from "../application/tracking-run/receipt-schema.js";
 import type { Config } from "../config/index.js";
 import { nodeContentDigestPort as digest } from "../infrastructure/tracking-run/content-digest.js";
 import type { StateBranchAdapter } from "../persistence/index.js";
@@ -25,63 +24,15 @@ import { buildWorkflowPages } from "./run-publication/workflow-stage-handlers.js
 import type { SplitStagePaths } from "./split-stage-paths.js";
 import { restoreSplitHistoryPagesArtifact } from "./split-stage-pages-recovery.js";
 import { restoreSplitInitialPagesArtifacts } from "./split-stage-receipts.js";
-
-const artifactSchema = z.strictObject({
-  id: z.number().int().positive(),
-  name: z.string().min(1),
-  workflowRunId: z.number().int().positive(),
-});
-const pageSchema = artifactSchema.extend({ runAttempt: z.number().int().positive() });
-const witnessSchema = z.strictObject({
-  phase: z.enum(["initial", "notification_history"]),
-  trackingRunId: z.string().regex(/^tracker-run:[0-9a-f]{64}$/u),
-  status: z.enum(["no_previous", "downloaded"]),
-  stageArtifact: artifactSchema.nullable(),
-  individualArtifact: artifactSchema.nullable(),
-  pagesArtifact: pageSchema.nullable(),
-});
-
-type Witness = z.output<typeof witnessSchema>;
-
-async function readWitness(
-  adapters: ProductionRuntimeAdapters,
-  phase: Witness["phase"],
-  runId: string,
-): Promise<Witness | undefined> {
-  const prefix = phase === "initial" ? "INITIAL" : "HISTORY";
-  const path = adapters.environment[`VOICEVOX_PRIOR_${prefix}_EVIDENCE_PATH`];
-  if (path == null) return undefined;
-  const witness = witnessSchema.parse(JSON.parse(await readFile(path, "utf8")));
-  if (
-    witness.phase !== phase ||
-    witness.trackingRunId !== runId ||
-    witness.status !== adapters.environment[`VOICEVOX_PREVIOUS_${prefix}_OUTCOME_STATUS`]
-  ) {
-    throw new TypeError("Pages保持artifactの取得状態とrunが一致しません");
-  }
-  if (
-    witness.stageArtifact != null &&
-    witness.stageArtifact.name !==
-      (phase === "initial"
-        ? "tracking-stage-initial-pages"
-        : "tracking-stage-notification-history-pages")
-  ) {
-    throw new TypeError("Pages保持artifactの段階名が一致しません");
-  }
-  return witness;
-}
+import { readSelectedPriorPagesWitness } from "./prior-pages-artifacts.js";
 
 function assertPagesArtifact(
-  witness: Witness,
-  reference: {
-    kind: string;
-    actionsArtifact?: { kind: string; artifactId?: string; artifactName?: string };
-    recordingId?: string;
-  },
+  witness: NonNullable<Awaited<ReturnType<typeof readSelectedPriorPagesWitness>>>,
+  reference: PagesDeploymentExternalReference,
 ): void {
   const page = witness.pagesArtifact;
   if (page == null) {
-    throw new TypeError("保存済みPages receiptのActions artifactがありません");
+    return;
   }
   const suffix = witness.phase === "initial" ? "initial" : "notification-history";
   const match = new RegExp(
@@ -100,10 +51,9 @@ function assertPagesArtifact(
   if (reference.kind === "github_pages_actions") {
     const artifact = reference.actionsArtifact;
     if (
-      artifact == null ||
-      (artifact.kind === "not_exposed"
+      artifact.kind === "not_exposed"
         ? artifact.artifactName !== page.name
-        : artifact.artifactId !== String(page.id))
+        : artifact.artifactId !== String(page.id)
     ) {
       throw new TypeError("Pages receiptのActions artifact参照が一致しません");
     }
@@ -125,18 +75,17 @@ export async function validateRetainedInitialPages(
   adapter: StateBranchAdapter,
   effectTarget: "production" | "sandbox" | "recording",
 ): Promise<void> {
-  const witness = await readWitness(adapters, "initial", runId);
-  if (witness?.status !== "downloaded") return;
+  const witness = await readSelectedPriorPagesWitness(adapters, "initial", runId);
+  if (witness?.stage.kind !== "prepared") return;
   const original = decodeInitialPagesBuildArtifact(await readFile(paths.initialBuild));
-  const outcome = await readInitialPagesDeploymentOutcome(paths.initialDeployment, original);
-  if (outcome.kind !== "success") {
-    if (outcome.effectCertainty === "no_effect") return;
+  const outcome =
+    witness.status === "downloaded"
+      ? await readInitialPagesDeploymentOutcome(paths.initialDeployment, original)
+      : undefined;
+  if (outcome?.kind === "failure" && outcome.effectCertainty !== "no_effect") {
     throw new TypeError("初回Pagesの保存結果が成功を確定していません");
   }
-  if (witness.stageArtifact == null) {
-    throw new TypeError("初回Pagesの元build artifactがありません");
-  }
-  assertPagesArtifact(witness, outcome.evidence.externalReference);
+  if (outcome?.kind === "success") assertPagesArtifact(witness, outcome.evidence.externalReference);
   const initial = decodeReceipt(await readFile(paths.initialReceipt), digest);
   if (initial.receiptType !== "initial_state_commit") {
     throw new TypeError("保持された初回Pagesの初回state receiptが不正です");
@@ -170,7 +119,7 @@ export async function validateRetainedInitialPages(
     repositoryPath: adapters.repositoryPath,
     artifact: original,
     initialStateCommitReceipt: initial,
-    previousOutcome: outcome,
+    ...(outcome == null ? {} : { previousOutcome: outcome }),
     replay: true,
     observedAt: adapters.now().toISOString(),
     effectTarget,
@@ -178,7 +127,10 @@ export async function validateRetainedInitialPages(
       ? { adapterIdentityDigest: await workflowAdapterIdentityV2(adapters.repositoryPath, digest) }
       : {}),
   });
-  if (preflight.kind !== "observed") {
+  if (
+    preflight.kind !== "observed" &&
+    !(outcome?.kind !== "success" && preflight.kind === "ready")
+  ) {
     throw new TypeError("保持された初回Pages receiptをremote stateへ再観測できません");
   }
 }
@@ -193,21 +145,20 @@ export async function validateRetainedHistoryPages(
   adapter: StateBranchAdapter,
   effectTarget: "production" | "sandbox" | "recording",
 ): Promise<void> {
-  const witness = await readWitness(adapters, "notification_history", runId);
-  if (witness?.status !== "downloaded") return;
-  if (witness.stageArtifact == null) {
-    throw new TypeError("通知履歴Pagesの元build artifactがありません");
-  }
+  const witness = await readSelectedPriorPagesWitness(adapters, "notification_history", runId);
+  if (witness?.stage.kind !== "prepared") return;
   const original = decodeNotificationHistoryPagesBuildArtifact(await readFile(paths.historyBuild));
-  const outcome = decodeNotificationHistoryPagesDeploymentOutcome(
-    await readFile(paths.historyDeployment),
-    original,
-  );
-  if (outcome.kind === "failure") {
-    if (outcome.failedOperationEffectCertainty === "no_effect") return;
+  const outcome =
+    witness.status === "downloaded"
+      ? decodeNotificationHistoryPagesDeploymentOutcome(
+          await readFile(paths.historyDeployment),
+          original,
+        )
+      : undefined;
+  if (outcome?.kind === "failure" && outcome.failedOperationEffectCertainty !== "no_effect") {
     throw new TypeError("通知履歴Pagesの保存結果が成功を確定していません");
   }
-  if (outcome.kind === "deployed") {
+  if (outcome?.kind === "deployed") {
     const reference = outcome.receipt.result?.externalReference;
     if (reference == null) throw new TypeError("通知履歴Pagesの公開先参照がありません");
     assertPagesArtifact(witness, reference);
@@ -258,7 +209,7 @@ export async function validateRetainedHistoryPages(
     artifact: original,
     settlementReceipt: settlement,
     finalizationReceipt: finalization,
-    previousOutcome: outcome,
+    ...(outcome == null ? {} : { previousOutcome: outcome }),
     replay: true,
     observedAt: adapters.now().toISOString(),
     effectTarget,
@@ -266,7 +217,11 @@ export async function validateRetainedHistoryPages(
       ? { adapterIdentityDigest: await workflowAdapterIdentityV2(adapters.repositoryPath, digest) }
       : {}),
   });
-  if (preflight.kind !== "observed" && preflight.kind !== "not_required") {
+  if (
+    preflight.kind !== "observed" &&
+    preflight.kind !== "not_required" &&
+    !((outcome == null || outcome.kind === "failure") && preflight.kind === "ready")
+  ) {
     throw new TypeError("保持された通知履歴Pages receiptをfinal stateへ再観測できません");
   }
 }
