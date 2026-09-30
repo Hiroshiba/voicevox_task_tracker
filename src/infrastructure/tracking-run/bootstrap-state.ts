@@ -132,6 +132,9 @@ export async function inspectRunBootstrapState(
       reason: "different_run",
     });
   }
+  if (marker.phase === "run_finalized" && intent.kind === "start_new") {
+    return Object.freeze({ kind: "start_with_current_runtime", observedStateHead });
+  }
   if (record.runtimeRecoveryPlan.kind === "not_reproducible") {
     return manualResolution(observedStateHead, new TypeError("未完了runのruntimeを再現できません"));
   }
@@ -157,17 +160,6 @@ export async function inspectRunBootstrapState(
       observedStateHead,
       reason: headMarker.runId === intent.runId ? "state_head_changed" : "superseded_by_newer_run",
     });
-  }
-  if (marker.phase === "run_finalized") {
-    if (intent.kind === "retry_run") {
-      return Object.freeze({
-        kind: "resume_with_exact_runtime",
-        observedStateHead,
-        marker,
-        record,
-      });
-    }
-    return Object.freeze({ kind: "start_with_current_runtime", observedStateHead });
   }
   return Object.freeze({ kind: "resume_with_exact_runtime", observedStateHead, marker, record });
 }

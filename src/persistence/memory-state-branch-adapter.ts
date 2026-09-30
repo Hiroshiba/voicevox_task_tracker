@@ -251,7 +251,7 @@ export class MemoryStateBranchAdapter implements StateBranchAdapter {
     const metadata = createStateCommitMetadata(request.commitIdentity, changedPathManifest);
 
     this.#revisionSequence += 1;
-    const revision = `memory-state-${this.#revisionSequence.toString()}`;
+    const revision = this.#revisionSequence.toString(16).padStart(40, "0");
     this.#commits.set(
       revision,
       Object.freeze({

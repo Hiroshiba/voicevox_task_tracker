@@ -1,5 +1,8 @@
 import { ISSUE_DETERMINISTIC_RULES_VERSION } from "../../../domain/issue-state-contracts.js";
-import type { AiAnalysisDependencyReconciliationContext } from "../../../domain/ai-analysis-dependencies.js";
+import {
+  aiAnalysisDependencyForRelationCandidate,
+  type AiAnalysisDependencyReconciliationContext,
+} from "../../../domain/ai-analysis-dependencies.js";
 import type { Evidence, GitHubNodeId, GraphNodeId, SourceId } from "../../../domain/index.js";
 import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";
 import type { GitHubItemDetail } from "../../../github/item-detail-types.js";
@@ -155,7 +158,11 @@ function aiDependencyContext(run: GraphReconciledRun): AiAnalysisDependencyRecon
         Object.freeze({
           endpointNodeIds: candidate.endpointNodeIds,
           ownerNodeId: candidate.ownerNodeId,
-          aiDependency: candidate.aiDependency,
+          aiDependency: aiAnalysisDependencyForRelationCandidate(
+            candidate.candidateId,
+            candidate.endpointNodeIds,
+            candidate.aiDependency,
+          ),
         }),
       ]),
     ),
