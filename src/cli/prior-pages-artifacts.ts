@@ -195,6 +195,7 @@ function assertPagesStarts(
   const relevantRuns = new Set([
     ...witness.commitWorkflowRunIds,
     ...candidates.map((candidate) => candidate.stageArtifact.workflowRunId),
+    ...witness.individualArtifacts.map((artifact) => artifact.workflowRunId),
   ]);
   for (const artifact of witness.pagesArtifacts) {
     const current =
@@ -299,9 +300,10 @@ async function selectPhase(
         phase,
         trackingRunId: runId,
         status,
-        stage: selected == null
-          ? { kind: "absent" }
-          : { kind: selected.validated.content.kind, artifact: selected.stageArtifact },
+        stage:
+          selected == null
+            ? { kind: "absent" }
+            : { kind: selected.validated.content.kind, artifact: selected.stageArtifact },
         individualArtifact: selected?.individualArtifact ?? null,
         pagesArtifact: page ?? null,
       }),
