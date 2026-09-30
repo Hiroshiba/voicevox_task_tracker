@@ -364,7 +364,7 @@ function createNativeDependency(
   return Object.freeze({
     sourceId: buildSourceId(
       "github_native_dependency",
-      `${blockedItem.nodeId}:${blockerItem.nodeId}`,
+      `${blockedItem.nodeId}:blocked_by:${blockerItem.nodeId}`,
     ),
     authoritative: true,
     provenance: "native",
@@ -399,10 +399,7 @@ function createCrossReference(
       willCloseTarget: false,
     } satisfies GitHubTimelineEvent),
     inbound: Object.freeze({
-      sourceId: buildSourceId(
-        "github_inbound_cross_reference",
-        `${targetItem.nodeId}:${sourceItem.nodeId}`,
-      ),
+      sourceId: buildSourceId("github_inbound_cross_reference", `${nodeId}:${sourceItem.nodeId}`),
       candidateOnly: true,
       provenance: "cross_reference",
       eventSourceId,
@@ -424,7 +421,7 @@ function createProfileComment(
     author: Object.freeze({
       status: "identified",
       account: Object.freeze({
-        sourceId: buildSourceId("github_account", `U_commenter_${item.nodeId}`),
+        sourceId: buildSourceId("github_actor", `U_commenter_${item.nodeId}`),
         nodeId: createGitHubNodeId(`U_commenter_${item.nodeId}`),
         login: `commenter-${item.number.toString()}`,
         apiType: "User",

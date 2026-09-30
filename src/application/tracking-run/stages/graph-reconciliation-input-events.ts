@@ -1,4 +1,5 @@
 import { parseSourceId, type SourceId, type TrackedItemInputEvent } from "../../../domain/index.js";
+import { normalizeTrackedItemInputEvents } from "../../../domain/tracked-item-input-events.js";
 import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";
 import type { GitHubItemDetail } from "../../../github/item-detail-types.js";
 import { assertNonNullable } from "../../../util/index.js";
@@ -64,7 +65,7 @@ function trackedItemInputEventUrl(
 export function trackedItemInputEvents(
   analysis: InputEventAnalysis,
 ): readonly TrackedItemInputEvent[] {
-  return Object.freeze(
+  return normalizeTrackedItemInputEvents(
     analysis.item.events.map((event) =>
       Object.freeze({
         sourceId: event.sourceId,

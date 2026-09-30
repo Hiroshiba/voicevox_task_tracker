@@ -535,6 +535,9 @@ semantic補正は候補1件の論理call内で行うため、追加世代を`aiC
 `main`にはsource、設定、schema、prompt、Web UI、fixture、文書を置きます。
 日次stateはorphan branchの`tracker-state`へcanonical JSONとして保存し、外部databaseは使いません。
 
+根拠閉包は、保存時と同じ正規化を通したoutward値から参照pathを作ります。
+追跡項目の`inputEvents`はsource ID順にそろえ、snapshotの保存と再読み込みでも同じ順序を保ちます。
+
 | 既定パス                                         | 内容                                                                                                                         |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
 | `state/snapshot.json`                            | 要対応度、期限日、AI状態、AI要素の適用元、値別のAI依存、trackingStartAt、個人催促の原因を含むschema version 21の最新snapshot |

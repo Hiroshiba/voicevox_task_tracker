@@ -1,5 +1,6 @@
 import { normalizeAiAnalysisDependency } from "../domain/ai-analysis-dependencies.js";
 import { aiAnalysisElementApplicationsSchema } from "../domain/ai-analysis-elements.js";
+import { normalizeTrackedItemInputEvents } from "../domain/tracked-item-input-events.js";
 import { type TrackedItemAiAnalysis, type TrackedItemAiDependencies } from "../domain/index.js";
 import type { StateSnapshot } from "./snapshot-contracts.js";
 import {
@@ -108,15 +109,7 @@ export function normalizeSnapshot(snapshot: StateSnapshot): StateSnapshot {
               item.personalReminderCausePlanning,
             ),
             aiAnalysis: normalizeTrackedItemAiAnalysis(item.aiAnalysis),
-            inputEvents: Object.freeze(
-              [...item.inputEvents]
-                .sort((left, right) => compareStrings(left.sourceId, right.sourceId))
-                .map((event) =>
-                  Object.freeze({
-                    ...event,
-                  }),
-                ),
-            ),
+            inputEvents: normalizeTrackedItemInputEvents(item.inputEvents),
             severityContext: Object.freeze({
               ...item.severityContext,
             }),
