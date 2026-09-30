@@ -64,13 +64,14 @@ import {
   initialPagesEvidenceForSplitReceipt,
   readSplitReceiptChain,
   recoverSplitInitialPagesChain,
-  restoreSplitInitialPagesArtifacts,
   stateCommitEvidenceForSplitReceipt,
   writeSplitReceiptChain,
 } from "./split-stage-receipts.js";
 import { restoreSplitReceipts, verifySplitSettlementReceipt } from "./split-stage-recovery.js";
 import { splitStagePaths, type SplitStagePaths } from "./split-stage-paths.js";
 import { needsReceiptRestoration } from "./split-stage-artifact-state.js";
+import { reconcileSplitPagesOutcomes } from "./split-stage-pages-recovery.js";
+import { validateRetainedPages } from "./prior-pages-witness.js";
 
 type SplitState = Readonly<{
   config: Awaited<ReturnType<ProductionRuntimeAdapters["loadConfig"]>>;
@@ -268,6 +269,16 @@ async function priorReceipts(
       state.initialStateRevision,
     );
   }
+  if (entries != null)
+    entries = await reconcileSplitPagesOutcomes(
+      adapters,
+      paths,
+      runId,
+      state.adapter,
+      state.config.state,
+      state.initialStateRevision,
+      entries,
+    );
   if (entries != null) {
     await verifySplitState(state, runId, randomUUID(), adapters.now().toISOString(), entries);
   }
@@ -318,7 +329,7 @@ async function priorReceipts(
     }
   }
   if (entries != null) {
-    await restoreSplitInitialPagesArtifacts(adapters, paths, entries, configPath);
+    await validateRetainedPages(adapters, paths, entries, runId, configPath, state);
     if (chainMissing) {
       await writeSplitReceiptChain(paths.receiptChain, entries, adapters.writeJsonArtifact);
     }

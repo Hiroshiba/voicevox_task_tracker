@@ -1,28 +1,30 @@
 import { Buffer } from "node:buffer";
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
-import { basename, dirname, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import process from "node:process";
 import { setTimeout } from "node:timers/promises";
 import { URL } from "node:url";
-import { crc32, inflateRawSync } from "node:zlib";
+import { extractFiles } from "./zip.mjs";
 
-const artifactName = "notification-history-pages-deployment-record";
-const expectedFileName = "notification-history-pages-deployment.json";
+const phase = "notification_history";
+const stageName = "tracking-stage-notification-history-pages";
+const commitName = "tracking-stage-finalize-run";
+const outcomeName = "notification-history-pages-deployment-record";
+const filenames = [
+  "notification-settlement-receipt.json",
+  "run-finalization-receipt.json",
+  "notification-history-pages-build.json",
+  "notification-history-pages-deployment.json",
+  "receipt-chain.json",
+];
 const pageSize = 100;
 const maximumPages = 1000;
-const maximumArchiveBytes = 4 * 1024 * 1024;
-const maximumOutcomeBytes = 1024 * 1024;
+const maximumArchiveBytes = 64 * 1024 * 1024;
 
 function requiredEnvironment(name) {
   const value = process.env[name];
-  if (value == null || value.length === 0) {
-    throw new TypeError(`${name}が必要です`);
-  }
+  if (value == null || value.length === 0) throw new TypeError(`${name}が必要です`);
   return value;
-}
-
-function isTransientStatus(status) {
-  return status === 429 || status >= 500;
 }
 
 async function request(url, headers) {
@@ -31,13 +33,12 @@ async function request(url, headers) {
     try {
       response = await globalThis.fetch(url, { headers, redirect: "manual" });
     } catch (error) {
-      if (attempt === 2) {
+      if (attempt === 2)
         throw new Error("Actions artifact取得の通信に失敗しました", { cause: error });
-      }
       await setTimeout(1000 * (attempt + 1));
       continue;
     }
-    if (isTransientStatus(response.status) && attempt < 2) {
+    if ((response.status === 429 || response.status >= 500) && attempt < 2) {
       await response.body?.cancel();
       await setTimeout(1000 * (attempt + 1));
       continue;
@@ -50,64 +51,68 @@ async function request(url, headers) {
   throw new TypeError("Actions artifact取得の再試行が完了しませんでした");
 }
 
-function parseArtifactPage(value) {
-  if (
-    value == null ||
-    typeof value !== "object" ||
-    !Array.isArray(value.artifacts) ||
-    !Number.isSafeInteger(value.total_count) ||
-    value.total_count < 0
-  ) {
-    throw new TypeError("Actions artifact一覧の形式が不正です");
-  }
-  const artifacts = value.artifacts.map((artifact) => {
-    if (
-      artifact == null ||
-      typeof artifact !== "object" ||
-      !Number.isSafeInteger(artifact.id) ||
-      artifact.id < 1 ||
-      typeof artifact.name !== "string"
-    ) {
-      throw new TypeError("Actions artifactの識別子が不正です");
-    }
-    return { id: artifact.id, name: artifact.name };
-  });
-  return { totalCount: value.total_count, artifacts };
-}
-
-async function listPriorArtifact(apiUrl, repository, runId, token) {
-  const matches = [];
-  let totalCount;
-  let listed = 0;
+async function listArtifacts(apiUrl, repository, token) {
+  const artifacts = [];
+  const ids = new Set();
+  let expectedCount;
   for (let page = 1; page <= maximumPages; page += 1) {
     const url = new URL(
-      `repos/${repository}/actions/runs/${runId}/artifacts?per_page=${pageSize}&page=${page}`,
+      `repos/${repository}/actions/artifacts?per_page=${pageSize}&page=${page}`,
       `${apiUrl.replace(/\/$/u, "")}/`,
     );
     const response = await request(url, {
       Authorization: `Bearer ${token}`,
       Accept: "application/vnd.github+json",
     });
-    const raw = await response.json();
-    const result = parseArtifactPage(raw);
-    if (totalCount == null) {
-      totalCount = result.totalCount;
-    }
-    const artifacts = result.artifacts;
-    listed += artifacts.length;
+    const value = await response.json();
     if (
-      result.totalCount !== totalCount ||
-      listed > totalCount ||
-      (listed < totalCount && artifacts.length !== pageSize)
+      value == null ||
+      typeof value !== "object" ||
+      !Number.isSafeInteger(value.total_count) ||
+      value.total_count < 0 ||
+      !Array.isArray(value.artifacts)
     ) {
+      throw new TypeError("Actions artifact一覧の形式が不正です");
+    }
+    if (expectedCount == null) expectedCount = value.total_count;
+    if (
+      expectedCount !== value.total_count ||
+      artifacts.length + value.artifacts.length > expectedCount
+    ) {
+      throw new TypeError("Actions artifact一覧の件数が一致しません");
+    }
+    for (const artifact of value.artifacts) {
+      if (
+        artifact == null ||
+        typeof artifact !== "object" ||
+        !Number.isSafeInteger(artifact.id) ||
+        artifact.id < 1 ||
+        typeof artifact.name !== "string" ||
+        ids.has(artifact.id)
+      ) {
+        throw new TypeError("Actions artifactの識別情報が不正です");
+      }
+      ids.add(artifact.id);
+      const relevant =
+        artifact.name === stageName ||
+        artifact.name === commitName ||
+        artifact.name === outcomeName ||
+        /^(?:tracking|sandbox)-pages-[1-9][0-9]*-[1-9][0-9]*-/u.test(artifact.name);
+      if (
+        relevant &&
+        (!Number.isSafeInteger(artifact.workflow_run?.id) || artifact.workflow_run.id < 1)
+      ) {
+        throw new TypeError("Pages関連artifactのActions run IDがありません");
+      }
+      artifacts.push({
+        id: artifact.id,
+        name: artifact.name,
+        workflowRunId: artifact.workflow_run?.id,
+      });
+    }
+    if (artifacts.length === expectedCount) return artifacts;
+    if (value.artifacts.length !== pageSize) {
       throw new TypeError("Actions artifact一覧のページ数が一致しません");
-    }
-    matches.push(...artifacts.filter((artifact) => artifact.name === artifactName));
-    if (matches.length > 1) {
-      throw new TypeError("保存済み通知履歴Pages公開結果が重複しています");
-    }
-    if (listed === totalCount) {
-      return matches[0]?.id;
     }
   }
   throw new TypeError("Actions artifact一覧の全ページを確認できませんでした");
@@ -124,138 +129,221 @@ async function archiveBytes(apiUrl, repository, artifactId, token) {
   });
   for (let redirect = 0; response.status === 302 && redirect < 5; redirect += 1) {
     const location = response.headers.get("location");
-    if (location == null) {
-      throw new TypeError("Actions artifactのdownload先がありません");
-    }
+    if (location == null) throw new TypeError("Actions artifactのdownload先がありません");
     response = await request(new URL(location, url), {});
   }
-  if (response.status === 302) {
-    throw new TypeError("Actions artifactのdownload先を確定できません");
-  }
+  if (response.status === 302) throw new TypeError("Actions artifactのdownload先を確定できません");
   const length = Number(response.headers.get("content-length"));
   if (Number.isFinite(length) && length > maximumArchiveBytes) {
-    throw new TypeError("保存済み通知履歴Pages artifactが許容byte数を超えています");
+    throw new TypeError("保存済みPages artifactが許容byte数を超えています");
   }
   const reader = response.body?.getReader();
-  if (reader == null) {
-    throw new TypeError("Actions artifactのdownload結果がありません");
-  }
+  if (reader == null) throw new TypeError("Actions artifactのdownload結果がありません");
   const chunks = [];
   let total = 0;
   for (;;) {
     const { done, value } = await reader.read();
-    if (done) {
-      return Buffer.concat(chunks);
-    }
+    if (done) return Buffer.concat(chunks);
     total += value.byteLength;
     if (total > maximumArchiveBytes) {
       await reader.cancel();
-      throw new TypeError("保存済み通知履歴Pages artifactが許容byte数を超えています");
+      throw new TypeError("保存済みPages artifactが許容byte数を超えています");
     }
     chunks.push(value);
   }
 }
 
-function extractOutcome(archive) {
-  let endOffset = -1;
-  for (
-    let offset = archive.byteLength - 22;
-    offset >= Math.max(0, archive.byteLength - 65557);
-    offset -= 1
-  ) {
-    if (
-      archive.readUInt32LE(offset) === 0x06054b50 &&
-      offset + 22 + archive.readUInt16LE(offset + 20) === archive.byteLength
-    ) {
-      endOffset = offset;
-      break;
+function artifactRunId(bytes) {
+  const value = JSON.parse(bytes.toString("utf8"));
+  if (value.kind === "deployed" || value.kind === "not_required")
+    return value.receipt?.binding?.runId;
+  if (value.kind === "failure") return value.runId;
+  throw new TypeError("保存済み通知履歴Pages結果の種別が不正です");
+}
+
+function chainHasDeployment(bytes) {
+  if (bytes == null) return false;
+  const value = JSON.parse(bytes.toString("utf8"));
+  return (
+    value.entries?.some(
+      (entry) => entry.receipt?.receiptType === "pages_deployment" && entry.receipt.phase === phase,
+    ) === true
+  );
+}
+
+function sameFiles(left, right) {
+  if (left.size !== right.size) return false;
+  return [...left].every(([name, bytes]) => right.get(name)?.equals(bytes) === true);
+}
+
+function pagesReference(reference, pageArtifacts) {
+  if (reference == null) return undefined;
+  let page;
+  if (reference?.kind === "github_pages_actions") {
+    const actions = reference.actionsArtifact;
+    if (actions?.kind === "not_exposed") {
+      page = pageArtifacts.filter((candidate) => candidate.name === actions.artifactName);
+    } else if (actions?.kind === "identified" || actions?.kind === "identified_without_digest") {
+      page = pageArtifacts.filter((candidate) => String(candidate.id) === actions.artifactId);
     }
+  } else if (reference?.kind === "recording") {
+    page = pageArtifacts.filter(
+      (candidate) => `${candidate.name}:${candidate.id}` === reference.recordingId,
+    );
   }
-  if (
-    endOffset < 0 ||
-    archive.readUInt16LE(endOffset + 4) !== 0 ||
-    archive.readUInt16LE(endOffset + 6) !== 0 ||
-    archive.readUInt16LE(endOffset + 8) !== 1 ||
-    archive.readUInt16LE(endOffset + 10) !== 1
-  ) {
-    throw new TypeError("保存済み通知履歴Pages artifactのZIP構造が不正です");
+  if (page?.length !== 1)
+    throw new TypeError("保存済み通知履歴PagesのActions artifactを特定できません");
+  const found = page[0];
+  const match =
+    /^(?:tracking|sandbox)-pages-([1-9][0-9]*)-([1-9][0-9]*)-notification-history$/u.exec(
+      found.name,
+    );
+  if (match == null || Number(match[1]) !== found.workflowRunId) {
+    throw new TypeError("通知履歴Pages artifact名とActions runが一致しません");
   }
-  const centralSize = archive.readUInt32LE(endOffset + 12);
-  const centralOffset = archive.readUInt32LE(endOffset + 16);
-  if (
-    centralSize < 46 ||
-    centralOffset + centralSize !== endOffset ||
-    archive.readUInt32LE(centralOffset) !== 0x02014b50
-  ) {
-    throw new TypeError("保存済み通知履歴Pages artifactのZIP索引が不正です");
-  }
-  const flags = archive.readUInt16LE(centralOffset + 8);
-  const method = archive.readUInt16LE(centralOffset + 10);
-  const checksum = archive.readUInt32LE(centralOffset + 16);
-  const compressedSize = archive.readUInt32LE(centralOffset + 20);
-  const uncompressedSize = archive.readUInt32LE(centralOffset + 24);
-  const nameLength = archive.readUInt16LE(centralOffset + 28);
-  const extraLength = archive.readUInt16LE(centralOffset + 30);
-  const commentLength = archive.readUInt16LE(centralOffset + 32);
-  const localOffset = archive.readUInt32LE(centralOffset + 42);
-  const expectedName = Buffer.from(expectedFileName);
-  if (
-    flags & 1 ||
-    (method !== 0 && method !== 8) ||
-    uncompressedSize === 0 ||
-    uncompressedSize > maximumOutcomeBytes ||
-    centralSize !== 46 + nameLength + extraLength + commentLength ||
-    !archive.subarray(centralOffset + 46, centralOffset + 46 + nameLength).equals(expectedName) ||
-    localOffset + 30 > centralOffset ||
-    archive.readUInt32LE(localOffset) !== 0x04034b50 ||
-    archive.readUInt16LE(localOffset + 6) !== flags ||
-    archive.readUInt16LE(localOffset + 8) !== method
-  ) {
-    throw new TypeError("保存済み通知履歴Pages artifactのZIP内容が不正です");
-  }
-  const localNameLength = archive.readUInt16LE(localOffset + 26);
-  const localExtraLength = archive.readUInt16LE(localOffset + 28);
-  const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
-  if (
-    !archive.subarray(localOffset + 30, localOffset + 30 + localNameLength).equals(expectedName) ||
-    dataOffset + compressedSize > centralOffset
-  ) {
-    throw new TypeError("保存済み通知履歴Pages artifactのZIP本文が不正です");
-  }
-  const compressed = archive.subarray(dataOffset, dataOffset + compressedSize);
-  const outcome =
-    method === 0
-      ? compressed
-      : inflateRawSync(compressed, { maxOutputLength: maximumOutcomeBytes + 1 });
-  if (outcome.byteLength !== uncompressedSize || crc32(outcome) !== checksum) {
-    throw new TypeError("保存済み通知履歴Pages artifactのZIP検査値が一致しません");
-  }
-  return outcome;
+  return {
+    id: found.id,
+    name: found.name,
+    workflowRunId: found.workflowRunId,
+    runAttempt: Number(match[2]),
+  };
 }
 
 async function main() {
   const apiUrl = requiredEnvironment("GITHUB_API_URL");
   const repository = requiredEnvironment("GITHUB_REPOSITORY");
-  const runId = requiredEnvironment("PRIOR_OUTCOME_RUN_ID");
   const token = requiredEnvironment("ACTIONS_READ_TOKEN");
+  const trackingRunId = requiredEnvironment("PRIOR_TRACKING_RUN_ID");
+  const currentRunId = requiredEnvironment("GITHUB_RUN_ID");
+  const currentAttempt = requiredEnvironment("GITHUB_RUN_ATTEMPT");
   const outputPath = resolve(requiredEnvironment("PRIOR_OUTCOME_PATH"));
   const githubOutput = requiredEnvironment("GITHUB_OUTPUT");
   const githubEnvironment = requiredEnvironment("GITHUB_ENV");
-  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository) || !/^[1-9][0-9]*$/u.test(runId)) {
-    throw new TypeError("Actions runの指定が不正です");
+  const match = /^tracker-run:([0-9a-f]{64})$/u.exec(trackingRunId);
+  if (
+    match == null ||
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository) ||
+    !/^[1-9][0-9]*$/u.test(currentRunId) ||
+    !/^[1-9][0-9]*$/u.test(currentAttempt)
+  ) {
+    throw new TypeError("Actions runまたはtracking runの指定が不正です");
   }
-  if (basename(outputPath) !== expectedFileName) {
-    throw new TypeError("保存済み通知履歴Pages公開結果の保存先が不正です");
+  const suffix = match[1];
+  const root = resolve("artifacts/workflow/runs", suffix);
+  const artifacts = await listArtifacts(apiUrl, repository, token);
+  const pages = artifacts.filter((artifact) =>
+    /^(?:tracking|sandbox)-pages-[1-9][0-9]*-[1-9][0-9]*-notification-history$/u.test(
+      artifact.name,
+    ),
+  );
+  const stageCandidates = [];
+  const commitRuns = new Set();
+  for (const artifact of artifacts.filter(
+    (candidate) => candidate.name === stageName || candidate.name === commitName,
+  )) {
+    const zip = extractFiles(await archiveBytes(apiUrl, repository, artifact.id, token));
+    const selected = new Map();
+    for (const filename of filenames) {
+      const bytes = zip.get(`${suffix}/${filename}`);
+      if (bytes != null) selected.set(filename, bytes);
+    }
+    if (artifact.name === commitName) {
+      if (zip.has(`${suffix}/run-finalization-receipt.json`))
+        commitRuns.add(artifact.workflowRunId);
+    } else if (selected.size > 0) {
+      stageCandidates.push({ artifact, files: selected });
+    }
   }
-  const artifactId = await listPriorArtifact(apiUrl, repository, runId, token);
-  const status = artifactId == null ? "no_previous" : "downloaded";
-  if (artifactId != null) {
-    const outcome = extractOutcome(await archiveBytes(apiUrl, repository, artifactId, token));
-    await mkdir(dirname(outputPath), { recursive: true });
-    await writeFile(outputPath, outcome, { flag: "wx" });
+  if (stageCandidates.some((candidate) => !sameFiles(candidate.files, stageCandidates[0].files))) {
+    throw new TypeError("保存済み通知履歴Pagesの通常artifactが一致しません");
   }
+  const stage = stageCandidates[0];
+  const outcomeCandidates = [];
+  for (const artifact of artifacts.filter((candidate) => candidate.name === outcomeName)) {
+    const zip = extractFiles(await archiveBytes(apiUrl, repository, artifact.id, token));
+    if (zip.size !== 1 || !zip.has("notification-history-pages-deployment.json")) {
+      throw new TypeError("保存済み通知履歴Pages個別artifactの内容が不正です");
+    }
+    const bytes = zip.get("notification-history-pages-deployment.json");
+    if (artifactRunId(bytes) === trackingRunId) outcomeCandidates.push({ artifact, bytes });
+  }
+  if (outcomeCandidates.some((candidate) => !candidate.bytes.equals(outcomeCandidates[0].bytes))) {
+    throw new TypeError("保存済み通知履歴Pagesの個別artifactが一致しません");
+  }
+  const individual = outcomeCandidates[0];
+  const stageOutcome = stage?.files.get("notification-history-pages-deployment.json");
+  if (stageOutcome != null && individual != null && !stageOutcome.equals(individual.bytes)) {
+    throw new TypeError("通常artifactと個別artifactの通知履歴Pages結果が一致しません");
+  }
+  const outcome = stageOutcome ?? individual?.bytes;
+  if (outcome != null && stage == null) {
+    throw new TypeError("通知履歴Pagesの元buildが失われたため自動再開できません");
+  }
+  const chain = stage?.files.get("receipt-chain.json");
+  const chainReceipt =
+    chain == null
+      ? undefined
+      : JSON.parse(chain.toString("utf8")).entries?.findLast(
+          (entry) =>
+            entry.receipt?.receiptType === "pages_deployment" && entry.receipt.phase === phase,
+        )?.receipt;
+  const parsedOutcome = outcome == null ? undefined : JSON.parse(outcome.toString("utf8"));
+  const reference =
+    parsedOutcome?.kind === "success"
+      ? parsedOutcome.evidence?.externalReference
+      : parsedOutcome?.kind === "deployed"
+        ? parsedOutcome.receipt?.result?.externalReference
+        : chainReceipt?.result?.externalReference;
+  const page = pagesReference(reference, pages);
+  const relevantRuns = new Set([
+    ...commitRuns,
+    ...stageCandidates.map((candidate) => candidate.artifact.workflowRunId),
+  ]);
+  for (const artifact of pages) {
+    const match =
+      /^(?:tracking|sandbox)-pages-([1-9][0-9]*)-([1-9][0-9]*)-notification-history$/u.exec(
+        artifact.name,
+      );
+    if (match == null || Number(match[1]) !== artifact.workflowRunId) {
+      throw new TypeError("通知履歴Pages artifact名とActions runが一致しません");
+    }
+    const isCurrent = match[1] === currentRunId && match[2] === currentAttempt;
+    if (isCurrent && page != null && artifact.id !== page.id) {
+      throw new TypeError("今回の通知履歴Pages deploy開始と別の保存済み成功結果が競合しています");
+    }
+    if (relevantRuns.has(artifact.workflowRunId) && !isCurrent && artifact.id !== page?.id) {
+      throw new TypeError("結果が不明な通知履歴Pages deployの開始証拠があります");
+    }
+  }
+  if (stage != null) {
+    await mkdir(root, { recursive: true });
+    for (const [filename, bytes] of stage.files) {
+      await writeFile(resolve(root, filename), bytes);
+    }
+  }
+  if (individual != null && stageOutcome == null) {
+    await mkdir(root, { recursive: true });
+    await writeFile(resolve(root, "notification-history-pages-deployment.json"), individual.bytes);
+  }
+  const status =
+    outcome != null || chainHasDeployment(stage?.files.get("receipt-chain.json"))
+      ? "downloaded"
+      : "no_previous";
+  await mkdir(dirname(outputPath), { recursive: true });
+  await writeFile(
+    outputPath,
+    JSON.stringify({
+      phase,
+      trackingRunId,
+      status,
+      stageArtifact: stage == null ? null : stage.artifact,
+      individualArtifact: individual == null ? null : individual.artifact,
+      pagesArtifact: page ?? null,
+    }),
+  );
   await appendFile(githubOutput, `status=${status}\n`);
   await appendFile(githubEnvironment, `VOICEVOX_PREVIOUS_HISTORY_OUTCOME_STATUS=${status}\n`);
+  await appendFile(githubEnvironment, `VOICEVOX_PRIOR_HISTORY_EVIDENCE_PATH=${outputPath}\n`);
 }
 
 await main();
