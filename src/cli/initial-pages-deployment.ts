@@ -267,6 +267,7 @@ export async function preflightInitialPagesDeployment(
     artifact: InitialPagesBuildArtifact;
     initialStateCommitReceipt: InitialStateCommitReceipt;
     replay: boolean;
+    previousOutcome?: InitialPagesDeploymentOutcome;
     observedAt: string;
     effectTarget: "production" | "sandbox" | "recording";
     adapterIdentityDigest?: string;
@@ -356,6 +357,28 @@ export async function preflightInitialPagesDeployment(
   ) {
     throw new TypeError("Pages deploy指示と初回state revisionが一致しません");
   }
+  const previous =
+    input.previousOutcome == null
+      ? undefined
+      : parseInitialPagesDeploymentOutcome(input.previousOutcome, artifact);
+  if (previous?.kind === "success") {
+    const reference = previous.evidence.externalReference;
+    if (
+      serializeCanonicalJson(previous.receipt.binding) !==
+        serializeCanonicalJson(artifact.receipt.binding) ||
+      (input.adapterIdentityDigest != null &&
+        (reference.kind !== "github_pages_actions" ||
+          reference.adapterIdentityDigest !== input.adapterIdentityDigest)) ||
+      (input.adapterIdentityDigest == null &&
+        input.effectTarget === "production" &&
+        reference.kind !== "sequential_production") ||
+      (input.effectTarget !== "production" && reference.kind !== "recording")
+    ) {
+      throw new TypeError("保存済み初回Pages結果のadapterまたはcheckpoint結合が一致しません");
+    }
+  } else if (previous != null && previous.effectCertainty !== "no_effect") {
+    throw new TypeError("初回Pagesの先行公開結果を自動再試行できません");
+  }
   const head = await input.adapter.resolveHead(input.configuration.branch);
   if (head.status !== "present") {
     throw new TypeError("Pages deploy直前のremote state branchがありません");
@@ -380,6 +403,14 @@ export async function preflightInitialPagesDeployment(
   if (current.marker.phase !== "initial_state_committed") {
     if (current.initialPagesEvidence == null) {
       throw new TypeError("通知開始後のstateにPages保存証拠がありません");
+    }
+    if (
+      previous != null &&
+      (previous.kind !== "success" ||
+        serializeCanonicalJson(previous.evidence) !==
+          serializeCanonicalJson(current.initialPagesEvidence))
+    ) {
+      throw new TypeError("初回Pagesの保存済み結果とremote証拠が一致しません");
     }
     const observed = observeInitialPagesDeployment(
       {
@@ -424,12 +455,22 @@ export async function preflightInitialPagesDeployment(
     artifact.intent.sourceStateRevision,
     head.revision,
   );
+  if (previous?.kind === "success") {
+    return preflightSchema.parse({
+      schemaVersion: 1,
+      kind: "observed",
+      deploymentIntentDigest: artifact.intent.deploymentIntentDigest,
+      observedHeadRevision: head.revision,
+      receipt: previous.receipt,
+      evidence: previous.evidence,
+    });
+  }
   return preflightSchema.parse({
     schemaVersion: 1,
     kind: "ready",
     deploymentIntentDigest: artifact.intent.deploymentIntentDigest,
     observedHeadRevision: head.revision,
-    replay: input.replay,
+    replay: input.replay || previous != null,
   });
 }
 
@@ -735,7 +776,14 @@ export async function readInitialPagesDeploymentOutcome(
   path: string,
   artifact: InitialPagesBuildArtifact,
 ): Promise<InitialPagesDeploymentOutcome> {
-  const bytes = await readFile(path);
+  return decodeInitialPagesDeploymentOutcome(await readFile(path), artifact);
+}
+
+/** canonical JSONの初回Pages公開結果をbyte列から検証する。 */
+export function decodeInitialPagesDeploymentOutcome(
+  bytes: Uint8Array,
+  artifact: InitialPagesBuildArtifact,
+): InitialPagesDeploymentOutcome {
   if (bytes.length > MAX_DEPLOYMENT_ARTIFACT_BYTES) {
     throw new TypeError("Pages公開結果artifactが許容byte数を超えています");
   }

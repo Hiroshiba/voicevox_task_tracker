@@ -7,6 +7,8 @@ import { verifyReceiptChain } from "../application/tracking-run/receipt-chain.js
 import type { ReceiptChainEntry } from "../application/tracking-run/receipt-chain-schema.js";
 import type {
   InitialStateCommitReceipt,
+  NotificationSettlementReceipt,
+  PagesDeploymentReceipt,
   Receipt,
 } from "../application/tracking-run/receipt-schema.js";
 import { nodeContentDigestPort as digest } from "../infrastructure/tracking-run/content-digest.js";
@@ -29,6 +31,50 @@ type RecoveryState = Readonly<{
   headRevision: string;
   initialStateRevision: string;
 }>;
+
+/** 保存済みsettlement receiptをremoteのexact commitとGit祖先へ照合する。 */
+export async function verifySplitSettlementReceipt(
+  state: RecoveryState,
+  runId: string,
+  checkpointDigest: string,
+  receipt: NotificationSettlementReceipt,
+): Promise<void> {
+  if (receipt.previousReceiptDigest == null || receipt.phaseSequence < 2) {
+    throw new TypeError("通知settlement receiptの先行receiptがありません");
+  }
+  const revision = await findCommitRevision(
+    state,
+    runId,
+    "notification_settlement",
+    checkpointDigest,
+  );
+  const observed = await observeStateCommitAtRevision(
+    state.adapter,
+    state.configuration,
+    revision,
+    state.initialStateRevision,
+    "notification_settlement",
+    {
+      invocationId: randomUUID(),
+      observedAt: receipt.observedAt,
+      position: {
+        kind: "after",
+        previousReceiptDigest: receipt.previousReceiptDigest,
+        previousPhaseSequence: receipt.phaseSequence - 1,
+      },
+    },
+  );
+  if (
+    receipt.receiptType !== observed.receipt.receiptType ||
+    receipt.operationId !== observed.receipt.operationId ||
+    receipt.expectedStateRevision !== observed.receipt.expectedStateRevision ||
+    receipt.logicalTarget !== observed.receipt.logicalTarget ||
+    serializeCanonicalJson(receipt.binding) !== serializeCanonicalJson(observed.receipt.binding) ||
+    serializeCanonicalJson(receipt.result) !== serializeCanonicalJson(observed.receipt.result)
+  ) {
+    throw new TypeError("通知settlement receiptがremoteのexact commitと一致しません");
+  }
+}
 
 async function findCommitRevision(
   state: RecoveryState,
@@ -93,6 +139,7 @@ export async function restoreSplitReceipts(
   runId: string,
   configPath: string,
   state: RecoveryState,
+  existingEntries?: readonly ReceiptChainEntry[],
 ): Promise<readonly ReceiptChainEntry[]> {
   const current = await readNotificationMessageState(
     state.adapter,
@@ -104,19 +151,34 @@ export async function restoreSplitReceipts(
   if (marker.runId !== runId || record.runIdentity.runId !== runId) {
     throw new TypeError("receipt復旧先のrun IDが一致しません");
   }
-  const initial = await observeCommit(
-    state,
-    state.initialStateRevision,
-    "initial_state_commit",
-    undefined,
-    adapters,
-  );
+  const existingPagesIndex =
+    existingEntries?.findLastIndex(
+      (entry) =>
+        entry.receipt.receiptType === "pages_deployment" && entry.receipt.phase === "initial",
+    ) ?? -1;
+  const initial =
+    existingPagesIndex >= 0 && existingEntries != null
+      ? existingEntries[0]
+      : await observeCommit(
+          state,
+          state.initialStateRevision,
+          "initial_state_commit",
+          undefined,
+          adapters,
+        );
+  if (initial == null) {
+    throw new TypeError("復旧した初回state receiptがありません");
+  }
   if (initial.receipt.receiptType !== "initial_state_commit") {
     throw new TypeError("復旧した初回state receiptの種別が不正です");
   }
   const initialReceipt: InitialStateCommitReceipt = initial.receipt;
   const entries: ReceiptChainEntry[] = [initial];
-  await adapters.writeJsonArtifact(paths.initialReceipt, initialReceipt);
+  if (existingPagesIndex < 0) {
+    await adapters.writeJsonArtifact(paths.initialReceipt, initialReceipt);
+  } else if (existingEntries != null) {
+    entries.push(...existingEntries.slice(1, existingPagesIndex + 1));
+  }
   if (marker.phase === "initial_state_committed") {
     await writeSplitReceiptChain(paths.receiptChain, entries, adapters.writeJsonArtifact);
     return entries;
@@ -125,58 +187,76 @@ export async function restoreSplitReceipts(
   if (evidence == null) {
     throw new TypeError("通知開始済みrunの初回Pages保存証拠がありません");
   }
-  await buildWorkflowPages(
-    { adapters },
-    {
-      kind: "build-pages",
-      configPath,
-      initialStateReceiptPath: paths.initialReceipt,
-      buildArtifactPath: paths.initialBuild,
-      outputDirectory: paths.pagesOutput,
-    },
-  );
-  const build = decodeInitialPagesBuildArtifact(await readFile(paths.initialBuild));
-  if (
-    build.intent.deploymentIntentDigest !== evidence.deploymentIntentDigest ||
-    build.intent.pagesContentDigest !== evidence.pagesContentDigest ||
-    build.intent.sourceStateRevision !== evidence.sourceStateRevision ||
-    build.receipt.previousReceiptDigest !== initialReceipt.receiptDigest
-  ) {
-    throw new TypeError("再生成した初回Pagesと保存済み公開証拠が一致しません");
-  }
-  entries.push({ receipt: build.receipt, evidence: { kind: "none" } });
-  const pagesReceipt = observeInitialPagesFromState(
-    {
-      record,
-      marker,
-      exactStateRevision: state.headRevision,
-      evidence,
-      invocationId: randomUUID(),
-      localAttemptIndex: 0,
-      phaseSequence: build.receipt.phaseSequence + 1,
-      previousReceiptDigest: build.receipt.receiptDigest,
-      observedAt: adapters.now().toISOString(),
-    },
-    digest,
-  );
-  const pagesEntry = {
-    receipt: pagesReceipt,
-    evidence: {
-      kind: "initial_pages_state",
-      state: {
-        exactStateRevision: state.headRevision,
-        marker: {
-          runId: marker.runId,
-          checkpointDigest: marker.checkpointDigest,
-          phase: marker.phase,
-          initialPagesPublicationEvidenceDigest: marker.initialPagesPublicationEvidenceDigest,
-          initialStateRevision: marker.initialStateRevision,
-        },
-        evidence,
+  let pagesEntry: ReceiptChainEntry & Readonly<{ receipt: PagesDeploymentReceipt }>;
+  if (existingPagesIndex >= 0) {
+    const pages = entries.at(-1);
+    if (
+      pages?.receipt.receiptType !== "pages_deployment" ||
+      pages.receipt.result?.deploymentIntentDigest !== evidence.deploymentIntentDigest ||
+      pages.receipt.result.pagesContentDigest !== evidence.pagesContentDigest ||
+      pages.receipt.result.sourceStateRevision !== evidence.sourceStateRevision ||
+      pages.receipt.result.pageUrl !== evidence.pageUrl ||
+      (pages.receipt.receiptKind === "observed"
+        ? pages.receipt.result.observedSourceReceiptDigest !== evidence.deploymentReceiptDigest
+        : pages.receipt.receiptDigest !== evidence.deploymentReceiptDigest)
+    ) {
+      throw new TypeError("保存済み初回Pages chainがremote証拠と一致しません");
+    }
+    pagesEntry = { receipt: pages.receipt, evidence: pages.evidence };
+  } else {
+    await buildWorkflowPages(
+      { adapters },
+      {
+        kind: "build-pages",
+        configPath,
+        initialStateReceiptPath: paths.initialReceipt,
+        buildArtifactPath: paths.initialBuild,
+        outputDirectory: paths.pagesOutput,
       },
-    },
-  } as const;
-  entries.push(pagesEntry);
+    );
+    const build = decodeInitialPagesBuildArtifact(await readFile(paths.initialBuild));
+    if (
+      build.intent.deploymentIntentDigest !== evidence.deploymentIntentDigest ||
+      build.intent.pagesContentDigest !== evidence.pagesContentDigest ||
+      build.intent.sourceStateRevision !== evidence.sourceStateRevision ||
+      build.receipt.previousReceiptDigest !== initialReceipt.receiptDigest
+    ) {
+      throw new TypeError("再生成した初回Pagesと保存済み公開証拠が一致しません");
+    }
+    entries.push({ receipt: build.receipt, evidence: { kind: "none" } });
+    const pagesReceipt = observeInitialPagesFromState(
+      {
+        record,
+        marker,
+        exactStateRevision: state.headRevision,
+        evidence,
+        invocationId: randomUUID(),
+        localAttemptIndex: 0,
+        phaseSequence: build.receipt.phaseSequence + 1,
+        previousReceiptDigest: build.receipt.receiptDigest,
+        observedAt: adapters.now().toISOString(),
+      },
+      digest,
+    );
+    pagesEntry = {
+      receipt: pagesReceipt,
+      evidence: {
+        kind: "initial_pages_state",
+        state: {
+          exactStateRevision: state.headRevision,
+          marker: {
+            runId: marker.runId,
+            checkpointDigest: marker.checkpointDigest,
+            phase: marker.phase,
+            initialPagesPublicationEvidenceDigest: marker.initialPagesPublicationEvidenceDigest,
+            initialStateRevision: marker.initialStateRevision,
+          },
+          evidence,
+        },
+      },
+    };
+    entries.push(pagesEntry);
+  }
   const initialState = await readNotificationMessageState(
     state.adapter,
     state.configuration,

@@ -1,10 +1,13 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
+
+import { z } from "zod";
 
 import { decodeReceipt } from "../../application/tracking-run/receipt-codec.js";
 import { decodeInitialPagesBuildArtifact } from "../initial-pages-build-artifact.js";
 import {
   preflightInitialPagesDeployment,
+  decodeInitialPagesDeploymentOutcome,
   readInitialPagesDeploymentPreflight,
   recordInitialPagesSequentialDeployment,
   recordInitialPagesWorkflowDeployment,
@@ -29,6 +32,28 @@ type DeploymentAdapters = Pick<
   | "writeJsonArtifact"
 >;
 
+async function previousInitialOutcome(
+  path: string,
+  status: unknown,
+): Promise<Uint8Array | undefined> {
+  const parsed = z.enum(["no_previous", "downloaded"]).optional().parse(status);
+  if (parsed === "downloaded") {
+    return readFile(path);
+  }
+  try {
+    if (parsed === "no_previous") {
+      await stat(path);
+      throw new TypeError("初回Pages結果が不在と確認されたのにfileが存在します");
+    }
+    return await readFile(path);
+  } catch (error: unknown) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
 /** split Pages actionの直前にremote stateと全fileを検査する。 */
 export async function preflightWorkflowPagesDeployment(
   adapters: DeploymentAdapters,
@@ -47,6 +72,10 @@ export async function preflightWorkflowPagesDeployment(
   if (initialReceipt.receiptType !== "initial_state_commit") {
     throw new TypeError("Pages deploy直前の初回state commit receiptがありません");
   }
+  const previousBytes = await previousInitialOutcome(
+    resolve(adapters.repositoryPath, command.previousOutcomePath),
+    adapters.environment["VOICEVOX_PREVIOUS_INITIAL_OUTCOME_STATUS"],
+  );
   const adapter = adapters.createStateBranchAdapter();
   const source = await readNotificationMessageState(
     adapter,
@@ -59,6 +88,11 @@ export async function preflightWorkflowPagesDeployment(
     repositoryPath: adapters.repositoryPath,
     artifact,
     initialStateCommitReceipt: initialReceipt,
+    ...(previousBytes == null
+      ? {}
+      : {
+          previousOutcome: decodeInitialPagesDeploymentOutcome(previousBytes, artifact),
+        }),
     replay:
       initialReceipt.receiptKind === "observed" ||
       isWorkflowPublicationReplay(

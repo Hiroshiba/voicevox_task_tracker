@@ -153,6 +153,7 @@ export type PreflightPagesDeploymentCliCommand = Readonly<{
   configPath: string;
   initialStateReceiptPath: string;
   buildArtifactPath: string;
+  previousOutcomePath: string;
   preflightPath: string;
   runAttempt: number;
 }>;
@@ -462,7 +463,14 @@ function parsePreflightPagesDeployment(
 ): PreflightPagesDeploymentCliCommand {
   const options = parseOptions(
     args,
-    new Set(["--config", "--receipt", "--build-artifact", "--preflight", "--run-attempt"]),
+    new Set([
+      "--config",
+      "--receipt",
+      "--build-artifact",
+      "--previous-outcome",
+      "--preflight",
+      "--run-attempt",
+    ]),
   );
   const runAttempt = Number(singleOption(options, "--run-attempt", "1"));
   if (!Number.isSafeInteger(runAttempt) || runAttempt < 1) {
@@ -476,6 +484,11 @@ function parsePreflightPagesDeployment(
       options,
       "--build-artifact",
       "artifacts/workflow/initial-pages-build.json",
+    ),
+    previousOutcomePath: singleOption(
+      options,
+      "--previous-outcome",
+      "artifacts/workflow/initial-pages-deployment.json",
     ),
     preflightPath: singleOption(
       options,

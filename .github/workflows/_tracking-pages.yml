@@ -124,15 +124,24 @@ jobs:
           run-id: ${{ github.run_id }}
           github-token: ${{ github.token }}
           output-path: artifacts/workflow/runs/${{ steps.route.outputs.run_suffix }}/notification-history-pages-deployment.json
+      - name: 同じActions runの初回Pages公開結果を取得
+        id: prior_initial
+        if: inputs.phase == 'initial' && (steps.route.outputs.next_stage == 'preflight-initial-pages-deployment' || steps.prepare.outcome == 'success')
+        uses: ./.github/actions/download-prior-initial-pages-outcome
+        with:
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+          output-path: artifacts/workflow/runs/${{ steps.route.outputs.run_suffix }}/initial-pages-deployment.json
       - name: deploy直前のstateと出力全fileを検証
         id: preflight
-        if: (inputs.phase == 'initial' && (steps.route.outputs.next_stage == 'preflight-initial-pages-deployment' || steps.prepare.outcome == 'success')) || (inputs.phase == 'notification_history' && steps.prior_history.outcome == 'success')
+        if: (inputs.phase == 'initial' && steps.prior_initial.outcome == 'success') || (inputs.phase == 'notification_history' && steps.prior_history.outcome == 'success')
         env:
           TRACKING_CONFIG_PATH: ${{ inputs.config_path }}
           TRACKING_PROTOCOL_VERSION: ${{ steps.route.outputs.protocol_version }}
           TRACKING_RUN_ID: ${{ steps.route.outputs.run_id }}
           TRACKING_RUN_SUFFIX: ${{ steps.route.outputs.run_suffix }}
           VOICEVOX_PREVIOUS_HISTORY_OUTCOME_STATUS: ${{ steps.prior_history.outputs.status }}
+          VOICEVOX_PREVIOUS_INITIAL_OUTCOME_STATUS: ${{ steps.prior_initial.outputs.status }}
         run: |
           if [[ "$TRACKING_PAGES_PHASE" == 'initial' ]]; then
             stage='preflight-initial-pages-deployment'
@@ -251,15 +260,24 @@ jobs:
           run-id: ${{ github.run_id }}
           github-token: ${{ github.token }}
           output-path: artifacts/workflow/runs/${{ steps.route.outputs.run_suffix }}/notification-history-pages-deployment.json
+      - name: 同じActions runの初回Pages公開結果を取得
+        id: prior_initial
+        if: inputs.phase == 'initial' && (steps.route.outputs.next_stage == 'preflight-initial-pages-deployment' || steps.prepare.outcome == 'success')
+        uses: ./.github/actions/download-prior-initial-pages-outcome
+        with:
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+          output-path: artifacts/workflow/runs/${{ steps.route.outputs.run_suffix }}/initial-pages-deployment.json
       - name: 記録直前のstateと出力全fileを再検証
         id: preflight
-        if: (inputs.phase == 'initial' && (steps.route.outputs.next_stage == 'preflight-initial-pages-deployment' || steps.prepare.outcome == 'success')) || (inputs.phase == 'notification_history' && steps.prior_history.outcome == 'success')
+        if: (inputs.phase == 'initial' && steps.prior_initial.outcome == 'success') || (inputs.phase == 'notification_history' && steps.prior_history.outcome == 'success')
         env:
           TRACKING_CONFIG_PATH: ${{ inputs.config_path }}
           TRACKING_PROTOCOL_VERSION: ${{ steps.route.outputs.protocol_version }}
           TRACKING_RUN_ID: ${{ steps.route.outputs.run_id }}
           TRACKING_RUN_SUFFIX: ${{ steps.route.outputs.run_suffix }}
           VOICEVOX_PREVIOUS_HISTORY_OUTCOME_STATUS: ${{ steps.prior_history.outputs.status }}
+          VOICEVOX_PREVIOUS_INITIAL_OUTCOME_STATUS: ${{ steps.prior_initial.outputs.status }}
         run: |
           if [[ "$TRACKING_PAGES_PHASE" == 'initial' ]]; then
             stage='preflight-initial-pages-deployment'
@@ -306,6 +324,7 @@ jobs:
           RECORD_PREFLIGHT_KIND: ${{ steps.preflight.outputs.kind }}
           DEPLOY_PREFLIGHT_KIND: ${{ needs.deploy.outputs.preflight_kind }}
           RECORD_INTENT_DIGEST: ${{ steps.preflight.outputs.intent_digest }}
+          VOICEVOX_PREVIOUS_INITIAL_OUTCOME_STATUS: ${{ steps.prior_initial.outputs.status }}
         run: |
           if [[ "$TRACKING_PAGES_PHASE" == 'initial' ]]; then
             phase=initial
@@ -316,7 +335,14 @@ jobs:
             observation="artifacts/workflow/runs/$TRACKING_RUN_SUFFIX/notification-history-pages-observation-v2.json"
             stage=record-history-pages-deployment
           fi
-          if [[ "$RECORD_PREFLIGHT_KIND" != "$DEPLOY_PREFLIGHT_KIND" || "$RECORD_INTENT_DIGEST" != "$PAGES_DEPLOYMENT_INTENT_DIGEST" ]]; then
+          if [[ "$RECORD_INTENT_DIGEST" != "$PAGES_DEPLOYMENT_INTENT_DIGEST" ]]; then
+            echo 'Pages公開時と記録時のpreflightが一致しません' >&2
+            exit 1
+          fi
+          if [[ "$phase" == 'initial' && "$RECORD_PREFLIGHT_KIND" == 'observed' && "$DEPLOY_PREFLIGHT_KIND" == 'ready' && "$VOICEVOX_PREVIOUS_INITIAL_OUTCOME_STATUS" == 'downloaded' ]]; then
+            PAGES_UPLOAD_OUTCOME=skipped
+            PAGES_DEPLOYMENT_OUTCOME=skipped
+          elif [[ "$RECORD_PREFLIGHT_KIND" != "$DEPLOY_PREFLIGHT_KIND" ]]; then
             echo 'Pages公開時と記録時のpreflightが一致しません' >&2
             exit 1
           fi
@@ -337,6 +363,24 @@ jobs:
         with:
           name: ${{ inputs.phase == 'initial' && 'tracking-stage-initial-pages' || 'tracking-stage-notification-history-pages' }}
           path: artifacts/workflow/runs/
+          if-no-files-found: error
+          retention-days: ${{ inputs.artifact_retention_days }}
+      - name: 初回Pages結果の保存要否を判定
+        id: initial_record
+        if: always() && inputs.phase == 'initial' && steps.record.outcome != 'skipped' && steps.prior_initial.outputs.status == 'no_previous'
+        env:
+          TRACKING_RUN_SUFFIX: ${{ steps.route.outputs.run_suffix }}
+        run: |
+          outcome="artifacts/workflow/runs/$TRACKING_RUN_SUFFIX/initial-pages-deployment.json"
+          if [[ -f "$outcome" ]] && jq -e '.kind == "success" or (.kind == "failure" and .effectCertainty == "ambiguous")' "$outcome" >/dev/null; then
+            echo 'upload=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: 初回Pages公開結果を個別保存
+        if: always() && steps.initial_record.outputs.upload == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: initial-pages-deployment-record
+          path: artifacts/workflow/runs/${{ steps.route.outputs.run_suffix }}/initial-pages-deployment.json
           if-no-files-found: error
           retention-days: ${{ inputs.artifact_retention_days }}
       - name: 診断と失敗を保存

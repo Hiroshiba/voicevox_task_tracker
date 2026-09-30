@@ -1,4 +1,5 @@
-import { readFile, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 
 import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../canonical-json/value.js";
@@ -49,8 +50,8 @@ import { decodeNotificationHistoryPagesDeploymentOutcome } from "./notification-
 import { readNotificationMessageState } from "./notification-message-state.js";
 import { readPublicationCheckpointHeader } from "./publication-checkpoint-file.js";
 import {
+  assertRecordedWorkflowAdapterIdentityV2,
   assertRecoveryToolchain,
-  readPublicationRuntimeContext,
   verifyRecoveryBundle,
 } from "./publication-runtime.js";
 import { projectPublicationSettings } from "./run-publication/settings.js";
@@ -62,11 +63,14 @@ import {
   appendSplitReceipts,
   initialPagesEvidenceForSplitReceipt,
   readSplitReceiptChain,
+  recoverSplitInitialPagesChain,
+  restoreSplitInitialPagesArtifacts,
   stateCommitEvidenceForSplitReceipt,
   writeSplitReceiptChain,
 } from "./split-stage-receipts.js";
-import { restoreSplitReceipts } from "./split-stage-recovery.js";
+import { restoreSplitReceipts, verifySplitSettlementReceipt } from "./split-stage-recovery.js";
 import { splitStagePaths, type SplitStagePaths } from "./split-stage-paths.js";
+import { needsReceiptRestoration } from "./split-stage-artifact-state.js";
 
 type SplitState = Readonly<{
   config: Awaited<ReturnType<ProductionRuntimeAdapters["loadConfig"]>>;
@@ -95,96 +99,6 @@ export type SplitStageExecutionResult = Readonly<{
 
 function isMissingFile(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
-}
-
-async function allFilesPresent(paths: readonly string[]): Promise<boolean> {
-  for (const path of paths) {
-    try {
-      if (!(await stat(path)).isFile()) {
-        throw new TypeError("分割runの必要artifactが通常fileではありません");
-      }
-    } catch (error: unknown) {
-      if (isMissingFile(error)) {
-        return false;
-      }
-      throw error;
-    }
-  }
-  return true;
-}
-
-async function needsReceiptRestoration(
-  entries: readonly ReceiptChainEntry[],
-  state: SplitState,
-  paths: SplitStagePaths,
-): Promise<boolean> {
-  const last = entries.at(-1)?.receipt;
-  if (last == null) {
-    throw new TypeError("分割runのreceipt chainが空です");
-  }
-  if (
-    (state.markerPhase === "notifications_in_progress" &&
-      last.stage !== "initial_pages_published") ||
-    (state.markerPhase === "notifications_settled" && last.stage !== "notifications_settled") ||
-    (state.markerPhase === "run_finalized" &&
-      last.stage !== "run_finalized" &&
-      last.stage !== "notification_history_pages_prepared" &&
-      last.stage !== "notification_history_pages_published" &&
-      last.stage !== "completed")
-  ) {
-    return true;
-  }
-  const required = [paths.initialReceipt];
-  if (last.stage !== "initial_state_committed") {
-    required.push(paths.initialBuild);
-  }
-  if (
-    last.stage === "initial_pages_published" ||
-    last.stage === "notifications_settled" ||
-    last.stage === "run_finalized" ||
-    last.stage === "notification_history_pages_prepared" ||
-    last.stage === "notification_history_pages_published" ||
-    last.stage === "completed"
-  ) {
-    const initialPages = entries.findLast(
-      (entry) =>
-        entry.receipt.receiptType === "pages_deployment" && entry.receipt.phase === "initial",
-    )?.receipt;
-    if (initialPages?.receiptType !== "pages_deployment") {
-      throw new TypeError("初回Pagesのreceiptがありません");
-    }
-    if (initialPages.receiptKind !== "observed") {
-      required.push(paths.initialDeployment);
-    }
-  }
-  if (
-    last.stage === "notifications_settled" ||
-    last.stage === "run_finalized" ||
-    last.stage === "notification_history_pages_prepared" ||
-    last.stage === "notification_history_pages_published" ||
-    last.stage === "completed"
-  ) {
-    required.push(paths.settlementReceipt);
-  }
-  if (
-    last.stage === "run_finalized" ||
-    last.stage === "notification_history_pages_prepared" ||
-    last.stage === "notification_history_pages_published" ||
-    last.stage === "completed"
-  ) {
-    required.push(paths.finalizationReceipt);
-  }
-  if (
-    last.stage === "notification_history_pages_prepared" ||
-    last.stage === "notification_history_pages_published" ||
-    last.stage === "completed"
-  ) {
-    required.push(paths.historyBuild);
-  }
-  if (last.stage === "notification_history_pages_published" || last.stage === "completed") {
-    required.push(paths.historyDeployment);
-  }
-  return !(await allFilesPresent(required));
 }
 
 function previousStage(entries: readonly ReceiptChainEntry[]): TrackingRunStageName {
@@ -261,13 +175,13 @@ async function inspectSplitState(
   }
   await verifyRecoveryBundle(resolve(adapters.repositoryPath, "artifacts/workflow/runtime"), plan);
   await assertRecoveryToolchain(adapters.repositoryPath, plan);
+  await assertRecordedWorkflowAdapterIdentityV2(
+    adapters.repositoryPath,
+    plan.recoveryProtocol.workflowEffectAdapterIdentityDigest,
+    digest,
+  );
   const state = await readNotificationMessageState(adapter, config.state, head.revision);
   const record = state.transaction.record;
-  const runtime = await readPublicationRuntimeContext(
-    adapters.repositoryPath,
-    record.executionPolicy,
-    adapters.environment,
-  );
   if (
     record.executionPolicy.executionShape !== "split_workflow" ||
     state.transaction.marker.runId !== runId ||
@@ -275,7 +189,7 @@ async function inspectSplitState(
     record.recordDigest !== bootstrap.record.recordDigest ||
     serializeCanonicalJson(projectPublicationSettings(config).pages) !==
       serializeCanonicalJson(record.initialPagesProjection.settings) ||
-    digest.sha256Utf8(serializeCanonicalJson(runtime.runtimeIdentity)) !==
+    digest.sha256Utf8(serializeCanonicalJson(record.runtimeIdentity)) !==
       bootstrap.record.runtimeIdentityDigest
   ) {
     throw new TypeError("分割runの永続recordと選択runtimeが一致しません");
@@ -335,22 +249,99 @@ async function priorReceipts(
   state: SplitState,
   configPath: string,
 ): Promise<readonly ReceiptChainEntry[]> {
+  let entries: readonly ReceiptChainEntry[] | undefined;
+  let chainMissing = false;
   try {
-    const entries = await readSplitReceiptChain(paths.receiptChain, runId);
-    if (!(await needsReceiptRestoration(entries, state, paths))) {
-      return entries;
+    entries = await readSplitReceiptChain(paths.receiptChain, runId);
+  } catch (error: unknown) {
+    if (!isMissingFile(error)) {
+      throw error;
     }
+    chainMissing = true;
+  }
+  if (chainMissing) {
+    entries = await recoverSplitInitialPagesChain(
+      paths,
+      runId,
+      state.adapter,
+      state.config.state,
+      state.initialStateRevision,
+    );
+  }
+  if (entries != null) {
+    await verifySplitState(state, runId, randomUUID(), adapters.now().toISOString(), entries);
+  }
+  let settlementReceipt: ReturnType<typeof decodeReceipt> | undefined;
+  try {
+    settlementReceipt = decodeReceipt(await readFile(paths.settlementReceipt), digest);
   } catch (error: unknown) {
     if (!isMissingFile(error)) {
       throw error;
     }
   }
-  return restoreSplitReceipts(adapters, paths, runId, configPath, {
-    adapter: state.adapter,
-    configuration: state.config.state,
-    headRevision: state.headRevision,
-    initialStateRevision: state.initialStateRevision,
-  });
+  const chainSettlement = entries?.findLast(
+    (entry) => entry.receipt.receiptType === "notification_settlement",
+  )?.receipt;
+  if (settlementReceipt != null || chainSettlement != null) {
+    if (state.markerPhase !== "notifications_settled" && state.markerPhase !== "run_finalized") {
+      throw new TypeError("remote未確定の通知settlementをartifactが主張しています");
+    }
+    const recoveryState = {
+      adapter: state.adapter,
+      configuration: state.config.state,
+      headRevision: state.headRevision,
+      initialStateRevision: state.initialStateRevision,
+    };
+    for (const receipt of [settlementReceipt, chainSettlement]) {
+      if (receipt == null) {
+        continue;
+      }
+      if (
+        receipt.receiptType !== "notification_settlement" ||
+        receipt.binding.bindingKind !== "checkpoint"
+      ) {
+        throw new TypeError("通知settlement artifactのreceipt種別が不正です");
+      }
+      await verifySplitSettlementReceipt(
+        recoveryState,
+        runId,
+        receipt.binding.checkpointDigest,
+        receipt,
+      );
+    }
+    if (
+      settlementReceipt != null &&
+      chainSettlement != null &&
+      settlementReceipt.receiptDigest !== chainSettlement.receiptDigest
+    ) {
+      throw new TypeError("通知settlement fileとchainのreceipt digestが一致しません");
+    }
+  }
+  if (entries != null) {
+    await restoreSplitInitialPagesArtifacts(adapters, paths, entries, configPath);
+    if (chainMissing) {
+      await writeSplitReceiptChain(paths.receiptChain, entries, adapters.writeJsonArtifact);
+    }
+  }
+  if (settlementReceipt == null && chainSettlement != null) {
+    await adapters.writeJsonArtifact(paths.settlementReceipt, chainSettlement);
+  }
+  if (entries != null && !(await needsReceiptRestoration(entries, state.markerPhase, paths))) {
+    return entries;
+  }
+  return restoreSplitReceipts(
+    adapters,
+    paths,
+    runId,
+    configPath,
+    {
+      adapter: state.adapter,
+      configuration: state.config.state,
+      headRevision: state.headRevision,
+      initialStateRevision: state.initialStateRevision,
+    },
+    entries,
+  );
 }
 
 async function saveStageReceipts(
@@ -812,6 +803,7 @@ export class SplitStageRunner {
           configPath: command.configPath,
           initialStateReceiptPath: paths.initialReceipt,
           buildArtifactPath: paths.initialBuild,
+          previousOutcomePath: paths.initialDeployment,
           preflightPath: paths.initialPreflight,
           runAttempt: command.runAttempt,
         });

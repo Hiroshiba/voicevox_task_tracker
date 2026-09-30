@@ -204,6 +204,32 @@ async function readWorkflowV2AdapterCurrentProjection(repositoryPath: string): P
 export async function readWorkflowV2Adapter(repositoryPath: string): Promise<object> {
   const { projection, deploy, record, workflowCallOutputs } =
     await readWorkflowV2AdapterCurrentProjection(repositoryPath);
+  for (const job of [deploy, record]) {
+    const steps = job.steps;
+    const prior = steps?.findIndex(
+      (step) => step.uses === "./.github/actions/download-prior-initial-pages-outcome",
+    );
+    const preflight = steps?.findIndex((step) => step.id === "preflight");
+    if (
+      prior == null ||
+      preflight == null ||
+      prior < 0 ||
+      preflight <= prior ||
+      steps?.[prior]?.id !== "prior_initial" ||
+      steps[preflight]?.if?.includes("steps.prior_initial.outcome == 'success'") !== true
+    ) {
+      throw new TypeError("V2初回Pagesの保存済み結果取得とpreflightが接続されていません");
+    }
+  }
+  if (
+    !record.steps?.some(
+      (step) =>
+        step.uses === "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" &&
+        step.if?.includes("steps.initial_record.outputs.upload == 'true'") === true,
+    )
+  ) {
+    throw new TypeError("V2初回Pagesの個別結果artifactが保存されません");
+  }
   const deploymentSteps = deploy.steps?.filter((step) => step.uses === deployAction);
   if (
     deploy.name !==
