@@ -5,16 +5,16 @@ import {
   type Relation,
   type TrackedItemState,
 } from "../domain/index.js";
+import { createFinalGraphProjection } from "../graph/final-graph-projection.js";
 import {
   analyzeGraph,
   type GraphAnalysisNode,
   type ReconciledGraphEdge,
   type RelationCandidateId,
 } from "../graph/index.js";
-import { createFinalGraphProjection } from "../graph/final-graph-projection.js";
 import { assertNonNullable } from "../util/index.js";
 import { StateSnapshotSemanticError } from "./errors.js";
-import type { StateSnapshot as StateSnapshotVersion19 } from "./snapshot.js";
+import type { StateSnapshot as StateSnapshotVersion19 } from "./snapshot-contracts.js";
 import { createStateSnapshot, type StateSnapshot } from "./snapshot-v20.js";
 
 function snapshotGraphEdge(relation: Relation): ReconciledGraphEdge {

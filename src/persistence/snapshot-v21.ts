@@ -3,12 +3,13 @@ import { z } from "zod";
 
 import snapshotSchema from "../../schemas/snapshot-v21.schema.json" with { type: "json" };
 import { serializeCanonicalJsonLine, type Sha256Hash } from "../canonical-json/index.js";
-import { AI_ANALYSIS_ELEMENTS } from "../domain/ai-analysis-elements.js";
 import {
   AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS,
   AI_ANALYSIS_ELEMENT_REVISIONS,
 } from "../codex/analysis-elements.js";
+import { AI_ANALYSIS_ELEMENTS } from "../domain/ai-analysis-elements.js";
 import type {
+  Evidence,
   GraphNodeId,
   SourceId,
   TrackedItem,
@@ -16,19 +17,20 @@ import type {
   TrackedItemState,
 } from "../domain/index.js";
 import type { FinalGraphProjection } from "../graph/final-graph-projection.js";
-import { createStateSnapshot as createVersion20Snapshot } from "./snapshot-v20.js";
-import type { StateSnapshot as StateSnapshotVersion20 } from "./snapshot-v20.js";
+import { StateFormatError, StateSnapshotSchemaError } from "./errors.js";
+import type {
+  SnapshotCollectionItem,
+  SnapshotTrackedItem,
+  StateSnapshot as StateSnapshotVersion19,
+} from "./snapshot-contracts.js";
 import {
   assertPersonalReminderEvidenceClosure as assertVersion19PersonalReminderEvidenceClosure,
   assertPersonalReminderEvidenceRecordsClosure as assertVersion19PersonalReminderEvidenceRecordsClosure,
-  createStateSnapshot as createVersion19Snapshot,
-  type SnapshotCollectionItem,
-  type SnapshotTrackedItem,
-  type StateSnapshot as StateSnapshotVersion19,
-} from "./snapshot.js";
-import { StateFormatError, StateSnapshotSchemaError } from "./errors.js";
+} from "./snapshot-evidence-closure.js";
 import { assertFinalGraphProjectionSemantics } from "./snapshot-final-graph-validation.js";
-import type { Evidence } from "../domain/index.js";
+import type { StateSnapshot as StateSnapshotVersion20 } from "./snapshot-v20.js";
+import { createStateSnapshot as createVersion20Snapshot } from "./snapshot-v20.js";
+import { createStateSnapshot as createVersion19Snapshot } from "./snapshot.js";
 
 /** tracker-stateへ保存するschema version 21のcurrent snapshot。 */
 export type StateSnapshot = Omit<StateSnapshotVersion19, "schemaVersion"> &

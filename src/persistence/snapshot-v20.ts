@@ -5,6 +5,7 @@ import snapshotSchema from "../../schemas/snapshot-v20.schema.json" with { type:
 import snapshotVersion19Schema from "../../schemas/snapshot.schema.json" with { type: "json" };
 import { serializeCanonicalJsonLine, type Sha256Hash } from "../canonical-json/index.js";
 import type {
+  Evidence,
   GraphNodeId,
   SourceId,
   TrackedItemAiAnalysis,
@@ -12,17 +13,18 @@ import type {
   TrackedItemState,
 } from "../domain/index.js";
 import type { FinalGraphProjection } from "../graph/final-graph-projection.js";
+import { StateFormatError, StateSnapshotSchemaError } from "./errors.js";
+import type {
+  SnapshotCollectionItem,
+  SnapshotTrackedItem,
+  StateSnapshot as StateSnapshotVersion19,
+} from "./snapshot-contracts.js";
 import {
   assertPersonalReminderEvidenceClosure as assertVersion19PersonalReminderEvidenceClosure,
   assertPersonalReminderEvidenceRecordsClosure as assertVersion19PersonalReminderEvidenceRecordsClosure,
-  createStateSnapshot as createVersion19Snapshot,
-  type SnapshotCollectionItem,
-  type SnapshotTrackedItem,
-  type StateSnapshot as StateSnapshotVersion19,
-} from "./snapshot.js";
-import { StateFormatError, StateSnapshotSchemaError } from "./errors.js";
+} from "./snapshot-evidence-closure.js";
 import { assertFinalGraphProjectionSemantics } from "./snapshot-final-graph-validation.js";
-import type { Evidence } from "../domain/index.js";
+import { createStateSnapshot as createVersion19Snapshot } from "./snapshot.js";
 
 type Version20AiAnalysis =
   | Omit<Extract<TrackedItemAiAnalysis, { origin: "current" }>, "retainedElements">

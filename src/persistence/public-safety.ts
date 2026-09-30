@@ -1,8 +1,8 @@
+import { type Repository } from "../domain/index.js";
+import { containsPrivateRepositoryReference } from "../github/private-repository-reference.js";
+import { isEligiblePublicRepository } from "../github/public-repository-allowlist.js";
 import { StateConfigurationError, StatePublicSafetyError } from "./errors.js";
 import { type StateSnapshot } from "./snapshot-v21.js";
-import { type Repository } from "../domain/index.js";
-import { isEligiblePublicRepository } from "../github/public-repository-allowlist.js";
-import { containsPrivateRepositoryReference } from "../github/private-repository-reference.js";
 
 const MAX_PERSISTED_STRING_LENGTH = 4096;
 const SECRET_PATTERNS: readonly RegExp[] = [

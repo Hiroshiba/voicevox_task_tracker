@@ -1,27 +1,27 @@
+import { assertRunTransactionMarkerTransition } from "../application/tracking-run/run-transaction-marker.js";
 import {
   type StateBranchAdapter,
+  type StateBranchCommitInspection,
   type StateBranchCommitRequest,
   type StateBranchCommitResult,
-  type StateBranchCommitInspection,
   type StateBranchHead,
   type StateFileReadResult,
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
 import { StateBranchConflictError } from "./errors.js";
-import { assertRunTransactionMarkerTransition } from "../application/tracking-run/run-transaction-marker.js";
-import { createStateChangedPathManifest, digestStateManifest } from "./state-commit-metadata.js";
 import { verifyStateCasCandidate } from "./state-cas-candidate.js";
 import type { StateCommitIdentity } from "./state-commit-metadata.js";
-import {
-  verifyRunTransactionFiles,
-  type VerifiedRunTransactionFiles,
-} from "./state-transaction-files.js";
+import { createStateChangedPathManifest, digestStateManifest } from "./state-commit-metadata.js";
 import {
   authorizeAdvanceAfterOrthogonalCommits,
   findInitialStateRevision,
   MAX_INTERVENING_COMMITS,
   type OrthogonalCommitAdvance,
 } from "./state-orthogonal-advance.js";
+import {
+  verifyRunTransactionFiles,
+  type VerifiedRunTransactionFiles,
+} from "./state-transaction-files.js";
 
 /** CAS commit候補のremote反映と再観測結果。 */
 export type StateCasWriteResult =

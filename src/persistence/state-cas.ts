@@ -1,3 +1,4 @@
+import { assertRunTransactionMarkerTransition } from "../application/tracking-run/run-transaction-marker.js";
 import {
   validateStatePersistenceConfiguration,
   type StateBranchAdapter,
@@ -7,28 +8,29 @@ import {
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
 import { StateBranchConflictError } from "./errors.js";
-import { verifyRunTransactionFiles } from "./state-transaction-files.js";
-import { assertRunTransactionMarkerTransition } from "../application/tracking-run/run-transaction-marker.js";
-import { digestStateManifest } from "./state-commit-metadata.js";
 import { verifyStateCasCandidate } from "./state-cas-candidate.js";
-import {
-  authorizeAdvanceAfterOrthogonalCommits,
-  findInitialStateRevision,
-  type OrthogonalCommitAdvance,
-} from "./state-orthogonal-advance.js";
 import {
   materializeCommitRequest,
   observeCommittedStateWrite,
   type StateCasCommitRequestInput,
   type StateCasWriteResult,
 } from "./state-cas-observation.js";
+import { digestStateManifest } from "./state-commit-metadata.js";
+import {
+  authorizeAdvanceAfterOrthogonalCommits,
+  findInitialStateRevision,
+  type OrthogonalCommitAdvance,
+} from "./state-orthogonal-advance.js";
+import { verifyRunTransactionFiles } from "./state-transaction-files.js";
 
-export { authorizeAdvanceAfterOrthogonalCommits } from "./state-orthogonal-advance.js";
-export { type OrthogonalCommitAdvance } from "./state-orthogonal-advance.js";
 export {
   type StateCasCommitRequestFactory,
   type StateCasWriteResult,
 } from "./state-cas-observation.js";
+export {
+  authorizeAdvanceAfterOrthogonalCommits,
+  type OrthogonalCommitAdvance,
+} from "./state-orthogonal-advance.js";
 
 /** 一つのremote commit treeから得た全state file。 */
 export type ExactStateTree = Readonly<{

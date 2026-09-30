@@ -1,7 +1,7 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 
-import snapshotVersion19Schema from "../../schemas/snapshot.schema.json" with { type: "json" };
 import snapshotVersion20Schema from "../../schemas/snapshot-v20.schema.json" with { type: "json" };
+import snapshotVersion19Schema from "../../schemas/snapshot.schema.json" with { type: "json" };
 import {
   AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS,
   AI_ANALYSIS_ELEMENT_REVISIONS,

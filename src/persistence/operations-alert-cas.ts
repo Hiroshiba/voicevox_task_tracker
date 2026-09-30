@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import type { OperationsAlertLedgerEntry } from "../domain/index.js";
-import { createStateCommitOperationId } from "./state-commit-metadata.js";
 import {
   operationsAlertBranchForStateBranch,
   type StateBranchAdapter,
@@ -9,8 +8,7 @@ import {
   type StateBranchHead,
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
-import { StateBranchConflictError, StateBranchCommitError, StateFormatError } from "./errors.js";
-import { decodeStateFile, encodeStateFile } from "./state-file-codec.js";
+import { StateBranchCommitError, StateBranchConflictError, StateFormatError } from "./errors.js";
 import {
   createStateOperationsAlertLedger,
   isCanonicalStateOperationsAlertLedgerSource,
@@ -22,6 +20,8 @@ import {
   type StateOperationsAlertLedger,
   type StateOperationsAlertReservation,
 } from "./operations-alert-ledger.js";
+import { createStateCommitOperationId } from "./state-commit-metadata.js";
+import { decodeStateFile, encodeStateFile } from "./state-file-codec.js";
 
 type OperationsAlertLedgerAtRef = Readonly<{
   head: StateBranchHead;

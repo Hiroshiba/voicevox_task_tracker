@@ -17,11 +17,11 @@ import {
   type StateBranchAdapter,
   type StatePersistenceConfiguration,
 } from "../../persistence/branch-adapter.js";
-import {
-  appendStateHistoryNotificationEvents,
-  type StateHistoryNotificationEvent,
-  type StateHistoryRecord,
-} from "../../persistence/history.js";
+import { appendStateHistoryNotificationEvents } from "../../persistence/history.js";
+import type {
+  StateHistoryNotificationEvent,
+  StateHistoryRecord,
+} from "../../persistence/history-contracts.js";
 import { assertStateValuesPublicSafety } from "../../persistence/public-safety.js";
 import {
   createStateRunReport,

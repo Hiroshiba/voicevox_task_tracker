@@ -1,15 +1,15 @@
 import {
+  DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
+  INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1,
+  RUN_TRANSACTION_MARKER_STATE_PATH_V1,
+} from "../application/tracking-run/contracts/recovery-paths.js";
+import {
   validateStatePersistenceConfiguration,
   type StateBranchAdapter,
   type StateFileReadResult,
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
 import { StateBranchConflictError } from "./errors.js";
-import {
-  DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
-  INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1,
-  RUN_TRANSACTION_MARKER_STATE_PATH_V1,
-} from "../application/tracking-run/contracts/recovery-paths.js";
 import {
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
   isCanonicalStateOperationsAlertLedgerSource,

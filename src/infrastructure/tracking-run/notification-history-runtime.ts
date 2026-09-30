@@ -10,7 +10,7 @@ import {
   type NotificationLedgerEntry,
   type UtcIsoDateTime,
 } from "../../domain/index.js";
-import { resolveStateHistoryNotificationItemDisplayReference } from "../../persistence/history.js";
+import { resolveStateHistoryNotificationItemDisplayReference } from "../../persistence/history-contracts.js";
 import type { StateHistoryNotificationEvent, StateSnapshot } from "../../persistence/index.js";
 import { version19SnapshotFields } from "../../persistence/snapshot-v21.js";
 import { UnreachableError, assertNonNullable } from "../../util/index.js";

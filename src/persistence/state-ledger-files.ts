@@ -3,12 +3,11 @@ import { z } from "zod";
 import {
   type StateBranchAdapter,
   type StateBranchHead,
-  type StateFileUpdate,
   type StateFileReadResult,
+  type StateFileUpdate,
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
 import { StateFormatError } from "./errors.js";
-import { decodeStateFile, encodeStateFile } from "./state-file-codec.js";
 import {
   createEmptyStateNotificationLedger,
   createStateNotificationLedger,
@@ -21,6 +20,7 @@ import {
   serializeStateOperationsAlertLedger,
   type StateNotificationLedger,
 } from "./state-documents.js";
+import { decodeStateFile, encodeStateFile } from "./state-file-codec.js";
 
 /** 同じexact revisionから通常通知と運用通知を損失なく合成する。 */
 export async function loadStateNotificationLedgers(

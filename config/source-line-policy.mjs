@@ -1,4 +1,4 @@
-export const SOURCE_LINE_CHECKER_VERSION = 1;
+export const SOURCE_LINE_CHECKER_VERSION = 2;
 
 export const SOURCE_LINE_ROOTS = [
   "src",

@@ -2,25 +2,25 @@ import { z } from "zod";
 
 import type { AiCacheKey } from "../codex/cache.js";
 import {
-  AI_ANALYSIS_ELEMENTS,
-  aiAnalysisElementApplicationsSchema,
-} from "../domain/ai-analysis-elements.js";
-import {
   AI_ANALYSIS_DEPENDENCY_ELEMENTS,
   type AiAnalysisDependency,
   type TrackedItemAiDependencies,
 } from "../domain/ai-analysis-dependencies.js";
+import {
+  AI_ANALYSIS_ELEMENTS,
+  aiAnalysisElementApplicationsSchema,
+} from "../domain/ai-analysis-elements.js";
 import type { LegacyAiCacheEntry } from "./ai-cache-migration.js";
 import { StateFormatError, StateSnapshotSemanticError } from "./errors.js";
 import { migrateVersion19FinalGraphProjection } from "./snapshot-final-graph-migration.js";
 import { migrateStateSnapshot as migrateVersion20Snapshot } from "./snapshot-v20-migration.js";
+import type { StateSnapshot as StateSnapshotVersion20 } from "./snapshot-v20.js";
+import { version19SnapshotFields } from "./snapshot-v20.js";
 import {
   normalizeLegacyProofForValidation,
   type LegacyProofKeys,
 } from "./snapshot-v21-legacy-proof.js";
 import { migratePersonalReminderSubjectChanges } from "./snapshot-v21-personal-reminder-migration.js";
-import { version19SnapshotFields } from "./snapshot-v20.js";
-import type { StateSnapshot as StateSnapshotVersion20 } from "./snapshot-v20.js";
 import { createStateSnapshot, parseStateSnapshot, type StateSnapshot } from "./snapshot-v21.js";
 
 const snapshotVersionSchema = z.object({ schemaVersion: z.string() });

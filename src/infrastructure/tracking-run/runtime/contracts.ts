@@ -18,7 +18,7 @@ import type { Config } from "../../../config/index.js";
 import type { Repository, TrackedItem } from "../../../domain/index.js";
 import type { PublicRepositoryAllowlist } from "../../../github/index.js";
 import type { StateBranchHead } from "../../../persistence/branch-adapter.js";
-import type { StateHistoryRecord } from "../../../persistence/history.js";
+import type { StateHistoryRecord } from "../../../persistence/history-contracts.js";
 import type {
   StateNotificationLedger,
   StatePersistenceSession,

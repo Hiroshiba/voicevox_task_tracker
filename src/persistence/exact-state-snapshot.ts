@@ -5,14 +5,14 @@ import {
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
 import { StateFormatError } from "./errors.js";
-import { readAiCacheMigrationPlan } from "./state-ai-cache-migration-plan.js";
-import { decodeStateFile } from "./state-file-codec.js";
 import { migrateStateSnapshot } from "./snapshot-v21-migration.js";
+import { readAiCacheMigrationPlan } from "./state-ai-cache-migration-plan.js";
 import {
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
   parseStateNotificationLedger,
   parseStateOperationsAlertLedger,
 } from "./state-documents.js";
+import { decodeStateFile } from "./state-file-codec.js";
 import type { StateSnapshotReadResult } from "./state-persistence-session.js";
 
 /** 指定したGit revisionのsnapshotと移行依存をそのtreeだけから読む。 */

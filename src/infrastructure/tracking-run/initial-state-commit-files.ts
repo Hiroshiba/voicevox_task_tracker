@@ -36,7 +36,7 @@ import {
   serializeStateSnapshot,
   version19SnapshotFields,
 } from "../../persistence/snapshot-v21.js";
-import { createPersonalReminderEvidenceSourceIndex } from "../../persistence/snapshot.js";
+import { createPersonalReminderEvidenceSourceIndex } from "../../persistence/snapshot-evidence-closure.js";
 import { readAiCacheMigrationPlan } from "../../persistence/state-ai-cache-migration-plan.js";
 import { cachePath, personalReminderAiCachePath } from "../../persistence/state-cache-paths.js";
 import { createStateNotificationLedger } from "../../persistence/state-documents.js";

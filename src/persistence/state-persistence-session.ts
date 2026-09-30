@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1 } from "../application/tracking-run/contracts/recovery-paths.js";
 import {
   createAiCacheEntry,
   type AiCacheEntry,
@@ -15,7 +16,6 @@ import {
   type PersonalReminderAiCacheStore,
 } from "../codex/personal-reminder-cache.js";
 import type { AiCacheMigrationPlan } from "./ai-cache-migration.js";
-import { migrateStateSnapshot } from "./snapshot-v21-migration.js";
 import {
   joinStatePath,
   validateStatePersistenceConfiguration,
@@ -26,25 +26,21 @@ import {
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
 import { StateBranchConflictError, StateFormatError, StateHistoryError } from "./errors.js";
-import {
-  diffStateHistory,
-  parseStateHistoryRecords,
-  type StateHistoryDiff,
-  type StateHistoryRecord,
-} from "./history.js";
-import type { StateSnapshot } from "./snapshot-v21.js";
-import { readAiCacheMigrationPlan } from "./state-ai-cache-migration-plan.js";
-import { cachePath, personalReminderAiCachePath } from "./state-cache-paths.js";
-import { compareStateKeys as compareStrings } from "./state-key-order.js";
-import { loadStateNotificationLedgers } from "./state-ledger-files.js";
-import { decodeStateFile } from "./state-file-codec.js";
-import { OPERATIONS_ALERT_LEDGER_STATE_PATH_V1 } from "./operations-alert-ledger.js";
-import type { StateNotificationLedger } from "./state-documents.js";
-import { INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1 } from "../application/tracking-run/contracts/recovery-paths.js";
+import type { StateHistoryDiff, StateHistoryRecord } from "./history-contracts.js";
+import { diffStateHistory, parseStateHistoryRecords } from "./history.js";
 import {
   createInitialPublicationBaseState,
   type InitialPublicationBaseState,
 } from "./initial-publication-base-state.js";
+import { OPERATIONS_ALERT_LEDGER_STATE_PATH_V1 } from "./operations-alert-ledger.js";
+import { migrateStateSnapshot } from "./snapshot-v21-migration.js";
+import type { StateSnapshot } from "./snapshot-v21.js";
+import { readAiCacheMigrationPlan } from "./state-ai-cache-migration-plan.js";
+import { cachePath, personalReminderAiCachePath } from "./state-cache-paths.js";
+import type { StateNotificationLedger } from "./state-documents.js";
+import { decodeStateFile } from "./state-file-codec.js";
+import { compareStateKeys as compareStrings } from "./state-key-order.js";
+import { loadStateNotificationLedgers } from "./state-ledger-files.js";
 
 const HISTORY_FILE_PATTERN = /^(\d{4}-\d{2}-\d{2})\.jsonl$/u;
 const STATE_ROOT_DIRECTORY = "state";

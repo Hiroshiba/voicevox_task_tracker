@@ -18,7 +18,7 @@ import type {
   StatePersistenceConfiguration,
 } from "../../persistence/branch-adapter.js";
 import { StateBranchConflictError, StateFormatError } from "../../persistence/errors.js";
-import type { StateHistoryRecord } from "../../persistence/history.js";
+import type { StateHistoryRecord } from "../../persistence/history-contracts.js";
 import { snapshotEffectiveGraphStateByNodeId } from "../../persistence/snapshot-v21.js";
 import type { StateNotificationLedger } from "../../persistence/state-documents.js";
 import type { StateSnapshotReadResult } from "../../persistence/state-persistence-session.js";
