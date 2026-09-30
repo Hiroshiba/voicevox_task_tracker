@@ -6,10 +6,10 @@ import {
   createPublicFailureArtifact,
   type FailedRun,
 } from "../../application/tracking-run/failure-artifact.js";
-import type { CliExecutionResult } from "../../cli/application.js";
-import type { CliCommand } from "../../cli/command.js";
 import type { DiagnosticsJsonlRecorder } from "../../diagnostics/recorder.js";
+import type { CliCommand } from "./command-input.js";
 import { nodeContentDigestPort } from "./content-digest.js";
+import type { CliExecutionResult } from "./execution-result.js";
 import { observeCliFailureContext } from "./failure-context.js";
 import { RecordedFailureError, recordFailureDiagnostic } from "./failure-diagnostic.js";
 import { writeCliJsonArtifact } from "./file-output.js";

@@ -2,11 +2,11 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { decodeReceipt } from "../../../application/tracking-run/receipt-codec.js";
-import type { PrepareNotificationHistoryPagesCliCommand } from "../../../cli/command.js";
 import { nodeContentDigestPort as digest } from "../content-digest.js";
 import { parseNotificationHistoryPagesBuildArtifact } from "../notification-history-pages-build-artifact.js";
 import { requireEnvironmentValue } from "../production-runtime-setup.js";
 import type { RunPublicationAdapters } from "./contracts.js";
+import type { WorkflowNotificationHistoryPagesBuildInput } from "./history-operation-inputs.js";
 import { buildNotificationHistoryPages } from "./notification-history-pages.js";
 
 type WorkflowHistoryPagesAdapters = Pick<
@@ -24,7 +24,7 @@ type WorkflowHistoryPagesAdapters = Pick<
 /** split workflowのfinal stateから通知履歴Pages build artifactを保存する。 */
 export async function prepareWorkflowNotificationHistoryPages(
   adapters: WorkflowHistoryPagesAdapters,
-  command: PrepareNotificationHistoryPagesCliCommand,
+  command: WorkflowNotificationHistoryPagesBuildInput,
 ): Promise<void> {
   const config = await adapters.loadConfig(resolve(adapters.repositoryPath, command.configPath));
   const settlementReceipt = decodeReceipt(

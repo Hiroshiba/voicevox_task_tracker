@@ -1,18 +1,18 @@
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
+import { parseInitialPagesPublicationEvidence } from "./initial-pages-evidence-codec.js";
+import {
+  assertObservedStateCommitReceipt,
+  type ObservedStateCommitPosition,
+} from "./observed-state-commit.js";
 import type { ContentDigestPort } from "./ports.js";
-import { parseReceipt } from "./receipt-codec.js";
 import {
   manualResolutionStateEvidenceSchema,
   notificationMessageStateEvidenceSchema,
   receiptChainEntrySchema,
   type ReceiptChainEvidence,
 } from "./receipt-chain-schema.js";
-import {
-  assertObservedStateCommitReceipt,
-  type ObservedStateCommitPosition,
-} from "./observed-state-commit.js";
+import { parseReceipt } from "./receipt-codec.js";
 import type { Receipt } from "./receipt-schema.js";
-import { parseInitialPagesPublicationEvidence } from "./initial-pages-evidence.js";
 
 const receiptChainProofBrand: unique symbol = Symbol("receiptChainProof");
 

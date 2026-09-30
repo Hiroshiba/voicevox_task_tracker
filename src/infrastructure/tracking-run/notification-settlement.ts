@@ -5,7 +5,7 @@ import { ZodError } from "zod";
 import {
   parseInitialPagesPublicationEvidence,
   type InitialPagesPublicationEvidence,
-} from "../../application/tracking-run/initial-pages-evidence.js";
+} from "../../application/tracking-run/initial-pages-evidence-codec.js";
 import type { StateCommitReceiptEvidence } from "../../application/tracking-run/observed-state-commit.js";
 import type { ReceiptChainEvidence } from "../../application/tracking-run/receipt-chain-schema.js";
 import { verifyReceiptChain } from "../../application/tracking-run/receipt-chain.js";

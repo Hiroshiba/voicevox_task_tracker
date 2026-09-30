@@ -3,10 +3,6 @@ import { resolve } from "node:path";
 
 import { decodeReceipt } from "../../../application/tracking-run/receipt-codec.js";
 import { serializeCanonicalJsonLine } from "../../../canonical-json/value.js";
-import type {
-  PreflightNotificationHistoryDeploymentCliCommand,
-  RecordNotificationHistoryDeploymentCliCommand,
-} from "../../../cli/command.js";
 import { nodeContentDigestPort as digest } from "../content-digest.js";
 import { decodeNotificationHistoryPagesBuildArtifact } from "../notification-history-pages-build-artifact.js";
 import { decodeNotificationHistoryPagesDeploymentOutcome } from "../notification-history-pages-deployment-outcome.js";
@@ -22,6 +18,10 @@ import { readNotificationMessageState } from "../notification-message-state.js";
 import { readPreviousNotificationHistoryOutcome } from "../previous-notification-history-outcome.js";
 import { isWorkflowPublicationReplay, workflowAdapterIdentityV2 } from "../publication-runtime.js";
 import type { RunPublicationAdapters } from "./contracts.js";
+import type {
+  WorkflowNotificationHistoryPagesPreflightInput,
+  WorkflowNotificationHistoryPagesRecordInput,
+} from "./history-operation-inputs.js";
 
 type WorkflowHistoryDeploymentAdapters = Pick<
   RunPublicationAdapters,
@@ -44,7 +44,7 @@ function optionalOutput(
 /** split通知履歴Pages action直前の正本と全fileを検証する。 */
 export async function preflightWorkflowNotificationHistoryDeployment(
   adapters: WorkflowHistoryDeploymentAdapters,
-  command: PreflightNotificationHistoryDeploymentCliCommand,
+  command: WorkflowNotificationHistoryPagesPreflightInput,
 ): Promise<void> {
   const artifact = decodeNotificationHistoryPagesBuildArtifact(
     await readFile(resolve(adapters.repositoryPath, command.buildArtifactPath)),
@@ -108,7 +108,7 @@ export async function preflightWorkflowNotificationHistoryDeployment(
 /** split通知履歴Pages actionの実outputをreceiptまたは失敗artifactへ記録する。 */
 export async function recordWorkflowNotificationHistoryDeployment(
   adapters: WorkflowHistoryDeploymentAdapters,
-  command: RecordNotificationHistoryDeploymentCliCommand,
+  command: WorkflowNotificationHistoryPagesRecordInput,
 ): Promise<void> {
   const artifact = decodeNotificationHistoryPagesBuildArtifact(
     await readFile(resolve(adapters.repositoryPath, command.buildArtifactPath)),

@@ -1,8 +1,8 @@
 import {
-  createInitialPagesPublicationEvidence,
   parseInitialPagesPublicationEvidence,
   type InitialPagesPublicationEvidence,
-} from "../../application/tracking-run/initial-pages-evidence.js";
+} from "../../application/tracking-run/initial-pages-evidence-codec.js";
+import { createInitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence.js";
 import { createReceipt, parseReceipt } from "../../application/tracking-run/receipt-codec.js";
 import type {
   InitialStateCommitReceipt,

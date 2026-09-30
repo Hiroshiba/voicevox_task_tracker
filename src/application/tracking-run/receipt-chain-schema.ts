@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { notificationDeliveryAttemptSchema } from "../../domain/notification-delivery-attempt.js";
 
-import { initialPagesEvidenceStateSchema } from "./initial-pages-evidence.js";
+import { initialPagesEvidenceStateSchema } from "./initial-pages-evidence-codec.js";
 import { stateCommitReceiptEvidenceSchema } from "./observed-state-commit.js";
-import { runTransactionMarkerSchema } from "./run-transaction-marker.js";
 import { receiptSchema } from "./receipt-schema.js";
+import { runTransactionMarkerSchema } from "./run-transaction-marker.js";
 
 export const RECEIPT_CHAIN_SCHEMA_VERSION = 3;
 

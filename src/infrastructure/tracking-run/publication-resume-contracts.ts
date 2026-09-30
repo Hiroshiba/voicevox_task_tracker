@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { initialPagesPublicationEvidenceSchema } from "../../application/tracking-run/initial-pages-evidence.js";
+import { initialPagesPublicationEvidenceSchema } from "../../application/tracking-run/initial-pages-evidence-codec.js";
 import { stateCommitReceiptEvidenceSchema } from "../../application/tracking-run/observed-state-commit.js";
 import { receiptSchema } from "../../application/tracking-run/receipt-schema.js";
 import { durablePublicationRecordSchema } from "../../publication/durable-record-schema.js";

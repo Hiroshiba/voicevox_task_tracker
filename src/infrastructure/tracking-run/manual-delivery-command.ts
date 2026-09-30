@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import type { ResolveDiscordDeliveryCliCommand } from "../../cli/command.js";
+import type { ResolveDiscordDeliveryCliCommand } from "./command-input.js";
 
 import { resolveManualNotificationDelivery } from "./manual-resolution.js";
 import type { ProductionRuntimeAdapters } from "./runtime/adapters.js";

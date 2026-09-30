@@ -22,7 +22,6 @@ import type { GraphNodeId, NormalizedEvent } from "../../../domain/types.js";
 import type { GitHubItemDetail } from "../../../github/item-detail-types.js";
 import type { ReconciledGraphEdge } from "../../../graph/index.js";
 import { assertNonNullable } from "../../../util/index.js";
-import { compareEventOccurrence } from "./personal-reminder-runtime-activity.js";
 import {
   addRuntimeSource,
   compareStrings,
@@ -30,7 +29,7 @@ import {
   currentAiDependencyInput,
   seedAiDependencyInput,
 } from "./personal-reminder-runtime-common.js";
-import { contextItemByNodeId } from "./personal-reminder-runtime-context.js";
+import { contextItemByNodeId } from "./personal-reminder-runtime-context-values.js";
 import type {
   PersonalReminderCauseNewDraftIdCollision,
   PersonalReminderRuntimeActiveRelation,
@@ -42,6 +41,7 @@ import type {
   PersonalReminderRuntimePlanningIndexes,
   PersonalReminderRuntimeSource,
 } from "./personal-reminder-runtime-contracts.js";
+import { compareEventOccurrence } from "./personal-reminder-runtime-event-order.js";
 import {
   activeRelationIsEffective,
   candidateAffectsCause,

@@ -2,8 +2,8 @@ import { z } from "zod";
 
 import { serializeCanonicalJsonLine } from "../../canonical-json/value.js";
 import { gitCommitRevisionSchema } from "./contracts/revision.js";
+import type { InitialPagesPublicationEvidence } from "./initial-pages-evidence-codec.js";
 import { readRunTransactionMarkerRecoveryBootstrap } from "./recovery-bootstrap.js";
-import type { InitialPagesPublicationEvidence } from "./initial-pages-evidence.js";
 
 const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const runIdSchema = z.string().regex(/^tracker-run:[0-9a-f]{64}$/u);

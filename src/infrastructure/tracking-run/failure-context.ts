@@ -8,14 +8,14 @@ import type {
 } from "../../application/tracking-run/failure-artifact.js";
 import { PagesEffectNotStartedError } from "../../application/tracking-run/pages-effect.js";
 import type { Receipt } from "../../application/tracking-run/receipt-schema.js";
-import type { CliExecutionResult } from "../../cli/application.js";
-import type { CliCommand } from "../../cli/command.js";
 import {
   DiscordOperationsPostSendError,
   DiscordWebhookDeliveryUnknownError,
 } from "../../discord/index.js";
 import { StateBranchConflictError } from "../../persistence/index.js";
+import type { CliCommand } from "./command-input.js";
 import { CliCodexAuthenticationError, CliUsageError, CliWorkflowArtifactError } from "./errors.js";
+import type { CliExecutionResult } from "./execution-result.js";
 import {
   BoundPublicationFailureError,
   OperationsAlertReceiptFailureError,

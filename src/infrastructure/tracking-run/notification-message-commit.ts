@@ -1,4 +1,4 @@
-import type { InitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence.js";
+import type { InitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence-codec.js";
 import { writeStateCas, type StateCasCommitRequestFactory } from "../../persistence/state-cas.js";
 import type { StateCommitIdentity } from "../../persistence/state-commit-metadata.js";
 import { createStateCommitOperationId } from "../../persistence/state-commit-metadata.js";

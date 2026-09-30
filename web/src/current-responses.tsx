@@ -5,7 +5,7 @@ import type {
 } from "../../src/pages/public-dto-contracts.js";
 import { UnreachableError, assertNonNullable } from "../../src/util/index.js";
 import { AiUnverifiedMark } from "./ai-analysis-notice-icon.js";
-import { ItemDetailsLink } from "./item-details.js";
+import { ItemDetailsLink } from "./item-details-link.js";
 import { currentResponseResponsibleLabel } from "./model-current-response.js";
 import {
   currentResponseRoleLabel,

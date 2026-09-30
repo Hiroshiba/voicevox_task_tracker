@@ -3,7 +3,7 @@ import { type ComponentChildren } from "preact";
 import { UnreachableError } from "../../src/util/index.js";
 import { AiUnverifiedMark } from "./ai-analysis-notice-icon.js";
 import { GitHubIconButton } from "./github-icon-button.js";
-import { ItemDetailsLink } from "./item-details.js";
+import { ItemDetailsLink } from "./item-details-link.js";
 import { itemAiNoticeAriaLabel, itemAiUnverifiedDescription } from "./model-ai-presentation.js";
 import type { ItemTableRow } from "./model-contracts.js";
 import { Pill } from "./ui.js";

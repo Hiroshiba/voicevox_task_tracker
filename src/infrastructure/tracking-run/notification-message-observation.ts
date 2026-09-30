@@ -1,4 +1,4 @@
-import { parseInitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence.js";
+import { parseInitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence-codec.js";
 import {
   notificationMessageStateEvidenceSchema,
   type NotificationMessageStateEvidence,

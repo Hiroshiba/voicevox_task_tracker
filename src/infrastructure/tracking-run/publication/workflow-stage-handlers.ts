@@ -7,12 +7,6 @@ import type { BaseStateRevision } from "../../../application/tracking-run/contra
 import { operationsIncidentKindForFailure } from "../../../application/tracking-run/failure-primary.js";
 import { decodeReceipt } from "../../../application/tracking-run/receipt-codec.js";
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
-import type {
-  BuildPagesCliCommand,
-  NotifyOperationsCliCommand,
-  PersistStateCliCommand,
-  VerifyCheckpointCliCommand,
-} from "../../../cli/command.js";
 import type { Config } from "../../../config/index.js";
 import {
   DiscordOperationsPostSendError,
@@ -25,6 +19,7 @@ import {
   loadOperationsAlertLedger,
   readExactStateSnapshot,
 } from "../../../persistence/index.js";
+import type { VerifyCheckpointCliCommand } from "../command-input.js";
 import { nodeContentDigestPort } from "../content-digest.js";
 import {
   BoundPublicationFailureError,
@@ -41,6 +36,7 @@ import {
 import { readPriorOperationsAlertReceipts } from "../operations-alert-receipt-file.js";
 import { assertPriorOperationsAlertDeliveries } from "../operations-alert-receipt-state.js";
 import { createOperationsAlertReceipt } from "../operations-alert-receipt.js";
+import type { NotifyOperationsCliCommand } from "../operations-command-input.js";
 import {
   createWorkflowInfrastructureFailure,
   primaryAlertFailure,
@@ -57,6 +53,10 @@ import {
 } from "../publication-checkpoint-file.js";
 import { readPublicationRuntimeContext } from "../publication-runtime.js";
 import type { RunPublicationAdapters } from "./contracts.js";
+import type {
+  WorkflowInitialPagesBuildInput,
+  WorkflowInitialStateCommitInput,
+} from "./operation-inputs.js";
 import { buildPublicPages } from "./pages.js";
 import { discordDeliverySettings, projectPublicationSettings } from "./settings.js";
 
@@ -191,7 +191,7 @@ export async function verifyWorkflowCheckpoint(
 /** workflow artifactの検証済みstateを初期保存する。 */
 export async function persistWorkflowState(
   dependencies: Readonly<{ adapters: WorkflowStateAdapters }>,
-  command: PersistStateCliCommand,
+  command: WorkflowInitialStateCommitInput,
 ): Promise<void> {
   const config = await dependencies.adapters.loadConfig(
     resolve(dependencies.adapters.repositoryPath, command.configPath),
@@ -229,7 +229,7 @@ export async function buildWorkflowPages(
     adapters: WorkflowStateAdapters &
       Pick<RunPublicationAdapters, "writePublicData" | "buildWebOutput">;
   }>,
-  command: BuildPagesCliCommand,
+  command: WorkflowInitialPagesBuildInput,
 ): Promise<void> {
   const config = await dependencies.adapters.loadConfig(
     resolve(dependencies.adapters.repositoryPath, command.configPath),

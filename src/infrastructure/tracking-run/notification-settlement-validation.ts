@@ -1,12 +1,12 @@
-import type { InitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence.js";
+import type { InitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence-codec.js";
 import type {
   ManualResolutionReceipt,
   NotificationMessageReceipt,
 } from "../../application/tracking-run/receipt-schema.js";
 import { hashCanonicalJson } from "../../canonical-json/index.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
-import { buildDiscordDigestPlan } from "../../discord/payload.js";
 import type { PreparedDiscordDigestMessage } from "../../discord/payload-contracts.js";
+import { buildDiscordDigestPlan } from "../../discord/payload.js";
 import type { StatePersistenceConfiguration } from "../../persistence/branch-adapter.js";
 import { joinStatePath } from "../../persistence/branch-adapter.js";
 import {

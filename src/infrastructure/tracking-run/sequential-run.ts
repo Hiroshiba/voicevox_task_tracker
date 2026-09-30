@@ -27,14 +27,6 @@ import type { GenericAiExecutedRun } from "../../application/tracking-run/stages
 import type { GenericAiPlannedRun } from "../../application/tracking-run/stages/generic-ai-plan.js";
 import type { GraphReconciledRun } from "../../application/tracking-run/stages/graph-reconciliation.js";
 import type { InventoryCollectedRun } from "../../application/tracking-run/stages/inventory.js";
-import {
-  type BackfillCliCommand,
-  type CollectAnalyzeCliCommand,
-  type DailyCliCommand,
-  type DryRunCliCommand,
-  type RunSequentialCliCommand,
-} from "../../cli/command.js";
-import { parseRunRequest } from "../../cli/tracking-run/parse-request.js";
 import type { UtcIsoDateTime } from "../../domain/index.js";
 import {
   StateFormatError,
@@ -46,12 +38,20 @@ import {
   type RunReport,
   type RunStage,
 } from "../../publication/run-report.js";
+import type {
+  BackfillCliCommand,
+  CollectAnalyzeCliCommand,
+  DailyCliCommand,
+  DryRunCliCommand,
+  RunSequentialCliCommand,
+} from "./command-input.js";
 import { safeErrorDiagnostic } from "./error-diagnostic.js";
 import { observeCliFailureContext } from "./failure-context.js";
 import { isPublicBoundaryViolation } from "./public-boundary-error.js";
 import { publicDiagnosticCode } from "./public-failure-boundary.js";
 import type { RecoveryStageInput } from "./recovery-stage.js";
 import { RunCoordinator, type CoordinatedRunResult } from "./run-coordinator.js";
+import { parseRunRequest } from "./run-request-input.js";
 import {
   createDailyPublicationStages,
   type DailyPublicationStageValues,

@@ -6,7 +6,7 @@ import { assertNonNullable } from "../../src/util/index.js";
 import { AiUnverifiedMark } from "./ai-analysis-notice-icon.js";
 import { CurrentResponses } from "./current-responses.js";
 import { GitHubIconButton } from "./github-icon-button.js";
-import { ItemDetailsLink } from "./item-details.js";
+import { ItemDetailsLink } from "./item-details-link.js";
 import { hasAiUnverifiedValue } from "./model-ai-presentation.js";
 import {
   aiUnverifiedValueLabel,

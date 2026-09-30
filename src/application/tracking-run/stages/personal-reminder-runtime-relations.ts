@@ -36,7 +36,7 @@ import {
 import {
   candidateEndpointItemByNodeId,
   contextItemByNodeId,
-} from "./personal-reminder-runtime-context.js";
+} from "./personal-reminder-runtime-context-values.js";
 import type {
   PersonalReminderConnectedSeedRelations,
   PersonalReminderGraphDraftProjection,

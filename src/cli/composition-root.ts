@@ -25,11 +25,11 @@ import {
 } from "../infrastructure/tracking-run/file-output.js";
 import type { ProductionRuntimeAdapters } from "../infrastructure/tracking-run/runtime/adapters.js";
 import { parseSandboxContext } from "../infrastructure/tracking-run/sandbox-context.js";
+import { verifyPersistentStateDirectory } from "../infrastructure/tracking-run/state-verification.js";
 import { buildWebOutput, writePublicDataFiles } from "../pages/index.js";
 import { GitStateBranchAdapter, StatePersistenceSession } from "../persistence/index.js";
-import { type CliApplication } from "./application.js";
+import type { CliApplication } from "./application.js";
 import { createProductionCliApplication } from "./create-application.js";
-import { verifyPersistentStateDirectory } from "./state-verification.js";
 
 const DEFAULT_PAGES_OUTPUT_DIRECTORY = "web/public/data";
 const sandboxStateRefSchema = z.string().regex(/^sandbox-state\/env-[1-9][0-9]*-[1-9][0-9]*$/u);

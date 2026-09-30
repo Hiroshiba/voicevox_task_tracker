@@ -23,7 +23,7 @@ import {
   actionKindForDecision,
   checkContextOccurredAt,
   latestUtcIsoDateTime,
-} from "./personal-reminder-runtime-context.js";
+} from "./personal-reminder-runtime-context-values.js";
 import type {
   PersonalReminderRuntimeLocalDecision,
   PersonalReminderRuntimeRelatedContext,

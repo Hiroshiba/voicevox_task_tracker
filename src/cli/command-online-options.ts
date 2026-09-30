@@ -3,13 +3,16 @@ import {
   type NotificationAction,
 } from "../application/tracking-run/contracts/closed-values.js";
 import { createUtcIsoDateTime } from "../domain/index.js";
+import type {
+  BackfillCliCommand,
+  CliSchedule,
+} from "../infrastructure/tracking-run/command-input.js";
 import {
   optionalSingleOption,
   singleOption,
   usageError,
   type ParsedOptions,
 } from "./command-options.js";
-import type { BackfillCliCommand, CliSchedule } from "./command.js";
 
 const REPOSITORY_FILTER_PATTERN = /^VOICEVOX\/[A-Za-z0-9._-]+$/u;
 

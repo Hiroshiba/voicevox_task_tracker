@@ -1,12 +1,12 @@
 import { z } from "zod";
 
 import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../../canonical-json/value.js";
-import type { ContentDigestPort } from "./ports.js";
-import { receiptSchema, type PagesDeploymentReceipt, type Receipt } from "./receipt-schema.js";
 import {
   parseInitialPagesPublicationEvidence,
   type InitialPagesEvidenceState,
-} from "./initial-pages-evidence.js";
+} from "./initial-pages-evidence-codec.js";
+import type { ContentDigestPort } from "./ports.js";
+import { receiptSchema, type PagesDeploymentReceipt, type Receipt } from "./receipt-schema.js";
 
 const MAX_RECEIPT_BYTES = 1024 * 1024;
 const identityMask = {

@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 
-import type { ReportWorkflowCliCommand } from "../../cli/command.js";
+import type { ReportWorkflowCliCommand } from "./command-input.js";
 import type { ProductionRuntimeAdapters } from "./runtime/adapters.js";
 import { createWorkflowRunReport } from "./workflow-run-report.js";
 

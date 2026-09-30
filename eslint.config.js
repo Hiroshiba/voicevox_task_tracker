@@ -243,4 +243,53 @@ export default defineConfig([
       ],
     },
   },
+  {
+    files: ["src/infrastructure/tracking-run/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            { group: ["**/cli/**"], message: "infrastructureからCLIを参照しないでください" },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["src/infrastructure/tracking-run/runtime/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            "fs",
+            "fs/promises",
+            "child_process",
+            "node:fs",
+            "node:fs/promises",
+            "node:child_process",
+          ].map((name) => ({
+            name,
+            message: "解析portの配線ではfilesystemや子processを直接使わないでください",
+          })),
+          patterns: [
+            { group: ["**/cli/**"], message: "infrastructureからCLIを参照しないでください" },
+          ],
+        },
+      ],
+      "no-restricted-globals": [
+        "error",
+        { name: "fetch", message: "解析portの配線ではglobal fetchを使わないでください" },
+      ],
+      "no-restricted-properties": [
+        "error",
+        {
+          object: "process",
+          property: "env",
+          message: "解析portの配線では注入した環境値を使ってください",
+        },
+      ],
+    },
+  },
 ]);

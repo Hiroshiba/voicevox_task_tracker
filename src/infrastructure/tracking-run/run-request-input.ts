@@ -7,7 +7,7 @@ import type {
   DailyCliCommand,
   DryRunCliCommand,
   RunSequentialCliCommand,
-} from "../command.js";
+} from "./command-input.js";
 
 type OnlineCommand =
   | DailyCliCommand

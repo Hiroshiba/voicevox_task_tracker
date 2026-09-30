@@ -1,46 +1,15 @@
+import type { CliCommand, DryRunCliCommand } from "../infrastructure/tracking-run/command-input.js";
+import type { CliExecutionResult } from "../infrastructure/tracking-run/execution-result.js";
 import type { CoordinatedRunResult } from "../infrastructure/tracking-run/run-coordinator.js";
 import {
   SequentialRunRunner,
   type DailyRunExecutionResult,
 } from "../infrastructure/tracking-run/sequential-run.js";
 import { SplitStageRunner } from "../infrastructure/tracking-run/split-stage-runner.js";
-import type { DryRunCliCommand } from "./command.js";
-import { formatCliUsage, parseCliArguments, type CliCommand } from "./command.js";
+import { formatCliUsage } from "./command-usage.js";
+import { parseCliArguments } from "./command.js";
 import { StateVerificationRunner } from "./state-verification.js";
 import type { WorkflowCommandRunner } from "./workflow-stage.js";
-
-/** CLI実行後の終了codeとreport種別。 */
-export type CliExecutionResult =
-  | Readonly<{
-      command: "help";
-      exitCode: 0;
-    }>
-  | Readonly<{
-      command:
-        "daily" | "dry-run" | "backfill" | "collect-analyze" | "run-sequential" | "run-stage";
-      exitCode: 0 | 1;
-      execution: "executed" | "deduplicated";
-      result: DailyRunExecutionResult;
-    }>
-  | Readonly<{
-      command:
-        | "resolve-discord-delivery"
-        | "notify-operations"
-        | "report-workflow"
-        | "verify-checkpoint"
-        | "verify-runtime-recovery"
-        | "inspect-run-state"
-        | "verify-receipt-chain"
-        | "report-failure"
-        | "run-stage"
-        | "route-stage"
-        | "runtime-recovery-v2";
-      exitCode: 0;
-    }>
-  | Readonly<{
-      command: "verify-state";
-      exitCode: 0;
-    }>;
 
 /** CLI applicationへ注入するonline、標準出力境界。 */
 export type CliApplicationDependencies = Readonly<{

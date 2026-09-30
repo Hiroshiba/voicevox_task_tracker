@@ -6,7 +6,7 @@ import {
 import {
   decodeInitialPagesPublicationEvidence,
   type InitialPagesPublicationEvidence,
-} from "../application/tracking-run/initial-pages-evidence.js";
+} from "../application/tracking-run/initial-pages-evidence-codec.js";
 import {
   decodeRunTransactionMarker,
   type RunTransactionMarker,

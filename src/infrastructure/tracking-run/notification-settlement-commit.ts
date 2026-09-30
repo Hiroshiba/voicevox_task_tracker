@@ -5,7 +5,7 @@ import {
 import {
   serializeInitialPagesPublicationEvidence,
   type InitialPagesPublicationEvidence,
-} from "../../application/tracking-run/initial-pages-evidence.js";
+} from "../../application/tracking-run/initial-pages-evidence-codec.js";
 import { stateCommitReceiptOperationId } from "../../application/tracking-run/observed-state-commit.js";
 import type {
   ManualResolutionReceipt,

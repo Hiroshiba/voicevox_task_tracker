@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { ZodError } from "zod";
 
-import type { InitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence.js";
+import type { InitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence-codec.js";
 import { stateCommitReceiptOperationId } from "../../application/tracking-run/observed-state-commit.js";
 import type {
   InitialStateCommitReceipt,

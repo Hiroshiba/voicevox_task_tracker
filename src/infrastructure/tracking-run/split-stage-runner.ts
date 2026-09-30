@@ -12,16 +12,11 @@ import { runTrackingStageOnce } from "../../application/tracking-run/engine.js";
 import type { ReceiptChainEntry } from "../../application/tracking-run/receipt-chain-schema.js";
 import { decodeReceipt } from "../../application/tracking-run/receipt-codec.js";
 import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../../canonical-json/value.js";
-import type {
-  CollectAnalyzeCliCommand,
-  RecoverRuntimeV2CliCommand,
-  RouteStageCliCommand,
-  RunStageCliCommand,
-} from "../../cli/command.js";
 import { findInitialStateRevision } from "../../persistence/state-orthogonal-advance.js";
 import { DURABLE_PUBLICATION_RECORD_SCHEMA_VERSION } from "../../publication/durable-record-schema.js";
 import { assertNonNullable } from "../../util/index.js";
 import { inspectRunBootstrapState } from "./bootstrap-state.js";
+import type { CollectAnalyzeCliCommand } from "./command-input.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import { decodeInitialPagesBuildArtifact } from "./initial-pages-build-artifact.js";
 import { readInitialPagesDeploymentOutcome } from "./initial-pages-deployment.js";
@@ -57,6 +52,11 @@ import type { RecoveryStageInput } from "./recovery-stage.js";
 import { recoverSplitRuntimeV2 } from "./runtime-recovery-acquisition.js";
 import type { ProductionRuntimeAdapters } from "./runtime/adapters.js";
 import { SequentialRunRunner, type DailyRunExecutionResult } from "./sequential-run.js";
+import type {
+  RecoverRuntimeV2CliCommand,
+  RouteStageCliCommand,
+  RunStageCliCommand,
+} from "./split-command-input.js";
 import { needsReceiptRestoration } from "./split-stage-artifact-state.js";
 import { reconcileSplitPagesOutcomes } from "./split-stage-pages-recovery.js";
 import { splitStagePaths, type SplitStagePaths } from "./split-stage-paths.js";
@@ -736,7 +736,6 @@ export class SplitStageRunner {
         persistWorkflowState(
           { adapters },
           {
-            kind: "persist-state",
             configPath: command.configPath,
             artifactPath: paths.checkpoint,
             receiptPath: paths.initialReceipt,
@@ -786,7 +785,6 @@ export class SplitStageRunner {
           buildWorkflowPages(
             { adapters },
             {
-              kind: "build-pages",
               configPath: command.configPath,
               initialStateReceiptPath: paths.initialReceipt,
               buildArtifactPath: paths.initialBuild,
@@ -805,7 +803,6 @@ export class SplitStageRunner {
           throw new TypeError("初回Pages deploy前のbuild receiptがありません");
         }
         await preflightWorkflowPagesDeployment(adapters, {
-          kind: "preflight-pages-deployment",
           configPath: command.configPath,
           initialStateReceiptPath: paths.initialReceipt,
           buildArtifactPath: paths.initialBuild,
@@ -824,7 +821,6 @@ export class SplitStageRunner {
       case "record-initial-pages-deployment": {
         await execute("initial_pages_prepared", "initial_pages_published", () =>
           recordWorkflowPagesDeployment(adapters, {
-            kind: "record-pages-deployment",
             buildArtifactPath: paths.initialBuild,
             preflightPath: paths.initialPreflight,
             outcomePath: paths.initialDeployment,
@@ -858,7 +854,6 @@ export class SplitStageRunner {
           settleWorkflowNotifications(
             adapters,
             {
-              kind: "settle-notifications",
               configPath: command.configPath,
               initialStateReceiptPath: paths.initialReceipt,
               buildArtifactPath: paths.initialBuild,
@@ -880,7 +875,6 @@ export class SplitStageRunner {
       case "finalize-run": {
         const outcome = await execute("notifications_settled", "run_finalized", () =>
           finalizeWorkflowRun(adapters, {
-            kind: "finalize-run",
             configPath: command.configPath,
             initialStateReceiptPath: paths.initialReceipt,
             settlementReceiptPath: paths.settlementReceipt,
@@ -895,7 +889,6 @@ export class SplitStageRunner {
       case "prepare-history-pages": {
         await execute("run_finalized", "notification_history_pages_prepared", () =>
           prepareWorkflowNotificationHistoryPages(adapters, {
-            kind: "prepare-notification-history-pages",
             configPath: command.configPath,
             settlementReceiptPath: paths.settlementReceipt,
             finalizationReceiptPath: paths.finalizationReceipt,
@@ -916,7 +909,6 @@ export class SplitStageRunner {
           throw new TypeError("通知履歴Pages deploy前のbuild receiptがありません");
         }
         await preflightWorkflowNotificationHistoryDeployment(adapters, {
-          kind: "preflight-notification-history-deployment",
           configPath: command.configPath,
           settlementReceiptPath: paths.settlementReceipt,
           finalizationReceiptPath: paths.finalizationReceipt,
@@ -939,7 +931,6 @@ export class SplitStageRunner {
           "notification_history_pages_published",
           () =>
             recordWorkflowNotificationHistoryDeployment(adapters, {
-              kind: "record-notification-history-deployment",
               buildArtifactPath: paths.historyBuild,
               preflightPath: paths.historyPreflight,
               outcomePath: paths.historyDeployment,

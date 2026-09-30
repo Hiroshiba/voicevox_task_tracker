@@ -1,7 +1,7 @@
 import type { FailedRun } from "../../application/tracking-run/failure-artifact.js";
-import type { CliCommand } from "../../cli/command.js";
-import type { RunStageCliCommand } from "../../cli/split-stage-command.js";
 import type { RunStage } from "../../publication/run-report.js";
+import type { CliCommand } from "./command-input.js";
+import type { RunStageCliCommand } from "./split-command-input.js";
 
 function stageFromSplitCommand(stage: RunStageCliCommand["stage"]): FailedRun["failedStage"] {
   switch (stage) {

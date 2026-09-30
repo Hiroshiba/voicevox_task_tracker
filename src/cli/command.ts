@@ -1,9 +1,21 @@
 import { z } from "zod";
-import {
-  notificationActionSchema,
-  type NotificationAction,
-} from "../application/tracking-run/contracts/closed-values.js";
-import { type UtcIsoDateTime } from "../domain/index.js";
+import type {
+  BackfillCliCommand,
+  CliCommand,
+  CollectAnalyzeCliCommand,
+  DailyCliCommand,
+  DryRunCliCommand,
+  InspectRunStateCliCommand,
+  OnlineCommandFields,
+  ReportFailureCliCommand,
+  ReportWorkflowCliCommand,
+  ResolveDiscordDeliveryCliCommand,
+  RunSequentialCliCommand,
+  VerifyCheckpointCliCommand,
+  VerifyReceiptChainCliCommand,
+  VerifyRuntimeRecoveryCliCommand,
+  VerifyStateCliCommand,
+} from "../infrastructure/tracking-run/command-input.js";
 import {
   parseBackfillMode,
   parseNotificationAction,
@@ -17,32 +29,8 @@ import {
   usageError,
   type ParsedOptions,
 } from "./command-options.js";
-import {
-  parseNotifyOperations,
-  type NotifyOperationsCliCommand,
-} from "./operations-alert-command.js";
-import {
-  parseRecoverRuntimeV2,
-  parseRouteStage,
-  parseRunStage,
-  type RecoverRuntimeV2CliCommand,
-  type RouteStageCliCommand,
-  type RunStageCliCommand,
-} from "./split-stage-command.js";
-
-export { formatCliUsage } from "./command-usage.js";
-export type {
-  PreflightNotificationHistoryDeploymentCliCommand,
-  PrepareNotificationHistoryPagesCliCommand,
-  RecordNotificationHistoryDeploymentCliCommand,
-} from "./notification-history-deployment-command.js";
-export type { NotifyOperationsCliCommand } from "./operations-alert-command.js";
-export type {
-  RecoverRuntimeV2CliCommand,
-  RouteStageCliCommand,
-  RunStageCliCommand,
-} from "./split-stage-command.js";
-export { notificationActionSchema, type NotificationAction };
+import { parseNotifyOperations } from "./operations-alert-command.js";
+import { parseRecoverRuntimeV2, parseRouteStage, parseRunStage } from "./split-stage-command.js";
 
 const DEFAULT_CONFIG_PATH = "config.yml";
 const DEFAULT_REPORT_DIRECTORY = "artifacts/run-reports";
@@ -57,222 +45,6 @@ const resolveDiscordDeliveryResolutionSchema = z.enum(["retry", "acknowledge"]);
 const runIdSchema = z.string().regex(/^tracker-run:[0-9a-f]{64}$/u);
 const checkpointDigestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const attemptIdSchema = z.string().regex(/^attempt:v1:[0-9a-f]{64}$/u);
-
-/** runの予定時刻を現在時刻または明示値から決める指定。 */
-export type CliSchedule =
-  | Readonly<{
-      kind: "current_time";
-    }>
-  | Readonly<{
-      kind: "specified";
-      value: UtcIsoDateTime;
-    }>;
-
-type OnlineCommandFields = Readonly<{
-  configPath: string;
-  reportPath: string;
-  schedule: CliSchedule;
-}>;
-
-type NotificationActionCommandFields = Readonly<{
-  notificationAction: NotificationAction;
-}>;
-
-/** 通常の日次実行を表すCLI入力。 */
-export type DailyCliCommand = OnlineCommandFields &
-  NotificationActionCommandFields &
-  Readonly<{
-    kind: "daily";
-  }>;
-
-/** 外部公開を行わない日次実行を表すCLI入力。 */
-export type DryRunCliCommand = OnlineCommandFields &
-  Readonly<{
-    kind: "dry-run";
-    artifactPath: string;
-  }>;
-
-/** 追跡対象を追加する日次実行を表すCLI入力。 */
-export type BackfillCliCommand = OnlineCommandFields &
-  NotificationActionCommandFields &
-  Readonly<{
-    kind: "backfill";
-    mode: "none" | "linked" | "all-open";
-    repositoryFilter: readonly string[];
-  }>;
-
-/** 直列engineを使う日次またはbackfillのCLI入力。 */
-export type RunSequentialCliCommand = OnlineCommandFields &
-  NotificationActionCommandFields &
-  Readonly<{
-    kind: "run-sequential";
-    mode: "none" | "linked" | "all-open";
-    repositoryFilter: readonly string[];
-  }>;
-
-/** workflowの収集と判定だけを行うCLI入力。 */
-export type CollectAnalyzeCliCommand = OnlineCommandFields &
-  NotificationActionCommandFields &
-  Readonly<{
-    kind: "collect-analyze";
-    mode: "none" | "linked" | "all-open";
-    repositoryFilter: readonly string[];
-    artifactPath: string;
-    sandboxContextPath: string | undefined;
-  }>;
-
-/** 検証済みworkflow artifactをstate branchへ保存するCLI入力。 */
-export type PersistStateCliCommand = Readonly<{
-  kind: "persist-state";
-  configPath: string;
-  artifactPath: string;
-  receiptPath: string;
-}>;
-
-/** 検証済みworkflow artifactからPages用データを生成するCLI入力。 */
-export type BuildPagesCliCommand = Readonly<{
-  kind: "build-pages";
-  configPath: string;
-  initialStateReceiptPath: string;
-  buildArtifactPath: string;
-  outputDirectory: string;
-}>;
-
-/** Pages actionの直前にstateと出力を検証するCLI入力。 */
-export type PreflightPagesDeploymentCliCommand = Readonly<{
-  kind: "preflight-pages-deployment";
-  configPath: string;
-  initialStateReceiptPath: string;
-  buildArtifactPath: string;
-  previousOutcomePath: string;
-  preflightPath: string;
-  runAttempt: number;
-}>;
-
-/** Pages actionの実結果をreceiptへ記録するCLI入力。 */
-export type RecordPagesDeploymentCliCommand = Readonly<{
-  kind: "record-pages-deployment";
-  buildArtifactPath: string;
-  preflightPath: string;
-  outcomePath: string;
-}>;
-
-/** 初回Pages成功後に通知settlementを確定するCLI入力。 */
-export type SettleNotificationsCliCommand = Readonly<{
-  kind: "settle-notifications";
-  configPath: string;
-  initialStateReceiptPath: string;
-  buildArtifactPath: string;
-  deploymentOutcomePath: string;
-  settlementReceiptPath: string;
-  manualResolutionReceiptPath?: string;
-}>;
-
-/** settlement済みrunの最終CASを確定するCLI入力。 */
-export type FinalizeRunCliCommand = Readonly<{
-  kind: "finalize-run";
-  configPath: string;
-  initialStateReceiptPath: string;
-  settlementReceiptPath: string;
-  finalizationReceiptPath: string;
-}>;
-
-/** Discord通知の送信保留を解除するCLI入力。 */
-export type ResolveDiscordDeliveryCliCommand = Readonly<{
-  kind: "resolve-discord-delivery";
-  configPath: string;
-  runId: string;
-  checkpointDigest: string;
-  deliveryId: string;
-  attemptId: string;
-  notificationKeys: readonly string[];
-  resolution: "retry" | "acknowledge";
-  receiptPath: string;
-}>;
-
-/** workflow全体のjob結果をCLI reportへ統合する入力。 */
-export type ReportWorkflowCliCommand = Readonly<{
-  kind: "report-workflow";
-  actionsJobsPath: string;
-  collectAnalyzeReportPath: string;
-  completionDirectory: string;
-  failureDirectory: string;
-  outputPath: string;
-  workflowRunId: string;
-  workflowRunAttempt: number;
-  trackingRunId: string | undefined;
-  effectTarget: "production" | "sandbox" | "recording";
-}>;
-
-/** 指定した永続stateディレクトリを検証するCLI入力。 */
-export type VerifyStateCliCommand = Readonly<{
-  kind: "verify-state";
-  stateDirectory: string;
-  configPath: string;
-}>;
-
-/** v19 checkpointとexact baseの結合を検証するCLI入力。 */
-export type VerifyCheckpointCliCommand = Readonly<{
-  kind: "verify-checkpoint";
-  configPath: string;
-  artifactPath: string;
-}>;
-
-/** 固定V1 protocolでexact runtimeを検証するCLI入力。 */
-export type VerifyRuntimeRecoveryCliCommand = Readonly<{
-  kind: "verify-runtime-recovery";
-  inputPath: string;
-  bundleRoot: string | undefined;
-}>;
-
-/** 永続stateの起動またはrun指定再開を判定する入力。 */
-export type InspectRunStateCliCommand = Readonly<{
-  kind: "inspect-run-state";
-  configPath: string;
-  stateRef: string | undefined;
-  recoveryIntent:
-    | Readonly<{ kind: "start_new" }>
-    | Readonly<{ kind: "retry_run"; runId: string; exactStateRevision: string }>;
-}>;
-
-/** receipt列の保存内容を検証する入力。 */
-export type VerifyReceiptChainCliCommand = Readonly<{
-  kind: "verify-receipt-chain";
-  inputPath: string;
-}>;
-
-/** 記録済み失敗runから公開artifactを作る入力。 */
-export type ReportFailureCliCommand = Readonly<{
-  kind: "report-failure";
-  inputPath: string;
-  outputPath: string;
-}>;
-
-/** CLIの使用方法だけを表示する入力。 */
-export type HelpCliCommand = Readonly<{
-  kind: "help";
-}>;
-
-/** サポートする全サブコマンドの検証済み入力。 */
-export type CliCommand =
-  | DailyCliCommand
-  | DryRunCliCommand
-  | BackfillCliCommand
-  | RunSequentialCliCommand
-  | RunStageCliCommand
-  | RouteStageCliCommand
-  | RecoverRuntimeV2CliCommand
-  | CollectAnalyzeCliCommand
-  | ResolveDiscordDeliveryCliCommand
-  | NotifyOperationsCliCommand
-  | ReportWorkflowCliCommand
-  | VerifyStateCliCommand
-  | VerifyCheckpointCliCommand
-  | VerifyRuntimeRecoveryCliCommand
-  | InspectRunStateCliCommand
-  | VerifyReceiptChainCliCommand
-  | ReportFailureCliCommand
-  | HelpCliCommand;
 
 function requiredSingleOption(options: ParsedOptions, name: string, commandName: string): string {
   const value = optionalSingleOption(options, name);

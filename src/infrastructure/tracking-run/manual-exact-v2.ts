@@ -8,7 +8,7 @@ import { runtimeRecoveryInputV1Schema } from "../../application/tracking-run/con
 import { runtimeRecoveryInputV2Schema } from "../../application/tracking-run/contracts/runtime-recovery-v2.js";
 import { parseReceipt } from "../../application/tracking-run/receipt-codec.js";
 import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../../canonical-json/value.js";
-import { parseCliArguments } from "../../cli/command.js";
+import type { ResolveDiscordDeliveryCliCommand } from "./command-input.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import { writeCliTextFile } from "./file-output.js";
 import { launchRuntimeRecoveryV2 } from "./runtime-recovery-launcher-v2.js";
@@ -18,8 +18,8 @@ import { readSplitReceiptChain } from "./split-stage-receipts.js";
 /** 手動workflowで選択済みの固定V2入口に一つの手動判断を渡す。 */
 export async function resolveSelectedManualRuntimeV2(
   checkout: string,
-  args: readonly string[],
-): Promise<boolean> {
+  command: ResolveDiscordDeliveryCliCommand,
+): Promise<void> {
   const source = await readFile("artifacts/workflow/manual-recovery-input.json", "utf8");
   const raw: unknown = JSON.parse(source);
   if (source !== serializeCanonicalJsonLine(raw)) {
@@ -27,14 +27,12 @@ export async function resolveSelectedManualRuntimeV2(
   }
   const selected = z.union([runtimeRecoveryInputV1Schema, runtimeRecoveryInputV2Schema]).parse(raw);
   if (selected.protocolVersion === 1) {
-    return false;
+    throw new TypeError("手動送達の解決にはV2固定protocolが必要です");
   }
   if (selected.operation !== "inspect") {
     throw new TypeError("V2手動回復の選択入力がinspect以外です");
   }
-  const command = parseCliArguments(["resolve-discord-delivery", ...args]);
   if (
-    command.kind !== "resolve-discord-delivery" ||
     command.runId !== selected.runId ||
     command.configPath !== selected.configPath ||
     resolve(checkout, command.receiptPath) !==
@@ -91,5 +89,4 @@ export async function resolveSelectedManualRuntimeV2(
     throw new TypeError("V2手動判断の固定出力と同じrunのreceiptが一致しません");
   }
   await writeCliTextFile("artifacts/workflow/manual-resolution-receipt.json", receiptSource);
-  return true;
 }

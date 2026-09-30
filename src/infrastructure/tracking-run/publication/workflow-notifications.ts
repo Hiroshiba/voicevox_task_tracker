@@ -11,7 +11,6 @@ import type {
   PagesDeploymentReceipt,
 } from "../../../application/tracking-run/receipt-schema.js";
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
-import type { FinalizeRunCliCommand, SettleNotificationsCliCommand } from "../../../cli/command.js";
 import { StateFormatError, StateHistoryError } from "../../../persistence/errors.js";
 import { nodeContentDigestPort } from "../content-digest.js";
 import {
@@ -35,6 +34,10 @@ import { requireEnvironmentValue } from "../production-runtime-setup.js";
 import { observeInitialPagesFromState } from "../publication-resume-inputs.js";
 import { finalizeRun, type FinalizeRunOutcome } from "../run-finalization.js";
 import type { RunPublicationAdapters } from "./contracts.js";
+import type {
+  WorkflowNotificationSettlementInput,
+  WorkflowRunFinalizationInput,
+} from "./operation-inputs.js";
 
 type WorkflowNotificationAdapters = Pick<
   RunPublicationAdapters,
@@ -99,7 +102,7 @@ async function initialReceipt(
 /** split workflowの通知をexact state recordからsettleする。 */
 export async function settleWorkflowNotifications(
   adapters: WorkflowNotificationAdapters,
-  command: SettleNotificationsCliCommand,
+  command: WorkflowNotificationSettlementInput,
   priorPagesReceipt?: PagesDeploymentReceipt,
 ): Promise<Extract<NotificationSettlementOutcome, { kind: "settled" }>> {
   const config = await adapters.loadConfig(resolve(adapters.repositoryPath, command.configPath));
@@ -337,7 +340,7 @@ export async function settleWorkflowNotifications(
 /** split workflowの最終reportをsettlement stateから単一CASへ保存する。 */
 export async function finalizeWorkflowRun(
   adapters: WorkflowNotificationAdapters,
-  command: FinalizeRunCliCommand,
+  command: WorkflowRunFinalizationInput,
 ): Promise<Extract<FinalizeRunOutcome, { kind: "finalized" }>> {
   const config = await adapters.loadConfig(resolve(adapters.repositoryPath, command.configPath));
   const settlementReceipt = decodeReceipt(

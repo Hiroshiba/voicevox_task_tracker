@@ -3,10 +3,14 @@ import { randomUUID } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  manualExactCommandSchema as commandSchema,
+  type ManualExactCommand,
+} from "../infrastructure/tracking-run/manual-command-input.js";
+import { parseCliArguments } from "./command.js";
 
 import { z } from "zod";
 
-import { runtimeRecoveryInputV1Schema } from "../application/tracking-run/contracts/runtime-recovery-v1.js";
 import { runtimeRecoveryInputV2Schema } from "../application/tracking-run/contracts/runtime-recovery-v2.js";
 import { decodePublicFailureArtifact } from "../application/tracking-run/failure-artifact.js";
 import { runtimeRecoveryPlanV2Schema } from "../application/tracking-run/recovery-bootstrap.js";
@@ -17,36 +21,14 @@ import {
   type BootstrapFailureObservation,
 } from "../infrastructure/tracking-run/failure-context-state.js";
 import { writeCliTextFile } from "../infrastructure/tracking-run/file-output.js";
-import { encryptManualDiagnostics } from "../infrastructure/tracking-run/manual-diagnostics-encryption.js";
-import {
-  assertManualPagesOutcomeAbsent,
-  type ManualPagesRecordPaths,
-} from "../infrastructure/tracking-run/manual-exact-evidence.js";
 import {
   isExpectedCheckpoint,
   reportManualExactFailure,
   revision,
 } from "../infrastructure/tracking-run/manual-exact-failure.js";
 import { resolveSelectedManualRuntimeV2 } from "../infrastructure/tracking-run/manual-exact-v2.js";
-import { readPreviousNotificationHistoryOutcome } from "../infrastructure/tracking-run/previous-notification-history-outcome.js";
-import {
-  assertWorkflowV2AdapterCompatibility,
-  verifyRecoveryBundle,
-} from "../infrastructure/tracking-run/publication-runtime.js";
+import { assertWorkflowV2AdapterCompatibility } from "../infrastructure/tracking-run/publication-runtime.js";
 import { verifyRuntimeRecoveryV2 } from "../infrastructure/tracking-run/runtime-recovery-launcher-v2.js";
-import { parseRecordNotificationHistoryDeployment } from "./notification-history-deployment-command.js";
-
-const commandSchema = z.enum([
-  "verify-checkpoint",
-  "select-runtime",
-  "resolve-discord-delivery",
-  "settle-notifications",
-  "finalize-run",
-  "prepare-notification-history-pages",
-  "preflight-notification-history-deployment",
-  "record-notification-history-deployment",
-  "encrypt-diagnostics",
-]);
 const environmentSchema = z.strictObject({
   checkout: z.string().min(1),
   runId: z.string().regex(/^tracker-run:[0-9a-f]{64}$/u),
@@ -71,12 +53,10 @@ const v2SelectionSchema = z.strictObject({
   runtimeRecoveryPlan: runtimeRecoveryPlanV2Schema,
 });
 
-export type ManualExactCommand = z.output<typeof commandSchema>;
-
 class ExactCommandExitError extends Error {
   public constructor(command: string, exitCode: number | null, signal: string | null) {
     super(
-      `旧runtimeの${command}が失敗しました。exit code: ${String(exitCode)}、signal: ${String(signal)}`,
+      `手動解決runtimeの${command}が失敗しました。exit code: ${String(exitCode)}、signal: ${String(signal)}`,
     );
   }
 }
@@ -106,7 +86,7 @@ async function runExactCli(
   if (captureOutput) {
     const stdout = child.stdout;
     if (stdout == null) {
-      throw new TypeError("旧runtimeの標準出力を取得できません");
+      throw new TypeError("手動解決runtimeの標準出力を取得できません");
     }
     stdout.on("data", (chunk: Buffer) => {
       byteLength += chunk.byteLength;
@@ -151,7 +131,7 @@ async function selectRuntime(
   const decision = z
     .looseObject({
       kind: z.literal("resume_with_exact_runtime"),
-      recoveryInput: z.union([runtimeRecoveryInputV1Schema, v2SelectionSchema]),
+      recoveryInput: v2SelectionSchema,
     })
     .parse(value);
   const input = decision.recoveryInput;
@@ -163,53 +143,45 @@ async function selectRuntime(
     throw new TypeError("手動復旧のworkflow bundleを選べません");
   }
   const bundleRoot = resolve("artifacts/workflow/runtime");
-  if (input.protocolVersion === 2) {
-    if (
-      input.checkpointDigest !== checkpointDigest ||
-      input.checkpointFileDigest !== checkpointFileDigest ||
-      input.expectedRuntimeIdentityDigest !== runtimeIdentityDigest ||
-      input.expectedWorkflowEffectAdapterIdentityDigest !==
-        plan.recoveryProtocol.workflowEffectAdapterIdentityDigest ||
-      input.runtimeRecoveryPlan.kind !== "workflow_bundle" ||
-      input.runtimeRecoveryPlan.recoveryProtocol.manualResolutionOperation !==
-        "resolve_manual_delivery"
-    ) {
-      throw new TypeError("V2手動解決の固定操作またはrun、record、checkpoint結合が一致しません");
-    }
-    await assertWorkflowV2AdapterCompatibility(
-      controlRepositoryPath,
-      checkout,
-      input.expectedWorkflowEffectAdapterIdentityDigest,
-      nodeContentDigestPort,
-    );
-    const fixedInput = runtimeRecoveryInputV2Schema.parse({
-      protocolVersion: 2,
-      inputContract: "tracking-run-recovery-input-v2",
-      operation: "inspect",
-      invocationId: randomUUID(),
-      configPath: "config.yml",
-      stateRef: "tracker-state",
-      exactStateRevision: stateRevision,
-      runId,
-      runAttempt: z.coerce.number().int().positive().parse(process.env["GITHUB_RUN_ATTEMPT"]),
-      expectedRecordDigest: input.expectedRecordDigest,
-      expectedRuntimeIdentityDigest: input.expectedRuntimeIdentityDigest,
-      expectedWorkflowEffectAdapterIdentityDigest:
-        input.expectedWorkflowEffectAdapterIdentityDigest,
-      runtimeRecoveryPlan: plan,
-    });
-    await verifyRuntimeRecoveryV2(checkout, bundleRoot, fixedInput);
-    await writeCliTextFile(
-      "artifacts/workflow/manual-recovery-input.json",
-      serializeCanonicalJsonLine(fixedInput),
-    );
-    return;
+  if (
+    input.checkpointDigest !== checkpointDigest ||
+    input.checkpointFileDigest !== checkpointFileDigest ||
+    input.expectedRuntimeIdentityDigest !== runtimeIdentityDigest ||
+    input.expectedWorkflowEffectAdapterIdentityDigest !==
+      plan.recoveryProtocol.workflowEffectAdapterIdentityDigest ||
+    input.runtimeRecoveryPlan.kind !== "workflow_bundle" ||
+    input.runtimeRecoveryPlan.recoveryProtocol.manualResolutionOperation !==
+      "resolve_manual_delivery"
+  ) {
+    throw new TypeError("V2手動解決の固定操作またはrun、record、checkpoint結合が一致しません");
   }
+  await assertWorkflowV2AdapterCompatibility(
+    controlRepositoryPath,
+    checkout,
+    input.expectedWorkflowEffectAdapterIdentityDigest,
+    nodeContentDigestPort,
+  );
+  const fixedInput = runtimeRecoveryInputV2Schema.parse({
+    protocolVersion: 2,
+    inputContract: "tracking-run-recovery-input-v2",
+    operation: "inspect",
+    invocationId: randomUUID(),
+    configPath: "config.yml",
+    stateRef: "tracker-state",
+    exactStateRevision: stateRevision,
+    runId,
+    runAttempt: z.coerce.number().int().positive().parse(process.env["GITHUB_RUN_ATTEMPT"]),
+    expectedRecordDigest: input.expectedRecordDigest,
+    expectedRuntimeIdentityDigest: input.expectedRuntimeIdentityDigest,
+    expectedWorkflowEffectAdapterIdentityDigest: input.expectedWorkflowEffectAdapterIdentityDigest,
+    runtimeRecoveryPlan: plan,
+  });
+  await verifyRuntimeRecoveryV2(checkout, bundleRoot, fixedInput);
   await writeCliTextFile(
     "artifacts/workflow/manual-recovery-input.json",
-    serializeCanonicalJsonLine(input),
+    serializeCanonicalJsonLine(fixedInput),
   );
-  await verifyRecoveryBundle(bundleRoot, plan);
+  return;
 }
 
 /** 手動workflowの現行制御CLIを実行し、未報告の失敗を記録する。 */
@@ -228,7 +200,6 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
   let inCheckout = false;
   let inputValidated = false;
   let childStarted = false;
-  let pagesRecordPaths: ManualPagesRecordPaths | undefined;
   let before: BootstrapFailureObservation | undefined;
   try {
     command = commandSchema.parse(args[0]);
@@ -237,16 +208,11 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
     const controlRepositoryPath = process.cwd();
     const checkout = resolve(input.checkout);
     const controlEntrypoint = resolve("dist/cli/tracker-run.js");
-    const entrypoint = resolve(checkout, "artifacts/workflow/runtime/tracker-run.mjs");
     const failureDirectory = resolve(input.failureDirectory);
     const priorFailures = new Set(await failureNames(failureDirectory));
     existingFailures = priorFailures;
     process.chdir(checkout);
     inCheckout = true;
-    if (command === "encrypt-diagnostics") {
-      await encryptManualDiagnostics(input.diagnosticsPath, priorFailures.size > 0);
-      return 0;
-    }
     before = await observeBootstrap("config.yml", input.runId);
     if (!isExpectedCheckpoint(before, input.runId, input.checkpointDigest)) {
       throw new TypeError("手動解決前のstateと指定したrun/checkpointが一致しません");
@@ -258,7 +224,7 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
         stateRevision == null ||
         before.evidence?.bindingKind !== "checkpoint"
       ) {
-        throw new TypeError("旧runtime選択に必要なstate revisionがありません");
+        throw new TypeError("手動解決runtime選択に必要なstate revisionがありません");
       }
       childStarted = true;
       await selectRuntime(
@@ -273,28 +239,12 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
         stateRevision,
       );
     } else {
-      if (command === "preflight-notification-history-deployment") {
-        await readPreviousNotificationHistoryOutcome(
-          resolve("artifacts/workflow/previous/notification-history-pages-deployment.json"),
-          process.env["VOICEVOX_PREVIOUS_HISTORY_OUTCOME_STATUS"],
-        );
-      }
-      if (command === "record-notification-history-deployment") {
-        const paths = parseRecordNotificationHistoryDeployment(args.slice(1));
-        pagesRecordPaths = {
-          buildArtifactPath: resolve(paths.buildArtifactPath),
-          preflightPath: resolve(paths.preflightPath),
-          outcomePath: resolve(paths.outcomePath),
-        };
-        await assertManualPagesOutcomeAbsent(pagesRecordPaths.outcomePath);
+      const resolution = parseCliArguments(["resolve-discord-delivery", ...args.slice(1)]);
+      if (resolution.kind !== "resolve-discord-delivery") {
+        throw new TypeError("手動送達のcommandが不正です");
       }
       childStarted = true;
-      if (
-        command !== "resolve-discord-delivery" ||
-        !(await resolveSelectedManualRuntimeV2(checkout, args.slice(1)))
-      ) {
-        await runExactCli(entrypoint, [command, ...args.slice(1)], false);
-      }
+      await resolveSelectedManualRuntimeV2(checkout, resolution);
     }
     return 0;
   } catch (error: unknown) {
@@ -306,13 +256,13 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
       } catch (observationError: unknown) {
         failure = new AggregateError(
           [failure, observationError],
-          "旧runtime失敗後のstate観測にも失敗しました",
+          "手動解決runtime失敗後のstate観測にも失敗しました",
           { cause: failure },
         );
       }
     }
     const priorFailures = existingFailures;
-    if (priorFailures != null && input != null && command !== "encrypt-diagnostics") {
+    if (priorFailures != null && input != null) {
       let createdFailures: readonly string[] = [];
       try {
         createdFailures = (await failureNames(resolve(input.failureDirectory))).filter(
@@ -327,7 +277,7 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
       } catch (artifactError: unknown) {
         failure = new AggregateError(
           [failure, artifactError],
-          "旧runtime失敗後の公開artifact観測にも失敗しました",
+          "手動解決runtime失敗後の公開artifact観測にも失敗しました",
           { cause: failure },
         );
         createdFailures = [];
@@ -348,12 +298,11 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
         failureDirectory: resolve(paths.failureDirectory),
         inputInvalid: !inputValidated,
         childStarted,
-        ...(pagesRecordPaths == null ? {} : { pagesRecordPaths }),
       };
     } catch (reportingError: unknown) {
       throw new AggregateError(
         [failure, reportingError],
-        "旧runtime失敗と公開失敗報告先の検証に失敗しました",
+        "手動解決runtime失敗と公開失敗報告先の検証に失敗しました",
         { cause: failure },
       );
     }
@@ -362,7 +311,7 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
     } catch (reportingError: unknown) {
       throw new AggregateError(
         [failure, reportingError],
-        "旧runtime失敗と公開失敗artifactの作成に失敗しました",
+        "手動解決runtime失敗と公開失敗artifactの作成に失敗しました",
         { cause: failure },
       );
     }

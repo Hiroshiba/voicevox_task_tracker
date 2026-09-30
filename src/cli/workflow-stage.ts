@@ -1,13 +1,13 @@
-import {
-  type InspectRunStateCliCommand,
-  type NotifyOperationsCliCommand,
-  type ReportFailureCliCommand,
-  type ReportWorkflowCliCommand,
-  type ResolveDiscordDeliveryCliCommand,
-  type VerifyCheckpointCliCommand,
-  type VerifyReceiptChainCliCommand,
-  type VerifyRuntimeRecoveryCliCommand,
-} from "./command.js";
+import type {
+  InspectRunStateCliCommand,
+  ReportFailureCliCommand,
+  ReportWorkflowCliCommand,
+  ResolveDiscordDeliveryCliCommand,
+  VerifyCheckpointCliCommand,
+  VerifyReceiptChainCliCommand,
+  VerifyRuntimeRecoveryCliCommand,
+} from "../infrastructure/tracking-run/command-input.js";
+import type { NotifyOperationsCliCommand } from "../infrastructure/tracking-run/operations-command-input.js";
 
 /** 日次workflowの後続stageで受け付けるCLI入力。 */
 export type WorkflowCliCommand =

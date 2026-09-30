@@ -4,10 +4,6 @@ import { resolve } from "node:path";
 import { z } from "zod";
 
 import { decodeReceipt } from "../../../application/tracking-run/receipt-codec.js";
-import type {
-  PreflightPagesDeploymentCliCommand,
-  RecordPagesDeploymentCliCommand,
-} from "../../../cli/command.js";
 import type { Config } from "../../../config/index.js";
 import { nodeContentDigestPort } from "../content-digest.js";
 import { decodeInitialPagesBuildArtifact } from "../initial-pages-build-artifact.js";
@@ -21,6 +17,10 @@ import {
 import { readNotificationMessageState } from "../notification-message-state.js";
 import { isWorkflowPublicationReplay, workflowAdapterIdentityV2 } from "../publication-runtime.js";
 import type { RunPublicationAdapters } from "./contracts.js";
+import type {
+  WorkflowInitialPagesPreflightInput,
+  WorkflowInitialPagesRecordInput,
+} from "./operation-inputs.js";
 
 type DeploymentAdapters = Pick<
   RunPublicationAdapters,
@@ -57,7 +57,7 @@ async function previousInitialOutcome(
 /** split Pages actionの直前にremote stateと全fileを検査する。 */
 export async function preflightWorkflowPagesDeployment(
   adapters: DeploymentAdapters,
-  command: PreflightPagesDeploymentCliCommand,
+  command: WorkflowInitialPagesPreflightInput,
 ): Promise<void> {
   const config: Config = await adapters.loadConfig(
     resolve(adapters.repositoryPath, command.configPath),
@@ -127,7 +127,7 @@ function optionalOutput(
 /** split Pages actionの成否と実outputをreceiptまたは失敗artifactへ記録する。 */
 export async function recordWorkflowPagesDeployment(
   adapters: DeploymentAdapters,
-  command: RecordPagesDeploymentCliCommand,
+  command: WorkflowInitialPagesRecordInput,
 ): Promise<void> {
   const artifact = decodeInitialPagesBuildArtifact(
     await readFile(resolve(adapters.repositoryPath, command.buildArtifactPath)),

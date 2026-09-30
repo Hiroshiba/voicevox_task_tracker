@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
-import type { DryRunCliCommand } from "../../cli/command.js";
 import { GitStateBranchAdapter } from "../../persistence/index.js";
 import { inspectRunBootstrapState } from "./bootstrap-state.js";
+import type { DryRunCliCommand } from "./command-input.js";
 import type { CoordinatedRunResult } from "./run-coordinator.js";
 import type { ProductionRuntimeAdapters } from "./runtime/adapters.js";
 import { createDailyDependencies } from "./runtime/daily-dependencies.js";

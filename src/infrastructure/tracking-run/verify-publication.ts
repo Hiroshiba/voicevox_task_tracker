@@ -9,15 +9,15 @@ import {
 import { receiptChainEnvelopeSchema } from "../../application/tracking-run/receipt-chain-schema.js";
 import { verifyReceiptChain } from "../../application/tracking-run/receipt-chain.js";
 import { serializeCanonicalJsonLine } from "../../canonical-json/value.js";
+import { assertValidStateBranch } from "../../persistence/branch-adapter.js";
+import { createRuntimeRecoveryInputV1, inspectRunBootstrapState } from "./bootstrap-state.js";
 import type {
   InspectRunStateCliCommand,
   ReportFailureCliCommand,
   VerifyCheckpointCliCommand,
   VerifyReceiptChainCliCommand,
   VerifyRuntimeRecoveryCliCommand,
-} from "../../cli/command.js";
-import { assertValidStateBranch } from "../../persistence/branch-adapter.js";
-import { createRuntimeRecoveryInputV1, inspectRunBootstrapState } from "./bootstrap-state.js";
+} from "./command-input.js";
 import { nodeContentDigestPort } from "./content-digest.js";
 import { writeCliJsonArtifact } from "./file-output.js";
 import { verifyWorkflowCheckpoint } from "./publication/workflow-stage-handlers.js";

@@ -207,7 +207,6 @@ export async function restoreSplitReceipts(
     await buildWorkflowPages(
       { adapters },
       {
-        kind: "build-pages",
         configPath,
         initialStateReceiptPath: paths.initialReceipt,
         buildArtifactPath: paths.initialBuild,

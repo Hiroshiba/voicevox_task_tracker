@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
-import type { RunStageCliCommand } from "../../cli/split-stage-command.js";
 import { assertNonNullable } from "../../util/index.js";
+import type { RunStageCliCommand } from "./split-command-input.js";
 
 const RUN_ID_PATTERN = /^tracker-run:([0-9a-f]{64})$/u;
 

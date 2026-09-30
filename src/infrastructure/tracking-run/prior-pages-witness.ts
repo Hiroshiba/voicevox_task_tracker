@@ -96,7 +96,6 @@ export async function validateRetainedInitialPages(
     await buildWorkflowPages(
       { adapters },
       {
-        kind: "build-pages",
         configPath,
         initialStateReceiptPath: paths.initialReceipt,
         buildArtifactPath: regeneratedPath,
@@ -167,7 +166,6 @@ export async function validateRetainedHistoryPages(
   try {
     const regeneratedPath = join(temp, "notification-history-pages-build.json");
     await prepareWorkflowNotificationHistoryPages(adapters, {
-      kind: "prepare-notification-history-pages",
       configPath,
       settlementReceiptPath: paths.settlementReceipt,
       finalizationReceiptPath: paths.finalizationReceipt,

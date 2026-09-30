@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { InitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence.js";
+import type { InitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence-codec.js";
 import type { ReceiptChainEvidence } from "../../application/tracking-run/receipt-chain-schema.js";
 import { receiptIdentifiers } from "../../application/tracking-run/receipt-codec.js";
 import type {

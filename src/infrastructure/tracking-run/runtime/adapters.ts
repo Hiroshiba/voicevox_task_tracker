@@ -1,5 +1,4 @@
 import type { PagesDeploymentIntent } from "../../../application/tracking-run/pages-build-contracts.js";
-import type { verifyPersistentStateDirectory } from "../../../cli/state-verification.js";
 import type {
   CodexAdapterConfiguration,
   CodexAdapterDependencies,
@@ -25,6 +24,7 @@ import type {
 } from "../../../persistence/index.js";
 import type { SequentialPagesResult } from "../initial-pages-deployment.js";
 import type { SandboxRunContext } from "../sandbox-context.js";
+import type { verifyPersistentStateDirectory } from "../state-verification.js";
 
 /** 日次実行配線へ注入する外部接続、時刻、永続化の境界。 */
 export type ProductionRuntimeAdapters = Readonly<{

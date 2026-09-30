@@ -1,4 +1,4 @@
-import { parseInitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence.js";
+import { parseInitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence-codec.js";
 import { stateCommitReceiptOperationId } from "../../application/tracking-run/observed-state-commit.js";
 import type { ReceiptChainEvidence } from "../../application/tracking-run/receipt-chain-schema.js";
 import { verifyReceiptChain } from "../../application/tracking-run/receipt-chain.js";

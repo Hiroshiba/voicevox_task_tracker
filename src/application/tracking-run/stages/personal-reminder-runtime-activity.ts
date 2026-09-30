@@ -26,7 +26,6 @@ import type {
 } from "../../../domain/types.js";
 import { UnreachableError, assertNonNullable } from "../../../util/index.js";
 import {
-  compareSourceIds,
   compareStrings,
   createNonEmptySourceIds,
   determineLocalDecision,
@@ -37,9 +36,9 @@ import {
 import {
   actionKindForDecision,
   basisFromEvent,
-  createActionActivity,
   isPersonalReminderResponsibleWaitingOn,
-} from "./personal-reminder-runtime-context.js";
+} from "./personal-reminder-runtime-context-values.js";
+import { createActionActivity } from "./personal-reminder-runtime-context.js";
 import type {
   PersonalReminderCauseSemanticProjection,
   PersonalReminderRuntimeActivity,
@@ -51,6 +50,7 @@ import type {
   PersonalReminderRuntimePlanningIndexes,
   PersonalReminderRuntimeSource,
 } from "./personal-reminder-runtime-contracts.js";
+import { compareEventOccurrence } from "./personal-reminder-runtime-event-order.js";
 import {
   duplicateOptionsForCause,
   selectedPendingRelations,
@@ -171,19 +171,6 @@ function isStructuredWaitingResolutionEvent(
     case "decision":
       return false;
   }
-}
-
-/** 二つのeventの発生順を比較する。 */
-export function compareEventOccurrence(left: NormalizedEvent, right: NormalizedEvent): number {
-  const leftTime = Date.parse(left.occurredAt);
-  const rightTime = Date.parse(right.occurredAt);
-  if (!Number.isFinite(leftTime) || !Number.isFinite(rightTime)) {
-    throw new TypeError("待機解消イベントの時刻が不正です");
-  }
-  if (leftTime !== rightTime) {
-    return leftTime - rightTime;
-  }
-  return compareSourceIds(left.sourceId, right.sourceId);
 }
 
 function scopedActivityForCause(

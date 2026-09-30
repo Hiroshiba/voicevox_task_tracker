@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { DiagnosticsError } from "../diagnostics/errors.js";
 import type { DiagnosticsJsonlRecorder } from "../diagnostics/recorder.js";
 import { createDiagnosticsRecorder } from "../diagnostics/recorder.js";
+import type { CliCommand } from "../infrastructure/tracking-run/command-input.js";
 import { safeErrorDiagnostic } from "../infrastructure/tracking-run/error-diagnostic.js";
 import {
   CliCodexAuthenticationError,
@@ -13,13 +14,13 @@ import {
   CliUsageError,
   CliWorkflowArtifactError,
 } from "../infrastructure/tracking-run/errors.js";
+import type { CliExecutionResult } from "../infrastructure/tracking-run/execution-result.js";
 import { NotificationSettlementFailureError } from "../infrastructure/tracking-run/notification-settlement.js";
 import { isPublicBoundaryViolation } from "../infrastructure/tracking-run/public-boundary-error.js";
 import { reportCliFailure } from "../infrastructure/tracking-run/public-failure-boundary.js";
 import { type RunStage } from "../publication/run-report.js";
 import { UnreachableError } from "../util/index.js";
-import { type CliExecutionResult } from "./application.js";
-import { parseCliArguments, type CliCommand } from "./command.js";
+import { parseCliArguments } from "./command.js";
 import { createDefaultCliApplication } from "./composition-root.js";
 import { runRuntimeRecoveryEntrypointV1 } from "./runtime-recovery-entrypoint-v1.js";
 import { runRuntimeRecoveryEntrypointV2 } from "./runtime-recovery-entrypoint-v2.js";

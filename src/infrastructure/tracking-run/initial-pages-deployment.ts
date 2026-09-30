@@ -5,10 +5,10 @@ import { resolve } from "node:path";
 import { z } from "zod";
 
 import {
-  createInitialPagesPublicationEvidence,
   initialPagesPublicationEvidenceSchema,
   parseInitialPagesPublicationEvidence,
-} from "../../application/tracking-run/initial-pages-evidence.js";
+} from "../../application/tracking-run/initial-pages-evidence-codec.js";
+import { createInitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence.js";
 import { verifyReceiptChain } from "../../application/tracking-run/receipt-chain.js";
 import {
   createReceipt,
