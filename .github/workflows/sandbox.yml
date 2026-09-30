@@ -115,6 +115,14 @@ jobs:
       first_tracking_run_id: ${{ steps.recording_control.outputs.first_tracking_run_id }}
       first_final_state_revision: ${{ steps.recording_control.outputs.first_final_state_revision }}
       first_code_revision: ${{ steps.recording_control.outputs.first_code_revision }}
+      notification_phase: ${{ steps.recording_control.outputs.notification_phase }}
+      notification_source_run_id: ${{ steps.recording_control.outputs.notification_source_run_id }}
+      notification_source_run_attempt: ${{ steps.recording_control.outputs.notification_source_run_attempt }}
+      notification_first_tracking_run_id: ${{ steps.recording_control.outputs.notification_first_tracking_run_id }}
+      notification_first_pending_revision: ${{ steps.recording_control.outputs.notification_first_pending_revision }}
+      notification_first_delivery_operation_id: ${{ steps.recording_control.outputs.notification_first_delivery_operation_id }}
+      notification_decision: ${{ steps.recording_control.outputs.notification_decision }}
+      notification_prior_json: ${{ steps.recording_control.outputs.notification_prior_json }}
     steps:
       - name: forkのコードを取得
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -146,6 +154,7 @@ jobs:
           SANDBOX_NOTIFICATION_ACTION: ${{ inputs.notification_action }}
           SANDBOX_SCENARIO_ID: ${{ inputs.scenario_id }}
           SANDBOX_ENVIRONMENT_ID: ${{ inputs.environment_id }}
+          SANDBOX_RESET_SOURCE: ${{ inputs.reset_source }}
         run: node .github/scripts/parse-sandbox-recording-control.mjs
       - name: continuity firstの結果を取得
         if: steps.recording_control.outputs.continuity_phase == 'second'
@@ -192,7 +201,7 @@ jobs:
           SANDBOX_FORCED_NODE_ID: ${{ inputs.forced_node_id }}
           SANDBOX_FORCED_ELEMENTS: ${{ inputs.forced_elements }}
           SANDBOX_CONTEXT_PATH: ${{ runner.temp }}/sandbox-context.json
-          SANDBOX_EXPECTED_BASE_REVISION: ${{ steps.recording_control.outputs.first_final_state_revision }}
+          SANDBOX_EXPECTED_BASE_REVISION: ${{ steps.recording_control.outputs.first_final_state_revision || steps.recording_control.outputs.notification_first_pending_revision }}
         run: .github/scripts/sandbox-lifecycle.sh prepare
       - name: sandbox制御入力を保存
         if: inputs.operation != 'dispose'
@@ -205,6 +214,7 @@ jobs:
           SANDBOX_STATE_BRANCH: ${{ steps.prepare.outputs.state_branch }}
           SANDBOX_BASE_STATE_REVISION: ${{ steps.prepare.outputs.base_state_revision }}
           SANDBOX_CODE_REVISION: ${{ steps.prepare.outputs.code_revision }}
+          SANDBOX_NOTIFICATION_PRIOR_JSON: ${{ steps.recording_control.outputs.notification_prior_json }}
         run: |
           jq -cnS \
             --arg scenarioId "$SANDBOX_SCENARIO_ID" \
@@ -215,7 +225,8 @@ jobs:
             --arg stateRef "$SANDBOX_STATE_BRANCH" \
             --arg baseStateRevision "$SANDBOX_BASE_STATE_REVISION" \
             --arg codeRevision "$SANDBOX_CODE_REVISION" \
-            '{schemaVersion: 1, scenarioId: $scenarioId, notificationAction: $notificationAction, recordingOutcome: $recordingOutcome, recordingMessageIndex: $recordingMessageIndex, environmentId: $environmentId, stateRef: $stateRef, baseStateRevision: $baseStateRevision, codeRevision: $codeRevision}' \
+            --argjson notificationPrior "$SANDBOX_NOTIFICATION_PRIOR_JSON" \
+            '{schemaVersion: 1, scenarioId: $scenarioId, notificationAction: $notificationAction, recordingOutcome: $recordingOutcome, recordingMessageIndex: $recordingMessageIndex, environmentId: $environmentId, stateRef: $stateRef, baseStateRevision: $baseStateRevision, codeRevision: $codeRevision, notificationPrior: $notificationPrior}' \
             > "$RUNNER_TEMP/sandbox-control.json"
       - name: sandbox contextとcoverage入力を保存
         if: inputs.operation != 'dispose'
@@ -235,9 +246,90 @@ jobs:
           SANDBOX_ENVIRONMENT_ID: ${{ inputs.environment_id }}
         run: .github/scripts/sandbox-lifecycle.sh dispose
 
-  tracking:
+  manual-resolution:
     needs: prepare
-    if: inputs.operation != 'dispose' && needs.prepare.result == 'success'
+    if: needs.prepare.result == 'success' && needs.prepare.outputs.notification_phase == 'resolution'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      resolution_revision: ${{ steps.verify.outputs.resolution_revision }}
+    steps:
+      - name: 同じコードを取得
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.prepare.outputs.code_revision }}
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Node.jsを準備
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+      - name: 同じruntimeを準備
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: ambiguous初回の停止証拠を取得
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: sandbox-pending-${{ needs.prepare.outputs.environment_id }}-${{ needs.prepare.outputs.notification_source_run_id }}-${{ needs.prepare.outputs.notification_source_run_attempt }}
+          path: ${{ runner.temp }}/pending
+          run-id: ${{ needs.prepare.outputs.notification_source_run_id }}
+          github-token: ${{ github.token }}
+      - name: 同じpending runと元送達操作を照合
+        env:
+          SANDBOX_ENVIRONMENT_ID: ${{ needs.prepare.outputs.environment_id }}
+          SANDBOX_STATE_BRANCH: ${{ needs.prepare.outputs.state_branch }}
+          SANDBOX_SCENARIO_ID: ${{ inputs.scenario_id }}
+          SANDBOX_SOURCE_RUN_ID: ${{ needs.prepare.outputs.notification_source_run_id }}
+          SANDBOX_SOURCE_RUN_ATTEMPT: ${{ needs.prepare.outputs.notification_source_run_attempt }}
+          SANDBOX_FIRST_TRACKING_RUN_ID: ${{ needs.prepare.outputs.notification_first_tracking_run_id }}
+          SANDBOX_FIRST_PENDING_REVISION: ${{ needs.prepare.outputs.notification_first_pending_revision }}
+          SANDBOX_FIRST_DELIVERY_OPERATION_ID: ${{ needs.prepare.outputs.notification_first_delivery_operation_id }}
+          SANDBOX_RESOLUTION_DECISION: ${{ needs.prepare.outputs.notification_decision }}
+          SANDBOX_PENDING_REPORT_PATH: ${{ runner.temp }}/pending/sandbox-pending.json
+          SANDBOX_TARGET_OUTPUT_PATH: ${{ runner.temp }}/manual-target.json
+        run: node dist/cli/sandbox-notification-state.js target
+      - name: 手動判断を同じrunへCAS保存
+        env:
+          TRACKING_EFFECT_TARGET: sandbox
+          TRACKING_STATE_REF: ${{ needs.prepare.outputs.state_branch }}
+        run: |
+          mapfile -t arguments < <(jq -r '["--run-id", .runId, "--checkpoint-digest", .checkpointDigest, "--delivery-id", .deliveryId, "--attempt-id", .attemptId, "--resolution", .decision] + ([.notificationKeys[] | ["--notification-key", .]] | flatten) | .[]' "$RUNNER_TEMP/manual-target.json")
+          node --enable-source-maps dist/cli/tracker-run.js resolve-discord-delivery "${arguments[@]}"
+      - name: 手動解決receiptとremote stateを照合
+        id: verify
+        env:
+          SANDBOX_ENVIRONMENT_ID: ${{ needs.prepare.outputs.environment_id }}
+          SANDBOX_STATE_BRANCH: ${{ needs.prepare.outputs.state_branch }}
+          SANDBOX_SCENARIO_ID: ${{ inputs.scenario_id }}
+          SANDBOX_SOURCE_RUN_ID: ${{ needs.prepare.outputs.notification_source_run_id }}
+          SANDBOX_SOURCE_RUN_ATTEMPT: ${{ needs.prepare.outputs.notification_source_run_attempt }}
+          SANDBOX_FIRST_TRACKING_RUN_ID: ${{ needs.prepare.outputs.notification_first_tracking_run_id }}
+          SANDBOX_FIRST_PENDING_REVISION: ${{ needs.prepare.outputs.notification_first_pending_revision }}
+          SANDBOX_FIRST_DELIVERY_OPERATION_ID: ${{ needs.prepare.outputs.notification_first_delivery_operation_id }}
+          SANDBOX_RESOLUTION_DECISION: ${{ needs.prepare.outputs.notification_decision }}
+          SANDBOX_PENDING_REPORT_PATH: ${{ runner.temp }}/pending/sandbox-pending.json
+          SANDBOX_MANUAL_RECEIPT_PATH: artifacts/workflow/manual-resolution-receipt.json
+        run: node dist/cli/sandbox-notification-state.js resolved
+      - name: 同じrunの手動解決receiptを保存
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: manual-resolution-record
+          path: artifacts/workflow/manual-resolution-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: 手動解決の公開失敗artifactを保存
+        if: always()
+        uses: ./.github/actions/upload-failure-artifact
+        with:
+          artifact-name: sandbox-manual-failure-${{ github.run_id }}-${{ github.run_attempt }}
+
+  tracking:
+    needs: [prepare, manual-resolution]
+    if: always() && inputs.operation != 'dispose' && needs.prepare.result == 'success' && (needs.prepare.outputs.notification_phase != 'resolution' || needs.manual-resolution.result == 'success')
     permissions:
       contents: write
       actions: read
@@ -253,6 +345,8 @@ jobs:
       backfill: none
       repository_filter: ""
       notification_action: ${{ inputs.notification_action }}
+      expected_run_id: ${{ needs.prepare.outputs.notification_first_tracking_run_id }}
+      manual_resolution_artifact: ${{ needs.prepare.outputs.notification_phase == 'resolution' }}
       source_code_revision: ${{ needs.prepare.outputs.code_revision }}
       sandbox_context_artifact: sandbox-context-${{ github.run_id }}-${{ github.run_attempt }}
       sandbox_scenario_id: ${{ inputs.scenario_id }}
@@ -260,6 +354,92 @@ jobs:
       recording_message_index: ${{ fromJSON(needs.prepare.outputs.recording_message_index) }}
       artifact_retention_days: 30
     secrets: inherit
+
+  inspect-ambiguous:
+    needs: [prepare, tracking]
+    if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.notification_phase == 'first' && (inputs.scenario_id == 'ambiguous-retry' || inputs.scenario_id == 'ambiguous-acknowledge') && needs.tracking.result == 'failure'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+    outputs:
+      tracking_run_id: ${{ steps.inspect.outputs.tracking_run_id }}
+      pending_revision: ${{ steps.inspect.outputs.pending_revision }}
+      delivery_operation_id: ${{ steps.inspect.outputs.delivery_operation_id }}
+    steps:
+      - name: 同じコードを取得
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ needs.prepare.outputs.code_revision }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Node.jsを準備
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+      - name: pending state検証のCLIを準備
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: 元runのcheckpointを取得
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tracking-checkpoint-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/checkpoint
+      - name: 初回Pagesまでのreceipt chainを取得
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tracking-stage-initial-pages
+          path: ${{ runner.temp }}/initial-pages
+      - name: remote pending stateを照合
+        id: inspect
+        env:
+          SANDBOX_ENVIRONMENT_ID: ${{ needs.prepare.outputs.environment_id }}
+          SANDBOX_STATE_BRANCH: ${{ needs.prepare.outputs.state_branch }}
+          SANDBOX_SCENARIO_ID: ${{ inputs.scenario_id }}
+          SANDBOX_RECORDING_OUTCOME: ${{ needs.prepare.outputs.recording_outcome }}
+          SANDBOX_CHECKPOINT_PATH: ${{ runner.temp }}/checkpoint/validated-run.json
+          SANDBOX_SIDECAR_PATH: ${{ runner.temp }}/checkpoint/validated-run.json.sidecar.json
+          SANDBOX_INITIAL_RECEIPT_CHAIN_ROOT: ${{ runner.temp }}/initial-pages
+          SANDBOX_PENDING_OUTPUT_PATH: ${{ runner.temp }}/sandbox-pending.json
+        run: node dist/cli/sandbox-notification-state.js pending
+      - name: pending coverageと停止証拠を保存
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sandbox-pending-${{ needs.prepare.outputs.environment_id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sandbox-pending.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: 同じrunの手動解決を起動
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SANDBOX_ENVIRONMENT_ID: ${{ needs.prepare.outputs.environment_id }}
+          SANDBOX_SOURCE_REF: ${{ inputs.source_ref }}
+          SANDBOX_SCENARIO_ID: ${{ inputs.scenario_id }}
+          SANDBOX_DECISION: ${{ inputs.scenario_id == 'ambiguous-retry' && 'retry' || 'acknowledge' }}
+          SANDBOX_TRACKING_RUN_ID: ${{ steps.inspect.outputs.tracking_run_id }}
+          SANDBOX_PENDING_REVISION: ${{ steps.inspect.outputs.pending_revision }}
+          SANDBOX_DELIVERY_OPERATION_ID: ${{ steps.inspect.outputs.delivery_operation_id }}
+          SANDBOX_NOTIFICATION_PRIOR_JSON: ${{ needs.prepare.outputs.notification_prior_json }}
+        run: |
+          control="$(jq -cn \
+            --arg firstRunId "$GITHUB_RUN_ID" \
+            --argjson firstRunAttempt "$GITHUB_RUN_ATTEMPT" \
+            --arg firstTrackingRunId "$SANDBOX_TRACKING_RUN_ID" \
+            --arg firstPendingRevision "$SANDBOX_PENDING_REVISION" \
+            --arg firstDeliveryOperationId "$SANDBOX_DELIVERY_OPERATION_ID" \
+            --arg decision "$SANDBOX_DECISION" \
+            --argjson prior "$SANDBOX_NOTIFICATION_PRIOR_JSON" \
+            '{outcome: "recorded_success", messageIndex: 0, notification: {phase: "resolution", prior: $prior, firstRunId: $firstRunId, firstRunAttempt: $firstRunAttempt, firstTrackingRunId: $firstTrackingRunId, firstPendingRevision: $firstPendingRevision, firstDeliveryOperationId: $firstDeliveryOperationId, decision: $decision}}')"
+          gh workflow run sandbox.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
+            -f operation=continue \
+            -f source_ref="$SANDBOX_SOURCE_REF" \
+            -f environment_id="$SANDBOX_ENVIRONMENT_ID" \
+            -f analysis_mode=normal \
+            -f notification_action=send \
+            -f scenario_id="$SANDBOX_SCENARIO_ID" \
+            -f recording_control="$control"
 
   finalize:
     needs: [prepare, tracking]
@@ -284,19 +464,19 @@ jobs:
           SANDBOX_EXPECTED_REVISION: ${{ needs.tracking.outputs.final_state_revision }}
         run: .github/scripts/sandbox-lifecycle.sh finalize
       - name: continuityのcheckpointとsidecarを取得
-        if: needs.prepare.outputs.continuity_phase != 'none'
+        if: needs.prepare.outputs.continuity_phase != 'none' || needs.prepare.outputs.notification_phase != 'none'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: tracking-checkpoint-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/checkpoint
       - name: continuityの完了receiptを取得
-        if: needs.prepare.outputs.continuity_phase != 'none'
+        if: needs.prepare.outputs.continuity_phase != 'none' || needs.prepare.outputs.notification_phase != 'none'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: tracking-stage-complete
           path: ${{ runner.temp }}/complete
       - name: continuityの実行contextを取得
-        if: needs.prepare.outputs.continuity_phase != 'none'
+        if: needs.prepare.outputs.continuity_phase != 'none' || needs.prepare.outputs.notification_phase != 'none'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: sandbox-context-${{ github.run_id }}-${{ github.run_attempt }}
@@ -318,7 +498,7 @@ jobs:
           run-id: ${{ needs.prepare.outputs.first_run_id }}
           github-token: ${{ github.token }}
       - name: continuityの永続stateとreceiptを検証
-        if: needs.prepare.outputs.continuity_phase != 'none'
+        if: needs.prepare.outputs.continuity_phase != 'none' || needs.prepare.outputs.notification_phase != 'none'
         env:
           SANDBOX_FINAL_REVISION: ${{ steps.final_state.outputs.state_revision }}
           SANDBOX_TRACKING_RUN_ID: ${{ needs.tracking.outputs.tracking_run_id }}
@@ -334,6 +514,20 @@ jobs:
           node dist/cli/tracker-run.js verify-receipt-chain \
             --input "$RUNNER_TEMP/complete/$run_suffix/receipt-chain.json" \
             > "$RUNNER_TEMP/receipt-verification.json"
+      - name: ambiguous初回の停止証拠を再取得
+        if: needs.prepare.outputs.notification_phase == 'resolution'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: sandbox-pending-${{ needs.prepare.outputs.environment_id }}-${{ needs.prepare.outputs.notification_source_run_id }}-${{ needs.prepare.outputs.notification_source_run_attempt }}
+          path: ${{ runner.temp }}/pending
+          run-id: ${{ needs.prepare.outputs.notification_source_run_id }}
+          github-token: ${{ github.token }}
+      - name: 同じrunの手動解決receiptを取得
+        if: needs.prepare.outputs.notification_phase == 'resolution'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: manual-resolution-record
+          path: ${{ runner.temp }}/manual-resolution
       - name: continuity coverageと完了情報を作成
         if: needs.prepare.outputs.continuity_phase != 'none'
         env:
@@ -364,8 +558,46 @@ jobs:
           SANDBOX_SNAPSHOT_PATH="$RUNNER_TEMP/sandbox-state/state/snapshot.json" \
           SANDBOX_LEDGER_PATH="$RUNNER_TEMP/sandbox-state/state/notification-ledger.json" \
             node .github/scripts/sandbox-coverage.mjs report
+      - name: 通知scenarioのcoverageと完了情報を作成
+        if: needs.prepare.outputs.notification_phase != 'none'
+        env:
+          SANDBOX_ENVIRONMENT_ID: ${{ needs.prepare.outputs.environment_id }}
+          SANDBOX_SCENARIO_ID: ${{ inputs.scenario_id }}
+          SANDBOX_NOTIFICATION_PHASE: ${{ needs.prepare.outputs.notification_phase }}
+          SANDBOX_RECORDING_OUTCOME: ${{ needs.prepare.outputs.recording_outcome }}
+          SANDBOX_CONTEXT_PATH: ${{ runner.temp }}/context/sandbox-context.json
+          SANDBOX_CONTROL_PATH: ${{ runner.temp }}/context/sandbox-control.json
+          SANDBOX_CHECKPOINT_PATH: ${{ runner.temp }}/checkpoint/validated-run.json
+          SANDBOX_SIDECAR_PATH: ${{ runner.temp }}/checkpoint/validated-run.json.sidecar.json
+          SANDBOX_BASE_REVISION: ${{ needs.prepare.outputs.base_state_revision }}
+          SANDBOX_FINAL_REVISION: ${{ steps.final_state.outputs.state_revision }}
+          SANDBOX_STATE_BRANCH: ${{ needs.prepare.outputs.state_branch }}
+          SANDBOX_PENDING_REPORT_PATH: ${{ runner.temp }}/pending/sandbox-pending.json
+          SANDBOX_MANUAL_RECEIPT_PATH: ${{ runner.temp }}/manual-resolution/manual-resolution-receipt.json
+          SANDBOX_SOURCE_RUN_ID: ${{ needs.prepare.outputs.notification_source_run_id }}
+          SANDBOX_SOURCE_RUN_ATTEMPT: ${{ needs.prepare.outputs.notification_source_run_attempt }}
+          SANDBOX_FIRST_TRACKING_RUN_ID: ${{ needs.prepare.outputs.notification_first_tracking_run_id }}
+          SANDBOX_FIRST_PENDING_REVISION: ${{ needs.prepare.outputs.notification_first_pending_revision }}
+          SANDBOX_FIRST_DELIVERY_OPERATION_ID: ${{ needs.prepare.outputs.notification_first_delivery_operation_id }}
+          SANDBOX_RESOLUTION_DECISION: ${{ needs.prepare.outputs.notification_decision }}
+          SANDBOX_COMPLETED_PROOF_PATH: ${{ runner.temp }}/sandbox-completed-proof.json
+          SANDBOX_STATE_VERIFICATION_PATH: ${{ runner.temp }}/state-verification.txt
+          SANDBOX_COVERAGE_OUTPUT_PATH: ${{ runner.temp }}/sandbox-coverage.json
+          SANDBOX_RESULT_OUTPUT_PATH: ${{ runner.temp }}/sandbox-result.json
+          SANDBOX_TRACKING_RUN_ID: ${{ needs.tracking.outputs.tracking_run_id }}
+        run: |
+          run_suffix="${SANDBOX_TRACKING_RUN_ID#tracker-run:}"
+          if [[ "$SANDBOX_NOTIFICATION_PHASE" == 'resolution' ]]; then
+            node dist/cli/sandbox-notification-state.js completed
+          fi
+          SANDBOX_RECEIPT_CHAIN_PATH="$RUNNER_TEMP/complete/$run_suffix/receipt-chain.json" \
+          SANDBOX_RECORD_PATH="$RUNNER_TEMP/sandbox-state/state/durable-publication-record-v1.json" \
+          SANDBOX_MARKER_PATH="$RUNNER_TEMP/sandbox-state/state/run-transaction-marker-v1.json" \
+          SANDBOX_SNAPSHOT_PATH="$RUNNER_TEMP/sandbox-state/state/snapshot.json" \
+          SANDBOX_LEDGER_PATH="$RUNNER_TEMP/sandbox-state/state/notification-ledger.json" \
+            node .github/scripts/sandbox-notification-coverage.mjs
       - name: continuity coverageをartifactへ保存
-        if: needs.prepare.outputs.continuity_phase != 'none'
+        if: needs.prepare.outputs.continuity_phase != 'none' || needs.prepare.outputs.notification_phase != 'none'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sandbox-coverage-${{ needs.prepare.outputs.environment_id }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -373,7 +605,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       - name: sandbox完了情報を保存
-        if: needs.prepare.outputs.continuity_phase == 'none'
+        if: needs.prepare.outputs.continuity_phase == 'none' && needs.prepare.outputs.notification_phase == 'none'
         env:
           SANDBOX_ENVIRONMENT_ID: ${{ needs.prepare.outputs.environment_id }}
           SANDBOX_SCENARIO_ID: ${{ inputs.scenario_id }}
@@ -398,6 +630,94 @@ jobs:
         with:
           name: sandbox-result-${{ needs.prepare.outputs.environment_id }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/sandbox-result.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: 次の通知scenarioをseed resetから起動
+        if: needs.prepare.outputs.continuity_phase == 'second' || needs.prepare.outputs.notification_phase != 'none'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SANDBOX_ENVIRONMENT_ID: ${{ needs.prepare.outputs.environment_id }}
+          SANDBOX_SOURCE_REF: ${{ inputs.source_ref }}
+          SANDBOX_SCENARIO_ID: ${{ inputs.scenario_id }}
+          SANDBOX_CONTINUITY_PHASE: ${{ needs.prepare.outputs.continuity_phase }}
+          SANDBOX_NOTIFICATION_PRIOR_JSON: ${{ needs.prepare.outputs.notification_prior_json }}
+          SANDBOX_FINAL_REVISION: ${{ steps.final_state.outputs.state_revision }}
+          SANDBOX_COVERAGE_PATH: ${{ runner.temp }}/sandbox-coverage.json
+        run: |
+          if [[ "$SANDBOX_CONTINUITY_PHASE" == 'second' ]]; then
+            next_scenario=send-clear-rejection
+          else
+            case "$SANDBOX_SCENARIO_ID" in
+              send-clear-rejection) next_scenario=hold ;;
+              hold) next_scenario=acknowledge-current ;;
+              acknowledge-current) next_scenario=ambiguous-retry ;;
+              ambiguous-retry) next_scenario=ambiguous-acknowledge ;;
+              ambiguous-acknowledge) exit 0 ;;
+              *) echo '次の通知scenarioを選べません' >&2; exit 1 ;;
+            esac
+          fi
+          case "$next_scenario" in
+            send-clear-rejection) action=send; outcome=recorded_clear_rejection ;;
+            hold) action=hold; outcome=recorded_success ;;
+            acknowledge-current) action=acknowledge-current; outcome=recorded_success ;;
+            ambiguous-retry|ambiguous-acknowledge) action=send; outcome=recorded_ambiguous ;;
+            *) echo '通知scenarioのcontrolが不正です' >&2; exit 1 ;;
+          esac
+          prior="$SANDBOX_NOTIFICATION_PRIOR_JSON"
+          if [[ "$SANDBOX_CONTINUITY_PHASE" != 'second' ]]; then
+            coverage_digest="sha256:$(sha256sum "$SANDBOX_COVERAGE_PATH" | cut -d' ' -f1)"
+            prior="$(jq -cn \
+              --argjson previous "$prior" \
+              --arg scenarioId "$SANDBOX_SCENARIO_ID" \
+              --arg actionsRunId "$GITHUB_RUN_ID" \
+              --argjson actionsRunAttempt "$GITHUB_RUN_ATTEMPT" \
+              --arg environmentId "$SANDBOX_ENVIRONMENT_ID" \
+              --arg finalStateRevision "$SANDBOX_FINAL_REVISION" \
+              --arg coverageDigest "$coverage_digest" \
+              '$previous + [{scenarioId: $scenarioId, actionsRunId: $actionsRunId, actionsRunAttempt: $actionsRunAttempt, environmentId: $environmentId, finalStateRevision: $finalStateRevision, coverageDigest: $coverageDigest}]')"
+          fi
+          control="$(jq -cn --arg outcome "$outcome" --argjson prior "$prior" '{outcome: $outcome, messageIndex: 0, notification: {phase: "first", prior: $prior}}')"
+          gh workflow run sandbox.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
+            -f operation=reset \
+            -f source_ref="$SANDBOX_SOURCE_REF" \
+            -f environment_id="$SANDBOX_ENVIRONMENT_ID" \
+            -f reset_source=seed \
+            -f analysis_mode=normal \
+            -f notification_action="$action" \
+            -f scenario_id="$next_scenario" \
+            -f recording_control="$control"
+      - name: 通知scenarioの先行coverageを取得
+        if: inputs.scenario_id == 'ambiguous-acknowledge' && needs.prepare.outputs.notification_phase == 'resolution'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SANDBOX_CONTROL_PATH: ${{ runner.temp }}/context/sandbox-control.json
+        run: |
+          while IFS=$'\t' read -r scenario run_id run_attempt environment_id; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" \
+              | jq -e --arg branch "$GITHUB_REF_NAME" --arg sha "$GITHUB_SHA" \
+                '.conclusion == "success" and .head_branch == $branch and .head_sha == $sha' > /dev/null
+            destination="$RUNNER_TEMP/prior/$scenario"
+            mkdir -p "$destination"
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+              --name "sandbox-coverage-$environment_id-$run_id-$run_attempt" --dir "$destination"
+            gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
+              --name "sandbox-result-$environment_id-$run_id-$run_attempt" --dir "$destination"
+          done < <(jq -r '.notificationPrior[] | [.scenarioId, .actionsRunId, .actionsRunAttempt, .environmentId] | @tsv' "$SANDBOX_CONTROL_PATH")
+      - name: 通知5scenarioのcoverageを集約
+        if: inputs.scenario_id == 'ambiguous-acknowledge' && needs.prepare.outputs.notification_phase == 'resolution'
+        env:
+          SANDBOX_CONTROL_PATH: ${{ runner.temp }}/context/sandbox-control.json
+          SANDBOX_PRIOR_ROOT: ${{ runner.temp }}/prior
+          SANDBOX_CURRENT_COVERAGE_PATH: ${{ runner.temp }}/sandbox-coverage.json
+          SANDBOX_CURRENT_RESULT_PATH: ${{ runner.temp }}/sandbox-result.json
+          SANDBOX_MATRIX_OUTPUT_PATH: ${{ runner.temp }}/sandbox-notification-matrix.json
+        run: node .github/scripts/sandbox-notification-matrix.mjs
+      - name: 通知5scenarioのcoverageをartifactへ保存
+        if: inputs.scenario_id == 'ambiguous-acknowledge' && needs.prepare.outputs.notification_phase == 'resolution'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sandbox-notification-matrix-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sandbox-notification-matrix.json
           if-no-files-found: error
           retention-days: 30
       - name: continuity secondを非同期で起動
