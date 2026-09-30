@@ -14,7 +14,7 @@ import { observeStateCommitAtRevision } from "../infrastructure/tracking-run/sta
 import { MAX_INTERVENING_COMMITS } from "../persistence/state-orthogonal-advance.js";
 import type { StateBranchAdapter, StatePersistenceConfiguration } from "../persistence/index.js";
 import { decodeInitialPagesBuildArtifact } from "./initial-pages-build-artifact.js";
-import { observeNotificationMessageDelivery } from "./notification-message-observation.js";
+import { restoreNotificationReceiptHistory } from "./notification-receipt-history.js";
 import { readNotificationMessageState } from "./notification-message-state.js";
 import { plannedNotificationMessages } from "./notification-settlement-validation.js";
 import { observeInitialPagesFromState } from "./publication-resume-inputs.js";
@@ -159,7 +159,7 @@ export async function restoreSplitReceipts(
     },
     digest,
   );
-  entries.push({
+  const pagesEntry = {
     receipt: pagesReceipt,
     evidence: {
       kind: "initial_pages_state",
@@ -175,63 +175,61 @@ export async function restoreSplitReceipts(
         evidence,
       },
     },
-  });
-  if (marker.phase === "notifications_in_progress") {
-    verifyReceiptChain(entries, digest);
-    await writeSplitReceiptChain(paths.receiptChain, entries, adapters.writeJsonArtifact);
-    return entries;
-  }
-  const settlementRevision = await findCommitRevision(
-    state,
-    runId,
-    "notification_settlement",
-    record.checkpointDigest,
-  );
+  } as const;
+  entries.push(pagesEntry);
   const initialState = await readNotificationMessageState(
     state.adapter,
     state.configuration,
     state.initialStateRevision,
   );
   const messages = plannedNotificationMessages(record, initialState, evidence);
-  let previousReceipt: Receipt = pagesReceipt;
-  let expectedRevision = state.initialStateRevision;
-  for (let index = 0; index < messages.length; index += 1) {
-    const observed = await observeNotificationMessageDelivery(
-      {
-        record,
-        initialStateReceipt: initialReceipt,
-        initialPages: { kind: "state", evidence },
-        previousReceipt,
-        expectedStateRevision: expectedRevision,
-        messageIndex: index,
-        invocationId: randomUUID(),
-        localAttemptIndex: index,
-      },
-      state.adapter,
-      state.configuration,
-      settlementRevision,
-      adapters.now().toISOString(),
+  let settlementRevision: string | undefined;
+  let throughRevision = state.headRevision;
+  if (marker.phase !== "notifications_in_progress") {
+    settlementRevision = await findCommitRevision(
+      state,
+      runId,
+      "notification_settlement",
+      record.checkpointDigest,
     );
-    if (observed == null || observed.receipt.status === "ambiguous") {
-      throw new TypeError("通知settlementの送達をstateとGit祖先から確定できません");
+    const commit = await state.adapter.readCommit(settlementRevision);
+    if (commit.parent.status !== "present") {
+      throw new TypeError("通知settlement commitのGit親がありません");
     }
-    entries.push({
-      receipt: observed.receipt,
-      evidence: { kind: "notification_message_state", state: observed.evidence },
-    });
-    previousReceipt = observed.receipt;
-    expectedRevision = observed.stateRevision;
+    throughRevision = commit.parent.revision;
+  }
+  const history = await restoreNotificationReceiptHistory(
+    { adapter: state.adapter, configuration: state.configuration, now: adapters.now },
+    record,
+    initialReceipt,
+    { kind: "state", evidence },
+    pagesEntry,
+    messages,
+    throughRevision,
+  );
+  entries.push(...history.messageReceipts);
+  if (marker.phase === "notifications_in_progress") {
+    verifyReceiptChain(entries, digest);
+    await writeSplitReceiptChain(paths.receiptChain, entries, adapters.writeJsonArtifact);
+    return entries;
+  }
+  if (
+    settlementRevision == null ||
+    history.unresolvedReceipt != null ||
+    history.finalReceipts.length !== messages.length
+  ) {
+    throw new TypeError("通知settlementのmessage結果をGit祖先から確定できません");
   }
   const settlement = await observeCommit(
     state,
     settlementRevision,
     "notification_settlement",
-    previousReceipt,
+    history.previousReceipt,
     adapters,
   );
   if (
     settlement.receipt.receiptType !== "notification_settlement" ||
-    settlement.receipt.expectedStateRevision !== expectedRevision
+    settlement.receipt.expectedStateRevision !== history.stateRevision
   ) {
     throw new TypeError("復旧した通知settlementと送達commit列が一致しません");
   }

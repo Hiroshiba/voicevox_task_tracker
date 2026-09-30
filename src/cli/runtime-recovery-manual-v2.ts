@@ -112,13 +112,38 @@ export async function resolveExactManualDeliveryV2(
     }
   }
   const resolved = await resolveManualNotificationDelivery(port, target);
+  const completedEntries = await restoreSplitReceipts(
+    adapters,
+    paths,
+    input.runId,
+    input.configPath,
+    {
+      adapter,
+      configuration: config.state,
+      headRevision: resolved.stateRevision,
+      initialStateRevision: marker.initialStateRevision,
+    },
+  );
+  const linked = completedEntries.find(
+    (entry) =>
+      entry.receipt.receiptType === "manual_resolution" &&
+      entry.receipt.operationId === resolved.receipt.operationId &&
+      entry.receipt.result.resultingStateRevision === resolved.stateRevision,
+  )?.receipt;
+  if (
+    linked?.receiptType !== "manual_resolution" ||
+    (linked.receiptKind !== "executed" && linked.receiptKind !== "observed") ||
+    serializeCanonicalJson(linked.result) !== serializeCanonicalJson(resolved.receipt.result)
+  ) {
+    throw new TypeError("V2手動解決receiptが復元した通知履歴と一致しません");
+  }
   const decision = await classifyNotificationRecovery(
     {
       record,
       initialStateReceipt: initialReceipt,
       pagesReceipt,
       pagesEvidence: initialPagesEvidence,
-      lastVerifiedReceipt: resolved.receipt,
+      lastVerifiedReceipt: linked,
       casOutcome: "observed",
       httpOutcome: "ambiguous",
     },
@@ -128,14 +153,11 @@ export async function resolveExactManualDeliveryV2(
   if (decision.recoveryDisposition !== "resume_from_receipt") {
     throw new TypeError("V2手動解決後のGit祖先とreceiptを検証できません");
   }
-  if (resolved.receipt.receiptKind !== "executed" && resolved.receipt.receiptKind !== "observed") {
-    throw new TypeError("V2手動解決receiptの観測種別が不正です");
-  }
-  await writeCliJsonArtifact(paths.manualResolutionReceipt, resolved.receipt);
+  await writeCliJsonArtifact(paths.manualResolutionReceipt, linked);
   return {
     stateRevision: resolved.stateRevision,
-    receiptChainDigest: digest.sha256Utf8(serializeCanonicalJson(entries)),
-    manualResolutionReceiptDigest: resolved.receipt.receiptDigest,
-    receiptKind: resolved.receipt.receiptKind,
+    receiptChainDigest: digest.sha256Utf8(serializeCanonicalJson(completedEntries)),
+    manualResolutionReceiptDigest: linked.receiptDigest,
+    receiptKind: linked.receiptKind,
   };
 }

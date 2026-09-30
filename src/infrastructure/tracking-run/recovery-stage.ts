@@ -1,6 +1,7 @@
 import type { DurablePublicationRecord } from "../../cli/durable-record-schema.js";
 import type {
   Receipt,
+  NotificationMessageReceipt,
   PagesBuildReceipt,
   PagesDeploymentReceipt,
 } from "../../application/tracking-run/receipt-schema.js";
@@ -139,14 +140,31 @@ function latestPagesDeploymentReceipt(
 }
 
 function assertHttpReceiptsUnambiguous(receipts: readonly Receipt[]): void {
-  if (
-    receipts.some(
-      (receipt) =>
-        receipt.effectCertainty === "ambiguous" &&
-        (receipt.receiptType === "notification_message" ||
-          receipt.receiptType === "pages_deployment"),
-    )
-  ) {
+  let unresolved: NotificationMessageReceipt | undefined;
+  for (const receipt of receipts) {
+    if (receipt.receiptType === "pages_deployment" && receipt.effectCertainty === "ambiguous") {
+      throw new TypeError("外部HTTP結果が曖昧な操作を自動再開できません");
+    }
+    if (receipt.receiptType === "notification_message" && receipt.status === "ambiguous") {
+      if (unresolved != null) {
+        throw new TypeError("未解決の通知送達より後に別の曖昧送達があります");
+      }
+      unresolved = receipt;
+    }
+    if (receipt.receiptType === "manual_resolution") {
+      if (unresolved == null) {
+        throw new TypeError("手動解決receiptが曖昧送達試行と一致しません");
+      }
+      if (
+        receipt.result.deliveryId !== unresolved.result.deliveryId ||
+        receipt.expectedStateRevision !== unresolved.result.ledgerStateRevision
+      ) {
+        throw new TypeError("手動解決receiptが曖昧送達試行と一致しません");
+      }
+      unresolved = undefined;
+    }
+  }
+  if (unresolved != null) {
     throw new TypeError("外部HTTP結果が曖昧な操作を自動再開できません");
   }
 }

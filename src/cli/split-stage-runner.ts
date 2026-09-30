@@ -192,6 +192,9 @@ function previousStage(entries: readonly ReceiptChainEntry[]): TrackingRunStageN
   if (last == null || last.stage === "operations_alert") {
     throw new TypeError("分割runの直前receiptがありません");
   }
+  if (last.receiptType === "notification_message" || last.receiptType === "manual_resolution") {
+    return "initial_pages_published";
+  }
   return last.stage;
 }
 
@@ -845,10 +848,11 @@ export class SplitStageRunner {
         return {};
       }
       case "settle-notifications": {
-        const pagesReceipt = prior.findLast(
+        const pagesIndex = prior.findLastIndex(
           (entry) =>
             entry.receipt.receiptType === "pages_deployment" && entry.receipt.phase === "initial",
-        )?.receipt;
+        );
+        const pagesReceipt = prior[pagesIndex]?.receipt;
         if (pagesReceipt?.receiptType !== "pages_deployment") {
           throw new TypeError("通知段階の先行Pages receiptがありません");
         }
@@ -869,7 +873,7 @@ export class SplitStageRunner {
             pagesReceipt,
           ),
         );
-        await saveStageReceipts(adapters, paths, runId, prior, [
+        await saveStageReceipts(adapters, paths, runId, prior.slice(0, pagesIndex + 1), [
           ...outcome.messageReceipts,
           { receipt: outcome.receipt, evidence: outcome.receiptEvidence },
         ]);

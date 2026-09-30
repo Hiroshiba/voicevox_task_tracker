@@ -47,14 +47,14 @@ import {
   type NotificationMessageDeliveryPort,
 } from "./notification-message-delivery.js";
 import { prepareNotificationMessageContext } from "./notification-message-context.js";
-import { observeNotificationMessageDelivery } from "./notification-message-observation.js";
 import { validatePagesSource } from "./notification-message-receipt.js";
 import {
   readNotificationMessageState,
   type NotificationMessageState,
 } from "./notification-message-state.js";
 import { NotificationStructureError } from "./notification-structure-error.js";
-import { resumeManualNotificationSettlement } from "./notification-manual-resume.js";
+import { restoreNotificationReceiptHistory } from "./notification-receipt-history.js";
+import { verifyManualResolutionReceipt } from "./manual-resolution.js";
 import {
   classifyNotificationRecovery,
   type NotificationCasOutcome,
@@ -397,9 +397,10 @@ async function settleNotificationsChecked(
   if (record.recordDigest !== input.record.recordDigest) {
     throw new NotificationStructureError("通知settlementの永続recordが一致しません", "no_effect");
   }
+  let pagesReceiptEvidence: ReceiptChainEvidence;
   try {
     assertPagesReceipt(input);
-    const pagesReceiptEvidence = await readPagesReceiptEvidence(input, port);
+    pagesReceiptEvidence = await readPagesReceiptEvidence(input, port);
     if (input.initialPages.kind === "published") {
       verifyReceiptChain(
         [
@@ -489,20 +490,15 @@ async function settleNotificationsChecked(
       undefined,
     );
   }
-  if (input.manualResolutionReceipt != null) {
-    return resumeManualNotificationSettlement(input, port, initial, current, messages, evidence);
-  }
   const invocationId = randomUUID();
   const messageReceipts = progress.messageReceipts;
-  let expectedRevision = input.initialStateReceipt.result.resultingStateRevision;
-  let previousReceipt: Receipt = input.pagesReceipt;
+  let settlementRevision: string | undefined;
   if (
     current.transaction.marker.phase === "notifications_settled" ||
     current.transaction.marker.phase === "run_finalized"
   ) {
-    let revision: string;
     try {
-      revision = await settledRevision(input, port, head.revision);
+      settlementRevision = await settledRevision(input, port, head.revision);
     } catch (cause: unknown) {
       if (cause instanceof TypeError || cause instanceof StateBranchConflictError) {
         throw new NotificationStructureError("通知settlementのGit祖先が不正です", "no_effect", {
@@ -511,53 +507,74 @@ async function settleNotificationsChecked(
       }
       throw cause;
     }
-    for (let index = 0; index < messages.length; index += 1) {
-      const observed = await observeNotificationMessageDelivery(
-        {
-          record,
-          initialStateReceipt: input.initialStateReceipt,
-          initialPages: input.initialPages,
-          previousReceipt,
-          expectedStateRevision: expectedRevision,
-          messageIndex: index,
-          invocationId,
-          localAttemptIndex: index,
-        },
-        port.adapter,
-        port.configuration,
-        revision,
-        port.now().toISOString(),
-      );
-      if (observed == null || observed.receipt.status === "ambiguous") {
-        throw new TypeError("確定済みsettlementに未処理messageがあります");
-      }
-      assertNextReceipt(previousReceipt, observed.receipt, expectedRevision);
-      const next = {
-        receipt: observed.receipt,
-        evidence: { kind: "notification_message_state", state: observed.evidence },
-      } satisfies SettledMessageReceipt;
-      assertMessageChain([...messageReceipts, next]);
-      messageReceipts.push(next);
-      previousReceipt = observed.receipt;
-      progress.previousReceipt = observed.receipt;
-      expectedRevision = observed.stateRevision;
+  }
+  let throughRevision = head.revision;
+  if (settlementRevision != null) {
+    const commit = await port.adapter.readCommit(settlementRevision);
+    if (commit.parent.status !== "present") {
+      throw new TypeError("通知settlement commitのGit親がありません");
     }
-    assertMessageChain(messageReceipts);
+    throughRevision = commit.parent.revision;
+  }
+  const history = await restoreNotificationReceiptHistory(
+    port,
+    record,
+    input.initialStateReceipt,
+    input.initialPages,
+    { receipt: input.pagesReceipt, evidence: pagesReceiptEvidence },
+    messages,
+    throughRevision,
+  );
+  messageReceipts.push(...history.messageReceipts);
+  if (input.manualResolutionReceipt != null) {
+    const verified = await verifyManualResolutionReceipt(
+      port,
+      input.manualResolutionReceipt,
+      head.revision,
+    );
+    if (
+      !history.messageReceipts.some(
+        (entry) =>
+          entry.receipt.receiptType === "manual_resolution" &&
+          entry.receipt.operationId === verified.receipt.operationId &&
+          serializeCanonicalJson(entry.receipt.result) ===
+            serializeCanonicalJson(verified.receipt.result),
+      )
+    ) {
+      throw new TypeError("手動解決artifactが同じrunの通知履歴と一致しません");
+    }
+  }
+  let expectedRevision = history.stateRevision;
+  let previousReceipt = history.previousReceipt;
+  progress.previousReceipt = previousReceipt;
+  const finalReceipts = [...history.finalReceipts];
+  if (settlementRevision != null) {
+    if (history.unresolvedReceipt != null || finalReceipts.length !== messages.length) {
+      throw new TypeError("確定済みsettlementに未処理messageがあります");
+    }
     return receiptForSettlement(
       input,
       port,
-      revision,
+      settlementRevision,
       expectedRevision,
       previousReceipt,
       messageReceipts,
-      messageReceipts.map((entry) => entry.receipt),
+      finalReceipts,
       initial,
       messages,
       invocationId,
       false,
     );
   }
-  for (let index = 0; index < messages.length; index += 1) {
+  if (history.unresolvedReceipt != null) {
+    return {
+      kind: "manual_resolution_required",
+      receipt: history.unresolvedReceipt,
+      messageReceipts,
+      stateRevision: expectedRevision,
+    };
+  }
+  for (let index = history.nextMessageIndex; index < messages.length; index += 1) {
     const outcome = await deliverNotificationMessage(
       {
         record,
@@ -568,6 +585,10 @@ async function settleNotificationsChecked(
         messageIndex: index,
         invocationId,
         localAttemptIndex: index,
+        ...(previousReceipt.receiptType === "manual_resolution" &&
+        previousReceipt.result.decision === "retry"
+          ? { manualResolutionReceipt: previousReceipt }
+          : {}),
       },
       port,
     );
@@ -597,6 +618,7 @@ async function settleNotificationsChecked(
     const next = { receipt: outcome.receipt, evidence: outcome.receiptEvidence };
     assertMessageChain([...messageReceipts, next]);
     messageReceipts.push(next);
+    finalReceipts[index] = outcome.receipt;
     previousReceipt = outcome.receipt;
     progress.previousReceipt = outcome.receipt;
     expectedRevision = outcome.stateRevision;
@@ -614,7 +636,7 @@ async function settleNotificationsChecked(
     port,
     initial,
     messages,
-    messageReceipts.map((entry) => entry.receipt),
+    finalReceipts,
     evidence,
     expectedRevision,
   );
@@ -649,7 +671,7 @@ async function settleNotificationsChecked(
     expectedRevision,
     previousReceipt,
     messageReceipts,
-    messageReceipts.map((entry) => entry.receipt),
+    finalReceipts,
     initial,
     messages,
     invocationId,
