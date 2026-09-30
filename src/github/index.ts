@@ -26,23 +26,19 @@ export {
   GitHubRetryExhaustedError,
   type GitHubRateLimitSnapshot,
 } from "./errors.js";
+export { assertReadOnlyGraphQL, extractGraphQLRateLimit } from "./graphql.js";
 export {
-  createGitHubBodyFingerprint,
-  enumerateGitHubItemsByIdentifiers,
-  enumerateOpenGitHubItems,
-  type EnumeratedGitHubItem,
-  type EnumerateGitHubItemsByIdentifiersOptions,
-  type EnumerateOpenGitHubItemsOptions,
-  type GitHubItemAccount,
-  type GitHubItemAuthor,
-  type GitHubItemBodyLocator,
-  type Sha256Fingerprint,
-} from "./item-enumeration.js";
-export {
-  collectGitHubItemDetails,
-  type CollectGitHubItemDetailsOptions,
-  type GitHubItemDetailTarget,
-} from "./item-detail-collection.js";
+  planIncrementalItemCollection,
+  type AnalysisPlanFingerprint,
+  type IncrementalItemCollectionPlan,
+  type PlanIncrementalItemCollectionOptions,
+  type PreviousItemCollection,
+} from "./incremental-item-collection.js";
+export type {
+  CollectGitHubItemDetailsOptions,
+  GitHubItemDetailTarget,
+} from "./item-detail-collection-contracts.js";
+export { collectGitHubItemDetails } from "./item-detail-collection.js";
 export {
   type GitHubAutoMerge,
   type GitHubCheckContext,
@@ -52,10 +48,10 @@ export {
   type GitHubDetailActor,
   type GitHubHeadChecks,
   type GitHubInboundCrossReferenceCandidate,
+  type GitHubIssueComment,
   type GitHubItemDetail,
   type GitHubItemDetailCapabilities,
   type GitHubItemDetailCollection,
-  type GitHubIssueComment,
   type GitHubMergeQueue,
   type GitHubNativeClosingIssue,
   type GitHubNativeDependency,
@@ -72,9 +68,21 @@ export {
   type GitHubReviewCommit,
   type GitHubReviewRequestTarget,
   type GitHubReviewRequestTimestamp,
-  type GitHubTimelineEvent,
   type GitHubTimelineAssignee,
+  type GitHubTimelineEvent,
 } from "./item-detail-types.js";
+export {
+  createGitHubBodyFingerprint,
+  enumerateGitHubItemsByIdentifiers,
+  enumerateOpenGitHubItems,
+  type EnumerateGitHubItemsByIdentifiersOptions,
+  type EnumerateOpenGitHubItemsOptions,
+  type EnumeratedGitHubItem,
+  type GitHubItemAccount,
+  type GitHubItemAuthor,
+  type GitHubItemBodyLocator,
+  type Sha256Fingerprint,
+} from "./item-enumeration.js";
 export {
   normalizeGitHubActor,
   normalizeGitHubEvents,
@@ -90,19 +98,19 @@ export {
 } from "./item-normalization.js";
 export {
   PRODUCTION_SOURCE_ID_KINDS,
-  buildPullRequestCommitSourceId,
   buildProductionSourceId,
+  buildPullRequestCommitSourceId,
   isProductionSourceIdKind,
   type ProductionSourceIdKind,
 } from "./production-source-id.js";
 export {
-  planIncrementalItemCollection,
-  type AnalysisPlanFingerprint,
-  type IncrementalItemCollectionPlan,
-  type PlanIncrementalItemCollectionOptions,
-  type PreviousItemCollection,
-} from "./incremental-item-collection.js";
-export { assertReadOnlyGraphQL, extractGraphQLRateLimit } from "./graphql.js";
+  PublicRepositoryAllowlist,
+  assertPublicRepositoryBoundary,
+  createPublicRepositoryAllowlist,
+  isEligiblePublicRepository,
+  type PublicRepository,
+  type PublicRepositoryId,
+} from "./public-repository-allowlist.js";
 export {
   GitHubRateLimitController,
   graphQLRateLimitSchema,
@@ -110,23 +118,15 @@ export {
   type GraphQLRateLimit,
 } from "./rate-limit.js";
 export { assertReadOnlyGitHubRequest } from "./read-only.js";
-export { redactSensitiveText, SecretRedactor } from "./redaction.js";
+export { SecretRedactor, redactSensitiveText } from "./redaction.js";
+export {
+  discoverRepositoryInventory,
+  type DiscoverRepositoryInventoryOptions,
+} from "./repository-inventory.js";
 export {
   executeWithGitHubRetry,
   type GitHubRetryRuntime,
   type GitHubRetrySettings,
 } from "./retry.js";
-export {
-  assertPublicRepositoryBoundary,
-  createPublicRepositoryAllowlist,
-  isEligiblePublicRepository,
-  PublicRepositoryAllowlist,
-  type PublicRepository,
-  type PublicRepositoryId,
-} from "./public-repository-allowlist.js";
-export {
-  discoverRepositoryInventory,
-  type DiscoverRepositoryInventoryOptions,
-} from "./repository-inventory.js";
 export { deduplicateByStableId } from "./stable-id.js";
 export { GITHUB_APP_READ_PERMISSIONS, InstallationTokenManager } from "./token-manager.js";

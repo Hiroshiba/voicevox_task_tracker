@@ -2,16 +2,6 @@
   "baselineCommit": "2facf26033517ee7138a95b70ee1c0116028bc9a",
   "entries": [
     {
-      "path": "src/github/item-detail-collection.ts",
-      "lineCount": 2536,
-      "sha256": "cf6f5cf6802bcf81e4e3c311f9a10aa817e46d377b0907f9e928616678e2307b"
-    },
-    {
-      "path": "src/github/item-detail-queries.ts",
-      "lineCount": 1078,
-      "sha256": "2d86d09e17ed8eb9e756bf6f100ebe7af3294e8417f65ba02108969d102e406d"
-    },
-    {
       "path": "src/pages/public-dto.ts",
       "lineCount": 1727,
       "sha256": "54b949ec6e78ced99db7525cc139927ee71d68d2a7029f8cc98dce4d935fb965"

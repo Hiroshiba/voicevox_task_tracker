@@ -1,7 +1,8 @@
 import {
+  resolvePullRequestCommitOccurredAt,
   type Actor,
-  type FreshObservedGitHubItemBase,
   type FreshObservedGitHubIssue as DomainFreshObservedGitHubIssue,
+  type FreshObservedGitHubItemBase,
   type FreshObservedGitHubPullRequest,
   type GitHubAccountActor,
   type GitHubItemDisplayReference,
@@ -15,7 +16,6 @@ import {
   type ObservedGitHubReviewRequest,
   type ObservedGitHubReviewRequestTarget,
   type ObservedGitHubReviewThread,
-  resolvePullRequestCommitOccurredAt,
   type SourceId,
   type SystemActor,
   type UtcIsoDateTime,
