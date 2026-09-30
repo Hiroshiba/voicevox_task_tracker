@@ -259,15 +259,15 @@ AIのrevisionは意味上の判定規則を表し、プロンプトの共通本�
 
 ## 個人催促の原因と意味評価
 
-個人催促は、原因を計画する`plan`、評価結果を適用する`outcome application`、項目ごとの結果を確定する`finalization`の3段階で処理します。
+個人催促は、`personal_reminder_planned`、`personal_reminder_executed`、`personal_reminder_finalized`の3段階で処理します。
 
-1. `src/cli/personal-reminder-runtime.ts`は、型付きの収集結果、Issue・PRのローカル判定、前回state、最終graphから原因を計画します。責務の範囲と時計の入力を組み立て、原因がない項目も適用対象へ含めます。
-2. `src/cli/personal-reminder/outcome-application.ts`は、計画へ決定論的判定とAIの評価結果を適用し、原因と時計を更新して項目ごとの根拠を集めます。
-3. `src/cli/personal-reminder/finalization.ts`は、今回の適用結果と保持結果を項目ごとに確定します。保持値のAI依存を最終適用元へ照合し、原因が参照する根拠を所有項目へ集めて、列挙計画と原因ごとの停滞を確定します。
+1. `src/application/tracking-run/stages/personal-reminder-plan.ts`は、型付きの収集結果、Issue・PRのローカル判定、前回state、最終graphから原因を計画します。責務の範囲と時計の入力を組み立て、原因がない項目も項目計画へ含めます。
+2. `src/application/tracking-run/stages/personal-reminder-execution.ts`は、計画した原因ごとに決定論的判定、再利用、AI試行の結果を結び付け、共有予算のledgerを更新します。
+3. `src/application/tracking-run/stages/personal-reminder-finalization.ts`は、実行結果と保持結果を項目ごとに確定します。保持値のAI依存を最終適用元へ照合し、原因が参照する根拠を所有項目へ集めて、列挙計画と原因ごとの停滞を確定します。
 
-CLI内の最終正本は`PersonalReminderAnalysisResult.itemsByNodeId`です。
+最終正本は`PersonalReminderFinalizedRun.data.items`です。
 各項目は原因と停滞の組を`causeResults`へ持ち、同じ項目の`evidence`と`planning`を一緒に保持します。cause、staleness、evidence、planningを別々の正本へ分離しません。
-finalizationは、期待する項目と入力項目が一致し、planの適用対象・`evaluated`項目・outcome applicationの項目集合が一致することを検証します。原因の所有項目ID、原因IDの一意性、原因と採用済み評価が参照する根拠の閉包も検証します。
+finalizationは、計画と最終項目の集合、原因の計画・判断・実行結果の集合が一致することを検証します。原因の所有項目ID、原因IDの一意性、原因と採用済み評価が参照する根拠の閉包も検証します。
 これらの契約違反は例外として既存の診断経路へ伝播させ、AI失敗時の`fallback`へ変換しません。
 
 `src/application/tracking-run/stages/`の個人催促stageは直前の成果物から結果を確定し、validationへ渡します。validationは通知候補とsnapshotへ結果を反映し、原因、現在性、停滞、根拠、列挙計画の最終値を再導出しません。
