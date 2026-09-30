@@ -364,7 +364,7 @@ jobs:
               arguments+=(--repository "$repository")
             done
           fi
-          node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs "${arguments[@]}" > "$RUNNER_TEMP/tracking-analyze.json"
+          PATH="$PWD/node_modules/.bin:$PATH" node --enable-source-maps artifacts/workflow/runtime/tracker-run.mjs "${arguments[@]}" > "$RUNNER_TEMP/tracking-analyze.json"
           jq -e '.runId | test("^tracker-run:[0-9a-f]{64}$")' "$RUNNER_TEMP/tracking-analyze.json" > /dev/null
           echo "run_id=$(jq -r .runId "$RUNNER_TEMP/tracking-analyze.json")" >> "$GITHUB_OUTPUT"
       - name: checkpointとsidecarを保存

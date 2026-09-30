@@ -539,6 +539,8 @@ preflightはrun全体の入力文字数と見積費用へ1論理callとして計
 現行の`config.yml`は`ai.authentication: auth-json`を指定します。
 `ai.authentication: api-key`ではsubprocessへ`HOME`、`OPENAI_API_KEY`、`PATH`だけを渡します。
 `ai.authentication: auth-json`では`CODEX_HOME`、`HOME`、`PATH`だけを渡し、起動前に`CODEX_HOME`直下の`auth.json`がファイルとして存在することを確認します。
+workflowの解析stepでは、`node_modules/.bin`の絶対pathを`PATH`へ追加してtracker CLIを起動します。
+Codex subprocessは空の一時directoryから起動するため、CLIの場所を相対pathで渡しません。
 アプリケーション側のCodex認証providerは`auth.json`の存在だけを確認し、内容を読みません。
 GitHub App private key、installation token、Discord Webhook URL、`CODEX_AUTH_SYNC_TOKEN`は渡しません。
 Issue本文、コメント、ラベル、ユーザー名はID付きの信頼できない入力データとして渡し、命令として扱いません。
