@@ -103,6 +103,12 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ steps.inspect.outputs.node_version }}
+      - name: V2手動検証に必要な依存関係を準備
+        working-directory: artifacts/exact-runtime
+        run: |
+          if [[ "$(jq -r '.recoveryInput.protocolVersion' "$RUNNER_TEMP/manual-bootstrap.json")" == '2' ]]; then
+            pnpm install --frozen-lockfile
+          fi
       - name: 元runの固定bundleを取得
         id: source_runtime
         continue-on-error: true

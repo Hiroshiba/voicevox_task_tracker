@@ -19,6 +19,7 @@ import { GitStateBranchAdapter } from "../persistence/index.js";
 import { createCliApplication } from "./composition-root.js";
 import { createDefaultCliCompositionAdapters } from "./composition-root.js";
 import { readInitialPagesDeploymentPreflight } from "./initial-pages-deployment.js";
+import { resolveExactManualDeliveryV2 } from "./runtime-recovery-manual-v2.js";
 import { decodeNotificationHistoryPagesBuildArtifact } from "./notification-history-pages-build-artifact.js";
 import { parseNotificationHistoryPagesDeploymentPreflight } from "./notification-history-pages-deployment.js";
 import {
@@ -247,6 +248,27 @@ async function executeExactInput(
       serializeCanonicalJson(input.runtimeRecoveryPlan)
   ) {
     throw new TypeError("V2回復入力と永続stateのbootstrapが一致しません");
+  }
+  if (input.operation === "resolve_manual_delivery") {
+    if (
+      input.runtimeRecoveryPlan.kind !== "workflow_bundle" ||
+      input.runtimeRecoveryPlan.recoveryProtocol.manualResolutionOperation !== input.operation
+    ) {
+      throw new TypeError("記録済みV2 bundleに手動判断の固定操作がありません");
+    }
+    const resolved = await resolveExactManualDeliveryV2(repositoryPath, input, adapter);
+    return runtimeRecoveryOutputV2Schema.parse({
+      protocolVersion: 2,
+      outputContract: "tracking-run-recovery-output-v2",
+      runId: input.runId,
+      stateRevision: resolved.stateRevision,
+      receiptChainDigest: resolved.receiptChainDigest,
+      workflowEffectAdapterIdentityDigest: input.expectedWorkflowEffectAdapterIdentityDigest,
+      status: "manual_resolved",
+      decision: input.target.decision,
+      manualResolutionReceiptDigest: resolved.manualResolutionReceiptDigest,
+      receiptKind: resolved.receiptKind,
+    });
   }
   if (input.operation === "record_pages") {
     await assertPagesObservation(input, repositoryPath);

@@ -20,7 +20,11 @@ import type { ContentDigestPort } from "../application/tracking-run/ports.js";
 import type { RunExecutionPolicy } from "../application/tracking-run/request.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
 import { workflowActionSources } from "./workflow-action-identity.js";
-import { assertWorkflowV2Adapter, readWorkflowV2Adapter } from "./workflow-v2-adapter.js";
+import {
+  assertWorkflowV2Adapter,
+  readWorkflowV2Adapter,
+  readWorkflowV2AdapterLegacy,
+} from "./workflow-v2-adapter.js";
 
 const execFileAsync = promisify(execFile);
 const MANIFEST_FILE_NAME = "runtime-manifest.json";
@@ -188,6 +192,8 @@ export async function workflowAdapterIdentityV2(
       "src/cli/runtime-recovery-launcher-v2.ts",
       "src/cli/initial-pages-deployment.ts",
       "src/cli/notification-history-pages-deployment-record.ts",
+      "src/cli/notification-history-pages-deployment.ts",
+      "src/cli/notification-history-pages-deployment-outcome.ts",
     ],
     digest,
   );
@@ -208,13 +214,42 @@ async function workflowAdapterSelectionV2(
     "utf8",
   );
   const actionSources = await workflowActionSources(repositoryPath, [pagesWorkflowSource], digest);
+  const scriptSources = [pagesWorkflowSource];
+  for (const file of actionSources.localActionFiles) {
+    if (/\/action\.ya?ml$/u.test(file.path)) {
+      scriptSources.push(await readFile(resolve(repositoryPath, file.path), "utf8"));
+    }
+  }
+  const referencedScripts = [
+    ...new Set(
+      scriptSources.flatMap((source) =>
+        [...source.matchAll(/\.github\/scripts\/[A-Za-z0-9._/-]+/gu)].map((match) => match[0]),
+      ),
+    ),
+  ].sort();
+  return {
+    adapter: await readWorkflowV2Adapter(repositoryPath),
+    actionSources,
+    referencedScriptsDigest: await hashSources(repositoryPath, referencedScripts, digest),
+  };
+}
+
+async function workflowAdapterSelectionV2NarrowLegacy(
+  repositoryPath: string,
+  digest: ContentDigestPort,
+): Promise<object> {
+  const pagesWorkflowSource = await readFile(
+    resolve(repositoryPath, ".github/workflows/_tracking-pages.yml"),
+    "utf8",
+  );
+  const actionSources = await workflowActionSources(repositoryPath, [pagesWorkflowSource], digest);
   const pageActionPaths = [
     ".github/actions/download-prior-notification-history-outcome/",
     ".github/actions/observe-pages-deployment/",
     ".github/actions/route-tracking-stage/",
   ];
   return {
-    adapter: await readWorkflowV2Adapter(repositoryPath),
+    adapter: await readWorkflowV2AdapterLegacy(repositoryPath),
     actionSources: {
       effectActions: actionSources.effectActions,
       localActionFiles: actionSources.localActionFiles.filter(({ path }) =>
@@ -228,6 +263,28 @@ async function workflowAdapterSelectionV2(
       digest,
     ),
   };
+}
+
+async function workflowAdapterIdentityV2NarrowLegacy(
+  repositoryPath: string,
+  digest: ContentDigestPort,
+): Promise<ReturnType<ContentDigestPort["sha256Utf8"]>> {
+  const adapterSourcesDigest = await hashSources(
+    repositoryPath,
+    [
+      "src/application/tracking-run/contracts/runtime-recovery-v2.ts",
+      "src/cli/runtime-recovery-launcher-v2.ts",
+      "src/cli/initial-pages-deployment.ts",
+      "src/cli/notification-history-pages-deployment-record.ts",
+    ],
+    digest,
+  );
+  return digest.sha256Utf8(
+    serializeCanonicalJson({
+      selection: await workflowAdapterSelectionV2NarrowLegacy(repositoryPath, digest),
+      adapterSourcesDigest,
+    }),
+  );
 }
 
 async function workflowAdapterIdentityV2Legacy(
@@ -255,7 +312,7 @@ async function workflowAdapterIdentityV2Legacy(
   );
   return digest.sha256Utf8(
     serializeCanonicalJson({
-      adapter: await readWorkflowV2Adapter(repositoryPath),
+      adapter: await readWorkflowV2AdapterLegacy(repositoryPath),
       actionSources,
       adapterSourcesDigest,
     }),
@@ -269,6 +326,9 @@ export async function assertRecordedWorkflowAdapterIdentityV2(
   digest: ContentDigestPort,
 ): Promise<void> {
   if ((await workflowAdapterIdentityV2(repositoryPath, digest)) === expectedIdentity) {
+    return;
+  }
+  if ((await workflowAdapterIdentityV2NarrowLegacy(repositoryPath, digest)) === expectedIdentity) {
     return;
   }
   if ((await workflowAdapterIdentityV2Legacy(repositoryPath, digest)) === expectedIdentity) {
@@ -435,6 +495,7 @@ async function createManifest(
           workflowEffectObservationContract: "tracking-run-workflow-effect-observation-v2",
           workflowEffectAdapterIdentityDigest: adapterIdentity,
           workflowEffectAdapterVersion: "tracking-run-pages-actions-v2",
+          manualResolutionOperation: "resolve_manual_delivery",
         })
       : runtimeRecoveryProtocolV1Schema.parse({
           protocolVersion: 1,

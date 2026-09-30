@@ -22,7 +22,30 @@ const jobSchema = z.looseObject({
   permissions: z.record(z.string(), z.string()).optional(),
   environment: z.looseObject({ name: z.string() }).optional(),
 });
-const workflowSchema = z.looseObject({ jobs: z.record(z.string(), jobSchema) });
+const workflowCallInputSchema = z.looseObject({
+  type: z.string(),
+  required: z.boolean().optional(),
+  default: z.unknown().optional(),
+});
+const workflowSchema = z.looseObject({
+  on: z.looseObject({
+    workflow_call: z.looseObject({
+      inputs: z.record(z.string(), workflowCallInputSchema),
+    }),
+  }),
+  jobs: z.record(z.string(), jobSchema),
+});
+
+function executionFields(value: Record<string, unknown>): object {
+  return Object.fromEntries(Object.entries(value).filter(([name]) => name !== "name"));
+}
+
+function executionJob(job: z.output<typeof jobSchema>): object {
+  return {
+    ...executionFields(job),
+    ...(job.steps == null ? {} : { steps: job.steps.map((step) => executionFields(step)) }),
+  };
+}
 
 function hasProtocolCall(run: string | undefined, operation: string): boolean {
   if (run == null) {
@@ -139,6 +162,43 @@ export async function readWorkflowV2Adapter(repositoryPath: string): Promise<obj
     throw new TypeError("V2 Pagesの静的jobまたは権限がありません");
   }
   assertPagesSteps(deploy.steps, record.steps);
+  return {
+    adapterVersion: "tracking-run-pages-actions-v2",
+    calls: [executionJob(initial), executionJob(history)],
+    workflowCallInputs: Object.fromEntries(
+      Object.entries(pages.on.workflow_call.inputs).map(([name, input]) => [
+        name,
+        {
+          type: input.type,
+          ...(input.required == null ? {} : { required: input.required }),
+          ...(Object.hasOwn(input, "default") ? { default: input.default } : {}),
+        },
+      ]),
+    ),
+    workflowContext: {
+      ...(pages["env"] == null ? {} : { env: pages["env"] }),
+      ...(pages["defaults"] == null ? {} : { defaults: pages["defaults"] }),
+      ...(pages["permissions"] == null ? {} : { permissions: pages["permissions"] }),
+      ...(pages["concurrency"] == null ? {} : { concurrency: pages["concurrency"] }),
+    },
+    deploy: executionJob(deploy),
+    record: executionJob(record),
+  };
+}
+
+/** 旧V2 digestが記録したjobだけの投影をそのまま返す。 */
+export async function readWorkflowV2AdapterLegacy(repositoryPath: string): Promise<object> {
+  const [tracking, pages] = await Promise.all([
+    readWorkflow(repositoryPath, ".github/workflows/_tracking-run.yml"),
+    readWorkflow(repositoryPath, ".github/workflows/_tracking-pages.yml"),
+  ]);
+  const initial = tracking.jobs["initial-pages"];
+  const history = tracking.jobs["notification-history-pages"];
+  const deploy = pages.jobs["deploy"];
+  const record = pages.jobs["record"];
+  if (initial == null || history == null || deploy == null || record == null) {
+    throw new TypeError("旧V2 Pages adapterのjobがありません");
+  }
   return {
     adapterVersion: "tracking-run-pages-actions-v2",
     calls: [initial, history],

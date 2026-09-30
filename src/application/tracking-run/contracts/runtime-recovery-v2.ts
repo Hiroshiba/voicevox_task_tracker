@@ -48,6 +48,16 @@ export const workflowEffectObservationV2Schema = z.strictObject({
 export const runtimeRecoveryInputV2Schema = z.discriminatedUnion("operation", [
   baseSchema.extend({ operation: z.literal("inspect") }),
   baseSchema.extend({
+    operation: z.literal("resolve_manual_delivery"),
+    target: z.strictObject({
+      checkpointDigest: sha256Schema,
+      deliveryId: z.string().regex(/^discord-digest:v1:[0-9a-f]{24}:message:[1-9][0-9]*$/u),
+      attemptId: z.string().regex(/^attempt:v1:[0-9a-f]{64}$/u),
+      notificationKeys: z.array(z.string().min(1)).min(1),
+      decision: z.enum(["retry", "acknowledge"]),
+    }),
+  }),
+  baseSchema.extend({
     operation: z.literal("execute_stage"),
     stage: runtimeRecoveryStageV2Schema,
     manualResolutionReceiptPath: z.string().min(1).optional(),
@@ -88,6 +98,12 @@ export const runtimeRecoveryOutputV2Schema = z.discriminatedUnion("status", [
   outputBaseSchema.extend({
     status: z.literal("pages_recorded"),
     phase: z.enum(["initial", "notification_history"]),
+  }),
+  outputBaseSchema.extend({
+    status: z.literal("manual_resolved"),
+    decision: z.enum(["retry", "acknowledge"]),
+    manualResolutionReceiptDigest: sha256Schema,
+    receiptKind: z.enum(["executed", "observed"]),
   }),
 ]);
 

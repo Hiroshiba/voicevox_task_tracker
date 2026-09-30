@@ -81,6 +81,7 @@ export const runtimeRecoveryProtocolV2Schema = z.strictObject({
   workflowEffectObservationContract: z.literal("tracking-run-workflow-effect-observation-v2"),
   workflowEffectAdapterIdentityDigest: sha256Schema,
   workflowEffectAdapterVersion: z.literal("tracking-run-pages-actions-v2"),
+  manualResolutionOperation: z.literal("resolve_manual_delivery").optional(),
 });
 
 export const runtimeRecoveryPlanV2Schema = z.discriminatedUnion("kind", [

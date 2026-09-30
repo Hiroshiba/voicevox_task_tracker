@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 
 import { z } from "zod";
 
-import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../canonical-json/value.js";
+import { serializeCanonicalJsonLine } from "../canonical-json/value.js";
 import { decodePublicFailureArtifact } from "../application/tracking-run/failure-artifact.js";
 import { runtimeRecoveryInputV1Schema } from "../application/tracking-run/contracts/runtime-recovery-v1.js";
 import { runtimeRecoveryInputV2Schema } from "../application/tracking-run/contracts/runtime-recovery-v2.js";
@@ -17,12 +17,8 @@ import {
   assertWorkflowV2AdapterCompatibility,
   verifyRecoveryBundle,
 } from "./publication-runtime.js";
-import {
-  launchRuntimeRecoveryV2,
-  verifyRuntimeRecoveryV2,
-} from "./runtime-recovery-launcher-v2.js";
-import { splitStagePaths } from "./split-stage-paths.js";
-import { readSplitReceiptChain } from "./split-stage-receipts.js";
+import { verifyRuntimeRecoveryV2 } from "./runtime-recovery-launcher-v2.js";
+import { resolveSelectedManualRuntimeV2 } from "./manual-exact-v2.js";
 import { observeBootstrap, type BootstrapFailureObservation } from "./failure-context-state.js";
 import { encryptManualDiagnostics } from "./manual-diagnostics-encryption.js";
 import {
@@ -170,9 +166,12 @@ async function selectRuntime(
       input.checkpointFileDigest !== checkpointFileDigest ||
       input.expectedRuntimeIdentityDigest !== runtimeIdentityDigest ||
       input.expectedWorkflowEffectAdapterIdentityDigest !==
-        plan.recoveryProtocol.workflowEffectAdapterIdentityDigest
+        plan.recoveryProtocol.workflowEffectAdapterIdentityDigest ||
+      input.runtimeRecoveryPlan.kind !== "workflow_bundle" ||
+      input.runtimeRecoveryPlan.recoveryProtocol.manualResolutionOperation !==
+        "resolve_manual_delivery"
     ) {
-      throw new TypeError("V2手動解決のrun、record、checkpoint結合が一致しません");
+      throw new TypeError("V2手動解決の固定操作またはrun、record、checkpoint結合が一致しません");
     }
     await assertWorkflowV2AdapterCompatibility(
       controlRepositoryPath,
@@ -197,23 +196,6 @@ async function selectRuntime(
       runtimeRecoveryPlan: plan,
     });
     await verifyRuntimeRecoveryV2(checkout, bundleRoot, fixedInput);
-    const result = await launchRuntimeRecoveryV2(checkout, bundleRoot, fixedInput);
-    const entries = await readSplitReceiptChain(
-      splitStagePaths(checkout, runId).receiptChain,
-      runId,
-    );
-    if (
-      result.status !== "inspected" ||
-      result.runId !== runId ||
-      result.stateRevision !== stateRevision ||
-      result.nextStage !== "settle-notifications" ||
-      result.receiptChainDigest !==
-        nodeContentDigestPort.sha256Utf8(serializeCanonicalJson(entries)) ||
-      result.workflowEffectAdapterIdentityDigest !==
-        input.expectedWorkflowEffectAdapterIdentityDigest
-    ) {
-      throw new TypeError("V2固定入口の手動解決前の結果が永続runと一致しません");
-    }
     await writeCliTextFile(
       "artifacts/workflow/manual-recovery-input.json",
       serializeCanonicalJsonLine(fixedInput),
@@ -304,7 +286,12 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
         await assertManualPagesOutcomeAbsent(pagesRecordPaths.outcomePath);
       }
       childStarted = true;
-      await runExactCli(entrypoint, [command, ...args.slice(1)], false);
+      if (
+        command !== "resolve-discord-delivery" ||
+        !(await resolveSelectedManualRuntimeV2(checkout, args.slice(1)))
+      ) {
+        await runExactCli(entrypoint, [command, ...args.slice(1)], false);
+      }
     }
     return 0;
   } catch (error: unknown) {
