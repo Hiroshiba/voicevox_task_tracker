@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { cp, mkdtemp, rm, symlink } from "node:fs/promises";
+import { appendFile, cp, mkdtemp, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -46,6 +46,7 @@ async function withPerformanceSource<Value>(
     await execFileAsync("git", ["-C", source, "remote", "remove", "origin"]);
     await cp(join(repositoryPath, "dist"), join(source, "dist"), { recursive: true });
     await symlink(join(repositoryPath, "node_modules"), join(source, "node_modules"), "dir");
+    await appendFile(join(source, ".git/info/exclude"), "\nnode_modules\n");
     return await execute(source);
   } finally {
     await rm(directory, { recursive: true, force: true });
