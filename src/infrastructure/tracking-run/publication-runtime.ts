@@ -19,6 +19,10 @@ import type { RunExecutionPolicy } from "../../application/tracking-run/request.
 import { parseSha256Hash } from "../../canonical-json/sha256.js";
 import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../../canonical-json/value.js";
 import { nodeContentDigestPort } from "./content-digest.js";
+import {
+  workflowV1AdapterSourcePaths,
+  workflowV2AdapterSourcePaths,
+} from "./frozen-runtime-source-layout.js";
 import { workflowActionSources } from "./workflow-action-identity.js";
 import {
   assertWorkflowV2Adapter,
@@ -148,20 +152,14 @@ export async function workflowAdapterIdentity(
   const scripts = (await readdir(resolve(repositoryPath, ".github/scripts")))
     .map((path) => `.github/scripts/${path}`)
     .sort();
+  const adapterSources = await workflowV1AdapterSourcePaths(repositoryPath);
   const adapterSourcesDigest = await hashSources(
     repositoryPath,
     [
       ...workflowPaths,
-      "src/infrastructure/tracking-run/initial-pages-deployment.ts",
-      "src/infrastructure/tracking-run/notification-history-pages-deployment.ts",
-      "src/infrastructure/tracking-run/notification-history-pages-deployment-record.ts",
-      "src/infrastructure/tracking-run/notification-history-pages-deployment-outcome.ts",
-      "src/infrastructure/tracking-run/publication/deployment.ts",
-      "src/infrastructure/tracking-run/publication/workflow-history-deployment.ts",
+      ...adapterSources.effectSources,
       ...scripts,
-      "src/cli/create-workflow-command-runner.ts",
-      "src/infrastructure/tracking-run/manual-delivery-command.ts",
-      "src/infrastructure/tracking-run/workflow-report-command.ts",
+      ...adapterSources.commandSources,
     ],
     digest,
   );
@@ -184,15 +182,7 @@ export async function workflowAdapterIdentityV2(
 ): Promise<ReturnType<ContentDigestPort["sha256Utf8"]>> {
   const adapterSourcesDigest = await hashSources(
     repositoryPath,
-    [
-      "src/application/tracking-run/contracts/runtime-recovery-v2.ts",
-      "src/infrastructure/tracking-run/runtime-recovery-launcher-v2.ts",
-      "src/cli/runtime-recovery-entrypoint-v2.ts",
-      "src/infrastructure/tracking-run/initial-pages-deployment.ts",
-      "src/infrastructure/tracking-run/notification-history-pages-deployment-record.ts",
-      "src/infrastructure/tracking-run/notification-history-pages-deployment.ts",
-      "src/infrastructure/tracking-run/notification-history-pages-deployment-outcome.ts",
-    ],
+    await workflowV2AdapterSourcePaths(repositoryPath, "full"),
     digest,
   );
   return digest.sha256Utf8(
@@ -267,15 +257,7 @@ async function workflowAdapterIdentityV2CurrentLegacy(
 ): Promise<ReturnType<ContentDigestPort["sha256Utf8"]>> {
   const adapterSourcesDigest = await hashSources(
     repositoryPath,
-    [
-      "src/application/tracking-run/contracts/runtime-recovery-v2.ts",
-      "src/infrastructure/tracking-run/runtime-recovery-launcher-v2.ts",
-      "src/cli/runtime-recovery-entrypoint-v2.ts",
-      "src/infrastructure/tracking-run/initial-pages-deployment.ts",
-      "src/infrastructure/tracking-run/notification-history-pages-deployment-record.ts",
-      "src/infrastructure/tracking-run/notification-history-pages-deployment.ts",
-      "src/infrastructure/tracking-run/notification-history-pages-deployment-outcome.ts",
-    ],
+    await workflowV2AdapterSourcePaths(repositoryPath, "full"),
     digest,
   );
   return digest.sha256Utf8(
@@ -323,13 +305,7 @@ async function workflowAdapterIdentityV2NarrowLegacy(
 ): Promise<ReturnType<ContentDigestPort["sha256Utf8"]>> {
   const adapterSourcesDigest = await hashSources(
     repositoryPath,
-    [
-      "src/application/tracking-run/contracts/runtime-recovery-v2.ts",
-      "src/infrastructure/tracking-run/runtime-recovery-launcher-v2.ts",
-      "src/cli/runtime-recovery-entrypoint-v2.ts",
-      "src/infrastructure/tracking-run/initial-pages-deployment.ts",
-      "src/infrastructure/tracking-run/notification-history-pages-deployment-record.ts",
-    ],
+    await workflowV2AdapterSourcePaths(repositoryPath, "narrow"),
     digest,
   );
   return digest.sha256Utf8(
@@ -354,14 +330,7 @@ async function workflowAdapterIdentityV2Legacy(
     .sort();
   const adapterSourcesDigest = await hashSources(
     repositoryPath,
-    [
-      "src/application/tracking-run/contracts/runtime-recovery-v2.ts",
-      "src/infrastructure/tracking-run/runtime-recovery-launcher-v2.ts",
-      "src/cli/runtime-recovery-entrypoint-v2.ts",
-      "src/infrastructure/tracking-run/initial-pages-deployment.ts",
-      "src/infrastructure/tracking-run/notification-history-pages-deployment-record.ts",
-      ...scripts,
-    ],
+    [...(await workflowV2AdapterSourcePaths(repositoryPath, "narrow")), ...scripts],
     digest,
   );
   return digest.sha256Utf8(
