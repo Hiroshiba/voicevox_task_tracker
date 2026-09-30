@@ -23,6 +23,7 @@ import { workflowActionSources } from "./workflow-action-identity.js";
 import {
   assertWorkflowV2Adapter,
   readWorkflowV2Adapter,
+  readWorkflowV2AdapterCurrentLegacy,
   readWorkflowV2AdapterLegacy,
 } from "./workflow-v2-adapter.js";
 
@@ -234,6 +235,59 @@ async function workflowAdapterSelectionV2(
   };
 }
 
+async function workflowAdapterSelectionV2CurrentLegacy(
+  repositoryPath: string,
+  digest: ContentDigestPort,
+): Promise<object> {
+  const pagesWorkflowSource = await readFile(
+    resolve(repositoryPath, ".github/workflows/_tracking-pages.yml"),
+    "utf8",
+  );
+  const actionSources = await workflowActionSources(repositoryPath, [pagesWorkflowSource], digest);
+  const scriptSources = [pagesWorkflowSource];
+  for (const file of actionSources.localActionFiles) {
+    if (/\/action\.ya?ml$/u.test(file.path)) {
+      scriptSources.push(await readFile(resolve(repositoryPath, file.path), "utf8"));
+    }
+  }
+  const referencedScripts = [
+    ...new Set(
+      scriptSources.flatMap((source) =>
+        [...source.matchAll(/\.github\/scripts\/[A-Za-z0-9._/-]+/gu)].map((match) => match[0]),
+      ),
+    ),
+  ].sort();
+  return {
+    adapter: await readWorkflowV2AdapterCurrentLegacy(repositoryPath),
+    actionSources,
+    referencedScriptsDigest: await hashSources(repositoryPath, referencedScripts, digest),
+  };
+}
+
+async function workflowAdapterIdentityV2CurrentLegacy(
+  repositoryPath: string,
+  digest: ContentDigestPort,
+): Promise<ReturnType<ContentDigestPort["sha256Utf8"]>> {
+  const adapterSourcesDigest = await hashSources(
+    repositoryPath,
+    [
+      "src/application/tracking-run/contracts/runtime-recovery-v2.ts",
+      "src/cli/runtime-recovery-launcher-v2.ts",
+      "src/cli/initial-pages-deployment.ts",
+      "src/cli/notification-history-pages-deployment-record.ts",
+      "src/cli/notification-history-pages-deployment.ts",
+      "src/cli/notification-history-pages-deployment-outcome.ts",
+    ],
+    digest,
+  );
+  return digest.sha256Utf8(
+    serializeCanonicalJson({
+      selection: await workflowAdapterSelectionV2CurrentLegacy(repositoryPath, digest),
+      adapterSourcesDigest,
+    }),
+  );
+}
+
 async function workflowAdapterSelectionV2NarrowLegacy(
   repositoryPath: string,
   digest: ContentDigestPort,
@@ -325,13 +379,16 @@ export async function assertRecordedWorkflowAdapterIdentityV2(
   expectedIdentity: string,
   digest: ContentDigestPort,
 ): Promise<void> {
-  if ((await workflowAdapterIdentityV2(repositoryPath, digest)) === expectedIdentity) {
+  if ((await workflowAdapterIdentityV2CurrentLegacy(repositoryPath, digest)) === expectedIdentity) {
     return;
   }
   if ((await workflowAdapterIdentityV2NarrowLegacy(repositoryPath, digest)) === expectedIdentity) {
     return;
   }
   if ((await workflowAdapterIdentityV2Legacy(repositoryPath, digest)) === expectedIdentity) {
+    return;
+  }
+  if ((await workflowAdapterIdentityV2(repositoryPath, digest)) === expectedIdentity) {
     return;
   }
   throw new TypeError("V2 Pages adapterの記録済みidentityが選択元と一致しません");

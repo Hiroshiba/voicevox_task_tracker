@@ -8,12 +8,14 @@ const deployAction = "actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c
 const uploadAction = "actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa";
 const stepSchema = z.looseObject({
   id: z.string().optional(),
+  name: z.string().optional(),
   run: z.string().optional(),
   uses: z.string().optional(),
   if: z.string().optional(),
   "continue-on-error": z.boolean().optional(),
 });
 const jobSchema = z.looseObject({
+  name: z.string().optional(),
   uses: z.string().optional(),
   with: z.record(z.string(), z.unknown()).optional(),
   needs: z.union([z.string(), z.array(z.string())]).optional(),
@@ -21,16 +23,19 @@ const jobSchema = z.looseObject({
   steps: z.array(stepSchema).optional(),
   permissions: z.record(z.string(), z.string()).optional(),
   environment: z.looseObject({ name: z.string() }).optional(),
+  outputs: z.record(z.string(), z.string()).optional(),
 });
 const workflowCallInputSchema = z.looseObject({
   type: z.string(),
   required: z.boolean().optional(),
   default: z.unknown().optional(),
 });
+const workflowCallOutputSchema = z.looseObject({ value: z.string() });
 const workflowSchema = z.looseObject({
   on: z.looseObject({
     workflow_call: z.looseObject({
       inputs: z.record(z.string(), workflowCallInputSchema),
+      outputs: z.record(z.string(), workflowCallOutputSchema).optional(),
     }),
   }),
   jobs: z.record(z.string(), jobSchema),
@@ -127,8 +132,12 @@ function assertPagesSteps(
   }
 }
 
-/** V2固定入口とPages実actionの静的接続を検証してidentity入力を返す。 */
-export async function readWorkflowV2Adapter(repositoryPath: string): Promise<object> {
+async function readWorkflowV2AdapterCurrentProjection(repositoryPath: string): Promise<{
+  projection: object;
+  deploy: z.output<typeof jobSchema>;
+  record: z.output<typeof jobSchema>;
+  workflowCallOutputs: Record<string, z.output<typeof workflowCallOutputSchema>> | undefined;
+}> {
   const [tracking, pages] = await Promise.all([
     readWorkflow(repositoryPath, ".github/workflows/_tracking-run.yml"),
     readWorkflow(repositoryPath, ".github/workflows/_tracking-pages.yml"),
@@ -163,27 +172,63 @@ export async function readWorkflowV2Adapter(repositoryPath: string): Promise<obj
   }
   assertPagesSteps(deploy.steps, record.steps);
   return {
-    adapterVersion: "tracking-run-pages-actions-v2",
-    calls: [executionJob(initial), executionJob(history)],
-    workflowCallInputs: Object.fromEntries(
-      Object.entries(pages.on.workflow_call.inputs).map(([name, input]) => [
-        name,
-        {
-          type: input.type,
-          ...(input.required == null ? {} : { required: input.required }),
-          ...(Object.hasOwn(input, "default") ? { default: input.default } : {}),
-        },
-      ]),
-    ),
-    workflowContext: {
-      ...(pages["env"] == null ? {} : { env: pages["env"] }),
-      ...(pages["defaults"] == null ? {} : { defaults: pages["defaults"] }),
-      ...(pages["permissions"] == null ? {} : { permissions: pages["permissions"] }),
-      ...(pages["concurrency"] == null ? {} : { concurrency: pages["concurrency"] }),
+    projection: {
+      adapterVersion: "tracking-run-pages-actions-v2",
+      calls: [executionJob(initial), executionJob(history)],
+      workflowCallInputs: Object.fromEntries(
+        Object.entries(pages.on.workflow_call.inputs).map(([name, input]) => [
+          name,
+          {
+            type: input.type,
+            ...(input.required == null ? {} : { required: input.required }),
+            ...(Object.hasOwn(input, "default") ? { default: input.default } : {}),
+          },
+        ]),
+      ),
+      workflowContext: {
+        ...(pages["env"] == null ? {} : { env: pages["env"] }),
+        ...(pages["defaults"] == null ? {} : { defaults: pages["defaults"] }),
+        ...(pages["permissions"] == null ? {} : { permissions: pages["permissions"] }),
+        ...(pages["concurrency"] == null ? {} : { concurrency: pages["concurrency"] }),
+      },
+      deploy: executionJob(deploy),
+      record: executionJob(record),
     },
-    deploy: executionJob(deploy),
-    record: executionJob(record),
+    deploy,
+    record,
+    workflowCallOutputs: pages.on.workflow_call.outputs,
   };
+}
+
+/** V2固定入口とPages実actionの静的接続を検証してidentity入力を返す。 */
+export async function readWorkflowV2Adapter(repositoryPath: string): Promise<object> {
+  const { projection, deploy, record, workflowCallOutputs } =
+    await readWorkflowV2AdapterCurrentProjection(repositoryPath);
+  const deploymentSteps = deploy.steps?.filter((step) => step.uses === deployAction);
+  if (
+    deploy.name !==
+      "${{ inputs.phase == 'initial' && 'initial-pages-deploy' || 'notification-history-pages-deploy' }}" ||
+    deploymentSteps?.length !== 1 ||
+    deploymentSteps[0]?.name !== "Pagesへdeploy" ||
+    workflowCallOutputs?.["run_id"]?.value !== "${{ jobs.record.outputs.run_id }}" ||
+    record.outputs?.["run_id"] !== "${{ steps.route.outputs.run_id }}"
+  ) {
+    throw new TypeError("V2 Pagesのdeploy名またはrun ID出力の接続が不正です");
+  }
+  return {
+    ...projection,
+    deployJobName: deploy.name,
+    deployActionStepName: deploymentSteps[0].name,
+    workflowCallOutputs: Object.fromEntries(
+      Object.entries(workflowCallOutputs).map(([name, output]) => [name, output.value]),
+    ),
+  };
+}
+
+/** 旧現行V2 digestが記録した実効contextの投影をそのまま返す。 */
+export async function readWorkflowV2AdapterCurrentLegacy(repositoryPath: string): Promise<object> {
+  const { projection } = await readWorkflowV2AdapterCurrentProjection(repositoryPath);
+  return projection;
 }
 
 /** 旧V2 digestが記録したjobだけの投影をそのまま返す。 */
