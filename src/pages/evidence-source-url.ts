@@ -1,7 +1,7 @@
 import {
   parseSourceId,
-  type GitHubNodeId,
   type GitHubItemUrl,
+  type GitHubNodeId,
   type SourceId,
   type TrackedItemInputEvent,
 } from "../domain/index.js";

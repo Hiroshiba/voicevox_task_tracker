@@ -2,7 +2,7 @@ import { INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1 } from "../application
 import type { ContentDigestPort } from "../application/tracking-run/ports.js";
 import { assertValidatedRun } from "../application/tracking-run/stages/validate-run.js";
 import { serializeCanonicalJson } from "../canonical-json/value.js";
-import { PUBLIC_DTO_SCHEMA_VERSION } from "../pages/public-dto.js";
+import { PUBLIC_DTO_SCHEMA_VERSION } from "../pages/public-dto-primitives.js";
 import { planNotificationOutbox } from "./notification-outbox.js";
 import {
   canonicalSelection,

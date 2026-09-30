@@ -1,6 +1,6 @@
 import { type Repository } from "../domain/index.js";
-import { isEligiblePublicRepository } from "../github/public-repository-allowlist.js";
 import { containsPrivateRepositoryReference } from "../github/private-repository-reference.js";
+import { isEligiblePublicRepository } from "../github/public-repository-allowlist.js";
 import { type StateHistoryRecord, type StateSnapshot } from "../persistence/index.js";
 import { PagesPublicSafetyError } from "./errors.js";
 

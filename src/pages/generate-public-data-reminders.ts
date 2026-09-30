@@ -1,7 +1,7 @@
 import {
   currentPersonalReminderAssessment,
-  PERSONAL_REMINDER_CAUSE_PLANNING_VERSION,
   PERSONAL_REMINDER_ASSESSMENT_RULES_VERSION,
+  PERSONAL_REMINDER_CAUSE_PLANNING_VERSION,
   type AiAnalysisDependency,
   type CurrentPersonalReminderAssessment,
   type Evidence,
@@ -11,11 +11,11 @@ import {
 } from "../domain/index.js";
 import type { StateSnapshot } from "../persistence/index.js";
 import { UnreachableError } from "../util/index.js";
+import { PublicDtoSemanticError } from "./errors.js";
 import {
   resolveEvidenceSourceUrlForItem,
   type EvidenceSourceUrlMap,
 } from "./evidence-source-url.js";
-import { PublicDtoSemanticError } from "./errors.js";
 import type {
   PublicCurrentResponseSubjectChangesDto,
   PublicCurrentResponseSubjectDto,
@@ -23,7 +23,7 @@ import type {
   PublicItemSummaryDto,
   PublicPersonalReminderResponseDto,
   PublicPersonalReminderUnknownReason,
-} from "./public-dto.js";
+} from "./public-dto-contracts.js";
 
 type PublicPersonalReminderResponse = PublicPersonalReminderResponseDto;
 type PublicPersonalReminderUnverifiedValue =

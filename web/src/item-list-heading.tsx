@@ -4,7 +4,8 @@ import { UnreachableError } from "../../src/util/index.js";
 import { AiUnverifiedMark } from "./ai-analysis-notice-icon.js";
 import { GitHubIconButton } from "./github-icon-button.js";
 import { ItemDetailsLink } from "./item-details.js";
-import { itemAiNoticeAriaLabel, itemAiUnverifiedDescription, type ItemTableRow } from "./model.js";
+import { itemAiNoticeAriaLabel, itemAiUnverifiedDescription } from "./model-ai-presentation.js";
+import type { ItemTableRow } from "./model-contracts.js";
 import { Pill } from "./ui.js";
 
 type ItemHeadingItem = Readonly<{

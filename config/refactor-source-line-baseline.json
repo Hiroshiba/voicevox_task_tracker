@@ -2,11 +2,6 @@
   "baselineCommit": "2facf26033517ee7138a95b70ee1c0116028bc9a",
   "entries": [
     {
-      "path": "src/pages/public-dto.ts",
-      "lineCount": 1727,
-      "sha256": "54b949ec6e78ced99db7525cc139927ee71d68d2a7029f8cc98dce4d935fb965"
-    },
-    {
       "path": "src/persistence/history.ts",
       "lineCount": 1725,
       "sha256": "b9d44aeb95365c4c6476dc507da7aa78a14d7c76f1a4b8dc90f2ad070c3fa6f3"
@@ -20,11 +15,6 @@
       "path": "src/persistence/snapshot.ts",
       "lineCount": 5993,
       "sha256": "4304c75c6155b6bc2d3170c25d8b389cc79efdb86fbd720a6fef5c601f2e4898"
-    },
-    {
-      "path": "web/src/model.ts",
-      "lineCount": 1689,
-      "sha256": "1f3fbba7a23881818aa0a4253b2c95b97109f3610dedc9612f810fde5dad4f4d"
     }
   ]
 }

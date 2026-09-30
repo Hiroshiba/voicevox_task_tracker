@@ -1,11 +1,9 @@
 import type { UtcIsoDateTime } from "../domain/index.js";
 import type { StateHistoryRecord } from "../persistence/index.js";
 import { PublicDtoSemanticError } from "./errors.js";
-import {
-  comparePublicNotificationHistoryEntries,
-  createPublicNotificationHistoryDto,
-  type PublicNotificationHistoryDto,
-} from "./public-dto.js";
+import type { PublicNotificationHistoryDto } from "./public-dto-contracts.js";
+import { createPublicNotificationHistoryDto } from "./public-dto.js";
+import { comparePublicNotificationHistoryEntries } from "./public-history-dto-validation.js";
 import type { PagesPublicSafetyInput } from "./public-safety.js";
 
 /** 保存済み通知履歴を公開DTOへ写す。 */

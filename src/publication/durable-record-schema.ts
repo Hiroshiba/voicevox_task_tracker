@@ -22,7 +22,7 @@ import {
   notificationSelectionSchema,
 } from "../discord/notification-selection-schema.js";
 import { pendingNotificationSchema } from "../domain/index.js";
-import { PUBLIC_DTO_SCHEMA_VERSION } from "../pages/public-dto.js";
+import { PUBLIC_DTO_SCHEMA_VERSION } from "../pages/public-dto-primitives.js";
 import { NOTIFICATION_LEDGER_REASON_CODE_VALUES } from "../persistence/state-documents.js";
 import { runMetricsSchema } from "./run-report.js";
 
