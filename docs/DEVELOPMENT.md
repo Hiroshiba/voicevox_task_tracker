@@ -70,6 +70,9 @@ verify-stateは作業treeのファイルを検査対象にせず、指定したS
 bootstrapを最初に確認し、未完了runならcurrent runtimeで業務payloadをparse・migrationする前に停止します。
 未完了runの検証と再開は記録されたexact runtimeで行います。
 完了済みstateは現行ingressで読み、marker・record・初回Pages証拠と実Gitの親・初回commitを照合します。
+旧snapshotから個人催促時計の再確認待ちが生じた場合は、入口で構造・意味・IDと個人催促のEvidence参照を検証し、保存形式の検証を保留します。
+今回収集するGitHub詳細で時計を再確認するまで、`verify-state`の成功はsnapshotを保存できることを示しません。
+再確認待ちがないsnapshotは、保存用の直列化と再読込も検証します。
 検証用の一時コピーは終了時に削除し、元のstateとremoteを変更しません。
 
 ## Web UIをローカルで見る

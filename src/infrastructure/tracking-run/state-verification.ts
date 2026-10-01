@@ -17,6 +17,8 @@ import { verifyRunTransactionFiles } from "../../persistence/state-transaction-f
 
 import { serializeCanonicalJsonLine } from "../../canonical-json/index.js";
 import { createAiCacheEntry, type AiCacheKey } from "../../codex/cache.js";
+import { assertPersonalReminderEvidenceClosure as assertLegacyPersonalReminderEvidenceClosure } from "../../persistence/snapshot-evidence-closure.js";
+import { version19SnapshotFields, type StateSnapshot } from "../../persistence/snapshot-v22.js";
 import {
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
   StateFormatError,
@@ -51,6 +53,17 @@ export type StateDocumentVerification = Readonly<{
   migratedSchemaVersions: readonly string[];
 }>;
 
+/** snapshotの入口検証結果と保存用形式の検証結果。 */
+export type SnapshotVerification = StateDocumentVerification &
+  Readonly<{
+    storageValidation:
+      | Readonly<{ status: "verified" }>
+      | Readonly<{
+          status: "clock_reconfirmation_required";
+          pendingClockBasisCount: number;
+        }>;
+  }>;
+
 /** AI cacheの検証結果と仮想削除件数。 */
 export type AiCacheVerification = StateDocumentVerification &
   Readonly<{
@@ -59,7 +72,7 @@ export type AiCacheVerification = StateDocumentVerification &
 
 /** snapshot、通知ledger、履歴、AI cacheを検証した結果。 */
 export type StateVerificationResult = Readonly<{
-  snapshot: StateDocumentVerification;
+  snapshot: SnapshotVerification;
   notificationLedger: StateDocumentVerification;
   operationsAlertLedger: StateDocumentVerification;
   runTransaction: StateDocumentVerification;
@@ -178,16 +191,48 @@ function localStatePath(stateDirectory: string, statePath: string): string {
   return join(stateDirectory, statePath.slice("state/".length));
 }
 
+function countPendingClockBases(snapshot: StateSnapshot): number {
+  let count = 0;
+  for (const item of snapshot.items) {
+    for (const cause of item.personalReminderCauses) {
+      const bases = [
+        cause.obligationSince,
+        ...(cause.actionableClock.status === "observed"
+          ? [cause.actionableClock.actionableSince, cause.actionableClock.stallSince]
+          : []),
+      ];
+      count += bases.filter((basis) => basis.source === "reconfirmation_pending").length;
+    }
+  }
+  return count;
+}
+
 async function verifySnapshot(
   stateDirectory: string,
   legacyEntriesByCacheKey: ReadonlyMap<AiCacheKey, LegacyAiCacheEntry>,
   timezone: string,
   snapshotPath: string,
-): Promise<StateDocumentVerification> {
+): Promise<SnapshotVerification> {
   const path = localStatePath(stateDirectory, snapshotPath);
   const source = await readUtf8(path);
   try {
     const snapshot = migrateStateSnapshot(source, legacyEntriesByCacheKey, timezone);
+    const verification = createVerification(
+      1,
+      [jsonDocumentSchemaVersion(source, "snapshot")],
+      [snapshot.schemaVersion],
+    );
+    const pendingClockBasisCount = countPendingClockBases(snapshot);
+    if (pendingClockBasisCount > 0) {
+      assertLegacyPersonalReminderEvidenceClosure(version19SnapshotFields(snapshot));
+      return Object.freeze({
+        ...verification,
+        storageValidation: Object.freeze({
+          status: "clock_reconfirmation_required",
+          pendingClockBasisCount,
+        }),
+      });
+    }
     const canonicalSource = serializeStateSnapshot(snapshot);
     const reloadedSnapshot = migrateStateSnapshot(
       canonicalSource,
@@ -197,11 +242,10 @@ async function verifySnapshot(
     if (serializeStateSnapshot(reloadedSnapshot) !== canonicalSource) {
       throw new TypeError("snapshotをcanonical JSONへ再読み込みできません");
     }
-    return createVerification(
-      1,
-      [jsonDocumentSchemaVersion(source, "snapshot")],
-      [snapshot.schemaVersion],
-    );
+    return Object.freeze({
+      ...verification,
+      storageValidation: Object.freeze({ status: "verified" }),
+    });
   } catch (error: unknown) {
     throw verificationError(path, error);
   }
@@ -502,6 +546,9 @@ function formatDocumentResult(name: string, result: StateDocumentVerification): 
 export function formatStateVerificationResult(result: StateVerificationResult): string {
   return [
     formatDocumentResult("snapshot", result.snapshot),
+    result.snapshot.storageValidation.status === "verified"
+      ? "snapshot保存形式: serializeと再読込を検証済み"
+      : `snapshot保存形式: 未検証、個人催促時計の再確認待ち${result.snapshot.storageValidation.pendingClockBasisCount.toString()}箇所`,
     formatDocumentResult("notification ledger", result.notificationLedger),
     formatDocumentResult("operations alert ledger", result.operationsAlertLedger),
     formatDocumentResult("run transaction", result.runTransaction),
