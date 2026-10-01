@@ -1,7 +1,6 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
 
@@ -67,7 +66,13 @@ export function createCodexEnvironment(
 
 async function readFixedPrompt(promptUrl: URL, resource: string): Promise<string> {
   try {
-    return await readFile(fileURLToPath(promptUrl), "utf8");
+    if (promptUrl.protocol === "file:") {
+      return await readFile(promptUrl, "utf8");
+    }
+    if (promptUrl.protocol === "data:") {
+      return await (await fetch(promptUrl)).text();
+    }
+    throw new TypeError(`固定資材のURLスキームに対応していません: ${promptUrl.protocol}`);
   } catch (error: unknown) {
     throw new CodexResourceError(resource, { cause: error });
   }
