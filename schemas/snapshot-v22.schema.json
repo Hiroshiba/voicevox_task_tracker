@@ -5440,6 +5440,7 @@
           "required": [
             "source",
             "at",
+            "previousAt",
             "sourceIds"
           ],
           "properties": {
@@ -5447,6 +5448,9 @@
               "const": "reconfirmed_observation"
             },
             "at": {
+              "$ref": "#/$defs/dateTime"
+            },
+            "previousAt": {
               "$ref": "#/$defs/dateTime"
             },
             "sourceIds": {

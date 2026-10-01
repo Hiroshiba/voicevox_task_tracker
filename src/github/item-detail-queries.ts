@@ -206,6 +206,21 @@ export function createItemDetailQuery(capabilities: GitHubItemDetailCapabilities
               }
             }
           }
+          commits(first: 100) {
+            totalCount
+            nodes {
+              commit {
+                id
+                oid
+                committedDate
+                pushedDate
+              }
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
+            }
+          }
           timelineItems(first: 100, itemTypes: ${PULL_REQUEST_TIMELINE_ITEM_TYPES}) {
             nodes {
               ...DetailPullRequestTimelineFields

@@ -7,7 +7,7 @@ import type { SourceId } from "../../../domain/source-id.js";
 import type { Evidence, UtcIsoDateTime } from "../../../domain/types.js";
 import type { ReconciledGraphEdge } from "../../../graph/reconcile-graph-types.js";
 import { indexPersonalReminderEvidence } from "./personal-reminder-evidence-index.js";
-import { personalReminderCauseSourceIds } from "./personal-reminder-cause-references.js";
+import { personalReminderCauseEvidenceSourceIds } from "./personal-reminder-cause-references.js";
 import {
   verifiedCurrentClockEvidence,
   type CurrentClockEvidenceSources,
@@ -70,7 +70,7 @@ export function finalizePersonalReminderEvidence(
         }
       }
     }
-    for (const sourceId of personalReminderCauseSourceIds(cause)) {
+    for (const sourceId of personalReminderCauseEvidenceSourceIds(cause)) {
       const previous = previousEvidenceBySourceId.get(sourceId) ?? [];
       const current = currentEvidenceBySourceId.get(sourceId) ?? [];
       if (

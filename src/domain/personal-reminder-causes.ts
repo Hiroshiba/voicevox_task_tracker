@@ -380,6 +380,7 @@ export const personalReminderTimeBasisSchema = z.discriminatedUnion("source", [
   z.strictObject({
     source: z.literal("reconfirmed_observation"),
     at: utcIsoDateTimeSchema,
+    previousAt: utcIsoDateTimeSchema,
     sourceIds: z.array(sourceIdSchema).nonempty().max(30),
   }),
 ]);

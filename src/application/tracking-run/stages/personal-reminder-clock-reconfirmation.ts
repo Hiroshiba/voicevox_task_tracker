@@ -7,26 +7,21 @@ import {
 import { createSourceIds } from "../../../domain/personal-reminder-planning-common.js";
 import { parseSourceId, type SourceId } from "../../../domain/source-id.js";
 import type { GitHubNodeId, UtcIsoDateTime } from "../../../domain/types.js";
-import type { GitHubItemDetail } from "../../../github/item-detail-types.js";
 import { assertNonNullable } from "../../../util/index.js";
 import type { CurrentItemSourceFact } from "../contracts/evidence-catalog.js";
 import type { GraphReconciledRun } from "./graph-reconciliation.js";
 import {
+  inspectLegacyCommit,
+  type LegacyCommitContext,
+} from "./personal-reminder-legacy-commit.js";
+import {
   indexCurrentClockEvidenceSources,
   verifiedCurrentClockEvidence,
-  type CurrentClockEvidenceSources,
 } from "./personal-reminder-clock-evidence.js";
 import { personalReminderCauseScope } from "./personal-reminder-related-scope.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 
-type ClockReconfirmationContext = Readonly<{
-  clockSources: CurrentClockEvidenceSources;
-  detailsByNodeId: ReadonlyMap<GitHubNodeId, GitHubItemDetail>;
-  observedNodeIds: ReadonlySet<GitHubNodeId>;
-  evaluatedAt: UtcIsoDateTime;
-  allowedOwnerNodeIds: ReadonlySet<string>;
-  previousOwnersBySourceId: ReadonlyMap<SourceId, ReadonlySet<GitHubNodeId>>;
-}>;
+type ClockReconfirmationContext = LegacyCommitContext;
 
 function reconfirmationError(
   code: "missing_source" | "future_source" | "wrong_owner" | "kind_mismatch" | "source_id_conflict",
@@ -55,6 +50,13 @@ function assertReappearingEventClocks(
   context: ClockReconfirmationContext,
 ): void {
   for (const basis of clockBasesForCause(cause)) {
+    if (basis.source === "reconfirmed_observation") {
+      for (const sourceId of basis.sourceIds) {
+        if (parseSourceId(sourceId).kind === "github_pull_request_commit") {
+          inspectLegacyCommit(sourceId, basis.previousAt, context, false);
+        }
+      }
+    }
     if (basis.source !== "event") continue;
     for (const sourceId of basis.sourceIds) {
       const detailFacts = (context.clockSources.factsBySourceId.get(sourceId) ?? []).filter(
@@ -94,7 +96,22 @@ function reconfirmBasis(
   if (basis.source !== "reconfirmation_pending") return basis;
   let observedAt: UtcIsoDateTime | undefined;
   const eventSources: { sourceId: SourceId; at: UtcIsoDateTime }[] = [];
+  let hasUnavailableCommit = false;
   for (const sourceId of basis.sourceIds) {
+    const kind = parseSourceId(sourceId).kind;
+    if (kind === "github_pull_request_commit") {
+      const inspected = inspectLegacyCommit(sourceId, basis.at, context, true);
+      if (observedAt != null && observedAt !== inspected.observedAt) {
+        throw reconfirmationError("source_id_conflict", sourceId);
+      }
+      observedAt = inspected.observedAt;
+      if (inspected.eventAt == null) {
+        hasUnavailableCommit = true;
+      } else {
+        eventSources.push({ sourceId, at: inspected.eventAt });
+      }
+      continue;
+    }
     const detailFacts = (context.clockSources.factsBySourceId.get(sourceId) ?? []).filter(
       (fact): fact is CurrentItemSourceFact =>
         fact.origin === "item_detail" && fact.scope === "item",
@@ -118,7 +135,6 @@ function reconfirmBasis(
       throw reconfirmationError("source_id_conflict", sourceId);
     }
     observedAt = detail.observedAt;
-    const kind = parseSourceId(sourceId).kind;
     if (detailFacts.some((fact) => fact.sourceKind !== kind)) {
       throw reconfirmationError("kind_mismatch", sourceId);
     }
@@ -144,7 +160,7 @@ function reconfirmBasis(
   const matchingSourceIds = eventSources
     .filter((source) => source.at === basis.at)
     .map((source) => source.sourceId);
-  if (matchingSourceIds.length > 0) {
+  if (!hasUnavailableCommit && matchingSourceIds.length > 0) {
     return Object.freeze({
       source: "event",
       at: basis.at,
@@ -153,6 +169,7 @@ function reconfirmBasis(
   }
   const firstEventSource = eventSources[0];
   if (
+    !hasUnavailableCommit &&
     firstEventSource != null &&
     eventSources.every((source) => source.at === firstEventSource.at)
   ) {
@@ -168,6 +185,7 @@ function reconfirmBasis(
   return Object.freeze({
     source: "reconfirmed_observation",
     at: observedAt,
+    previousAt: basis.at,
     sourceIds: basis.sourceIds,
   });
 }
@@ -191,6 +209,7 @@ function basisAtOrAfter(
   return Object.freeze({
     source: "reconfirmed_observation",
     at: earlier.at,
+    previousAt: earlier.previousAt,
     sourceIds: earlier.sourceIds,
   });
 }
@@ -236,7 +255,9 @@ export function reconfirmPreviousPersonalReminderClocks(
   if (
     !needsReconfirmation &&
     !previousCauses.some((cause) =>
-      clockBasesForCause(cause).some((basis) => basis.source === "event"),
+      clockBasesForCause(cause).some(
+        (basis) => basis.source === "event" || basis.source === "reconfirmed_observation",
+      ),
     )
   ) {
     return run;
@@ -266,7 +287,9 @@ export function reconfirmPreviousPersonalReminderClocks(
       item.personalReminderCauses.map((cause) => {
         if (
           !personalReminderCauseNeedsClockReconfirmation(cause) &&
-          !clockBasesForCause(cause).some((basis) => basis.source === "event")
+          !clockBasesForCause(cause).some(
+            (basis) => basis.source === "event" || basis.source === "reconfirmed_observation",
+          )
         ) {
           return cause;
         }

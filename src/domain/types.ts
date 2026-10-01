@@ -493,6 +493,7 @@ const pendingPersonalReminderTimeBasisSchema = z.discriminatedUnion("source", [
   z.strictObject({
     source: z.literal("reconfirmed_observation"),
     at: utcIsoDateTimeSchema,
+    previousAt: utcIsoDateTimeSchema,
     sourceIds: z.array(pendingPersonalReminderSourceIdSchema).nonempty().max(30),
   }),
 ]);

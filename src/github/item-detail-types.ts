@@ -376,6 +376,11 @@ export type GitHubItemDetail =
         nativeClosingIssues: readonly GitHubNativeClosingIssue[];
         headSha: string;
         headCommit: GitHubPullRequestCommit;
+        commitMembership: Readonly<{
+          headSha: string;
+          totalCount: number;
+          commits: readonly GitHubPullRequestCommit[];
+        }>;
         mergeState: GitHubPullRequestMergeState;
       }>);
 

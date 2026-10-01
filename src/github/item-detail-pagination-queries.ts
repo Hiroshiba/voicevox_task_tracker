@@ -22,6 +22,48 @@ export const PULL_REQUEST_HEAD_COMMIT_QUERY = appendRequiredFragments(`
   }
 `);
 
+export const PULL_REQUEST_COMMIT_PAGE_QUERY = `
+  query GitHubPullRequestCommitPage($itemId: ID!, $after: String!) {
+    item: node(id: $itemId) {
+      __typename
+      ... on PullRequest {
+        id
+        headRefOid
+        commits(first: 100, after: $after) {
+          totalCount
+          nodes {
+            commit {
+              id
+              oid
+              committedDate
+              pushedDate
+            }
+          }
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+        }
+      }
+    }
+  }
+`;
+
+export const PULL_REQUEST_COMMIT_STABILITY_QUERY = `
+  query GitHubPullRequestCommitStability($itemId: ID!) {
+    item: node(id: $itemId) {
+      __typename
+      ... on PullRequest {
+        id
+        headRefOid
+        commits(first: 1) {
+          totalCount
+        }
+      }
+    }
+  }
+`;
+
 export const COMMENT_PAGE_QUERY = appendRequiredFragments(`
   query GitHubItemCommentPage($itemId: ID!, $after: String!) {
     item: node(id: $itemId) {

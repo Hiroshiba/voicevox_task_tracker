@@ -380,6 +380,9 @@ export function normalizedPersonalReminderResponsibleSignature(
 }
 
 export function personalReminderTimeBasisSignature(basis: PersonalReminderTimeBasis): string {
+  if (basis.source === "reconfirmed_observation") {
+    return JSON.stringify([basis.source, basis.at, basis.previousAt, basis.sourceIds]);
+  }
   if (basis.source !== "first_observation") {
     return JSON.stringify([basis.source, basis.at, basis.sourceIds]);
   }

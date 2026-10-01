@@ -6,6 +6,7 @@ import {
   normalizePullRequestMergeState,
   resolvePullRequestHeadCommit,
 } from "./item-detail-checks.js";
+import { collectPullRequestCommitMembership } from "./item-detail-commits.js";
 import type { CollectGitHubItemDetailsOptions } from "./item-detail-collection-contracts.js";
 import {
   collectCommentNodes,
@@ -86,6 +87,11 @@ async function collectPullRequestDetail(
   options: CollectGitHubItemDetailsOptions,
 ): Promise<GitHubItemDetail> {
   const headCommit = await resolvePullRequestHeadCommit(item.nodeId, pullRequest, options.graphql);
+  const commitMembership = await collectPullRequestCommitMembership(
+    item,
+    pullRequest,
+    options.graphql,
+  );
   const commentNodes = await collectCommentNodes(item, pullRequest.comments, options.graphql);
   const reviewNodes = await collectReviewNodes(item, pullRequest.reviews, options.graphql);
   const reviewThreadNodes = await collectReviewThreadNodes(
@@ -126,6 +132,7 @@ async function collectPullRequestDetail(
     nativeClosingIssues: normalizeNativeClosingIssues(item, closingIssueNodes),
     headSha: pullRequest.headRefOid,
     headCommit: normalizeCommit(item.nodeId, headCommit),
+    commitMembership,
     mergeState: await normalizePullRequestMergeState(pullRequest, headCommit, options.graphql),
     observedAt: options.observedAt,
   });

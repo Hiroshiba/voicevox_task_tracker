@@ -278,7 +278,15 @@ export function personalReminderDetailNodeIdsForCollection(
   );
   for (const previous of previousItemsByNodeId.values()) {
     for (const cause of previous.personalReminderCauses) {
-      if (personalReminderCauseNeedsClockReconfirmation(cause)) {
+      if (
+        personalReminderCauseNeedsClockReconfirmation(cause) ||
+        [
+          cause.obligationSince,
+          ...(cause.actionableClock.status === "observed"
+            ? [cause.actionableClock.actionableSince, cause.actionableClock.stallSince]
+            : []),
+        ].some((basis) => basis.source === "reconfirmed_observation")
+      ) {
         const scope = personalReminderCauseScope(cause, previousRelationsById, [
           "previousSnapshot",
           "items",

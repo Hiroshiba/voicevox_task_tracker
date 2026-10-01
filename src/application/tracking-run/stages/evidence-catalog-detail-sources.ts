@@ -311,6 +311,9 @@ export function addItemDetailSources(catalog: EvidenceCatalog, detail: GitHubIte
     return;
   }
   addPullRequestCommit(catalog, owner, detail.headCommit);
+  for (const commit of detail.commitMembership.commits) {
+    addPullRequestCommit(catalog, owner, commit);
+  }
   for (const review of detail.reviews) {
     assertSourceId(
       review.sourceId,

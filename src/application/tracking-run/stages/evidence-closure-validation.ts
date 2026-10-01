@@ -59,8 +59,19 @@ function assertBasis(
     );
   }
   if (basis.source === "first_observation") return;
+  if (basis.source === "reconfirmed_observation" && basis.previousAt > basis.at) {
+    throw new RunCompletenessError(
+      "source_id_conflict",
+      basis.sourceIds[0] ?? "clock",
+      path,
+      undefined,
+    );
+  }
   for (const [index, sourceId] of basis.sourceIds.entries()) {
     assertTime(sourceId, basis.at, [...path, "sourceIds", index], context);
+    if (basis.source === "reconfirmed_observation") {
+      assertTime(sourceId, basis.previousAt, [...path, "previousAt"], context);
+    }
   }
 }
 

@@ -156,6 +156,13 @@ function sameBasis(left: PersonalReminderTimeBasis, right: PersonalReminderTimeB
   if (left.source === "first_observation" || right.source === "first_observation") {
     return false;
   }
+  if (
+    left.source === "reconfirmed_observation" &&
+    right.source === "reconfirmed_observation" &&
+    left.previousAt !== right.previousAt
+  ) {
+    return false;
+  }
   const leftSourceIds = [...left.sourceIds].sort();
   const rightSourceIds = [...right.sourceIds].sort();
   return (
@@ -218,9 +225,13 @@ function mergeEqualTimeBases(
     throw new TypeError("再確認前の個人催促時計を結合できません");
   }
   if (left.source === "reconfirmed_observation" && right.source === "reconfirmed_observation") {
+    if (left.previousAt !== right.previousAt) {
+      return left.previousAt > right.previousAt ? left : right;
+    }
     return {
       source: "reconfirmed_observation",
       at: left.at,
+      previousAt: left.previousAt,
       sourceIds: [...new Set([...left.sourceIds, ...right.sourceIds])].sort(),
     };
   }

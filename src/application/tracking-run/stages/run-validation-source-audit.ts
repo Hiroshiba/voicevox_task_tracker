@@ -29,6 +29,8 @@ function walkSourcePaths(
       if (!Array.isArray(entry)) {
         throw new RunCompletenessError("invalid_reference", key, fieldPath, undefined);
       }
+      const auditOnly =
+        key === "sourceIds" && "source" in value && value.source === "reconfirmed_observation";
       for (const [index, sourceId] of entry.entries()) {
         if (typeof sourceId !== "string") {
           throw new RunCompletenessError(
@@ -38,7 +40,7 @@ function walkSourcePaths(
             undefined,
           );
         }
-        paths.push({ sourceId, path: [...fieldPath, index] });
+        if (!auditOnly) paths.push({ sourceId, path: [...fieldPath, index] });
       }
     } else if (/sourceids?$/iu.test(key)) {
       throw new RunCompletenessError("invalid_reference", key, fieldPath, undefined);

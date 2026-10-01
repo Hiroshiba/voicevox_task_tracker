@@ -370,6 +370,11 @@ const headCommitConnectionSchema = z.object({
     )
     .max(1),
 });
+export const pullRequestCommitConnectionSchema = z.object({
+  totalCount: z.number().int().nonnegative(),
+  nodes: z.array(z.object({ commit: commitSchema })).max(CONNECTION_PAGE_SIZE),
+  pageInfo: pageInfoSchema,
+});
 export const baseIssueSchema = z
   .object({
     __typename: z.literal("Issue"),
@@ -408,6 +413,7 @@ export const basePullRequestSchema = z.object({
   reviewThreads: reviewThreadConnectionSchema,
   reviewRequests: reviewRequestConnectionSchema,
   headCommit: headCommitConnectionSchema,
+  commits: pullRequestCommitConnectionSchema,
   timelineItems: timelineConnectionSchema,
 });
 export const baseItemDetailResponseSchema = z.object({
@@ -421,6 +427,26 @@ export const pullRequestHeadCommitResponseSchema = z.object({
       repository: z.object({
         object: headCommitSchema.nullable(),
       }),
+    })
+    .nullable(),
+});
+export const pullRequestCommitPageResponseSchema = z.object({
+  item: z
+    .object({
+      __typename: z.literal("PullRequest"),
+      id: opaqueIdSchema,
+      headRefOid: shaSchema,
+      commits: pullRequestCommitConnectionSchema,
+    })
+    .nullable(),
+});
+export const pullRequestCommitStabilityResponseSchema = z.object({
+  item: z
+    .object({
+      __typename: z.literal("PullRequest"),
+      id: opaqueIdSchema,
+      headRefOid: shaSchema,
+      commits: z.object({ totalCount: z.number().int().nonnegative() }),
     })
     .nullable(),
 });

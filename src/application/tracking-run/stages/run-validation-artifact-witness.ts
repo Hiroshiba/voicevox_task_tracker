@@ -358,6 +358,8 @@ function walkReferences(
         Object.freeze({ sourceId: canonicalSourceId(entry), path: [...path, key], owner }),
       );
     } else if ((key === "sourceIds" || key === "evidenceSourceIds") && Array.isArray(entry)) {
+      const auditOnly =
+        key === "sourceIds" && "source" in value && value.source === "reconfirmed_observation";
       for (const [index, sourceId] of entry.entries()) {
         if (typeof sourceId !== "string") {
           throw new RunCompletenessError(
@@ -366,6 +368,10 @@ function walkReferences(
             [...path, key, index],
             undefined,
           );
+        }
+        if (auditOnly) {
+          canonicalSourceId(sourceId);
+          continue;
         }
         references.push(
           Object.freeze({

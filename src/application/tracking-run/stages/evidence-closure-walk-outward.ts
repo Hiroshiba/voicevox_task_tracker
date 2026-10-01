@@ -16,7 +16,7 @@ import {
   walkTrackedItemAiAnalysis,
 } from "./evidence-closure-walk-ai.js";
 import { collectEvidenceUses, type EvidenceUseSink } from "./evidence-closure-walk-common.js";
-import { personalReminderCauseSourceIds } from "./personal-reminder-cause-references.js";
+import { personalReminderCauseEvidenceSourceIds } from "./personal-reminder-cause-references.js";
 import { personalReminderCauseScope, relatedScope } from "./personal-reminder-related-scope.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 
@@ -49,13 +49,13 @@ function walkBasis(
   ownerNodeIds: readonly string[],
   relationIds: readonly string[],
 ): void {
-  if (basis.source === "first_observation") return;
+  if (basis.source !== "event") return;
   for (const [index, sourceId] of basis.sourceIds.entries()) {
     emit(
       sourceId,
       [...path, "sourceIds", index],
       destination,
-      basis.source === "event" ? "personal_reminder_event_basis" : "personal_reminder_cause",
+      "personal_reminder_event_basis",
       "historical_allowed",
       ownerNodeIds,
       relationIds,
@@ -108,7 +108,7 @@ function itemEvidenceScope(
       result.cause.adoptedAssessment.status === "available"
         ? result.cause.adoptedAssessment.result.references
         : undefined;
-    if (personalReminderCauseSourceIds(result.cause).includes(sourceId)) {
+    if (personalReminderCauseEvidenceSourceIds(result.cause).includes(sourceId)) {
       for (const nodeId of causeOwnerNodeIds(result.cause)) ownerNodeIds.add(nodeId);
       for (const relationId of references?.relationIds ?? []) relationIds.add(relationId);
     }

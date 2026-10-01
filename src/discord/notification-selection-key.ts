@@ -192,7 +192,7 @@ function personalReminderNotificationState(
     context.stallSince,
   ].flatMap((basis, index) =>
     basis.source === "reconfirmed_observation"
-      ? [[index, basis.source, basis.at, [...basis.sourceIds].sort()]]
+      ? [[index, basis.source, basis.at, basis.previousAt, [...basis.sourceIds].sort()]]
       : [],
   );
   return JSON.stringify([

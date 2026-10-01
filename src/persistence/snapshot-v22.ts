@@ -2,19 +2,18 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 
 import snapshotSchema from "../../schemas/snapshot-v22.schema.json" with { type: "json" };
-import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../canonical-json/index.js";
+import { serializeCanonicalJsonLine } from "../canonical-json/index.js";
 import type {
   PersonalReminderCause,
   PersonalReminderTimeBasis,
 } from "../domain/personal-reminder-causes.js";
-import type { SourceId } from "../domain/source-id.js";
+import { parseSourceId, type SourceId } from "../domain/source-id.js";
 import type { Evidence, GraphNodeId, TrackedItemState } from "../domain/types.js";
 import {
   StateFormatError,
   StateSnapshotSchemaError,
   StateSnapshotSemanticError,
 } from "./errors.js";
-import { createPersonalReminderEvidenceSourceIndex } from "./snapshot-evidence-closure.js";
 import {
   assertPersonalReminderEvidenceClosure as assertVersion21EvidenceClosure,
   assertPersonalReminderEvidenceRecordsClosure as assertVersion21EvidenceRecordsClosure,
@@ -103,12 +102,9 @@ function assertNoPendingClock(snapshot: StateSnapshot): void {
   }
 }
 
-function assertReconfirmedEvidence(
-  snapshot: StateSnapshot,
-  expectedEvidenceBySourceId: ReadonlyMap<SourceId, readonly Evidence[]>,
-): void {
+function assertReconfirmedProvenance(snapshot: StateSnapshot): void {
+  const relationsById = new Map(snapshot.relations.map((relation) => [relation.id, relation]));
   for (const item of snapshot.items) {
-    const itemEvidence = new Set(item.evidence.map(serializeCanonicalJson));
     for (const cause of item.personalReminderCauses) {
       const bases = [
         cause.obligationSince,
@@ -118,14 +114,46 @@ function assertReconfirmedEvidence(
       ];
       for (const basis of bases) {
         if (basis.source !== "reconfirmed_observation") continue;
-        for (const sourceId of basis.sourceIds) {
-          const expected = expectedEvidenceBySourceId.get(sourceId) ?? [];
+        if (
+          basis.previousAt < item.createdAt ||
+          basis.previousAt > basis.at ||
+          new Set(basis.sourceIds).size !== basis.sourceIds.length
+        ) {
+          throw new StateSnapshotSemanticError(
+            `再確認した個人催促時計の監査値が不正です。item: ${item.nodeId} cause: ${cause.causeId}`,
+          );
+        }
+        const ownerNodeIds = new Set<string>([
+          item.nodeId,
+          ...(cause.responsibility.scope.kind === "item"
+            ? []
+            : cause.responsibility.scope.surfaces.map((surface) => surface.nodeId)),
+        ]);
+        const relationIds =
+          cause.adoptedAssessment.status === "available"
+            ? cause.adoptedAssessment.result.references.relationIds
+            : [];
+        for (const relationId of relationIds) {
+          const relation = relationsById.get(relationId);
           if (
-            expected.length === 0 ||
-            expected.some((evidence) => !itemEvidence.has(serializeCanonicalJson(evidence)))
+            relation == null ||
+            (relation.fromNodeId !== item.nodeId && relation.toNodeId !== item.nodeId)
           ) {
             throw new StateSnapshotSemanticError(
-              `再確認した個人催促時計のEvidenceがありません。item: ${item.nodeId} cause: ${cause.causeId} source: ${sourceId}`,
+              `再確認した個人催促時計の関連項目が不正です。item: ${item.nodeId} cause: ${cause.causeId} relation: ${relationId}`,
+            );
+          }
+          ownerNodeIds.add(relation.fromNodeId);
+          ownerNodeIds.add(relation.toNodeId);
+        }
+        for (const sourceId of basis.sourceIds) {
+          const source = parseSourceId(sourceId);
+          if (
+            source.kind === "github_pull_request_commit" &&
+            ![...ownerNodeIds].some((nodeId) => source.originalId.startsWith(`${nodeId}:`))
+          ) {
+            throw new StateSnapshotSemanticError(
+              `再確認した個人催促時計の所有項目が不正です。item: ${item.nodeId} cause: ${cause.causeId} source: ${sourceId}`,
             );
           }
         }
@@ -155,6 +183,7 @@ export function createStateSnapshot(value: unknown): StateSnapshot {
       }),
     ),
   } satisfies StateSnapshot);
+  assertReconfirmedProvenance(snapshot);
   return snapshot;
 }
 
@@ -197,13 +226,7 @@ export function snapshotEffectiveGraphStateByNodeId(
 export function assertPersonalReminderEvidenceClosure(snapshot: StateSnapshot): void {
   assertNoPendingClock(snapshot);
   assertVersion21EvidenceClosure(createVersion21Snapshot(version21Projection(snapshot)));
-  assertReconfirmedEvidence(
-    snapshot,
-    createPersonalReminderEvidenceSourceIndex([
-      ...snapshot.items.map((item) => item.evidence),
-      ...snapshot.relations.map((relation) => relation.evidence),
-    ]),
-  );
+  assertReconfirmedProvenance(snapshot);
 }
 
 /** personal reminderのEvidence recordを現行snapshot内で照合する。 */
@@ -216,5 +239,5 @@ export function assertPersonalReminderEvidenceRecordsClosure(
     createVersion21Snapshot(version21Projection(snapshot)),
     expectedEvidenceBySourceId,
   );
-  assertReconfirmedEvidence(snapshot, expectedEvidenceBySourceId);
+  assertReconfirmedProvenance(snapshot);
 }

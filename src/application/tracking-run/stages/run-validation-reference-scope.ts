@@ -79,11 +79,13 @@ function causeExecutionSurfaceNodeIds(cause: unknown, path: Path): readonly stri
 
 function causeClockReferencesSource(cause: unknown, sourceId: string): boolean {
   return [
-    ["obligationSince", "sourceIds"],
-    ["actionableClock", "actionableSince", "sourceIds"],
-    ["actionableClock", "stallSince", "sourceIds"],
+    ["obligationSince"],
+    ["actionableClock", "actionableSince"],
+    ["actionableClock", "stallSince"],
   ].some((path) => {
-    const sourceIds = valueAtPath(cause, path);
+    const basis = valueAtPath(cause, path);
+    if (!isRecord(basis) || basis["source"] !== "event") return false;
+    const sourceIds = basis["sourceIds"];
     return Array.isArray(sourceIds) && sourceIds.includes(sourceId);
   });
 }

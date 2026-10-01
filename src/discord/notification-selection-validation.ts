@@ -306,6 +306,9 @@ function validatePersonalReminderTimeBasis(
   if (basis.source !== "first_observation" && basis.sourceIds.length === 0) {
     throw new TypeError(`${context}のsource IDは空にできません`);
   }
+  if (basis.source === "reconfirmed_observation" && basis.previousAt > basis.at) {
+    throw new RangeError(`${context}の旧時計時刻は再確認時刻以前にしてください`);
+  }
 }
 
 export function samePersonalReminderTimeBasis(
@@ -317,6 +320,13 @@ export function samePersonalReminderTimeBasis(
   }
   if (left.source === "first_observation" || right.source === "first_observation") {
     return left.source === right.source;
+  }
+  if (
+    left.source === "reconfirmed_observation" &&
+    right.source === "reconfirmed_observation" &&
+    left.previousAt !== right.previousAt
+  ) {
+    return false;
   }
   const leftSourceIds = [...left.sourceIds].sort();
   const rightSourceIds = [...right.sourceIds].sort();
