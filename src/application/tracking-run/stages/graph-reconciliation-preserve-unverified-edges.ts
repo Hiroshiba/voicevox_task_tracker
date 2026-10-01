@@ -253,7 +253,7 @@ export function preserveUnverifiedGraphEdges(
   return Object.freeze({
     edges: Object.freeze(result),
     relationCandidateAiDependencies: new Map(
-      normalizedCandidateDecisionProofs.map((proof) => [proof.candidateId, proof.dependency]),
+      candidateDecisionProofs.map((proof) => [proof.candidateId, proof.dependency]),
     ),
     candidateResolutions: Object.freeze(
       normalizedCandidateDecisionProofs.map((proof) => proof.resolution),

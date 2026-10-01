@@ -1,5 +1,8 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
-import type { AiAnalysisDependency } from "../../../domain/ai-analysis-dependencies.js";
+import {
+  aiAnalysisDependencyForRelation,
+  type AiAnalysisDependency,
+} from "../../../domain/ai-analysis-dependencies.js";
 import type {
   GitHubNodeId,
   GraphNodeId,
@@ -12,12 +15,14 @@ import type {
   RelationCandidateDecisionProof,
   RelationCandidateId,
   RelationCandidateResolution,
+  ReconciledGraphEdge,
 } from "../../../graph/index.js";
 import {
   relationAssessmentOwnerNodeId,
   relationNodes,
 } from "../../../graph/relation-candidate-endpoints.js";
 import { assertNonNullable } from "../../../util/index.js";
+import { relationAiDependenciesForCandidates } from "./graph-reconciliation-candidate-dependencies.js";
 import type {
   GraphFinalItem,
   GraphWorkingCollection,
@@ -80,6 +85,8 @@ function finalCandidateRelation(
   dependency: AiAnalysisDependency,
   proof: RelationCandidateDecisionProof,
   resolution: RelationCandidateResolution,
+  missingAssessmentDependency: AiAnalysisDependency,
+  edge: ReconciledGraphEdge | undefined,
 ): GraphCandidateRelationContext {
   const [firstNode, secondNode] = relationNodes(candidate.relation);
   if (firstNode.nodeId === secondNode.nodeId) {
@@ -101,11 +108,30 @@ function finalCandidateRelation(
       `個人催促relation候補のproof endpointが一致しません。対象: ${candidate.id}`,
     );
   }
-  if (
-    serializeCanonicalJson(proof.resolution) !== serializeCanonicalJson(resolution) ||
-    serializeCanonicalJson(proof.dependency) !== serializeCanonicalJson(dependency)
-  ) {
+  if (serializeCanonicalJson(proof.resolution) !== serializeCanonicalJson(resolution)) {
     throw new TypeError(`個人催促relation候補の最終判定が一致しません。対象: ${candidate.id}`);
+  }
+  if (serializeCanonicalJson(proof.dependency) !== serializeCanonicalJson(dependency)) {
+    if (
+      candidate.authority !== "inferred" ||
+      resolution.status !== "active" ||
+      proof.dependency.status !== "unknown" ||
+      !proof.dependency.reasons.every(
+        (reason) => reason === "proof_unknown" || reason === "migration",
+      ) ||
+      proof.canonicalRelation == null ||
+      serializeCanonicalJson(dependency) !== serializeCanonicalJson(missingAssessmentDependency) ||
+      (edge != null &&
+        (!edge.active ||
+          edge.provenance === "native" ||
+          edge.type !== proof.canonicalRelation.type ||
+          edge.fromNodeId !== proof.canonicalRelation.fromNodeId ||
+          edge.toNodeId !== proof.canonicalRelation.toNodeId ||
+          serializeCanonicalJson(edge.aiDependency) !==
+            serializeCanonicalJson(aiAnalysisDependencyForRelation(edge.id, proof.dependency))))
+    ) {
+      throw new TypeError(`個人催促relation候補の最終判定が一致しません。対象: ${candidate.id}`);
+    }
   }
   const sortedEndpointNodeIds = [firstNode.nodeId, secondNode.nodeId].sort((left, right) =>
     left.localeCompare(right),
@@ -149,10 +175,17 @@ function finalCandidateRelation(
 
 function finalCandidateRelations(
   candidates: readonly RelationCandidate[],
+  finalItems: readonly GraphFinalItem[],
   graph: GraphWorkingResult,
 ): readonly GraphCandidateRelationContext[] {
   const dependencies = graph.relationCandidateAiDependencies;
   const proofs = new Map(graph.candidateDecisionProofs.map((proof) => [proof.candidateId, proof]));
+  const edges = new Map(graph.edges.map((edge) => [edge.id, edge]));
+  const missingAssessmentDependencies = relationAiDependenciesForCandidates(
+    candidates,
+    finalItems,
+    [],
+  );
   const resolutions = new Map(
     graph.candidateResolutions.map((value) => [value.candidateId, value]),
   );
@@ -173,6 +206,7 @@ function finalCandidateRelations(
         const proof = proofs.get(candidate.id);
         const resolution = resolutions.get(candidate.id);
         const dependency = dependencies.get(candidate.id);
+        const missingAssessmentDependency = missingAssessmentDependencies.get(candidate.id);
         assertNonNullable(proof, `個人催促relation候補のproofがありません。対象: ${candidate.id}`);
         assertNonNullable(
           resolution,
@@ -182,7 +216,18 @@ function finalCandidateRelations(
           dependency,
           `個人催促relation候補のAI依存がありません。対象: ${candidate.id}`,
         );
-        return finalCandidateRelation(candidate, dependency, proof, resolution);
+        assertNonNullable(
+          missingAssessmentDependency,
+          `個人催促relation候補の判定担当AI依存がありません。対象: ${candidate.id}`,
+        );
+        return finalCandidateRelation(
+          candidate,
+          dependency,
+          proof,
+          resolution,
+          missingAssessmentDependency,
+          edges.get(candidate.id),
+        );
       })
       .sort((left, right) => left.candidateId.localeCompare(right.candidateId)),
   );
@@ -266,7 +311,11 @@ export function createGraphFinalContext(
   finalItems: readonly GraphFinalItem[],
   graph: GraphWorkingResult,
 ): GraphFinalContext {
-  const candidateRelations = finalCandidateRelations(collection.relationCandidates, graph);
+  const candidateRelations = finalCandidateRelations(
+    collection.relationCandidates,
+    finalItems,
+    graph,
+  );
   return Object.freeze({
     candidateRelations,
     endpointStates: sortedEntries(
