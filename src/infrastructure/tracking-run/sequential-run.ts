@@ -555,7 +555,10 @@ export class SequentialRunRunner {
     try {
       const input = analysis.value;
       stage = "artifact";
-      await this.#dependencies.writeCollectAnalyzeArtifact(request.output.path, input);
+      await this.#dependencies.writeCollectAnalyzeArtifact(request.output.path, {
+        ...input,
+        completedStages: analysis.completedStages,
+      });
       effects.artifactWritten = true;
       const report = completedReport(
         invocation,

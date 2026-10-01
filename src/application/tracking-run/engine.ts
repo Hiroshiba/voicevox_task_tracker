@@ -1,4 +1,8 @@
-import { trackingRunStageNames, type TrackingRunStageName } from "./contracts/closed-values.js";
+import {
+  trackingRunStageNames,
+  type AnalysisRunStageName,
+  type TrackingRunStageName,
+} from "./contracts/closed-values.js";
 import type { CompletedRun } from "./complete-run.js";
 import type { FailedRun } from "./failure-artifact.js";
 import type { BaseStateRevision } from "./contracts/run-core.js";
@@ -131,17 +135,24 @@ export async function runTrackingAnalysis<Stages extends TrackingRunStageValues,
   stages: NewRunStagePorts<Stages, Checkpoint>,
   boundary: TrackingRunFailurePort,
 ): Promise<
-  | Readonly<{ kind: "planned"; value: Stages["publication_planned"] }>
+  | Readonly<{
+      kind: "planned";
+      value: Stages["publication_planned"];
+      completedStages: readonly AnalysisRunStageName[];
+    }>
   | Readonly<{ kind: "failed"; failure: FailedRun }>
 > {
   let failedStage: FailedRun["failedStage"] = "prepare";
+  const completedStages: AnalysisRunStageName[] = [];
   const step = async <Value>(
-    stage: FailedRun["failedStage"],
+    stage: AnalysisRunStageName,
     action: () => Promise<Value>,
   ): Promise<Value> => {
     failedStage = stage;
     await boundary.beforeStage(stage);
-    return action();
+    const value = await action();
+    completedStages.push(stage);
+    return value;
   };
   try {
     const prepared = await step("prepared", () => stages.prepare());
@@ -165,7 +176,11 @@ export async function runTrackingAnalysis<Stages extends TrackingRunStageValues,
     );
     const validated = await step("validated", () => stages.validated(reminderFinalized));
     const planned = await step("publication_planned", () => stages.publicationPlanned(validated));
-    return Object.freeze({ kind: "planned", value: planned });
+    return Object.freeze({
+      kind: "planned",
+      value: planned,
+      completedStages: Object.freeze(completedStages),
+    });
   } catch (error: unknown) {
     return Object.freeze({ kind: "failed", failure: await boundary.fail(failedStage, error) });
   }

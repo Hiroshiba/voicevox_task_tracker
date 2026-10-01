@@ -3,6 +3,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 import process from "node:process";
 
 import { z } from "zod";
+import {
+  assertCompleteSandboxStageCoverage,
+  createSandboxStageCoverage,
+} from "../../dist/infrastructure/tracking-run/sandbox-stage-coverage.js";
 import { readVerifiedFirstResult, resultSchema, sha256 } from "./sandbox-continuity-result.mjs";
 
 const revision = z.string().regex(/^[0-9a-f]{40}$/u);
@@ -144,6 +148,12 @@ function createCoverage() {
     checkpointFileDigest,
     "durable record checkpoint file digest",
   );
+  if (
+    record.runtimeRecoveryPlan.kind !== "workflow_bundle" ||
+    record.runtimeRecoveryPlan.workflowRunId !== required("SANDBOX_ANALYSIS_SOURCE_RUN_ID")
+  ) {
+    throw new TypeError("解析段階記録の元Actions runが一致しません");
+  }
   assertEqual(marker.runId, trackingRunId, "marker run ID");
   assertEqual(marker.checkpointDigest, checkpointDigest, "marker checkpoint digest");
   assertEqual(marker.publicationRecordDigest, record.recordDigest, "marker record digest");
@@ -207,6 +217,7 @@ function createCoverage() {
       throw new TypeError("first runにrecorded sentと通知履歴Pagesがありません");
     }
   } else {
+    assertCompleteSandboxStageCoverage(firstCoverage);
     assertEqual(baseStateRevision, first.finalStateRevision, "second baseとfirst final revision");
     if (
       trackingRunId === first.trackingRunId ||
@@ -230,20 +241,17 @@ function createCoverage() {
   ) {
     throw new TypeError("sandbox Pagesと通知の記録結果が不正です");
   }
-  const stageNames = [
-    "bootstrap",
-    "prepare",
-    "checkpoint",
-    "initial_state",
-    "initial_pages",
-    "notification",
-    "settlement",
-    "finalization",
-    "history_pages",
-    "complete",
-  ];
+  const stages = createSandboxStageCoverage({
+    analysisRecord: readJson(required("SANDBOX_STAGE_RECORD_PATH")),
+    receiptEntries: chain.entries,
+    runId: trackingRunId,
+    invocationId: checkpoint.payload.runIdentity.invocationId,
+    checkpointDigest,
+    checkpointFileDigest,
+  });
+  assertCompleteSandboxStageCoverage(stages);
   const coverage = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     scenarioId: "continuity",
     continuityPhase,
     run: {
@@ -256,8 +264,12 @@ function createCoverage() {
       baseStateRevision,
       finalStateRevision,
     },
-    stages: stageNames.map((stage) => ({ stage, executed: true })),
-    unexecutedStages: [],
+    ...stages,
+    stageLineage: {
+      analysisSourceActionsRunId: required("SANDBOX_ANALYSIS_SOURCE_RUN_ID"),
+      analysisStageRecordDigest: stages.analysisStageRecordDigest,
+      finalReceiptChainDigest: sha256(chainBytes),
+    },
     checkpoint: { checkpointDigest, checkpointFileDigest, sidecarByteLength: sidecar.byteLength },
     state: {
       verification: stateVerification,

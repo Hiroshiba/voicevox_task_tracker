@@ -5,6 +5,11 @@ import process from "node:process";
 import { z } from "zod";
 
 import { sandboxPendingNotificationSchema } from "../../dist/publication/sandbox-pending-evidence-schema.js";
+import {
+  assertCompleteSandboxStageCoverage,
+  assertPendingSandboxStageCoverage,
+  createSandboxStageCoverage,
+} from "../../dist/infrastructure/tracking-run/sandbox-stage-coverage.js";
 import { sha256 } from "./sandbox-continuity-result.mjs";
 import {
   countApplications,
@@ -35,19 +40,6 @@ const completedProofSchema = z.strictObject({
   pendingAncestorOfFinal: z.literal(true),
   newRunStarted: z.literal(false),
 });
-const stages = [
-  "bootstrap",
-  "prepare",
-  "checkpoint",
-  "initial_state",
-  "initial_pages",
-  "notification",
-  "settlement",
-  "finalization",
-  "history_pages",
-  "complete",
-];
-
 function required(name) {
   const value = process.env[name];
   if (value == null || value === "") {
@@ -126,6 +118,40 @@ function main() {
     phase === "resolution"
       ? completedProofSchema.parse(readJson(required("SANDBOX_COMPLETED_PROOF_PATH")))
       : null;
+  const stageCoverage = createSandboxStageCoverage({
+    analysisRecord: readJson(required("SANDBOX_STAGE_RECORD_PATH")),
+    receiptEntries: chain.entries,
+    runId: trackingRunId,
+    invocationId: checkpoint.payload.runIdentity.invocationId,
+    checkpointDigest: checkpoint.checkpointDigest,
+    checkpointFileDigest: sidecar.checkpointFileDigest,
+  });
+  assertCompleteSandboxStageCoverage(stageCoverage);
+  const analysisSourceActionsRunId = required("SANDBOX_ANALYSIS_SOURCE_RUN_ID");
+  if (
+    record.runtimeRecoveryPlan.kind !== "workflow_bundle" ||
+    record.runtimeRecoveryPlan.workflowRunId !== analysisSourceActionsRunId
+  ) {
+    throw new TypeError("解析段階記録の元Actions runが一致しません");
+  }
+  if (pending != null) {
+    assertPendingSandboxStageCoverage(pending);
+    same(
+      pending.analysisStageRecordDigest,
+      stageCoverage.analysisStageRecordDigest,
+      "再開前の解析段階記録",
+    );
+    same(pending.actionsRunId, analysisSourceActionsRunId, "再開前の解析元Actions run");
+    const initialPagesReceipt = receipts.find(
+      (receipt) => receipt.receiptType === "pages_deployment" && receipt.phase === "initial",
+    );
+    if (
+      initialPagesReceipt?.receiptDigest !== pending.initialPagesReceiptDigest &&
+      initialPagesReceipt?.result?.observedSourceReceiptDigest !== pending.initialPagesReceiptDigest
+    ) {
+      throw new TypeError("再開後の初回Pages receiptが停止時のreceiptに結合していません");
+    }
+  }
   if (
     verification.includes("snapshot:") === false ||
     verification.includes("notification ledger:") === false ||
@@ -224,7 +250,7 @@ function main() {
   const personal = countPersonal(snapshot.items);
   const metrics = checkpoint.payload.validatedPayload.runMetadata.metrics;
   const coverage = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     scenarioId,
     notificationPhase: phase,
     run: {
@@ -238,8 +264,13 @@ function main() {
       originalBaseStateRevision: revision.parse(record.baseStateRevision.revision),
       finalStateRevision,
     },
-    stages: stages.map((stage) => ({ stage, executed: true })),
-    unexecutedStages: [],
+    ...stageCoverage,
+    stageLineage: {
+      analysisSourceActionsRunId,
+      analysisStageRecordDigest: stageCoverage.analysisStageRecordDigest,
+      finalReceiptChainDigest: sha256(chainBytes),
+      pendingReceiptChainDigest: pending?.initialReceiptChainDigest ?? null,
+    },
     checkpoint: {
       checkpointDigest: digest.parse(storedCheckpointDigest),
       checkpointFileDigest: digest.parse(sidecar.checkpointFileDigest),

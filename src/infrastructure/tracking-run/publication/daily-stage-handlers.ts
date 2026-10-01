@@ -1,4 +1,4 @@
-import { basename, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import type { SequentialPublicationInput } from "../sequential-publication-input.js";
 import type { PersistedRun } from "./contracts.js";
 
@@ -27,6 +27,7 @@ import {
   writeWorkflowRuntimeManifest,
 } from "../publication-runtime.js";
 import { sequentialPagesArtifactPath } from "../sequential-pages-artifact-path.js";
+import { createAnalysisStageRecord } from "../analysis-stage-record.js";
 import { createCollectAnalyzePayload } from "./artifact.js";
 import type { DailyPublicationStageHandlers, RunPublicationAdapters } from "./contracts.js";
 import { buildPublicPages } from "./pages.js";
@@ -292,7 +293,7 @@ export async function deployDailyPages(
 /** 日次runの解析結果からworkflow artifactを書き出す。 */
 export async function writeDailyCollectAnalyzeArtifact(
   dependencies: Readonly<{
-    adapters: Pick<RunPublicationAdapters, "repositoryPath" | "environment">;
+    adapters: Pick<RunPublicationAdapters, "repositoryPath" | "environment" | "writeJsonArtifact">;
   }>,
   path: string,
   stageInput: Parameters<DailyPublicationStageHandlers["writeCollectAnalyzeArtifact"]>[1],
@@ -320,4 +321,15 @@ export async function writeDailyCollectAnalyzeArtifact(
     nodeContentDigestPort,
   );
   await writePublicationCheckpointFile(outputPath, encoded);
+  await dependencies.adapters.writeJsonArtifact(
+    join(dirname(outputPath), "analysis-stage-record.json"),
+    createAnalysisStageRecord({
+      schemaVersion: 1,
+      runId: stageInput.invocation.runId,
+      invocationId: stageInput.invocation.invocationId,
+      checkpointDigest: encoded.decoded.checkpointDigest,
+      checkpointFileDigest: encoded.decoded.checkpointFileDigest,
+      completedStages: [...stageInput.completedStages],
+    }),
+  );
 }

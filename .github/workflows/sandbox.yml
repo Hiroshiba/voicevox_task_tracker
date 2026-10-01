@@ -169,6 +169,9 @@ jobs:
           SANDBOX_ENVIRONMENT_ID: ${{ inputs.environment_id }}
           SANDBOX_RESET_SOURCE: ${{ inputs.reset_source }}
         run: node .github/scripts/parse-sandbox-recording-control.mjs
+      - name: continuity firstの段階記録検証を準備
+        if: steps.recording_control.outputs.continuity_phase == 'second'
+        run: pnpm build
       - name: continuity firstの結果を取得
         if: steps.recording_control.outputs.continuity_phase == 'second'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -417,6 +420,7 @@ jobs:
           SANDBOX_RECORDING_OUTCOME: ${{ needs.prepare.outputs.recording_outcome }}
           SANDBOX_CHECKPOINT_PATH: ${{ runner.temp }}/checkpoint/validated-run.json
           SANDBOX_SIDECAR_PATH: ${{ runner.temp }}/checkpoint/validated-run.json.sidecar.json
+          SANDBOX_STAGE_RECORD_PATH: ${{ runner.temp }}/checkpoint/analysis-stage-record.json
           SANDBOX_INITIAL_RECEIPT_CHAIN_ROOT: ${{ runner.temp }}/initial-pages
           SANDBOX_PENDING_OUTPUT_PATH: ${{ runner.temp }}/sandbox-pending.json
         run: node dist/cli/sandbox-notification-evidence.js pending
@@ -479,12 +483,20 @@ jobs:
           SANDBOX_ENVIRONMENT_ID: ${{ needs.prepare.outputs.environment_id }}
           SANDBOX_EXPECTED_REVISION: ${{ needs.tracking.outputs.final_state_revision }}
         run: .github/scripts/sandbox-lifecycle.sh finalize
-      - name: continuityのcheckpointとsidecarを取得
-        if: needs.prepare.outputs.continuity_phase != 'none' || needs.prepare.outputs.notification_phase != 'none'
+      - name: 今回のcheckpointと解析段階記録を取得
+        if: needs.prepare.outputs.continuity_phase != 'none' || needs.prepare.outputs.notification_phase == 'first'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: tracking-checkpoint-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/checkpoint
+      - name: 再開元のcheckpointと解析段階記録を取得
+        if: needs.prepare.outputs.notification_phase == 'resolution'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tracking-checkpoint-${{ needs.prepare.outputs.notification_source_run_id }}-${{ needs.prepare.outputs.notification_source_run_attempt }}
+          path: ${{ runner.temp }}/checkpoint
+          run-id: ${{ needs.prepare.outputs.notification_source_run_id }}
+          github-token: ${{ github.token }}
       - name: continuityの完了receiptを取得
         if: needs.prepare.outputs.continuity_phase != 'none' || needs.prepare.outputs.notification_phase != 'none'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -552,6 +564,8 @@ jobs:
           SANDBOX_CONTEXT_PATH: ${{ runner.temp }}/context/sandbox-context.json
           SANDBOX_CHECKPOINT_PATH: ${{ runner.temp }}/checkpoint/validated-run.json
           SANDBOX_SIDECAR_PATH: ${{ runner.temp }}/checkpoint/validated-run.json.sidecar.json
+          SANDBOX_STAGE_RECORD_PATH: ${{ runner.temp }}/checkpoint/analysis-stage-record.json
+          SANDBOX_ANALYSIS_SOURCE_RUN_ID: ${{ github.run_id }}
           SANDBOX_FINAL_REVISION: ${{ steps.final_state.outputs.state_revision }}
           SANDBOX_STATE_BRANCH: ${{ needs.prepare.outputs.state_branch }}
           SANDBOX_CONTINUITY_PHASE: ${{ needs.prepare.outputs.continuity_phase }}
@@ -586,6 +600,8 @@ jobs:
           SANDBOX_CONTROL_PATH: ${{ runner.temp }}/context/sandbox-control.json
           SANDBOX_CHECKPOINT_PATH: ${{ runner.temp }}/checkpoint/validated-run.json
           SANDBOX_SIDECAR_PATH: ${{ runner.temp }}/checkpoint/validated-run.json.sidecar.json
+          SANDBOX_STAGE_RECORD_PATH: ${{ runner.temp }}/checkpoint/analysis-stage-record.json
+          SANDBOX_ANALYSIS_SOURCE_RUN_ID: ${{ needs.prepare.outputs.notification_phase == 'resolution' && needs.prepare.outputs.notification_source_run_id || github.run_id }}
           SANDBOX_BASE_REVISION: ${{ needs.prepare.outputs.base_state_revision }}
           SANDBOX_FINAL_REVISION: ${{ steps.final_state.outputs.state_revision }}
           SANDBOX_STATE_BRANCH: ${{ needs.prepare.outputs.state_branch }}

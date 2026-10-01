@@ -13,7 +13,10 @@ import type { ProductionRuntimeAdapters } from "../adapters.js";
 
 type SequentialStageDependencies = SequentialRunDependencies;
 type JsonArtifactRuntimeAdapters = Pick<ProductionRuntimeAdapters, "writeJsonArtifact">;
-type CheckpointRuntimeAdapters = Pick<ProductionRuntimeAdapters, "repositoryPath" | "environment">;
+type CheckpointRuntimeAdapters = Pick<
+  ProductionRuntimeAdapters,
+  "repositoryPath" | "environment" | "writeJsonArtifact"
+>;
 type ReportRuntimeAdapters = Pick<ProductionRuntimeAdapters, "writeTextFile">;
 
 /** dry-runのartifact書込みを既存adapterへ接続する。 */

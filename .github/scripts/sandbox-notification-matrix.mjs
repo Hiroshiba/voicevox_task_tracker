@@ -1,8 +1,14 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 
 import { z } from "zod";
+import {
+  assertCompleteSandboxStageCoverage,
+  assertPendingSandboxStageCoverage,
+  assertSandboxStageReceiptLineage,
+} from "../../dist/infrastructure/tracking-run/sandbox-stage-coverage.js";
 
 import { sha256 } from "./sandbox-continuity-result.mjs";
 
@@ -12,18 +18,6 @@ const scenarioIds = [
   "acknowledge-current",
   "ambiguous-retry",
   "ambiguous-acknowledge",
-];
-const stageNames = [
-  "bootstrap",
-  "prepare",
-  "checkpoint",
-  "initial_state",
-  "initial_pages",
-  "notification",
-  "settlement",
-  "finalization",
-  "history_pages",
-  "complete",
 ];
 const digestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const revisionSchema = z.string().regex(/^[0-9a-f]{40}$/u);
@@ -54,7 +48,48 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
-function assertScenario(coverage, result, scenarioId, codeRevision) {
+/** 通知scenarioのcoverageと完了情報の結合を検証する。 */
+export function assertScenario(coverage, result, scenarioId, codeRevision) {
+  assertCompleteSandboxStageCoverage(coverage);
+  assertSandboxStageReceiptLineage(coverage, coverage.receiptChain.receiptDigests);
+  same(coverage.schemaVersion, 2, "通知matrixのcoverage schema version");
+  same(
+    coverage.stageLineage.analysisStageRecordDigest,
+    coverage.analysisStageRecordDigest,
+    "通知matrixの解析段階記録digest",
+  );
+  same(
+    coverage.stageLineage.finalReceiptChainDigest,
+    result.receiptChainDigest,
+    "通知matrixの段階receipt chain digest",
+  );
+  if (coverage.ambiguousInitial != null) {
+    assertPendingSandboxStageCoverage(coverage.ambiguousInitial);
+    same(
+      coverage.ambiguousInitial.analysisStageRecordDigest,
+      coverage.analysisStageRecordDigest,
+      "通知matrixの再開元解析段階記録",
+    );
+    same(
+      coverage.stageLineage.analysisSourceActionsRunId,
+      coverage.ambiguousInitial.actionsRunId,
+      "通知matrixの再開元Actions run ID",
+    );
+    same(
+      coverage.stageLineage.pendingReceiptChainDigest,
+      coverage.ambiguousInitial.initialReceiptChainDigest,
+      "通知matrixの初回receipt chain digest",
+    );
+  } else if (scenarioId === "ambiguous-retry" || scenarioId === "ambiguous-acknowledge") {
+    throw new TypeError("通知matrixにambiguous初回の停止証拠がありません");
+  } else {
+    same(
+      coverage.stageLineage.analysisSourceActionsRunId,
+      result.actionsRunId,
+      "通知matrixの解析元Actions run ID",
+    );
+    same(coverage.stageLineage.pendingReceiptChainDigest, null, "通知matrixの初回chain参照");
+  }
   same(coverage.scenarioId, scenarioId, "通知matrixのscenario ID");
   same(result.scenarioId, scenarioId, "通知matrixのresult scenario ID");
   same(coverage.run.codeRevision, codeRevision, "通知matrixのcode revision");
@@ -100,11 +135,6 @@ function assertScenario(coverage, result, scenarioId, codeRevision) {
   );
   z.array(revisionSchema).min(3).parse(coverage.state.stateCommitRevisions);
   if (
-    coverage.unexecutedStages.length !== 0 ||
-    coverage.stages.length !== stageNames.length ||
-    coverage.stages.some(
-      (stage, index) => stage.stage !== stageNames[index] || stage.executed !== true,
-    ) ||
     coverage.notification.selectedCandidateCount === 0 ||
     coverage.productionAdapters.pagesDeployExecuted !== false ||
     coverage.productionAdapters.discordSendExecuted !== false ||
@@ -228,10 +258,14 @@ function main() {
     })),
     branchCounts,
     productionAdapters: { pagesDeployExecuted: false, discordSendExecuted: false },
-    allCanonicalStagesExecuted: true,
+    allCanonicalStagesExecuted: coverages.every(
+      (coverage) => coverage.unexecutedStages.length === 0,
+    ),
     allSandboxBranchesIsolated: true,
   };
   writeFileSync(required("SANDBOX_MATRIX_OUTPUT_PATH"), `${JSON.stringify(matrix)}\n`);
 }
 
-main();
+if (process.argv[1] != null && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}

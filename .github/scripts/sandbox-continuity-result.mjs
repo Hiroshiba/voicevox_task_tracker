@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import process from "node:process";
 
 import { z } from "zod";
+import {
+  assertCompleteSandboxStageCoverage,
+  assertSandboxStageReceiptLineage,
+} from "../../dist/infrastructure/tracking-run/sandbox-stage-coverage.js";
 
 const revision = z.string().regex(/^[0-9a-f]{40}$/u);
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
@@ -77,6 +81,24 @@ export function readVerifiedFirstResult() {
   const coverageBytes = readFileSync(required("SANDBOX_FIRST_COVERAGE_PATH"));
   assertEqual(sha256(coverageBytes), result.coverageDigest, "first coverage digest");
   const coverage = JSON.parse(coverageBytes.toString("utf8"));
+  assertCompleteSandboxStageCoverage(coverage);
+  assertSandboxStageReceiptLineage(coverage, coverage.receiptChain.receiptDigests);
+  assertEqual(coverage.schemaVersion, 2, "first coverage schema version");
+  assertEqual(
+    coverage.stageLineage.finalReceiptChainDigest,
+    result.receiptChainDigest,
+    "first stage chain",
+  );
+  assertEqual(
+    coverage.stageLineage.analysisSourceActionsRunId,
+    result.actionsRunId,
+    "first解析元run",
+  );
+  assertEqual(
+    coverage.stageLineage.analysisStageRecordDigest,
+    coverage.analysisStageRecordDigest,
+    "first解析段階記録digest",
+  );
   assertEqual(coverage.run.trackingRunId, result.trackingRunId, "first coverage run ID");
   assertEqual(
     coverage.run.finalStateRevision,

@@ -13,6 +13,10 @@ import { nodeContentDigestPort } from "./content-digest.js";
 import { verifyManualResolutionReceipt } from "./manual-resolution.js";
 import { readNotificationMessageState } from "./notification-message-state.js";
 import { countSandboxReservationCommits } from "./sandbox-reservation-commits.js";
+import {
+  assertPendingSandboxStageCoverage,
+  createSandboxStageCoverage,
+} from "./sandbox-stage-coverage.js";
 import { readSplitReceiptChain } from "./split-stage-receipts.js";
 
 const revisionSchema = z.string().regex(/^[0-9a-f]{40}$/u);
@@ -118,7 +122,14 @@ async function inspectPending(): Promise<void> {
   const checkpoint: unknown = JSON.parse(checkpointBytes.toString("utf8"));
   const sidecar: unknown = JSON.parse(await readFile(required("SANDBOX_SIDECAR_PATH"), "utf8"));
   const checkpointBinding = z
-    .strictObject({ checkpointDigest: digestSchema, payload: z.unknown() })
+    .strictObject({
+      checkpointDigest: digestSchema,
+      payload: z
+        .strictObject({
+          runIdentity: z.strictObject({ runId: z.string(), invocationId: z.uuid() }).loose(),
+        })
+        .loose(),
+    })
     .loose()
     .parse(checkpoint);
   const fileBinding = z
@@ -129,15 +140,15 @@ async function inspectPending(): Promise<void> {
   same(fileBinding.checkpointFileDigest, record.checkpointFileDigest, "checkpoint file digest");
   same(fileBinding.checkpointFileDigest, sha256(checkpointBytes), "checkpoint file bytes");
   same(fileBinding.byteLength, checkpointBytes.length, "checkpoint file byteLength");
+  same(checkpointBinding.payload.runIdentity.runId, marker.runId, "checkpoint run ID");
   const initialChainPath = join(
     required("SANDBOX_INITIAL_RECEIPT_CHAIN_ROOT"),
     marker.runId.slice("tracker-run:".length),
     "receipt-chain.json",
   );
   const initialChainBytes = await readFile(initialChainPath);
-  const initialReceipts = (await readSplitReceiptChain(initialChainPath, marker.runId)).map(
-    (entry) => entry.receipt,
-  );
+  const initialEntries = await readSplitReceiptChain(initialChainPath, marker.runId);
+  const initialReceipts = initialEntries.map((entry) => entry.receipt);
   const initialPagesReceipt = initialReceipts.at(-1);
   if (
     initialPagesReceipt?.receiptType !== "pages_deployment" ||
@@ -157,6 +168,15 @@ async function inspectPending(): Promise<void> {
   }
   const markerBytes = markerFile.bytes;
   const ledgerBytes = ledgerFile.bytes;
+  const stageCoverage = createSandboxStageCoverage({
+    analysisRecord: JSON.parse(await readFile(required("SANDBOX_STAGE_RECORD_PATH"), "utf8")),
+    receiptEntries: initialEntries,
+    runId: marker.runId,
+    invocationId: checkpointBinding.payload.runIdentity.invocationId,
+    checkpointDigest: marker.checkpointDigest,
+    checkpointFileDigest: record.checkpointFileDigest,
+  });
+  assertPendingSandboxStageCoverage(stageCoverage);
   const pending = sandboxPendingNotificationSchema.parse({
     schemaVersion: 1,
     scenarioId,
@@ -182,20 +202,10 @@ async function inspectPending(): Promise<void> {
     originalOperationReservationCommitCount: count,
     initialReceiptChainDigest: sha256(initialChainBytes),
     initialPagesReceiptDigest: initialPagesReceipt.receiptDigest,
+    analysisStageRecordDigest: stageCoverage.analysisStageRecordDigest,
     markerPhase: marker.phase,
-    stages: [
-      "bootstrap",
-      "prepare",
-      "checkpoint",
-      "initial_state",
-      "initial_pages",
-      "notification",
-      "settlement",
-      "finalization",
-      "history_pages",
-      "complete",
-    ].map((stage, index) => ({ stage, executed: index < 6 })),
-    unexecutedStages: ["settlement", "finalization", "history_pages", "complete"],
+    stages: stageCoverage.stages.map(({ stage, executed }) => ({ stage, executed })),
+    unexecutedStages: stageCoverage.unexecutedStages,
     settled: false,
     finalized: false,
     newRunStarted: false,

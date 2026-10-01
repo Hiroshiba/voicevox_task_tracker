@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  trackingRunStageNames,
+  trackingRunStageSchema,
+} from "../application/tracking-run/contracts/closed-values.js";
 
 const revisionSchema = z.string().regex(/^[0-9a-f]{40}$/u);
 const digestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
@@ -29,9 +33,12 @@ export const sandboxPendingNotificationSchema = z.strictObject({
   originalOperationReservationCommitCount: z.literal(1),
   initialReceiptChainDigest: digestSchema,
   initialPagesReceiptDigest: digestSchema,
+  analysisStageRecordDigest: digestSchema,
   markerPhase: z.literal("notifications_in_progress"),
-  stages: z.array(z.strictObject({ stage: z.string().min(1), executed: z.boolean() })),
-  unexecutedStages: z.array(z.string().min(1)),
+  stages: z
+    .array(z.strictObject({ stage: trackingRunStageSchema, executed: z.boolean() }))
+    .length(trackingRunStageNames.length),
+  unexecutedStages: z.array(trackingRunStageSchema),
   settled: z.literal(false),
   finalized: z.literal(false),
   newRunStarted: z.literal(false),

@@ -14,6 +14,7 @@ import type { SequentialPublicationInput } from "./sequential-publication-input.
 import type { NotificationStageResult } from "./sequential-run.js";
 
 import type { CompletedRun } from "../../application/tracking-run/complete-run.js";
+import type { AnalysisRunStageName } from "../../application/tracking-run/contracts/closed-values.js";
 import type { BaseStateRevision } from "../../application/tracking-run/contracts/run-core.js";
 import type { InitialStateCommitReference } from "../../application/tracking-run/engine.js";
 import {
@@ -164,6 +165,7 @@ export type SequentialRunDependencies = Readonly<{
     path: string,
     input: Readonly<{
       invocation: RunInvocation;
+      completedStages: readonly AnalysisRunStageName[];
       configuration: RuntimeConfiguration;
       state: RuntimeState;
       planned: PublicationPlannedRun;
