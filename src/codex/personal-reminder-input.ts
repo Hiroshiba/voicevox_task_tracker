@@ -3,15 +3,15 @@ import type { PersonalReminderCauseSemanticInput } from "./personal-reminder-inp
 import {
   createPersonalReminderCauseInputFingerprint as createFingerprintWithDigest,
   planPersonalReminderCauseEvaluation as planEvaluationWithDigest,
-  preparePersonalReminderAiBatch as prepareBatchWithDigest,
-} from "./personal-reminder-input-transport.js";
+} from "./personal-reminder-input-assessment.js";
+import { preparePersonalReminderAiBatch as prepareBatchWithDigest } from "./personal-reminder-input-transport.js";
 
 export * from "./personal-reminder-input-contracts.js";
 export { createPersonalReminderCauseSemanticInput } from "./personal-reminder-input-core.js";
 export {
   createPersonalReminderAiInput,
   serializePersonalReminderAiInput,
-} from "./personal-reminder-input-transport.js";
+} from "./personal-reminder-input-transport-validation.js";
 
 /** 個人催促原因の意味入力fingerprintを作成する。 */
 export function createPersonalReminderCauseInputFingerprint(

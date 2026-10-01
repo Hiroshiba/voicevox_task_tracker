@@ -8,10 +8,8 @@ import {
 import type { AiAnalysisPriority } from "../../../codex/analysis-selection.js";
 import type { ContentDigestPort } from "../ports.js";
 import type { PreviousPersonalReminderAiCacheEntry } from "../contracts/previous-state.js";
-import {
-  createPersonalReminderCauseInputFingerprint,
-  preparePersonalReminderAiBatch,
-} from "../../../codex/personal-reminder-input-transport.js";
+import { createPersonalReminderCauseInputFingerprint } from "../../../codex/personal-reminder-input-assessment.js";
+import { preparePersonalReminderAiBatch } from "../../../codex/personal-reminder-input-transport.js";
 import { createPersonalReminderCauseSemanticInput } from "../../../codex/personal-reminder-input-core.js";
 import type {
   PersonalReminderCauseSemanticInput,

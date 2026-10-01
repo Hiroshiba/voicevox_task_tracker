@@ -1,9 +1,7 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
-import {
-  createPersonalReminderCauseInputFingerprint,
-  preparePersonalReminderAiBatch,
-  serializePersonalReminderAiInput,
-} from "../../../codex/personal-reminder-input-transport.js";
+import { createPersonalReminderCauseInputFingerprint } from "../../../codex/personal-reminder-input-assessment.js";
+import { preparePersonalReminderAiBatch } from "../../../codex/personal-reminder-input-transport.js";
+import { serializePersonalReminderAiInput } from "../../../codex/personal-reminder-input-transport-validation.js";
 import type {
   PersonalReminderAiGeneration,
   PersonalReminderCauseId,

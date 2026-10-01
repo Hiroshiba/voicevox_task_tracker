@@ -12,23 +12,25 @@ import type { DiagnosticsJsonValue } from "../diagnostics/error-serializer.js";
 import { REASONING_EFFORTS } from "../domain/index.js";
 import {
   CODEX_COMMAND,
-  PERMANENT_CODEX_API_ERROR_TYPES,
   createAuthenticationPreflightProcessRequest,
   createProcessRequest,
   createSemanticCorrectionSystemPrompt,
   createTemporaryWorkspace,
-  inspectCodexStdout,
-  mergeCodexApiErrors,
-  normalizedProcessOutput,
   readFixedPersonalReminderPrompt,
   readFixedSemanticCorrectionPrompt,
   readFixedSystemPrompt,
+  writeOutputSchema,
+} from "./adapter-process-support.js";
+import {
+  PERMANENT_CODEX_API_ERROR_TYPES,
+  inspectCodexStdout,
+  mergeCodexApiErrors,
+  normalizedProcessOutput,
   readLastMessage,
   safeApiErrorDetails,
-  writeOutputSchema,
   type CodexStdoutInspection,
   type LastMessageReadResult,
-} from "./adapter-process-support.js";
+} from "./adapter-process-output.js";
 import {
   CodexAttemptBudgetExceededError,
   type CodexAttemptBudget,

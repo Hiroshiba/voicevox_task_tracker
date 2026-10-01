@@ -1,6 +1,6 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import { ZodError } from "zod";
-import { createPersonalReminderCauseInputFingerprint } from "../../../codex/personal-reminder-input-transport.js";
+import { createPersonalReminderCauseInputFingerprint } from "../../../codex/personal-reminder-input-assessment.js";
 import {
   PERSONAL_REMINDER_AI_REVISION,
   PERSONAL_REMINDER_ASSESSMENT_RULES_VERSION,
