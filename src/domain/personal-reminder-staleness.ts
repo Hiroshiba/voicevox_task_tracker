@@ -153,7 +153,7 @@ function sameBasis(left: PersonalReminderTimeBasis, right: PersonalReminderTimeB
   if (left.source === "first_observation" && right.source === "first_observation") {
     return true;
   }
-  if (left.source !== "event" || right.source !== "event") {
+  if (left.source === "first_observation" || right.source === "first_observation") {
     return false;
   }
   const leftSourceIds = [...left.sourceIds].sort();
@@ -181,6 +181,12 @@ function actionabilityClockBasis(
   if (actionabilityStart.source === "first_observation") {
     return "first_observation";
   }
+  if (actionabilityStart.source === "reconfirmation_pending") {
+    throw new TypeError("再確認前の個人催促時計を更新できません");
+  }
+  if (actionabilityStart.source === "reconfirmed_observation") {
+    return "reconfirmed_observation";
+  }
   if (sameBasis(actionabilityStart, obligationSince)) {
     return "obligation";
   }
@@ -206,6 +212,22 @@ function mergeEqualTimeBases(
     return left;
   }
   if (right.source === "event") {
+    return right;
+  }
+  if (left.source === "reconfirmation_pending" || right.source === "reconfirmation_pending") {
+    throw new TypeError("再確認前の個人催促時計を結合できません");
+  }
+  if (left.source === "reconfirmed_observation" && right.source === "reconfirmed_observation") {
+    return {
+      source: "reconfirmed_observation",
+      at: left.at,
+      sourceIds: [...new Set([...left.sourceIds, ...right.sourceIds])].sort(),
+    };
+  }
+  if (left.source === "reconfirmed_observation") {
+    return left;
+  }
+  if (right.source === "reconfirmed_observation") {
     return right;
   }
   return left;

@@ -93,7 +93,7 @@ export type {
   SnapshotTrackedItem,
 } from "./snapshot-contracts.js";
 export { createPersonalReminderEvidenceSourceIndex } from "./snapshot-evidence-closure.js";
-export { migrateStateSnapshot } from "./snapshot-v21-migration.js";
+export { migrateStateSnapshot } from "./snapshot-v22-migration.js";
 export {
   assertPersonalReminderEvidenceClosure,
   assertPersonalReminderEvidenceRecordsClosure,
@@ -102,7 +102,7 @@ export {
   serializeStateSnapshot,
   snapshotEffectiveGraphStateByNodeId,
   type StateSnapshot,
-} from "./snapshot-v21.js";
+} from "./snapshot-v22.js";
 export {
   authorizeAdvanceAfterOrthogonalCommits,
   readExactStateTree,

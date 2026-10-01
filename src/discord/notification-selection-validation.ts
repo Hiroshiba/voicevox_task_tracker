@@ -300,7 +300,10 @@ function validatePersonalReminderTimeBasis(
   if (parseTimestamp(basis.at, context) > evaluatedTimestamp) {
     throw new RangeError(`${context}は判定時刻以前にしてください`);
   }
-  if (basis.source === "event" && basis.sourceIds.length === 0) {
+  if (basis.source === "reconfirmation_pending") {
+    throw new TypeError(`${context}の再確認が完了していません`);
+  }
+  if (basis.source !== "first_observation" && basis.sourceIds.length === 0) {
     throw new TypeError(`${context}のsource IDは空にできません`);
   }
 }
@@ -315,7 +318,12 @@ export function samePersonalReminderTimeBasis(
   if (left.source === "first_observation" || right.source === "first_observation") {
     return left.source === right.source;
   }
-  return true;
+  const leftSourceIds = [...left.sourceIds].sort();
+  const rightSourceIds = [...right.sourceIds].sort();
+  return (
+    leftSourceIds.length === rightSourceIds.length &&
+    leftSourceIds.every((sourceId, index) => sourceId === rightSourceIds[index])
+  );
 }
 
 function validatePersonalReminderInputs(

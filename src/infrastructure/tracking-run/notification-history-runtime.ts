@@ -10,9 +10,10 @@ import {
   type NotificationLedgerEntry,
   type UtcIsoDateTime,
 } from "../../domain/index.js";
+import { assertConfirmedPersonalReminderTimeBasis } from "../../domain/personal-reminder-causes.js";
 import { resolveStateHistoryNotificationItemDisplayReference } from "../../persistence/history-contracts.js";
 import type { StateHistoryNotificationEvent, StateSnapshot } from "../../persistence/index.js";
-import { version19SnapshotFields } from "../../persistence/snapshot-v21.js";
+import { version19SnapshotFields } from "../../persistence/snapshot-v22.js";
 import { UnreachableError, assertNonNullable } from "../../util/index.js";
 
 function createNotificationWaitingOn(
@@ -211,6 +212,9 @@ export function createNotificationHistoryEventsForMessage(
         throw new TypeError("個人催促通知理由のseverityがnoneです");
       }
       const context = reason.source.context;
+      assertConfirmedPersonalReminderTimeBasis(context.obligationSince);
+      assertConfirmedPersonalReminderTimeBasis(context.actionableSince);
+      assertConfirmedPersonalReminderTimeBasis(context.stallSince);
       return [
         Object.freeze({
           notificationKey: reason.notificationKey,

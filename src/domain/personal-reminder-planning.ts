@@ -341,7 +341,7 @@ export function createPersonalReminderCauseProjectionSeed(
   input: Readonly<{
     projection: PersonalReminderCauseProjection;
     currentObservedAt: UtcIsoDateTime;
-    sourceOccurredAtById: ReadonlyMap<SourceId, UtcIsoDateTime>;
+    clockEventOccurredAtBySourceId: ReadonlyMap<SourceId, UtcIsoDateTime>;
   }>,
 ): PersonalReminderCauseSeed {
   if (input.projection.previousCause != null) {
@@ -352,7 +352,7 @@ export function createPersonalReminderCauseProjectionSeed(
       draft: input.projection.draft,
       previousCause: input.projection.previousCause,
       currentObservedAt: input.currentObservedAt,
-      sourceOccurredAtById: input.sourceOccurredAtById,
+      clockEventOccurredAtBySourceId: input.clockEventOccurredAtBySourceId,
     });
   }
   const draft = input.projection.draft;
@@ -361,7 +361,7 @@ export function createPersonalReminderCauseProjectionSeed(
     draft,
     previousCause: undefined,
     currentObservedAt: input.currentObservedAt,
-    sourceOccurredAtById: input.sourceOccurredAtById,
+    clockEventOccurredAtBySourceId: input.clockEventOccurredAtBySourceId,
   });
 }
 
@@ -372,7 +372,7 @@ export function reconcilePersonalReminderCauseSeeds(
     drafts: readonly PersonalReminderCauseDraft[];
     previous: PreviousPersonalReminderCauses;
     currentObservedAt: UtcIsoDateTime;
-    sourceOccurredAtById: ReadonlyMap<SourceId, UtcIsoDateTime>;
+    clockEventOccurredAtBySourceId: ReadonlyMap<SourceId, UtcIsoDateTime>;
     confirmedEndedCauseIds: ReadonlySet<PersonalReminderCauseId>;
   }>,
 ): PersonalReminderCauseSeedReconciliation {
@@ -462,7 +462,7 @@ export function reconcilePersonalReminderCauseSeeds(
       draft,
       previousCause: previousCauseForSeed,
       currentObservedAt: input.currentObservedAt,
-      sourceOccurredAtById: input.sourceOccurredAtById,
+      clockEventOccurredAtBySourceId: input.clockEventOccurredAtBySourceId,
     });
     if (previousCauseForSeed == null && previousIds.has(seed.causeId)) {
       const previousCauseIds: [PersonalReminderCauseId] = [seed.causeId];

@@ -186,14 +186,16 @@ function createCauseId(
 function createObligationSince(
   draft: PersonalReminderCauseDraft,
   currentObservedAt: UtcIsoDateTime,
-  sourceOccurredAtById: ReadonlyMap<SourceId, UtcIsoDateTime>,
+  clockEventOccurredAtBySourceId: ReadonlyMap<SourceId, UtcIsoDateTime>,
 ): PersonalReminderTimeBasis {
   const basis = draft.responsibilityBasis;
   const currentTimestamp = parseTimestamp(currentObservedAt, "現在の観測時刻");
   const sourceIds = createSourceIds(basis.sourceIds);
   const eventSourceIds =
     basis.precision === "event"
-      ? sourceIds.filter((sourceId) => sourceOccurredAtById.get(sourceId) === basis.occurredAt)
+      ? sourceIds.filter(
+          (sourceId) => clockEventOccurredAtBySourceId.get(sourceId) === basis.occurredAt,
+        )
       : [];
   if (eventSourceIds.length > 0) {
     const occurredTimestamp = parseTimestamp(basis.occurredAt, "責務basisの時刻");
@@ -403,7 +405,7 @@ export function createSeedFromDraft(
     draft: PersonalReminderCauseDraft;
     previousCause: PersonalReminderCause | undefined;
     currentObservedAt: UtcIsoDateTime;
-    sourceOccurredAtById: ReadonlyMap<SourceId, UtcIsoDateTime>;
+    clockEventOccurredAtBySourceId: ReadonlyMap<SourceId, UtcIsoDateTime>;
   }>,
 ): PersonalReminderCauseSeed {
   if (input.previousCause != null) {
@@ -418,7 +420,11 @@ export function createSeedFromDraft(
   const responsibilityId = createResponsibilityId(input.draft);
   return createSeed(
     input.draft,
-    createObligationSince(input.draft, input.currentObservedAt, input.sourceOccurredAtById),
+    createObligationSince(
+      input.draft,
+      input.currentObservedAt,
+      input.clockEventOccurredAtBySourceId,
+    ),
     responsibilityId,
     createCauseId(input.draft, responsibilityId),
     personalReminderLastConfirmedActionabilitySchema.parse({ status: "not_observed" }),

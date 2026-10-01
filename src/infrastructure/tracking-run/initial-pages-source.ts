@@ -15,7 +15,7 @@ import {
   type StateSnapshot,
 } from "../../persistence/index.js";
 import { assertStateValuesPublicSafety } from "../../persistence/public-safety.js";
-import { parseStateSnapshot } from "../../persistence/snapshot-v21.js";
+import { parseStateSnapshot } from "../../persistence/snapshot-v22.js";
 import { verifyRunTransactionFiles } from "../../persistence/state-transaction-files.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import {

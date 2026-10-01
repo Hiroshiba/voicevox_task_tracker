@@ -4,8 +4,8 @@ import {
   notificationReasonSchema,
   personalReminderActionKindSchema,
   personalReminderResponsibleSchema,
-  personalReminderTimeBasisSchema,
 } from "../domain/index.js";
+import { confirmedPersonalReminderTimeBasisSchema } from "../domain/personal-reminder-causes.js";
 import { UnreachableError } from "../util/index.js";
 import {
   dateTimeSchema,
@@ -92,9 +92,9 @@ export const notificationSentPersonalReminderSchema = z
       summary: z.string().min(1).max(300),
     }),
     reason: notificationReasonSchema,
-    obligationSince: personalReminderTimeBasisSchema,
-    actionableSince: personalReminderTimeBasisSchema,
-    stallSince: personalReminderTimeBasisSchema,
+    obligationSince: confirmedPersonalReminderTimeBasisSchema,
+    actionableSince: confirmedPersonalReminderTimeBasisSchema,
+    stallSince: confirmedPersonalReminderTimeBasisSchema,
     severity: z.enum(["watch", "urgent", "critical"]),
   })
   .superRefine((personalReminder, context) => {

@@ -372,10 +372,47 @@ export const personalReminderTimeBasisSchema = z.discriminatedUnion("source", [
     source: z.literal("first_observation"),
     at: utcIsoDateTimeSchema,
   }),
+  z.strictObject({
+    source: z.literal("reconfirmation_pending"),
+    at: utcIsoDateTimeSchema,
+    sourceIds: z.array(sourceIdSchema).nonempty().max(30),
+  }),
+  z.strictObject({
+    source: z.literal("reconfirmed_observation"),
+    at: utcIsoDateTimeSchema,
+    sourceIds: z.array(sourceIdSchema).nonempty().max(30),
+  }),
 ]);
 
 /** 義務や実行可能性の時刻を特定する根拠。 */
 export type PersonalReminderTimeBasis = z.output<typeof personalReminderTimeBasisSchema>;
+
+/** 再確認を完了した公開可能な個人催促時計。 */
+export const confirmedPersonalReminderTimeBasisSchema = personalReminderTimeBasisSchema.refine(
+  (basis) => basis.source !== "reconfirmation_pending",
+  "個人催促時計の再確認が完了していません",
+);
+
+/** 再確認前の個人催促時計が公開経路へ進むのを拒否する。 */
+export function assertConfirmedPersonalReminderTimeBasis(
+  basis: PersonalReminderTimeBasis,
+): asserts basis is Exclude<PersonalReminderTimeBasis, { source: "reconfirmation_pending" }> {
+  if (basis.source === "reconfirmation_pending") {
+    throw new TypeError("個人催促時計の再確認が完了していません");
+  }
+}
+
+/** 保存済み原因に再確認を要する時刻があるか判定する。 */
+export function personalReminderCauseNeedsClockReconfirmation(
+  cause: PersonalReminderCause,
+): boolean {
+  if (cause.obligationSince.source === "reconfirmation_pending") return true;
+  if (cause.actionableClock.status === "not_observed") return false;
+  return (
+    cause.actionableClock.actionableSince.source === "reconfirmation_pending" ||
+    cause.actionableClock.stallSince.source === "reconfirmation_pending"
+  );
+}
 
 const personalReminderAssessmentWaitingForSchema = z.strictObject({
   itemNodeId: graphNodeIdSchema,
@@ -642,7 +679,12 @@ export const personalReminderActionableClockSchema = z.discriminatedUnion("statu
     status: z.literal("observed"),
     actionableSince: personalReminderTimeBasisSchema,
     stallSince: personalReminderTimeBasisSchema,
-    basis: z.enum(["obligation", "dependency_resolved", "first_observation"]),
+    basis: z.enum([
+      "obligation",
+      "dependency_resolved",
+      "first_observation",
+      "reconfirmed_observation",
+    ]),
   }),
 ]);
 

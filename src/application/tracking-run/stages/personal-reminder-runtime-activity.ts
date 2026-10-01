@@ -146,7 +146,14 @@ function scopedActivityForCause(
   const activities: PersonalReminderRuntimeActivity[] = [];
   const missing = new Set<PersonalReminderMissingInput>();
   if (seed.responsibility.scope.kind !== "execution_surfaces") {
-    activities.push(createActionActivity(item.item, seed.action.kind, responsibleCandidateIds));
+    activities.push(
+      createActionActivity(
+        item.item,
+        seed.action.kind,
+        responsibleCandidateIds,
+        item.clockEventOccurredAtBySourceId,
+      ),
+    );
   }
   for (const surface of seed.responsibility.scope.kind === "item"
     ? []
@@ -162,7 +169,14 @@ function scopedActivityForCause(
     if (related.localDecision == null) {
       missing.add("related_timeline");
     }
-    activities.push(createActionActivity(related.item, seed.action.kind, responsibleCandidateIds));
+    activities.push(
+      createActionActivity(
+        related.item,
+        seed.action.kind,
+        responsibleCandidateIds,
+        item.clockEventOccurredAtBySourceId,
+      ),
+    );
   }
   return Object.freeze({
     activity: Object.freeze({
@@ -200,6 +214,7 @@ function actionabilityEventForCause(
     throw new TypeError("前回の観測時刻が不正です");
   }
   const events = target.item.events
+    .filter((event) => item.clockEventOccurredAtBySourceId.get(event.sourceId) === event.occurredAt)
     .filter((event) => {
       const occurredAt = Date.parse(event.occurredAt);
       if (!Number.isFinite(occurredAt)) {

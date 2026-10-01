@@ -45,7 +45,7 @@ function canonicalEvidence(values: readonly Evidence[]): readonly Evidence[] {
   );
 }
 
-/** 閉包済み最終値と確定projectionからv21 snapshot候補を一度だけ生成する。 */
+/** 閉包済み最終値と確定projectionからv22 snapshot候補を一度だけ生成する。 */
 export function buildFinalSnapshot(
   run: PersonalReminderFinalizedRun,
   closure: EvidenceClosureResult,
@@ -73,7 +73,7 @@ export function buildFinalSnapshot(
   );
   const finalGraphProjection = run.data.finalGraphProjection;
   return Object.freeze({
-    schemaVersion: "21",
+    schemaVersion: "22",
     generatedAt: run.data.sourceRecords.evaluatedAt,
     trackingStartAt: projection.trackingStartAt,
     ai: projection.ai,

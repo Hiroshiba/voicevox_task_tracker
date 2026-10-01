@@ -372,9 +372,11 @@ Pull Requestのtimelineとheadにあるcommitは、Pull Requestとcommitの組�
 最も古い時刻はsourceの集合だけで決まるので、収集した項目の順番が変わっても同じ値になります。
 
 個人原因では、責務が発生した`obligationSince`、実行可能になった`actionableSince`、通知の計算に使う`stallSince`を分けます。
+個人催促時計のイベント時刻は、source ID、所有項目、種類、GitHub詳細の実測時刻と正規化イベントの一致を確認して使います。本文、native関係の合成時刻、push時刻が不明なcommitや作成時刻へ切り上げたcommitは時計の活動に含めません。これらのsourceはAI入力とgraphの時刻下限には残します。
 同じ行動に関する進捗や責任主体の活動を既存の理由別規則で評価し、`actionableSince`、継続中の停滞起点、有効な進捗時刻の最大値を`stallSince`にします。reviewでは人間のレビューも進捗に含めます。関連項目の活動は、その原因の進捗や待機解消と確認できる場合だけ反映します。
 block中も独立した行動が継続して可能なら両起点を保持し、実際に待たされた行動だけ待機解消の因果イベントを新しい実行可能性の起点にします。
 イベント時刻が不明な場合は、規則上の責務や実行可能性を最初に確認できた入力snapshotの`observedAt`を一度だけ保存し、時刻の出典を`first_observation`とします。AI評価時刻で代用せず、後日の再評価でも更新しません。証拠なしに義務発生時点まで遡らせることもしません。
+保存済み時計のイベントsourceは、今回の詳細で出典を再確認します。時計に使えるイベントなら時刻を維持し、使えないsourceなら今回の詳細の`observedAt`を`reconfirmed_observation`として保存します。原因ID、責務ID、採用済み評価、Evidenceは保持し、再確認できない場合は保存と公開を停止します。
 正常な`unknown`、失敗、延期を挟んでも、最後に確認できた実行可能性と時計を保持します。入力fingerprintの変化は意味結果の再検証に使い、同じ責務期間の原因や時計を終了させません。
 
 ## 公開DTOとWeb UI
@@ -540,14 +542,14 @@ semantic補正は候補1件の論理call内で行うため、追加世代を`aiC
 
 | 既定パス                                         | 内容                                                                                                                         |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `state/snapshot.json`                            | 要対応度、期限日、AI状態、AI要素の適用元、値別のAI依存、trackingStartAt、個人催促の原因を含むschema version 21の最新snapshot |
+| `state/snapshot.json`                            | 要対応度、期限日、AI状態、AI要素の適用元、値別のAI依存、trackingStartAt、個人催促の原因を含むschema version 22の最新snapshot |
 | `state/history/YYYY-MM-DD.jsonl`                 | schema version 7。前回snapshotとの差分と送信済み通知を持つ日次履歴。確認済み状態は記録しない                                 |
 | `state/ai-cache/<sha256>.json`                   | 汎用AIのcontent-addressed cache                                                                                              |
 | `state/personal-reminder-ai-cache/<sha256>.json` | 個人原因ごとの意味評価cache。`state.personalReminderAiCacheDirectory`で配置先を指定する                                      |
 | `state/notification-ledger.json`                 | schema version 10。予約期限、送信開始済み、送信済み、確認済みの記録を持つ通知管理記録                                        |
 | `state/run-reports/YYYY-MM-DD.json`              | 初回Pagesと通知の確定後、finalizationで保存する実績指標と診断                                                                |
 
-snapshot 21の各項目は、原因の列挙計画を表す`personalReminderCausePlanning`を必須で持ちます。`status`は`pending`、`completed`、`excluded`のいずれかとし、すべて`planningVersion`を保持します。`completed`には列挙に使った観測時刻`observedAt`、`excluded`には`reason: terminal_without_cause`を持たせます。
+snapshot 22の各項目は、原因の列挙計画を表す`personalReminderCausePlanning`を必須で持ちます。`status`は`pending`、`completed`、`excluded`のいずれかとし、すべて`planningVersion`を保持します。`completed`には列挙に使った観測時刻`observedAt`、`excluded`には`reason: terminal_without_cause`を持たせます。
 freshなopen項目の列挙が完了すれば原因0件でも`completed`にし、原因がないterminal項目だけを`excluded`にします。staleを含む分析対象外の項目は、前述の保持規則に従います。入口では旧`planningVersion`も受け入れ、現在版との不一致を再計画の選定へ渡します。
 
 追跡項目の`aiAnalysis.status`は次の利用状況を表します。
@@ -568,7 +570,7 @@ AI依存の`unknown`は、空でない`reasons`配列に理由を保存します
 Pagesのsummaryとdetailsは`aiAnalysis.status`を`runStatus`として公開し、生成元のcache keyと内部producerは公開しません。
 
 永続化sessionはbranch headを開始時に固定し、snapshot、履歴、汎用AIと個人原因の追加cache、通知候補選別後の通知管理記録を通常stateの最初のGit commitへまとめます。個人原因の採用結果と実行状態を永続化できる前に外部通知へ進みません。
-旧形式は入口で現行形式へ移行し、必要な旧cacheの削除もsnapshot更新と同じcommitへ含めます。snapshot 11から20を21へ移行します。snapshot 18のAI依存は単一の`reason`を1要素の`reasons`配列へ変換し、値・producer・適用元・採用済み評価・根拠・時計を保持します。snapshot 14以前の移行では個人原因を空配列として追加し、open項目の列挙計画を`pending`、原因がないterminal項目を`excluded`にします。PRの`inputEvents`は旧commit IDだけをそのPRに紐づく現行IDへ移行し、発生時刻を保持します。このID移行では既存の履歴、通知管理記録、現行cache、AIの採用値と根拠を書き換えません。旧AIの自由文から責務・時刻・意味結果を補填しません。
+旧形式は入口で現行形式へ移行し、必要な旧cacheの削除もsnapshot更新と同じcommitへ含めます。snapshot 11から21を22へ移行します。snapshot 18のAI依存は単一の`reason`を1要素の`reasons`配列へ変換し、値・producer・適用元・採用済み評価・根拠・時計を保持します。snapshot 14以前の移行では個人原因を空配列として追加し、open項目の列挙計画を`pending`、原因がないterminal項目を`excluded`にします。PRの`inputEvents`は旧commit IDだけをそのPRに紐づく現行IDへ移行し、発生時刻を保持します。このID移行では既存の履歴、通知管理記録、現行cache、AIの採用値と根拠を書き換えません。旧AIの自由文から責務・時刻・意味結果を補填しません。
 読み込みやCI検証だけでは本番へ保存せず、workflowによるpushまで完了してから移行済みとします。
 移行したAIの採用値は新しい生成結果と区別し、旧generationのresult、metadata、outputHashを改変せず、再推論の失敗・延期だけで消しません。
 本人起因の通知抑制は新しいsignalからnotification keyまたは未送信候補を作る前だけに適用し、既存pendingとnotification ledgerへ今回の原因を転用しません。既存のpending、reserved、delivery_started、sent、acknowledgedは通常の有効性・送信・失効規則でだけ更新します。

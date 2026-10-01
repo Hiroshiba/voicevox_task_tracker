@@ -20,7 +20,7 @@ import {
 import { normalNotificationLedgerValue } from "../publication/publication-order.js";
 import { type StateFileReadResult, type StatePersistenceConfiguration } from "./branch-adapter.js";
 import { StateFormatError } from "./errors.js";
-import { parseStateSnapshot, serializeStateSnapshot } from "./snapshot-v21.js";
+import { parseStateSnapshot, serializeStateSnapshot } from "./snapshot-v22.js";
 import {
   isCanonicalStateOperationsAlertLedgerSource,
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,

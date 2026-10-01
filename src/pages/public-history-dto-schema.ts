@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { notificationReasonSchema } from "../domain/notification-reason.js";
-import { personalReminderTimeBasisSchema } from "../domain/personal-reminder-causes.js";
+import { confirmedPersonalReminderTimeBasisSchema } from "../domain/personal-reminder-causes.js";
 import { UnreachableError } from "../util/index.js";
 import type { PublicPersonalReminderResponseDto } from "./public-dto-contracts.js";
 import {
@@ -109,9 +109,9 @@ export const publicNotificationHistoryPersonalReminderSchema = z
     responsible: z.array(publicPersonalReminderResponsibleSchema).nonempty().max(20),
     action: publicPersonalReminderActionSchema,
     reason: notificationReasonSchema,
-    obligationSince: personalReminderTimeBasisSchema,
-    actionableSince: personalReminderTimeBasisSchema,
-    stallSince: personalReminderTimeBasisSchema,
+    obligationSince: confirmedPersonalReminderTimeBasisSchema,
+    actionableSince: confirmedPersonalReminderTimeBasisSchema,
+    stallSince: confirmedPersonalReminderTimeBasisSchema,
     severity: z.enum(["watch", "urgent", "critical"]),
   })
   .superRefine((personalReminder, context) => {

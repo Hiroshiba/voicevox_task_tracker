@@ -276,7 +276,10 @@ export function finalizePersonalReminders(
       ...run.core.personalReminderInput.previousRelations.map((relation) => relation.evidence),
     ],
   );
-  const clockSources = indexCurrentClockEvidenceSources(run.data.sourceRecords);
+  const clockSources = indexCurrentClockEvidenceSources(
+    run.data.sourceRecords,
+    run.data.sourceRecords.evaluatedAt,
+  );
   const relationsById = new Map(run.data.graph.edges.map((edge) => [edge.id, edge]));
   const aiContext = finalAiDependencyContext(run);
   const resolveLabelEffects = createLabelEffectsResolver(

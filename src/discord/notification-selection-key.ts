@@ -186,6 +186,15 @@ function personalReminderNotificationState(
     throw new TypeError("個人催促通知のseverity閾値が未記録です");
   }
   const context = signal.source.context;
+  const reconfirmedBases = [
+    context.obligationSince,
+    context.actionableSince,
+    context.stallSince,
+  ].flatMap((basis, index) =>
+    basis.source === "reconfirmed_observation"
+      ? [[index, basis.source, basis.at, [...basis.sourceIds].sort()]]
+      : [],
+  );
   return JSON.stringify([
     "personal-reminder-v1",
     item.nodeId,
@@ -198,6 +207,7 @@ function personalReminderNotificationState(
     context.stallSince.at,
     signal.severity,
     signal.reason.threshold.hours,
+    ...(reconfirmedBases.length === 0 ? [] : [reconfirmedBases]),
   ]);
 }
 

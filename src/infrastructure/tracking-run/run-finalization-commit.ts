@@ -9,7 +9,7 @@ import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import { createGitHubRepositoryId } from "../../domain/index.js";
 import { joinStatePath } from "../../persistence/branch-adapter.js";
 import { assertStatePublicSafety } from "../../persistence/public-safety.js";
-import { serializeStateSnapshot } from "../../persistence/snapshot-v21.js";
+import { serializeStateSnapshot } from "../../persistence/snapshot-v22.js";
 import { writeStateCas, type StateCasCommitRequestFactory } from "../../persistence/state-cas.js";
 import {
   createStateRunReport,

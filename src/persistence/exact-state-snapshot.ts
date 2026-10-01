@@ -5,7 +5,7 @@ import {
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
 import { StateFormatError } from "./errors.js";
-import { migrateStateSnapshot } from "./snapshot-v21-migration.js";
+import { migrateStateSnapshot } from "./snapshot-v22-migration.js";
 import { readAiCacheMigrationPlan } from "./state-ai-cache-migration-plan.js";
 import {
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,

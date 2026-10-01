@@ -131,7 +131,7 @@ export function assertRuntimeSeedMatchesBuilder(
   const rebuilt = createPersonalReminderCauseProjectionSeed({
     projection,
     currentObservedAt: evaluatedAt,
-    sourceOccurredAtById: currentSeed.item.sourceOccurredAtById,
+    clockEventOccurredAtBySourceId: currentSeed.item.clockEventOccurredAtBySourceId,
   });
   if (serializeCanonicalJson(rebuilt) !== serializeCanonicalJson(currentSeed.seed)) {
     throw new TypeError(

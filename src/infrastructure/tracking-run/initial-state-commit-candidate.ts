@@ -5,7 +5,7 @@ import type {
   StatePersistenceConfiguration,
 } from "../../persistence/branch-adapter.js";
 import { assertStatePublicSafety } from "../../persistence/public-safety.js";
-import { parseStateSnapshot } from "../../persistence/snapshot-v21.js";
+import { parseStateSnapshot } from "../../persistence/snapshot-v22.js";
 import { verifyRunTransactionFiles } from "../../persistence/state-transaction-files.js";
 import type { DurablePublicationRecord } from "../../publication/durable-record-schema.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";

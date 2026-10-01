@@ -49,13 +49,13 @@ function walkBasis(
   ownerNodeIds: readonly string[],
   relationIds: readonly string[],
 ): void {
-  if (basis.source !== "event") return;
+  if (basis.source === "first_observation") return;
   for (const [index, sourceId] of basis.sourceIds.entries()) {
     emit(
       sourceId,
       [...path, "sourceIds", index],
       destination,
-      "personal_reminder_event_basis",
+      basis.source === "event" ? "personal_reminder_event_basis" : "personal_reminder_cause",
       "historical_allowed",
       ownerNodeIds,
       relationIds,

@@ -33,8 +33,8 @@ import {
   type InitialPublicationBaseState,
 } from "./initial-publication-base-state.js";
 import { OPERATIONS_ALERT_LEDGER_STATE_PATH_V1 } from "./operations-alert-ledger.js";
-import { migrateStateSnapshot } from "./snapshot-v21-migration.js";
-import type { StateSnapshot } from "./snapshot-v21.js";
+import { migrateStateSnapshot } from "./snapshot-v22-migration.js";
+import type { StateSnapshot } from "./snapshot-v22.js";
 import { readAiCacheMigrationPlan } from "./state-ai-cache-migration-plan.js";
 import { cachePath, personalReminderAiCachePath } from "./state-cache-paths.js";
 import type { StateNotificationLedger } from "./state-documents.js";

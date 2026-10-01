@@ -231,7 +231,7 @@ export function planPersonalReminderCauses(
           drafts: draftedItem.drafts,
           previous,
           currentObservedAt: context.evaluatedAt,
-          sourceOccurredAtById: item.sourceOccurredAtById,
+          clockEventOccurredAtBySourceId: item.clockEventOccurredAtBySourceId,
           confirmedEndedCauseIds: confirmedEnded,
         });
         if (
@@ -460,7 +460,7 @@ export function planPersonalReminderCauses(
           const probeSeed = createPersonalReminderCauseProjectionSeed({
             projection,
             currentObservedAt: context.evaluatedAt,
-            sourceOccurredAtById: draftedItem.item.sourceOccurredAtById,
+            clockEventOccurredAtBySourceId: draftedItem.item.clockEventOccurredAtBySourceId,
           });
           const probeCurrentSeed = createRuntimeCurrentSeed({
             item: draftedItem.item,

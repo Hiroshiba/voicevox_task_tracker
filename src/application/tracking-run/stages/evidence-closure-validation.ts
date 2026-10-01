@@ -50,7 +50,15 @@ function assertBasis(
   path: readonly (string | number)[],
   context: EvidenceClosureContext,
 ): void {
-  if (basis.source !== "event") return;
+  if (basis.source === "reconfirmation_pending") {
+    throw new RunCompletenessError(
+      "invalid_reference",
+      basis.sourceIds[0] ?? "clock",
+      path,
+      undefined,
+    );
+  }
+  if (basis.source === "first_observation") return;
   for (const [index, sourceId] of basis.sourceIds.entries()) {
     assertTime(sourceId, basis.at, [...path, "sourceIds", index], context);
   }

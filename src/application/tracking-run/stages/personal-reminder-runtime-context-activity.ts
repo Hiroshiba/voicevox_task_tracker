@@ -22,13 +22,13 @@ function timeBasisFromTransitionBasis(
     occurredAt: UtcIsoDateTime;
     precision: "event" | "inferred";
   }>,
-  sourceOccurredAtById: ReadonlyMap<SourceId, UtcIsoDateTime>,
+  clockEventOccurredAtBySourceId: ReadonlyMap<SourceId, UtcIsoDateTime>,
 ): PersonalReminderTimeBasis | undefined {
   if (basis.precision !== "event") {
     return undefined;
   }
   const sourceIds = basis.sourceIds.filter(
-    (sourceId) => sourceOccurredAtById.get(sourceId) === basis.occurredAt,
+    (sourceId) => clockEventOccurredAtBySourceId.get(sourceId) === basis.occurredAt,
   );
   if (sourceIds.length === 0) {
     return undefined;
@@ -113,11 +113,15 @@ export function createActionActivity(
   item: PersonalReminderItem,
   actionKind: PersonalReminderActionKind | undefined,
   responsibleCandidateIds: ReadonlySet<string>,
+  clockEventOccurredAtBySourceId: ReadonlyMap<SourceId, UtcIsoDateTime>,
 ): PersonalReminderRuntimeActivity {
-  const relevantProgress = item.events
+  const clockEvents = item.events.filter(
+    (event) => clockEventOccurredAtBySourceId.get(event.sourceId) === event.occurredAt,
+  );
+  const relevantProgress = clockEvents
     .filter((event) => isRelevantProgressEvent(event, actionKind))
     .map(basisFromEvent);
-  const responsibleActivity = item.events
+  const responsibleActivity = clockEvents
     .filter(
       (event) =>
         !isExcludedFromProgressAndHumanActivity(event) &&
@@ -126,7 +130,7 @@ export function createActionActivity(
         isResponsibleActivityEvent(event, actionKind),
     )
     .map(basisFromEvent);
-  const humanReviewActivity = item.events
+  const humanReviewActivity = clockEvents
     .filter(
       (event) =>
         !isExcludedFromProgressAndHumanActivity(event) &&
@@ -146,7 +150,7 @@ export function createActionActivity(
 export function createRuntimeActivity(
   item: PersonalReminderItem,
   decision: PersonalReminderLocalDecision,
-  sourceOccurredAtById: ReadonlyMap<SourceId, UtcIsoDateTime>,
+  clockEventOccurredAtBySourceId: ReadonlyMap<SourceId, UtcIsoDateTime>,
 ): PersonalReminderRuntimeActivity {
   const actionKind = actionKindForDecision(decision);
   const responsibleCandidateIds = new Set(
@@ -154,14 +158,19 @@ export function createRuntimeActivity(
       .filter(isPersonalReminderResponsibleWaitingOn)
       .map((waitingOn) => waitingOn.candidateId.toLowerCase()),
   );
-  const activity = createActionActivity(item, actionKind, responsibleCandidateIds);
+  const activity = createActionActivity(
+    item,
+    actionKind,
+    responsibleCandidateIds,
+    clockEventOccurredAtBySourceId,
+  );
   if (actionKind == null) {
     return activity;
   }
   const actionabilityStartByAction = new Map(activity.actionabilityStartByAction);
   actionabilityStartByAction.set(
     actionKind,
-    timeBasisFromTransitionBasis(decision.responsibilityBasis, sourceOccurredAtById),
+    timeBasisFromTransitionBasis(decision.responsibilityBasis, clockEventOccurredAtBySourceId),
   );
   return Object.freeze({ ...activity, actionabilityStartByAction });
 }

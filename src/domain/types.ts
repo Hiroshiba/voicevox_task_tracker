@@ -490,6 +490,11 @@ const pendingPersonalReminderTimeBasisSchema = z.discriminatedUnion("source", [
     source: z.literal("first_observation"),
     at: utcIsoDateTimeSchema,
   }),
+  z.strictObject({
+    source: z.literal("reconfirmed_observation"),
+    at: utcIsoDateTimeSchema,
+    sourceIds: z.array(pendingPersonalReminderSourceIdSchema).nonempty().max(30),
+  }),
 ]);
 const pendingNotificationTargetSchema = z.discriminatedUnion("kind", [
   z.strictObject({

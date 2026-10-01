@@ -253,6 +253,7 @@ export function createPersonalReminderRuntimeContext(
       item.detail,
       item.localDecision,
       item.relatedContexts,
+      input.evaluatedAt,
     );
     const responsibilities = createResponsibilities(
       item.item,
@@ -272,7 +273,7 @@ export function createPersonalReminderRuntimeContext(
     const activity = createRuntimeActivity(
       item.item,
       localDecision,
-      sourceProjection.sourceOccurredAtById,
+      sourceProjection.clockEventOccurredAtBySourceId,
     );
     const allContexts = [
       Object.freeze({ item: item.item, detail: item.detail, localDecision: item.localDecision }),
@@ -293,6 +294,7 @@ export function createPersonalReminderRuntimeContext(
         currentReviewRequestTargets: currentReviewTargetFromItem(item.item),
         executionSurfaceStates: executionSurfaceStates(graph, allContexts),
         sourceOccurredAtById: sourceProjection.sourceOccurredAtById,
+        clockEventOccurredAtBySourceId: sourceProjection.clockEventOccurredAtBySourceId,
         seedEvidence: sourceProjection.seedEvidence,
         evidenceScopes: sourceProjection.evidenceScopes,
         responsibilities: responsibilities ?? Object.freeze([]),

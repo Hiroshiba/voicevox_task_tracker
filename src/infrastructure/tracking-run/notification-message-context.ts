@@ -7,7 +7,7 @@ import type {
 } from "../../discord/notification-selection-contracts.js";
 import type { PreparedDiscordDigestMessage } from "../../discord/payload-contracts.js";
 import { buildDiscordDigestPlan } from "../../discord/payload.js";
-import type { StateSnapshot } from "../../persistence/snapshot-v21.js";
+import type { StateSnapshot } from "../../persistence/snapshot-v22.js";
 import type { StateNotificationLedger } from "../../persistence/state-documents.js";
 import type { DurablePublicationRecord } from "../../publication/durable-record-schema.js";
 import { NotificationStructureError } from "./notification-structure-error.js";

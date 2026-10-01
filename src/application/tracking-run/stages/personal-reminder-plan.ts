@@ -17,6 +17,7 @@ import {
 import { createPersonalReminderPlanningContext } from "./personal-reminder-planning-input.js";
 import { planPersonalReminderCauses } from "./personal-reminder-runtime-cause-plan.js";
 import type { PersonalReminderCauseRuntimePlan } from "./personal-reminder-runtime-contracts.js";
+import { reconfirmPreviousPersonalReminderClocks } from "./personal-reminder-clock-reconfirmation.js";
 
 /** 個人催促の原因集合、厳密入力、再利用と実行順が確定したrun。 */
 export type PersonalReminderPlannedRun = StageState<
@@ -188,12 +189,18 @@ export function planPersonalReminders(
   forcedGenericTarget: boolean,
   digest: ContentDigestPort,
 ): PersonalReminderPlannedRun {
-  const planningInput = createPersonalReminderPlanningContext(run);
+  const currentRun = reconfirmPreviousPersonalReminderClocks(run);
+  const planningInput = createPersonalReminderPlanningContext(currentRun);
   const causePlan = planPersonalReminderCauses(planningInput.context);
-  const aiPlanning = planPersonalReminderAi(causePlan.entries, run, forcedGenericTarget, digest);
+  const aiPlanning = planPersonalReminderAi(
+    causePlan.entries,
+    currentRun,
+    forcedGenericTarget,
+    digest,
+  );
   const plan: PersonalReminderPlan = Object.freeze({
     causePlan: canonicalPersonalReminderCausePlan(causePlan),
-    items: itemPlanning(run, causePlan),
+    items: itemPlanning(currentRun, causePlan),
     causes: aiPlanning.causes,
     batches: aiPlanning.batches,
     ...(aiPlanning.preflightReservation == null
@@ -202,26 +209,28 @@ export function planPersonalReminders(
   });
   return Object.freeze({
     stage: "personal_reminder_planned",
-    core: Object.freeze({ ...run.core, aiBudget: aiPlanning.ledger }),
+    core: Object.freeze({ ...currentRun.core, aiBudget: aiPlanning.ledger }),
     data: Object.freeze({
-      approvedRepositories: run.data.approvedRepositories,
-      allowlistDigest: run.data.allowlistDigest,
-      sourceCatalog: run.data.sourceCatalog,
+      approvedRepositories: currentRun.data.approvedRepositories,
+      allowlistDigest: currentRun.data.allowlistDigest,
+      sourceCatalog: currentRun.data.sourceCatalog,
       sourceRecords: Object.freeze({
-        evaluatedAt: run.data.collection.evaluatedAt,
-        enumeratedItems: run.data.collection.enumeratedItems,
-        details: run.data.collection.details,
-        observedItems: run.data.collection.observedItems,
-        staleItems: run.data.collection.staleItems,
-        collectionRepositories: run.data.collection.collectionRepositories,
-        relationCandidates: Object.freeze(run.data.facts.relations.map((fact) => fact.candidate)),
+        evaluatedAt: currentRun.data.collection.evaluatedAt,
+        enumeratedItems: currentRun.data.collection.enumeratedItems,
+        details: currentRun.data.collection.details,
+        observedItems: currentRun.data.collection.observedItems,
+        staleItems: currentRun.data.collection.staleItems,
+        collectionRepositories: currentRun.data.collection.collectionRepositories,
+        relationCandidates: Object.freeze(
+          currentRun.data.facts.relations.map((fact) => fact.candidate),
+        ),
       }),
-      aiItems: run.data.aiItems,
-      finalItems: run.data.finalItems,
-      graph: run.data.graph,
-      finalGraphProjection: run.data.finalGraphProjection,
-      snapshotProjection: run.data.snapshotProjection,
-      candidateDependencyContexts: run.data.context.candidateRelations,
+      aiItems: currentRun.data.aiItems,
+      finalItems: currentRun.data.finalItems,
+      graph: currentRun.data.graph,
+      finalGraphProjection: currentRun.data.finalGraphProjection,
+      snapshotProjection: currentRun.data.snapshotProjection,
+      candidateDependencyContexts: currentRun.data.context.candidateRelations,
       plan,
     }),
     proof: createPersonalReminderPlannedStageProof(),

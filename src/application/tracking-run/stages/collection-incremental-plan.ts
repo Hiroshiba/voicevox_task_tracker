@@ -8,6 +8,7 @@ import {
   type RetentionItemState,
   type UtcIsoDateTime,
 } from "../../../domain/index.js";
+import { personalReminderCauseNeedsClockReconfirmation } from "../../../domain/personal-reminder-causes.js";
 import { parseSourceId } from "../../../domain/source-id.js";
 import {
   planIncrementalItemCollection,
@@ -271,11 +272,22 @@ export function personalReminderDetailNodeIdsForCollection(
       .filter((sourceId) => !previousEvidenceSourceIds.has(sourceId)),
   );
   const missingReviewRequestOwnerNodeIds = new Set<string>();
+  const clockReconfirmationOwnerNodeIds = new Set<string>();
   const previousRelationsById = new Map(
     (snapshot?.relations ?? []).map((relation) => [relation.id, relation]),
   );
   for (const previous of previousItemsByNodeId.values()) {
     for (const cause of previous.personalReminderCauses) {
+      if (personalReminderCauseNeedsClockReconfirmation(cause)) {
+        const scope = personalReminderCauseScope(cause, previousRelationsById, [
+          "previousSnapshot",
+          "items",
+          previous.nodeId,
+          "personalReminderCauses",
+          cause.causeId,
+        ]);
+        for (const nodeId of scope.nodeIds) clockReconfirmationOwnerNodeIds.add(nodeId);
+      }
       if (
         !personalReminderCauseSourceIds(cause).some(
           (sourceId) =>
@@ -301,6 +313,9 @@ export function personalReminderDetailNodeIdsForCollection(
     );
   const nodeIds = new Set<GitHubNodeId>();
   for (const item of enumeratedItems) {
+    if (clockReconfirmationOwnerNodeIds.has(item.nodeId)) {
+      nodeIds.add(item.nodeId);
+    }
     if (item.type === "pull_request" && missingReviewRequestOwnerNodeIds.has(item.nodeId)) {
       nodeIds.add(item.nodeId);
     }
@@ -309,6 +324,9 @@ export function personalReminderDetailNodeIdsForCollection(
       continue;
     }
     if (potentialContinuityConflictNodeIds.has(item.nodeId)) {
+      nodeIds.add(item.nodeId);
+    }
+    if (previous.personalReminderCauses.some(personalReminderCauseNeedsClockReconfirmation)) {
       nodeIds.add(item.nodeId);
     }
     if (relationCandidateConsumerNodeIds.has(item.nodeId)) {
@@ -362,6 +380,9 @@ export function personalReminderReplanNodeIdsForCollection(
       continue;
     }
     if (potentialContinuityConflictNodeIds.has(item.nodeId)) {
+      nodeIds.add(item.nodeId);
+    }
+    if (previous.personalReminderCauses.some(personalReminderCauseNeedsClockReconfirmation)) {
       nodeIds.add(item.nodeId);
     }
     if (item.state !== "open") {

@@ -219,6 +219,7 @@ export type PersonalReminderRuntimeContextItem = Omit<
     currentReviewRequestTargets: readonly PersonalReminderReviewRequestTarget[];
     executionSurfaceStates: ReadonlyMap<GitHubNodeId, "open" | "merged" | "closed_without_merge">;
     sourceOccurredAtById: ReadonlyMap<SourceId, UtcIsoDateTime>;
+    clockEventOccurredAtBySourceId: ReadonlyMap<SourceId, UtcIsoDateTime>;
     seedEvidence: readonly Evidence[];
     evidenceScopes: readonly PersonalReminderEvidenceScope[];
     itemContext: PersonalReminderAiItemContext;

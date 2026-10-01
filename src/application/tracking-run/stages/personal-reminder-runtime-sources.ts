@@ -28,6 +28,7 @@ import type {
   PersonalReminderRuntimeRelatedContext,
   PersonalReminderRuntimeSource,
 } from "./personal-reminder-runtime-contracts.js";
+import { createPersonalReminderClockEventSources } from "./personal-reminder-clock-sources.js";
 
 /** 項目と詳細から原因計画用の根拠sourceを収集する。 */
 export function createRuntimeSources(
@@ -35,9 +36,11 @@ export function createRuntimeSources(
   detail: GitHubItemDetail,
   localDecision: PersonalReminderRuntimeLocalDecision,
   relatedContexts: readonly PersonalReminderRuntimeRelatedContext[],
+  evaluatedAt: UtcIsoDateTime,
 ): Readonly<{
   sources: readonly PersonalReminderRuntimeSource[];
   sourceOccurredAtById: ReadonlyMap<SourceId, UtcIsoDateTime>;
+  clockEventOccurredAtBySourceId: ReadonlyMap<SourceId, UtcIsoDateTime>;
   seedEvidence: readonly Evidence[];
   evidenceScopes: readonly PersonalReminderEvidenceScope[];
 }> {
@@ -45,6 +48,7 @@ export function createRuntimeSources(
   const sourceOccurredAtById = new Map<SourceId, UtcIsoDateTime>();
   const seedEvidence = new Map<SourceId, Evidence>();
   const contexts = [Object.freeze({ item, detail, localDecision }), ...relatedContexts];
+  const clockEventSources = createPersonalReminderClockEventSources(contexts, evaluatedAt);
   for (const context of contexts) {
     const contextItem = context.item;
     const contextDetail = context.detail;
@@ -233,6 +237,9 @@ export function createRuntimeSources(
       ),
     ),
     sourceOccurredAtById,
+    clockEventOccurredAtBySourceId: new Map(
+      [...clockEventSources].map(([sourceId, source]) => [sourceId, source.occurredAt]),
+    ),
     seedEvidence: Object.freeze([...seedEvidence.values()]),
     evidenceScopes: Object.freeze(evidenceScopes),
   });

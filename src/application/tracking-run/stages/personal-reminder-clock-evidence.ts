@@ -4,6 +4,10 @@ import type { SourceId } from "../../../domain/source-id.js";
 import type { Evidence, NormalizedEvent, UtcIsoDateTime } from "../../../domain/types.js";
 import type { CurrentSourceFact } from "../contracts/evidence-catalog.js";
 import {
+  createPersonalReminderClockEventSources,
+  type PersonalReminderClockEventSource,
+} from "./personal-reminder-clock-sources.js";
+import {
   collectCurrentSourceFacts,
   type CurrentSourceRecords,
 } from "./evidence-catalog-source-facts.js";
@@ -13,11 +17,13 @@ import { RunCompletenessError } from "./run-completeness-error.js";
 export type CurrentClockEvidenceSources = Readonly<{
   factsBySourceId: ReadonlyMap<SourceId, readonly CurrentSourceFact[]>;
   eventsBySourceId: ReadonlyMap<SourceId, NormalizedEvent>;
+  clockEventsBySourceId: ReadonlyMap<SourceId, PersonalReminderClockEventSource>;
 }>;
 
 /** 今回の収集recordから時刻根拠の検証に使うsourceを索引化する。 */
 export function indexCurrentClockEvidenceSources(
   records: CurrentSourceRecords,
+  evaluatedAt: UtcIsoDateTime,
 ): CurrentClockEvidenceSources {
   const factsBySourceId = new Map<SourceId, CurrentSourceFact[]>();
   let facts: readonly CurrentSourceFact[];
@@ -52,7 +58,21 @@ export function indexCurrentClockEvidenceSources(
       eventsBySourceId.set(event.sourceId, event);
     }
   }
-  return Object.freeze({ factsBySourceId, eventsBySourceId });
+  const detailsByNodeId = new Map(records.details.map((detail) => [detail.nodeId, detail]));
+  const contexts = records.observedItems.map((item) => {
+    const detail = detailsByNodeId.get(item.nodeId);
+    if (detail == null) {
+      throw new RunCompletenessError(
+        "missing_source",
+        item.sourceId,
+        ["sourceRecords", "details", item.nodeId],
+        undefined,
+      );
+    }
+    return Object.freeze({ item, detail });
+  });
+  const clockEventsBySourceId = createPersonalReminderClockEventSources(contexts, evaluatedAt);
+  return Object.freeze({ factsBySourceId, eventsBySourceId, clockEventsBySourceId });
 }
 
 /** 現行Eventまたはreview requestで確認した時刻だけからEvidenceを作る。 */
@@ -67,6 +87,10 @@ export function verifiedCurrentClockEvidence(
   const facts = sources.factsBySourceId.get(sourceId) ?? [];
   if (facts.length === 0) return undefined;
   const event = sources.eventsBySourceId.get(sourceId);
+  const clockEvent = sources.clockEventsBySourceId.get(sourceId);
+  if (clockEvent == null) {
+    throw new RunCompletenessError("kind_mismatch", sourceId, path, undefined);
+  }
   const detailFacts = facts.filter(
     (fact) => fact.origin === "item_detail" && fact.scope === "item",
   );
@@ -101,6 +125,12 @@ export function verifiedCurrentClockEvidence(
     (event.occurredAt !== basis.at || !allowedOwnerNodeIds.has(event.itemNodeId))
   ) {
     throw new RunCompletenessError("source_id_conflict", sourceId, path, undefined);
+  }
+  if (clockEvent.occurredAt !== basis.at) {
+    throw new RunCompletenessError("source_id_conflict", sourceId, path, undefined);
+  }
+  if (!allowedOwnerNodeIds.has(clockEvent.itemNodeId)) {
+    throw new RunCompletenessError("wrong_owner", sourceId, path, undefined);
   }
   return Object.freeze({
     sourceId,

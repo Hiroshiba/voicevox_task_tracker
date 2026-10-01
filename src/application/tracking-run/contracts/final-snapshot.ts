@@ -46,9 +46,9 @@ export type FinalSnapshotProjection = Readonly<{
   unavailablePersonalReminderConsumer: boolean;
 }>;
 
-/** schema version 21のcodecへ渡す唯一のsnapshot候補。 */
+/** schema version 22のcodecへ渡す唯一のsnapshot候補。 */
 export type FinalSnapshotCandidate = Readonly<{
-  schemaVersion: "21";
+  schemaVersion: "22";
   generatedAt: UtcIsoDateTime;
   trackingStartAt: TrackingStartAtState;
   ai: FinalSnapshotAiState;

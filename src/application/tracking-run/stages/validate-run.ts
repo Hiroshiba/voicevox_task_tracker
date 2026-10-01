@@ -64,7 +64,7 @@ const issuedValidatedRuns = new WeakSet<object>();
 export type RunCompletenessProof = Readonly<{ [runCompletenessProofBrand]: true }>;
 
 export type RunSnapshot = Readonly<{
-  schemaVersion: "21";
+  schemaVersion: "22";
   generatedAt: FinalSnapshotCandidate["generatedAt"];
   trackingStartAt: FinalSnapshotCandidate["trackingStartAt"];
   ai: FinalSnapshotCandidate["ai"];

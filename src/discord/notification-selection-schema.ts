@@ -8,8 +8,8 @@ import {
   personalReminderCauseIdSchema,
   personalReminderResponsibilityIdSchema,
   personalReminderResponsibleSchema,
-  personalReminderTimeBasisSchema,
 } from "../domain/index.js";
+import { confirmedPersonalReminderTimeBasisSchema } from "../domain/personal-reminder-causes.js";
 const actionsSecretNameSchema = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/u);
 const dateTimeSchema = z.iso
   .datetime({
@@ -52,9 +52,9 @@ const selectedReasonSourceSchema = z.discriminatedUnion("kind", [
         kind: personalReminderActionKindSchema,
         summary: z.string().min(1).max(300),
       }),
-      obligationSince: personalReminderTimeBasisSchema,
-      actionableSince: personalReminderTimeBasisSchema,
-      stallSince: personalReminderTimeBasisSchema,
+      obligationSince: confirmedPersonalReminderTimeBasisSchema,
+      actionableSince: confirmedPersonalReminderTimeBasisSchema,
+      stallSince: confirmedPersonalReminderTimeBasisSchema,
     }),
   }),
 ]);
