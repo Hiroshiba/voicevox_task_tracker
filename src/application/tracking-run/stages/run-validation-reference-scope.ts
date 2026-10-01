@@ -174,20 +174,11 @@ export function itemEvidenceScope(
   };
 }
 
-/** 個人催促原因が参照する関係の所有範囲を得る。 */
-export function causeScope(
+function causeValueScope(
+  cause: unknown,
   reference: MaterializedEvidenceReference,
   values: MaterializedReferenceValues,
 ): Readonly<{ nodeIds: readonly string[]; relationIds: readonly string[] }> {
-  const itemIndex = reference.path[2];
-  const causeIndex = reference.path[4];
-  const cause =
-    typeof itemIndex === "number" && typeof causeIndex === "number"
-      ? values.snapshot.items[itemIndex]?.personalReminderCauses[causeIndex]
-      : undefined;
-  if (cause == null) {
-    throw new RunCompletenessError("missing_value", reference.sourceId, reference.path, undefined);
-  }
   const related = valueAtPath(cause, ["adoptedAssessment", "result", "references", "relationIds"]);
   if (related != null && !Array.isArray(related)) {
     throw new RunCompletenessError(
@@ -222,19 +213,80 @@ export function causeScope(
   };
 }
 
-/** 保存済み通知に対応する原因の実行面をsource所有範囲へ加える。 */
-export function pendingNotificationScope(
+/** 個人催促原因が参照する関係の所有範囲を得る。 */
+export function causeScope(
+  reference: MaterializedEvidenceReference,
+  values: MaterializedReferenceValues,
+): Readonly<{ nodeIds: readonly string[]; relationIds: readonly string[] }> {
+  const itemIndex = reference.path[2];
+  const causeIndex = reference.path[4];
+  const cause =
+    typeof itemIndex === "number" && typeof causeIndex === "number"
+      ? values.snapshot.items[itemIndex]?.personalReminderCauses[causeIndex]
+      : undefined;
+  if (cause == null) {
+    throw new RunCompletenessError("missing_value", reference.sourceId, reference.path, undefined);
+  }
+  return causeValueScope(cause, reference, values);
+}
+
+function causeForItem(
+  values: MaterializedReferenceValues,
+  itemNodeId: string,
+  causeId: string,
+): unknown {
+  const item = values.snapshot.items.find((value) => value.nodeId === itemNodeId);
+  return item?.personalReminderCauses.find((value) => value.causeId === causeId);
+}
+
+/** 前回通知に対応する原因の実行面をsource所有範囲へ加える。 */
+export function previousPendingNotificationScope(
   reference: MaterializedEvidenceReference,
   values: MaterializedReferenceValues,
 ): readonly string[] {
   const pending = valueAtPath(values, reference.path.slice(0, 3));
   const causeId = valueAtPath(pending, ["target", "causeId"]);
   if (typeof causeId !== "string") return [reference.owner.id];
-  const item = values.snapshot.items.find((value) => value.nodeId === reference.owner.id);
-  const cause = item?.personalReminderCauses.find((value) => value.causeId === causeId);
+  const cause = causeForItem(values, reference.owner.id, causeId);
   return cause == null
     ? [reference.owner.id]
     : [
         ...new Set([reference.owner.id, ...causeExecutionSurfaceNodeIds(cause, reference.path)]),
       ].sort();
+}
+
+/** 保存済み通知に対応する原因の関係と実行面をsource所有範囲へ加える。 */
+export function pendingNotificationScope(
+  reference: MaterializedEvidenceReference,
+  values: MaterializedReferenceValues,
+): Readonly<{ nodeIds: readonly string[]; relationIds: readonly string[] }> {
+  const pending = valueAtPath(values, reference.path.slice(0, 3));
+  const causeId = valueAtPath(pending, ["target", "causeId"]);
+  if (typeof causeId !== "string") return { nodeIds: [reference.owner.id], relationIds: [] };
+  const cause = causeForItem(values, reference.owner.id, causeId);
+  return cause == null
+    ? { nodeIds: [reference.owner.id], relationIds: [] }
+    : causeValueScope(cause, reference, values);
+}
+
+/** 個人催促通知理由に対応する原因の所有範囲を得る。 */
+export function notificationReasonScope(
+  reference: MaterializedEvidenceReference,
+  values: MaterializedReferenceValues,
+): Readonly<{ nodeIds: readonly string[]; relationIds: readonly string[] }> {
+  const context = valueAtPath(values, reference.path.slice(0, 7));
+  const causeId = valueAtPath(context, ["causeId"]);
+  if (typeof causeId !== "string") {
+    throw new RunCompletenessError(
+      "invalid_reference",
+      reference.sourceId,
+      reference.path,
+      undefined,
+    );
+  }
+  const cause = causeForItem(values, reference.owner.id, causeId);
+  if (cause == null) {
+    throw new RunCompletenessError("missing_value", reference.sourceId, reference.path, undefined);
+  }
+  return causeValueScope(cause, reference, values);
 }

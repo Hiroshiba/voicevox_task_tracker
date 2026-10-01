@@ -4,13 +4,15 @@ import type {
   PersonalReminderTimeBasis,
 } from "../../../domain/personal-reminder-causes.js";
 import type { SourceId } from "../../../domain/source-id.js";
-import type { Evidence, GitHubNodeId, UtcIsoDateTime } from "../../../domain/types.js";
+import type { Evidence, UtcIsoDateTime } from "../../../domain/types.js";
+import type { ReconciledGraphEdge } from "../../../graph/reconcile-graph-types.js";
 import { indexPersonalReminderEvidence } from "./personal-reminder-evidence-index.js";
 import { personalReminderCauseSourceIds } from "./personal-reminder-cause-references.js";
 import {
   verifiedCurrentClockEvidence,
   type CurrentClockEvidenceSources,
 } from "./personal-reminder-clock-evidence.js";
+import { personalReminderCauseScope } from "./personal-reminder-related-scope.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 
 function evidenceIdentity(evidence: Evidence): string {
@@ -35,26 +37,22 @@ export function finalizePersonalReminderEvidence(
   currentEvidenceBySourceId: ReadonlyMap<SourceId, readonly Evidence[]>,
   previousEvidenceBySourceId: ReadonlyMap<SourceId, readonly Evidence[]>,
   clockSources: CurrentClockEvidenceSources,
+  relationsById: ReadonlyMap<string, ReconciledGraphEdge>,
   evaluatedAt: UtcIsoDateTime,
 ): readonly Evidence[] {
   const records = new Map(localEvidence.map((evidence) => [evidenceIdentity(evidence), evidence]));
   for (const cause of causes) {
-    const allowedOwnerNodeIds = new Set<GitHubNodeId>([
-      cause.itemNodeId,
-      ...(cause.responsibility.scope.kind === "item"
-        ? []
-        : cause.responsibility.scope.surfaces.map((surface) => surface.nodeId)),
+    const scope = personalReminderCauseScope(cause, relationsById, [
+      "personalReminderCauses",
+      itemNodeId,
+      cause.causeId,
+      "adoptedAssessment",
+      "references",
     ]);
+    const allowedOwnerNodeIds = new Set(scope.nodeIds);
     for (const basis of clockBasesForCause(cause)) {
       if (basis.source !== "event") continue;
       for (const sourceId of basis.sourceIds) {
-        if (
-          (currentEvidenceBySourceId.get(sourceId)?.length ?? 0) !== 0 ||
-          (previousEvidenceBySourceId.get(sourceId)?.length ?? 0) !== 0 ||
-          [...records.values()].some((evidence) => evidence.sourceId === sourceId)
-        ) {
-          continue;
-        }
         const verified = verifiedCurrentClockEvidence(
           sourceId,
           basis,
@@ -62,7 +60,14 @@ export function finalizePersonalReminderEvidence(
           evaluatedAt,
           clockSources,
         );
-        if (verified != null) records.set(evidenceIdentity(verified), verified);
+        if (
+          verified != null &&
+          (currentEvidenceBySourceId.get(sourceId)?.length ?? 0) === 0 &&
+          (previousEvidenceBySourceId.get(sourceId)?.length ?? 0) === 0 &&
+          ![...records.values()].some((evidence) => evidence.sourceId === sourceId)
+        ) {
+          records.set(evidenceIdentity(verified), verified);
+        }
       }
     }
     for (const sourceId of personalReminderCauseSourceIds(cause)) {

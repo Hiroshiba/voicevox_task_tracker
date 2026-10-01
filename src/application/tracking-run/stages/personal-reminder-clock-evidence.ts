@@ -1,12 +1,7 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type { PersonalReminderTimeBasis } from "../../../domain/personal-reminder-causes.js";
 import type { SourceId } from "../../../domain/source-id.js";
-import type {
-  Evidence,
-  GitHubNodeId,
-  NormalizedEvent,
-  UtcIsoDateTime,
-} from "../../../domain/types.js";
+import type { Evidence, NormalizedEvent, UtcIsoDateTime } from "../../../domain/types.js";
 import type { CurrentSourceFact } from "../contracts/evidence-catalog.js";
 import {
   collectCurrentSourceFacts,
@@ -64,7 +59,7 @@ export function indexCurrentClockEvidenceSources(
 export function verifiedCurrentClockEvidence(
   sourceId: SourceId,
   basis: Extract<PersonalReminderTimeBasis, { source: "event" }>,
-  allowedOwnerNodeIds: ReadonlySet<GitHubNodeId>,
+  allowedOwnerNodeIds: ReadonlySet<string>,
   evaluatedAt: UtcIsoDateTime,
   sources: CurrentClockEvidenceSources,
 ): Evidence | undefined {

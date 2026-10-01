@@ -8,6 +8,7 @@ import {
   type RetentionItemState,
   type UtcIsoDateTime,
 } from "../../../domain/index.js";
+import { parseSourceId } from "../../../domain/source-id.js";
 import {
   planIncrementalItemCollection,
   type IncrementalItemCollectionPlan,
@@ -23,6 +24,7 @@ import {
 } from "./collection-analysis-fingerprint.js";
 import { staleAiAnalysisElementsForLifecycle } from "./collection-lifecycle.js";
 import { personalReminderCauseSourceIds } from "./personal-reminder-cause-references.js";
+import { personalReminderCauseScope } from "./personal-reminder-related-scope.js";
 
 export type CollectionPlanningReferences = Readonly<{
   adjacentNodeIds: ReadonlySet<GitHubNodeId>;
@@ -268,12 +270,40 @@ export function personalReminderDetailNodeIdsForCollection(
       .flatMap(personalReminderCauseSourceIds)
       .filter((sourceId) => !previousEvidenceSourceIds.has(sourceId)),
   );
+  const missingReviewRequestOwnerNodeIds = new Set<string>();
+  const previousRelationsById = new Map(
+    (snapshot?.relations ?? []).map((relation) => [relation.id, relation]),
+  );
+  for (const previous of previousItemsByNodeId.values()) {
+    for (const cause of previous.personalReminderCauses) {
+      if (
+        !personalReminderCauseSourceIds(cause).some(
+          (sourceId) =>
+            missingCauseSourceIds.has(sourceId) &&
+            parseSourceId(sourceId).kind === "github_review_request",
+        )
+      ) {
+        continue;
+      }
+      const scope = personalReminderCauseScope(cause, previousRelationsById, [
+        "previousSnapshot",
+        "items",
+        previous.nodeId,
+        "personalReminderCauses",
+        cause.causeId,
+      ]);
+      for (const nodeId of scope.nodeIds) missingReviewRequestOwnerNodeIds.add(nodeId);
+    }
+  }
   const potentialContinuityConflictNodeIds =
     determinePotentialPersonalReminderContinuityConflictNodeIds(
       [...previousItemsByNodeId.values()].flatMap((item) => item.personalReminderCauses),
     );
   const nodeIds = new Set<GitHubNodeId>();
   for (const item of enumeratedItems) {
+    if (item.type === "pull_request" && missingReviewRequestOwnerNodeIds.has(item.nodeId)) {
+      nodeIds.add(item.nodeId);
+    }
     const previous = previousItemsByNodeId.get(item.nodeId);
     if (previous == null) {
       continue;

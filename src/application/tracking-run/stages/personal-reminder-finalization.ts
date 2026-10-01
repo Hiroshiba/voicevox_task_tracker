@@ -277,6 +277,7 @@ export function finalizePersonalReminders(
     ],
   );
   const clockSources = indexCurrentClockEvidenceSources(run.data.sourceRecords);
+  const relationsById = new Map(run.data.graph.edges.map((edge) => [edge.id, edge]));
   const aiContext = finalAiDependencyContext(run);
   const resolveLabelEffects = createLabelEffectsResolver(
     normalizeLabelRules(run.core.personalReminderInput.config),
@@ -410,6 +411,7 @@ export function finalizePersonalReminders(
       evidenceIndexes.current,
       evidenceIndexes.previous,
       clockSources,
+      relationsById,
       run.data.sourceRecords.evaluatedAt,
     );
     items.push(

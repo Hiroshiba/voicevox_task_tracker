@@ -8,7 +8,10 @@ import {
   causeScope,
   isRecord,
   itemEvidenceScope,
+  notificationReasonScope,
   pendingNotificationScope,
+  previousPendingNotificationScope,
+  relationScope,
   valueAtPath,
 } from "./run-validation-reference-scope.js";
 
@@ -161,30 +164,46 @@ export function referenceContext(
     const purpose = typeof element === "string" ? aiPurpose(path.slice(4), element) : undefined;
     if (purpose != null) return { purpose, currentness: "current", ownerNodeIds, relationIds: [] };
   }
-  if (path[0] === "personalReminderAiCacheAdditions")
+  if (path[0] === "personalReminderAiCacheAdditions") {
+    const index = path[1];
+    const addition =
+      typeof index === "number" ? values.personalReminderAiCacheAdditions[index] : undefined;
+    if (addition == null) {
+      throw new RunCompletenessError("missing_value", reference.sourceId, path, undefined);
+    }
+    const scope = relationScope(
+      values,
+      reference.owner.id,
+      addition.generation.result.references.relationIds,
+      path,
+    );
     return {
       purpose: "personal_reminder_cache",
       currentness: "current",
-      ownerNodeIds,
-      relationIds: [],
+      ownerNodeIds: scope.nodeIds,
+      relationIds: scope.relationIds,
     };
-  if (path[0] === "previousNotificationLedger" && path[1] === "pendingNotifications")
+  }
+  if (path[0] === "previousNotificationLedger" && path[1] === "pendingNotifications") {
     return {
       purpose: "previous_notification_pending",
       currentness: "historical_allowed",
-      ownerNodeIds: pendingNotificationScope(reference, values),
+      ownerNodeIds: previousPendingNotificationScope(reference, values),
       relationIds: [],
     };
+  }
   if (
     (path[0] === "notificationLedger" || path[0] === "notificationSelection") &&
     path[1] === "pendingNotifications"
-  )
+  ) {
+    const scope = pendingNotificationScope(reference, values);
     return {
       purpose: "personal_reminder_event_basis",
       currentness: "historical_allowed",
-      ownerNodeIds: pendingNotificationScope(reference, values),
-      relationIds: [],
+      ownerNodeIds: scope.nodeIds,
+      relationIds: scope.relationIds,
     };
+  }
   if (
     path[0] === "notificationSelection" &&
     path[1] === "candidates" &&
@@ -192,13 +211,15 @@ export function referenceContext(
     path[5] === "source" &&
     path[6] === "context" &&
     path.includes("sourceIds")
-  )
+  ) {
+    const scope = notificationReasonScope(reference, values);
     return {
       purpose: "personal_reminder_event_basis",
       currentness: "historical_allowed",
-      ownerNodeIds,
-      relationIds: [],
+      ownerNodeIds: scope.nodeIds,
+      relationIds: scope.relationIds,
     };
+  }
   throw new RunCompletenessError("invalid_reference", reference.sourceId, path, undefined);
 }
 

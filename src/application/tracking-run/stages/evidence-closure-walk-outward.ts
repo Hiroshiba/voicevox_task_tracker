@@ -17,6 +17,7 @@ import {
 } from "./evidence-closure-walk-ai.js";
 import { collectEvidenceUses, type EvidenceUseSink } from "./evidence-closure-walk-common.js";
 import { personalReminderCauseSourceIds } from "./personal-reminder-cause-references.js";
+import { personalReminderCauseScope, relatedScope } from "./personal-reminder-related-scope.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 
 function walkEvidence(
@@ -83,30 +84,6 @@ function walkRelation(
       [relation.id],
     );
   }
-}
-
-function relatedScope(
-  itemNodeId: string,
-  relationIds: readonly string[],
-  relationsById: ReadonlyMap<string, ReconciledGraphEdge>,
-  path: readonly (string | number)[],
-): Readonly<{ nodeIds: readonly string[]; relationIds: readonly string[] }> {
-  const nodes = new Set([itemNodeId]);
-  for (const relationId of relationIds) {
-    const relation = relationsById.get(relationId);
-    if (
-      relation == null ||
-      (relation.fromNodeId !== itemNodeId && relation.toNodeId !== itemNodeId)
-    ) {
-      throw new RunCompletenessError("invalid_reference", relationId, path, undefined);
-    }
-    nodes.add(relation.fromNodeId);
-    nodes.add(relation.toNodeId);
-  }
-  return Object.freeze({
-    nodeIds: Object.freeze([...nodes].sort()),
-    relationIds: Object.freeze([...new Set(relationIds)].sort()),
-  });
 }
 
 function causeOwnerNodeIds(cause: PersonalReminderCause): readonly string[] {
@@ -254,16 +231,13 @@ function walkItems(
         cause.adoptedAssessment.status === "available"
           ? cause.adoptedAssessment.result.references
           : undefined;
-      const scope = relatedScope(item.nodeId, references?.relationIds ?? [], relationsById, [
+      const scope = personalReminderCauseScope(cause, relationsById, [
         ...causePath,
         "adoptedAssessment",
         "result",
         "references",
         "relationIds",
       ]);
-      const causeNodeIds = Object.freeze(
-        [...new Set([...scope.nodeIds, ...causeOwnerNodeIds(cause)])].sort(),
-      );
       for (const [index, sourceId] of cause.evidenceSourceIds.entries()) {
         emit(
           sourceId,
@@ -271,7 +245,7 @@ function walkItems(
           destination,
           "personal_reminder_cause",
           "historical_allowed",
-          causeNodeIds,
+          scope.nodeIds,
           scope.relationIds,
         );
       }
@@ -283,7 +257,7 @@ function walkItems(
             destination,
             "personal_reminder_assessment",
             "historical_allowed",
-            causeNodeIds,
+            scope.nodeIds,
             scope.relationIds,
           );
         }
@@ -293,7 +267,7 @@ function walkItems(
         cause.obligationSince,
         [...causePath, "obligationSince"],
         destination,
-        causeNodeIds,
+        scope.nodeIds,
         scope.relationIds,
       );
       if (cause.actionableClock.status === "observed") {
@@ -302,7 +276,7 @@ function walkItems(
           cause.actionableClock.actionableSince,
           [...causePath, "actionableClock", "actionableSince"],
           destination,
-          causeNodeIds,
+          scope.nodeIds,
           scope.relationIds,
         );
         walkBasis(
@@ -310,7 +284,7 @@ function walkItems(
           cause.actionableClock.stallSince,
           [...causePath, "actionableClock", "stallSince"],
           destination,
-          causeNodeIds,
+          scope.nodeIds,
           scope.relationIds,
         );
       }
@@ -320,7 +294,7 @@ function walkItems(
           result.staleness.stallSince,
           [...base, "causeResults", causeIndex, "staleness", "stallSince"],
           destination,
-          causeNodeIds,
+          scope.nodeIds,
           scope.relationIds,
         );
       }
@@ -380,13 +354,22 @@ function walkPendingNotification(
   pending: PendingNotification,
   index: number,
   outward: EvidenceClosureOutward,
+  relationsById: ReadonlyMap<string, ReconciledGraphEdge>,
 ): void {
   const target = pending.target;
   if (target.kind !== "personal_reminder") return;
   const cause = outward.items
     .find((entry) => entry.item.nodeId === pending.itemNodeId)
     ?.causeResults.find((result) => result.cause.causeId === target.causeId)?.cause;
-  const ownerNodeIds = cause == null ? [pending.itemNodeId] : causeOwnerNodeIds(cause);
+  const scope =
+    cause == null
+      ? { nodeIds: [pending.itemNodeId], relationIds: [] }
+      : personalReminderCauseScope(cause, relationsById, [
+          "pendingNotifications",
+          index,
+          "target",
+          "causeId",
+        ]);
   const destination: EvidenceUse["destination"] = Object.freeze({
     kind: "item",
     itemNodeId: pending.itemNodeId,
@@ -396,16 +379,16 @@ function walkPendingNotification(
     target.actionableSince,
     ["pendingNotifications", index, "target", "actionableSince"],
     destination,
-    ownerNodeIds,
-    [],
+    scope.nodeIds,
+    scope.relationIds,
   );
   walkBasis(
     emit,
     target.stallSince,
     ["pendingNotifications", index, "target", "stallSince"],
     destination,
-    ownerNodeIds,
-    [],
+    scope.nodeIds,
+    scope.relationIds,
   );
 }
 
@@ -451,6 +434,12 @@ export function walkOutwardEvidenceUses(outward: EvidenceClosureOutward): readon
       );
     }
     for (const [index, addition] of outward.personalReminderAiCacheAdditions.entries()) {
+      const scope = relatedScope(
+        addition.itemNodeId,
+        addition.result.references.relationIds,
+        relationsById,
+        ["personalReminderAiCacheAdditions", index, "result", "references", "relationIds"],
+      );
       for (const [sourceIndex, sourceId] of addition.result.references.sourceIds.entries()) {
         emit(
           sourceId,
@@ -465,14 +454,14 @@ export function walkOutwardEvidenceUses(outward: EvidenceClosureOutward): readon
           Object.freeze({ kind: "item", itemNodeId: addition.itemNodeId }),
           "personal_reminder_cache",
           "current",
-          [addition.itemNodeId],
-          [],
+          scope.nodeIds,
+          scope.relationIds,
         );
       }
     }
     walkNotifications(emit, outward);
     for (const [index, pending] of outward.pendingNotifications.entries()) {
-      walkPendingNotification(emit, pending, index, outward);
+      walkPendingNotification(emit, pending, index, outward, relationsById);
     }
   });
 }
