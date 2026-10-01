@@ -71,6 +71,7 @@ export type PersonalReminderPlanningInput = Readonly<{
     | "state"
     | "personalReminderCauses"
     | "personalReminderCausePlanning"
+    | "inputEvents"
     | "evidence"
   >[];
   previousRelations: Extract<
@@ -173,6 +174,7 @@ export function projectGenericAiRunCore(analyzed: AnalysisRunCore): GenericAiRun
                   state: item.state,
                   personalReminderCauses: item.personalReminderCauses,
                   personalReminderCausePlanning: item.personalReminderCausePlanning,
+                  inputEvents: item.inputEvents,
                   evidence: item.evidence,
                 }),
               ),

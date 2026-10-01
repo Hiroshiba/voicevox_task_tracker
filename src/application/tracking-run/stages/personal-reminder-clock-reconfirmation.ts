@@ -13,6 +13,7 @@ import type { CurrentItemSourceFact } from "../contracts/evidence-catalog.js";
 import type { GraphReconciledRun } from "./graph-reconciliation.js";
 import {
   indexCurrentClockEvidenceSources,
+  verifiedCurrentClockEvidence,
   type CurrentClockEvidenceSources,
 } from "./personal-reminder-clock-evidence.js";
 import { personalReminderCauseScope } from "./personal-reminder-related-scope.js";
@@ -24,6 +25,7 @@ type ClockReconfirmationContext = Readonly<{
   observedNodeIds: ReadonlySet<GitHubNodeId>;
   evaluatedAt: UtcIsoDateTime;
   allowedOwnerNodeIds: ReadonlySet<string>;
+  previousOwnersBySourceId: ReadonlyMap<SourceId, ReadonlySet<GitHubNodeId>>;
 }>;
 
 function reconfirmationError(
@@ -36,6 +38,53 @@ function reconfirmationError(
     ["previousSnapshot", "personalReminderCauses", "clock", sourceId],
     undefined,
   );
+}
+
+function clockBasesForCause(cause: PersonalReminderCause): readonly PersonalReminderTimeBasis[] {
+  return cause.actionableClock.status === "observed"
+    ? [
+        cause.obligationSince,
+        cause.actionableClock.actionableSince,
+        cause.actionableClock.stallSince,
+      ]
+    : [cause.obligationSince];
+}
+
+function assertReappearingEventClocks(
+  cause: PersonalReminderCause,
+  context: ClockReconfirmationContext,
+): void {
+  for (const basis of clockBasesForCause(cause)) {
+    if (basis.source !== "event") continue;
+    for (const sourceId of basis.sourceIds) {
+      const detailFacts = (context.clockSources.factsBySourceId.get(sourceId) ?? []).filter(
+        (fact): fact is CurrentItemSourceFact =>
+          fact.origin === "item_detail" && fact.scope === "item",
+      );
+      if (detailFacts.length === 0) continue;
+      const previousOwners = context.previousOwnersBySourceId.get(sourceId);
+      if (previousOwners != null && previousOwners.size > 1) {
+        throw reconfirmationError("source_id_conflict", sourceId);
+      }
+      let previousOwner: GitHubNodeId | undefined;
+      if (previousOwners == null || previousOwners.size === 0) {
+        if (context.allowedOwnerNodeIds.size === 1) previousOwner = cause.itemNodeId;
+      } else {
+        previousOwner = [...previousOwners][0];
+      }
+      if (previousOwner == null) continue;
+      if (!context.allowedOwnerNodeIds.has(previousOwner)) {
+        throw reconfirmationError("wrong_owner", sourceId);
+      }
+      verifiedCurrentClockEvidence(
+        sourceId,
+        basis,
+        new Set([previousOwner]),
+        context.evaluatedAt,
+        context.clockSources,
+      );
+    }
+  }
 }
 
 function reconfirmBasis(
@@ -177,14 +226,17 @@ function reconfirmCause(
   });
 }
 
-/** 旧時計を現行の完全な詳細と正規化イベントで再確認する。 */
+/** 保存済み時計の再出現sourceと旧時計を現行の詳細と正規化イベントで再確認する。 */
 export function reconfirmPreviousPersonalReminderClocks(
   run: GraphReconciledRun,
 ): GraphReconciledRun {
   const previousItems = run.core.personalReminderInput.previousItems;
+  const previousCauses = previousItems.flatMap((item) => item.personalReminderCauses);
+  const needsReconfirmation = previousCauses.some(personalReminderCauseNeedsClockReconfirmation);
   if (
-    !previousItems.some((item) =>
-      item.personalReminderCauses.some(personalReminderCauseNeedsClockReconfirmation),
+    !needsReconfirmation &&
+    !previousCauses.some((cause) =>
+      clockBasesForCause(cause).some((basis) => basis.source === "event"),
     )
   ) {
     return run;
@@ -193,6 +245,14 @@ export function reconfirmPreviousPersonalReminderClocks(
     run.data.collection,
     run.data.collection.evaluatedAt,
   );
+  const previousOwnersBySourceId = new Map<SourceId, Set<GitHubNodeId>>();
+  for (const item of previousItems) {
+    for (const event of item.inputEvents) {
+      const owners = previousOwnersBySourceId.get(event.sourceId) ?? new Set<GitHubNodeId>();
+      owners.add(item.nodeId);
+      previousOwnersBySourceId.set(event.sourceId, owners);
+    }
+  }
   const detailsByNodeId = new Map(
     run.data.collection.details.map((detail) => [detail.nodeId, detail]),
   );
@@ -204,7 +264,12 @@ export function reconfirmPreviousPersonalReminderClocks(
     previousItems.map((item) => [
       item.nodeId,
       item.personalReminderCauses.map((cause) => {
-        if (!personalReminderCauseNeedsClockReconfirmation(cause)) return cause;
+        if (
+          !personalReminderCauseNeedsClockReconfirmation(cause) &&
+          !clockBasesForCause(cause).some((basis) => basis.source === "event")
+        ) {
+          return cause;
+        }
         const scope = personalReminderCauseScope(cause, previousRelationsById, [
           "previousSnapshot",
           "items",
@@ -212,16 +277,22 @@ export function reconfirmPreviousPersonalReminderClocks(
           "personalReminderCauses",
           cause.causeId,
         ]);
-        return reconfirmCause(cause, {
+        const context: ClockReconfirmationContext = {
           clockSources,
           detailsByNodeId,
           observedNodeIds,
           evaluatedAt: run.data.collection.evaluatedAt,
           allowedOwnerNodeIds: new Set(scope.nodeIds),
-        });
+          previousOwnersBySourceId,
+        };
+        assertReappearingEventClocks(cause, context);
+        return personalReminderCauseNeedsClockReconfirmation(cause)
+          ? reconfirmCause(cause, context)
+          : cause;
       }),
     ]),
   );
+  if (!needsReconfirmation) return run;
   return Object.freeze({
     ...run,
     core: Object.freeze({
