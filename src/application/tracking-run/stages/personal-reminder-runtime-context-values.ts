@@ -9,7 +9,7 @@ import { assertNonNullable } from "../../../util/index.js";
 import type {
   PersonalReminderDecisionWaitingOn,
   PersonalReminderResponsibleWaitingOn,
-} from "./personal-reminder-runtime-context.js";
+} from "./personal-reminder-runtime-context-activity.js";
 import type {
   PersonalReminderRuntimeCandidateEndpointItem,
   PersonalReminderRuntimeContext,

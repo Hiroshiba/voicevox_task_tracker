@@ -5,20 +5,19 @@ import type { PersonalReminderItem } from "../../../domain/personal-reminder-pla
 import type { SourceId } from "../../../domain/source-id.js";
 import type { Evidence, UtcIsoDateTime } from "../../../domain/types.js";
 import type { GitHubItemDetail } from "../../../github/item-detail-types.js";
+import { compareSourceIds, determineLocalDecision } from "./personal-reminder-runtime-common.js";
 import {
   actorCandidateId,
   actorTypeForItem,
   addRuntimeSource,
-  compareSourceIds,
   detailActorCandidateId,
   detailActorType,
-  determineLocalDecision,
   eventActorCandidateId,
   eventActorType,
   sourceContext,
   sourceSummaryForEvent,
   sourceSummaryForReviewRequest,
-} from "./personal-reminder-runtime-common.js";
+} from "./personal-reminder-runtime-source-projection.js";
 import {
   actionKindForDecision,
   checkContextOccurredAt,

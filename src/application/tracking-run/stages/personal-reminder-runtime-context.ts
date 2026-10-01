@@ -1,44 +1,18 @@
 import type { PersonalReminderAiItemContext } from "../../../codex/personal-reminder-input-contracts.js";
 import type { AiAnalysisDependencyReconciliationContext } from "../../../domain/ai-analysis-dependencies.js";
 import { aiAnalysisDependencyForRelationCandidate } from "../../../domain/ai-analysis-dependencies.js";
-import { determineIssuePersonalReminderResponsibilityAuthority } from "../../../domain/issue-state-machine.js";
-import { isExcludedFromProgressAndHumanActivity } from "../../../domain/meaningful-progress.js";
-import type {
-  PersonalReminderActionKind,
-  PersonalReminderExecutionSurface,
-  PersonalReminderResponsibility,
-  PersonalReminderResponsible,
-  PersonalReminderTimeBasis,
-} from "../../../domain/personal-reminder-causes.js";
-import type {
-  PersonalReminderItem,
-  PersonalReminderLocalDecision,
-} from "../../../domain/personal-reminder-planning.js";
-import { determinePullRequestPersonalReminderResponsibilityAuthority } from "../../../domain/pull-request-state-machine.js";
+import type { PersonalReminderItem } from "../../../domain/personal-reminder-planning.js";
 import type { SourceId } from "../../../domain/source-id.js";
-import type {
-  Evidence,
-  GitHubNodeId,
-  GraphNodeId,
-  NormalizedEvent,
-  UtcIsoDateTime,
-} from "../../../domain/types.js";
-import { assertNonNullable } from "../../../util/index.js";
+import type { Evidence, GitHubNodeId, GraphNodeId, UtcIsoDateTime } from "../../../domain/types.js";
 import { reconcileRetainedPersonalReminderCause } from "./personal-reminder-retained-cause.js";
 import {
-  compareStrings,
   createPreviousCauses,
   determineLocalDecision,
-  validateCollectedItem,
   validateLocalDecision,
 } from "./personal-reminder-runtime-common.js";
-import {
-  actionKindForDecision,
-  basisFromEvent,
-  isPersonalReminderResponsibleWaitingOn,
-} from "./personal-reminder-runtime-context-values.js";
+import { createRuntimeActivity } from "./personal-reminder-runtime-context-activity.js";
+import { createResponsibilities } from "./personal-reminder-runtime-context-responsibility.js";
 import type {
-  PersonalReminderRuntimeActivity,
   PersonalReminderRuntimeCandidateRelation,
   PersonalReminderRuntimeCollection,
   PersonalReminderRuntimeContext,
@@ -47,251 +21,11 @@ import type {
   PersonalReminderRuntimeGraph,
   PersonalReminderRuntimeItem,
   PersonalReminderRuntimeRelatedContext,
-  PersonalReminderRuntimeSource,
   PersonalReminderRuntimeState,
 } from "./personal-reminder-runtime-contracts.js";
-import { currentReviewTargetFromItem } from "./personal-reminder-runtime-relations.js";
+import { currentReviewTargetFromItem } from "./personal-reminder-runtime-relation-projection.js";
 import { createRuntimeSources } from "./personal-reminder-runtime-sources.js";
-
-function timeBasisFromTransitionBasis(
-  basis: Readonly<{
-    sourceIds: readonly SourceId[];
-    occurredAt: UtcIsoDateTime;
-    precision: "event" | "inferred";
-  }>,
-  sourceOccurredAtById: ReadonlyMap<SourceId, UtcIsoDateTime>,
-): PersonalReminderTimeBasis | undefined {
-  if (basis.precision !== "event") {
-    return undefined;
-  }
-  const sourceIds = basis.sourceIds.filter(
-    (sourceId) => sourceOccurredAtById.get(sourceId) === basis.occurredAt,
-  );
-  if (sourceIds.length === 0) {
-    return undefined;
-  }
-  return Object.freeze({
-    source: "event",
-    at: basis.occurredAt,
-    sourceIds,
-  });
-}
-
-export type PersonalReminderDecisionWaitingOn = PersonalReminderLocalDecision["waitingOn"][number];
-
-export type PersonalReminderResponsibleWaitingOn = Omit<
-  PersonalReminderDecisionWaitingOn,
-  "kind" | "role"
-> &
-  Readonly<{
-    kind: "user" | "team" | "role";
-    role: Exclude<PersonalReminderDecisionWaitingOn["role"], "dependency" | "ci">;
-  }>;
-
-function isRelevantProgressEvent(
-  event: NormalizedEvent,
-  actionKind: PersonalReminderActionKind | undefined,
-): boolean {
-  if (isExcludedFromProgressAndHumanActivity(event)) {
-    return false;
-  }
-  if (actionKind === "work") {
-    return event.kind === "push" || event.kind === "state";
-  }
-  if (actionKind === "reply") {
-    return false;
-  }
-  if (actionKind === "review" || actionKind === "revision") {
-    return event.kind === "review" && event.actor.type === "human";
-  }
-  if (actionKind === "owner") {
-    return event.kind === "state" || event.kind === "label";
-  }
-  if (actionKind === "merge") {
-    return event.kind === "state";
-  }
-  return (
-    event.kind === "state" ||
-    (event.kind === "relation" && event.relationType === "blocks" && event.action === "removed")
-  );
-}
-
-function isResponsibleActivityEvent(
-  event: NormalizedEvent,
-  actionKind: PersonalReminderActionKind | undefined,
-): boolean {
-  if (isExcludedFromProgressAndHumanActivity(event)) {
-    return false;
-  }
-  switch (actionKind) {
-    case "work":
-    case "revision":
-      return event.kind === "push" || event.kind === "state";
-    case "review":
-      return event.kind === "review" && event.actor.type === "human";
-    case "reply":
-      return (
-        (event.kind === "comment" && !event.bodyEmpty) ||
-        (event.kind === "review" && event.state === "commented" && !event.bodyEmpty)
-      );
-    case "owner":
-      return event.kind === "assignee" || event.kind === "label" || event.kind === "state";
-    case "merge":
-      return event.kind === "state";
-    case "assessment":
-    case "decision":
-    case undefined:
-      return false;
-  }
-}
-
-/** 行動種別に対応する進捗と担当者の活動を集める。 */
-export function createActionActivity(
-  item: PersonalReminderItem,
-  actionKind: PersonalReminderActionKind | undefined,
-  responsibleCandidateIds: ReadonlySet<string>,
-): PersonalReminderRuntimeActivity {
-  const relevantProgress = item.events
-    .filter((event) => isRelevantProgressEvent(event, actionKind))
-    .map(basisFromEvent);
-  const responsibleActivity = item.events
-    .filter(
-      (event) =>
-        !isExcludedFromProgressAndHumanActivity(event) &&
-        event.actor.type === "human" &&
-        responsibleCandidateIds.has(event.actor.login.toLowerCase()) &&
-        isResponsibleActivityEvent(event, actionKind),
-    )
-    .map(basisFromEvent);
-  const humanReviewActivity = item.events
-    .filter(
-      (event) =>
-        !isExcludedFromProgressAndHumanActivity(event) &&
-        event.actor.type === "human" &&
-        event.kind === "review",
-    )
-    .map(basisFromEvent);
-  return Object.freeze({
-    relevantProgress: Object.freeze(relevantProgress),
-    responsibleActivity: Object.freeze(responsibleActivity),
-    humanReviewActivity: Object.freeze(humanReviewActivity),
-    actionabilityStartByAction: new Map(),
-  });
-}
-
-function createRuntimeActivity(
-  item: PersonalReminderItem,
-  decision: PersonalReminderLocalDecision,
-  sourceOccurredAtById: ReadonlyMap<SourceId, UtcIsoDateTime>,
-): PersonalReminderRuntimeActivity {
-  const actionKind = actionKindForDecision(decision);
-  const responsibleCandidateIds = new Set(
-    decision.waitingOn
-      .filter(isPersonalReminderResponsibleWaitingOn)
-      .map((waitingOn) => waitingOn.candidateId.toLowerCase()),
-  );
-  const activity = createActionActivity(item, actionKind, responsibleCandidateIds);
-  if (actionKind == null) {
-    return activity;
-  }
-  const actionabilityStartByAction = new Map(activity.actionabilityStartByAction);
-  actionabilityStartByAction.set(
-    actionKind,
-    timeBasisFromTransitionBasis(decision.responsibilityBasis, sourceOccurredAtById),
-  );
-  return Object.freeze({ ...activity, actionabilityStartByAction });
-}
-
-function responsibilitySignature(value: PersonalReminderResponsible): string {
-  return `${value.kind}\u0000${value.candidateId.toLowerCase()}\u0000${value.role}`;
-}
-
-function createResponsibilityScope(
-  item: PersonalReminderItem,
-  decision: PersonalReminderLocalDecision,
-  sources: readonly PersonalReminderRuntimeSource[],
-  relatedContexts: readonly PersonalReminderRuntimeRelatedContext[],
-): PersonalReminderResponsibility {
-  const waitingSourceIds = new Set(decision.waitingOn.flatMap((waitingOn) => waitingOn.sourceIds));
-  const surfaces = new Map<GitHubNodeId, PersonalReminderExecutionSurface>();
-  let hasSubjectSource = false;
-  for (const source of sources) {
-    if (!waitingSourceIds.has(source.source.sourceId)) {
-      continue;
-    }
-    if (source.source.itemNodeId === item.nodeId) {
-      hasSubjectSource = true;
-      continue;
-    }
-    const related = relatedContexts.find(
-      (context) => context.item.nodeId === source.source.itemNodeId,
-    )?.item;
-    if (related?.type === "pull_request" || related?.type === "issue") {
-      surfaces.set(related.nodeId, Object.freeze({ kind: related.type, nodeId: related.nodeId }));
-    }
-  }
-  const sortedSurfaces = [...surfaces.values()].sort((left, right) =>
-    compareStrings(left.nodeId, right.nodeId),
-  );
-  const firstSurface = sortedSurfaces[0];
-  const authority = responsibilityAuthority(item, decision);
-  if (firstSurface == null) {
-    return Object.freeze({ authority, scope: Object.freeze({ kind: "item" }) });
-  }
-  const surfaceTuple: readonly [
-    PersonalReminderExecutionSurface,
-    ...PersonalReminderExecutionSurface[],
-  ] = [firstSurface, ...sortedSurfaces.slice(1)];
-  const scope = hasSubjectSource
-    ? Object.freeze({ kind: "item_and_execution_surfaces", surfaces: surfaceTuple })
-    : Object.freeze({ kind: "execution_surfaces", surfaces: surfaceTuple });
-  return Object.freeze({ authority, scope });
-}
-
-function responsibilityAuthority(
-  item: PersonalReminderItem,
-  decision: PersonalReminderLocalDecision,
-): "fixed" | "semantic" {
-  if (item.type === "issue" && decision.deterministicRulesVersion === "issue-v14") {
-    return determineIssuePersonalReminderResponsibilityAuthority({ issue: item, decision });
-  }
-  if (item.type === "pull_request" && decision.deterministicRulesVersion === "pull-request-v12") {
-    return determinePullRequestPersonalReminderResponsibilityAuthority(decision);
-  }
-  throw new TypeError(`個人催促責務のitemとstate decisionが一致しません。対象: ${item.nodeId}`);
-}
-
-function createResponsibilities(
-  item: PersonalReminderItem,
-  decision: PersonalReminderLocalDecision,
-  sources: readonly PersonalReminderRuntimeSource[],
-  relatedContexts: readonly PersonalReminderRuntimeRelatedContext[],
-): readonly [PersonalReminderResponsibility, ...PersonalReminderResponsibility[]] | undefined {
-  const responsibles = decision.waitingOn
-    .filter(isPersonalReminderResponsibleWaitingOn)
-    .map((waitingOn) =>
-      Object.freeze({
-        kind: waitingOn.kind,
-        candidateId: waitingOn.candidateId,
-        role: waitingOn.role,
-      }),
-    );
-  const firstResponsible = responsibles[0];
-  if (firstResponsible == null) {
-    return undefined;
-  }
-  const unique = new Map<string, PersonalReminderResponsible>();
-  for (const responsible of responsibles) {
-    unique.set(responsibilitySignature(responsible), responsible);
-  }
-  const sorted = [...unique.values()].sort((left, right) =>
-    compareStrings(responsibilitySignature(left), responsibilitySignature(right)),
-  );
-  const first = sorted[0];
-  assertNonNullable(first, `個人催促runtimeの責任主体がありません。対象: ${item.nodeId}`);
-  const scope = createResponsibilityScope(item, decision, sources, relatedContexts);
-  return Object.freeze([scope]);
-}
+import { validateCollectedItem } from "./personal-reminder-runtime-source-projection.js";
 
 /** graph端点から実行面の状態を取得する。 */
 export function executionSurfaceStates(

@@ -27,15 +27,17 @@ import type { SourceId } from "../../../domain/source-id.js";
 import type { Evidence, GitHubNodeId, GraphNodeId } from "../../../domain/types.js";
 import { assertNonNullable } from "../../../util/index.js";
 import {
-  assertRuntimeSeedMatchesBuilder,
   createCauseSemanticProjection,
   createCauseSourceEvidence,
   createGlobalItemContextIndex,
-  createRuntimeCurrentSeed,
-  seedOriginForProjection,
-} from "./personal-reminder-runtime-activity.js";
+} from "./personal-reminder-runtime-semantic-projection.js";
 import {
-  addRuntimeSource,
+  assertRuntimeSeedMatchesBuilder,
+  createRuntimeCurrentSeed,
+  personalReminderCauseSeedAiDependencyInputs,
+  seedOriginForProjection,
+} from "./personal-reminder-runtime-seed.js";
+import {
   aiAnalysisDependencyIsUnverified,
   combineCauseSetAiDependency,
   compareStrings,
@@ -46,6 +48,7 @@ import {
   seedAiDependencyInput,
   seedMatchesDraft,
 } from "./personal-reminder-runtime-common.js";
+import { addRuntimeSource } from "./personal-reminder-runtime-source-projection.js";
 import type {
   PersonalReminderCauseContinuityConflict,
   PersonalReminderCauseNewDraftIdCollision,
@@ -61,19 +64,18 @@ import type {
   PersonalReminderRuntimeSource,
 } from "./personal-reminder-runtime-contracts.js";
 import {
-  assertNewDraftIdCollisionPreviousCauses,
-  deterministicAssessment,
   pendingResponseMembershipDependencyInputs,
-  previousCauseById,
   responseMembershipAssessmentRequirement,
   sameResponsibleValues,
-} from "./personal-reminder-runtime-options.js";
+} from "./personal-reminder-runtime-duplicate-options.js";
 import {
-  createPersonalReminderPlanningIndexes,
-  graphDerivedDrafts,
-  negativeCandidateDependenciesForIssue,
-  personalReminderCauseSeedAiDependencyInputs,
-} from "./personal-reminder-runtime-relations.js";
+  assertNewDraftIdCollisionPreviousCauses,
+  deterministicAssessment,
+  previousCauseById,
+} from "./personal-reminder-runtime-options.js";
+import { graphDerivedDrafts } from "./personal-reminder-runtime-graph-drafts.js";
+import { negativeCandidateDependenciesForIssue } from "./personal-reminder-runtime-negative-candidates.js";
+import { createPersonalReminderPlanningIndexes } from "./personal-reminder-runtime-relations.js";
 
 /** fresh itemのcause候補をgraphと前回causeへreconcileする。 */
 export function planPersonalReminderCauses(

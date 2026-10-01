@@ -15,21 +15,20 @@ import type {
 import type { SourceId } from "../../../domain/source-id.js";
 import type { GraphNodeId } from "../../../domain/types.js";
 import { assertNonNullable } from "../../../util/index.js";
-import {
-  addRuntimeSource,
-  compareSourceIds,
-  compareStrings,
-} from "./personal-reminder-runtime-common.js";
+import { compareSourceIds, compareStrings } from "./personal-reminder-runtime-common.js";
+import { addRuntimeSource } from "./personal-reminder-runtime-source-projection.js";
 import type {
   PersonalReminderRuntimeContextItem,
   PersonalReminderRuntimeSource,
 } from "./personal-reminder-runtime-contracts.js";
 import {
   completenessForCause,
-  optionTargetScopeNodeIds,
-  seedScopeNodeIds,
   sourceIdsForPendingRelations,
   sourceIdsForRelationContexts,
+} from "./personal-reminder-runtime-relation-projection.js";
+import {
+  optionTargetScopeNodeIds,
+  seedScopeNodeIds,
 } from "./personal-reminder-runtime-relations.js";
 
 /** 原因の対象範囲と根拠から厳密な意味入力を作る。 */
