@@ -889,18 +889,23 @@ export async function executeCodexAuthenticationPreflight(
   dependencies: CodexAdapterDependencies,
 ): Promise<void> {
   const configuration = parseCodexAdapterConfiguration(configurationValue);
+  let previousAttemptError: CodexAttemptError | undefined;
 
   for (let attempts = 1; ; attempts += 1) {
     try {
       await executeAuthenticationPreflightAttempt(configuration, dependencies, attempts);
       return;
     } catch (error: unknown) {
+      if (error instanceof CodexAttemptBudgetExceededError && previousAttemptError != null) {
+        throw previousAttemptError;
+      }
       if (!(error instanceof CodexAttemptError)) {
         throw error;
       }
       if (!isTemporaryAttemptError(error) || attempts === configuration.execution.maxAttempts) {
         throw error;
       }
+      previousAttemptError = error;
       await waitBeforeRetry(attempts, configuration, dependencies);
     }
   }
