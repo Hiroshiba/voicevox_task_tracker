@@ -63,10 +63,10 @@ export async function collectPullRequestCommitMembership(
     commits.map((commit) => commit.id),
     context,
   );
-  if (commits.length !== totalCount || commits.length === 0) {
+  if (commits.length !== totalCount) {
     throw membershipError(context, "commit所属の取得件数がGitHubの件数と一致しません");
   }
-  if (commits[commits.length - 1]?.oid !== headSha) {
+  if (commits.length > 0 && commits[commits.length - 1]?.oid !== headSha) {
     throw membershipError(context, "commit所属の末尾がPull Requestのheadと一致しません");
   }
   const stabilityResponse = await graphql(PULL_REQUEST_COMMIT_STABILITY_QUERY, {

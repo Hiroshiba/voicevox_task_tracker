@@ -68,8 +68,8 @@ export function inspectLegacyCommit(
   if (
     membership.headSha !== detail.headSha ||
     membership.totalCount !== membership.commits.length ||
-    membership.commits.length === 0 ||
-    membership.commits[membership.commits.length - 1]?.sha !== detail.headSha ||
+    (membership.commits.length > 0 &&
+      membership.commits[membership.commits.length - 1]?.sha !== detail.headSha) ||
     new Set(membership.commits.map((commit) => commit.sourceId)).size !== membership.totalCount
   ) {
     throw commitError("missing_source", sourceId);
