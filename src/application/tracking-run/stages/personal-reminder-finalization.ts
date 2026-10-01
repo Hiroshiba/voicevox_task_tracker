@@ -36,6 +36,7 @@ import {
   finalizePersonalReminderEvidence,
   personalReminderEvidenceIndexes,
 } from "./personal-reminder-finalization-evidence.js";
+import { indexCurrentClockEvidenceSources } from "./personal-reminder-clock-evidence.js";
 import type {
   CanonicalPersonalReminderCausePlan,
   PersonalReminderCauseDecision,
@@ -275,6 +276,7 @@ export function finalizePersonalReminders(
       ...run.core.personalReminderInput.previousRelations.map((relation) => relation.evidence),
     ],
   );
+  const clockSources = indexCurrentClockEvidenceSources(run.data.sourceRecords);
   const aiContext = finalAiDependencyContext(run);
   const resolveLabelEffects = createLabelEffectsResolver(
     normalizeLabelRules(run.core.personalReminderInput.config),
@@ -407,7 +409,8 @@ export function finalizePersonalReminders(
       evidence,
       evidenceIndexes.current,
       evidenceIndexes.previous,
-      new Set(currentEntries.map((entry) => entry.seed.causeId)),
+      clockSources,
+      run.data.sourceRecords.evaluatedAt,
     );
     items.push(
       Object.freeze({

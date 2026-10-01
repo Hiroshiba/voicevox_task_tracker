@@ -1,30 +1,30 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type {
   PersonalReminderCause,
-  PersonalReminderCauseId,
+  PersonalReminderTimeBasis,
 } from "../../../domain/personal-reminder-causes.js";
 import type { SourceId } from "../../../domain/source-id.js";
-import type { Evidence } from "../../../domain/types.js";
+import type { Evidence, GitHubNodeId, UtcIsoDateTime } from "../../../domain/types.js";
 import { indexPersonalReminderEvidence } from "./personal-reminder-evidence-index.js";
+import { personalReminderCauseSourceIds } from "./personal-reminder-cause-references.js";
+import {
+  verifiedCurrentClockEvidence,
+  type CurrentClockEvidenceSources,
+} from "./personal-reminder-clock-evidence.js";
+import { RunCompletenessError } from "./run-completeness-error.js";
 
 function evidenceIdentity(evidence: Evidence): string {
   return serializeCanonicalJson(evidence);
 }
 
-function sourceIdsForCause(cause: PersonalReminderCause): readonly SourceId[] {
-  const sourceIds = new Set(cause.evidenceSourceIds);
-  if (cause.adoptedAssessment.status === "available") {
-    for (const id of cause.adoptedAssessment.result.references.sourceIds) sourceIds.add(id);
-  }
-  if (cause.obligationSince.source === "event") {
-    for (const id of cause.obligationSince.sourceIds) sourceIds.add(id);
-  }
-  if (cause.actionableClock.status === "observed") {
-    for (const basis of [cause.actionableClock.actionableSince, cause.actionableClock.stallSince]) {
-      if (basis.source === "event") for (const id of basis.sourceIds) sourceIds.add(id);
-    }
-  }
-  return Object.freeze([...sourceIds].sort());
+function clockBasesForCause(cause: PersonalReminderCause): readonly PersonalReminderTimeBasis[] {
+  return cause.actionableClock.status === "observed"
+    ? [
+        cause.obligationSince,
+        cause.actionableClock.actionableSince,
+        cause.actionableClock.stallSince,
+      ]
+    : [cause.obligationSince];
 }
 
 /** 原因が参照する検証済み根拠recordを所有項目へ保持する。 */
@@ -34,22 +34,50 @@ export function finalizePersonalReminderEvidence(
   localEvidence: readonly Evidence[],
   currentEvidenceBySourceId: ReadonlyMap<SourceId, readonly Evidence[]>,
   previousEvidenceBySourceId: ReadonlyMap<SourceId, readonly Evidence[]>,
-  currentCauseIds: ReadonlySet<PersonalReminderCauseId>,
+  clockSources: CurrentClockEvidenceSources,
+  evaluatedAt: UtcIsoDateTime,
 ): readonly Evidence[] {
   const records = new Map(localEvidence.map((evidence) => [evidenceIdentity(evidence), evidence]));
   for (const cause of causes) {
-    for (const sourceId of sourceIdsForCause(cause)) {
+    const allowedOwnerNodeIds = new Set<GitHubNodeId>([
+      cause.itemNodeId,
+      ...(cause.responsibility.scope.kind === "item"
+        ? []
+        : cause.responsibility.scope.surfaces.map((surface) => surface.nodeId)),
+    ]);
+    for (const basis of clockBasesForCause(cause)) {
+      if (basis.source !== "event") continue;
+      for (const sourceId of basis.sourceIds) {
+        if (
+          (currentEvidenceBySourceId.get(sourceId)?.length ?? 0) !== 0 ||
+          (previousEvidenceBySourceId.get(sourceId)?.length ?? 0) !== 0 ||
+          [...records.values()].some((evidence) => evidence.sourceId === sourceId)
+        ) {
+          continue;
+        }
+        const verified = verifiedCurrentClockEvidence(
+          sourceId,
+          basis,
+          allowedOwnerNodeIds,
+          evaluatedAt,
+          clockSources,
+        );
+        if (verified != null) records.set(evidenceIdentity(verified), verified);
+      }
+    }
+    for (const sourceId of personalReminderCauseSourceIds(cause)) {
       const previous = previousEvidenceBySourceId.get(sourceId) ?? [];
-      const current = currentCauseIds.has(cause.causeId)
-        ? (currentEvidenceBySourceId.get(sourceId) ?? [])
-        : [];
+      const current = currentEvidenceBySourceId.get(sourceId) ?? [];
       if (
         previous.length === 0 &&
         current.length === 0 &&
-        !localEvidence.some((evidence) => evidence.sourceId === sourceId)
+        ![...records.values()].some((evidence) => evidence.sourceId === sourceId)
       ) {
-        throw new TypeError(
-          `個人催促原因のsource recordがありません。item: ${itemNodeId} cause: ${cause.causeId} source: ${sourceId}`,
+        throw new RunCompletenessError(
+          "missing_source",
+          sourceId,
+          ["personalReminderCauses", itemNodeId, cause.causeId],
+          undefined,
         );
       }
       for (const evidence of [...previous, ...current]) {

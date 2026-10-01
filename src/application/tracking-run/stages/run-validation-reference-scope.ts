@@ -55,6 +55,39 @@ export function relationScope(
   return { nodeIds: [...nodes].sort(), relationIds: [...new Set(relationIds)].sort() };
 }
 
+function causeExecutionSurfaceNodeIds(cause: unknown, path: Path): readonly string[] {
+  const scope = valueAtPath(cause, ["responsibility", "scope"]);
+  if (!isRecord(scope) || typeof scope["kind"] !== "string") {
+    throw new RunCompletenessError("invalid_reference", "responsibility", path, undefined);
+  }
+  if (scope["kind"] === "item") return [];
+  const surfaces = scope["surfaces"];
+  if (
+    (scope["kind"] !== "execution_surfaces" && scope["kind"] !== "item_and_execution_surfaces") ||
+    !Array.isArray(surfaces)
+  ) {
+    throw new RunCompletenessError("invalid_reference", "responsibility", path, undefined);
+  }
+  return surfaces.map((surface: unknown) => {
+    const nodeId = valueAtPath(surface, ["nodeId"]);
+    if (typeof nodeId !== "string") {
+      throw new RunCompletenessError("invalid_reference", "responsibility", path, undefined);
+    }
+    return nodeId;
+  });
+}
+
+function causeClockReferencesSource(cause: unknown, sourceId: string): boolean {
+  return [
+    ["obligationSince", "sourceIds"],
+    ["actionableClock", "actionableSince", "sourceIds"],
+    ["actionableClock", "stallSince", "sourceIds"],
+  ].some((path) => {
+    const sourceIds = valueAtPath(cause, path);
+    return Array.isArray(sourceIds) && sourceIds.includes(sourceId);
+  });
+}
+
 /** 項目Evidenceの原因と関係から許可される所有範囲を得る。 */
 export function itemEvidenceScope(
   reference: MaterializedEvidenceReference,
@@ -67,6 +100,7 @@ export function itemEvidenceScope(
     throw new RunCompletenessError("missing_value", ownerNodeId, reference.path, undefined);
   }
   const relationIds = new Set<string>();
+  const ownerNodeIds = new Set([ownerNodeId]);
   for (const cause of item.personalReminderCauses) {
     const sourceIds = valueAtPath(cause, ["evidenceSourceIds"]);
     const assessmentSourceIds = valueAtPath(cause, [
@@ -77,8 +111,12 @@ export function itemEvidenceScope(
     ]);
     if (
       (Array.isArray(sourceIds) && sourceIds.includes(reference.sourceId)) ||
-      (Array.isArray(assessmentSourceIds) && assessmentSourceIds.includes(reference.sourceId))
+      (Array.isArray(assessmentSourceIds) && assessmentSourceIds.includes(reference.sourceId)) ||
+      causeClockReferencesSource(cause, reference.sourceId)
     ) {
+      for (const nodeId of causeExecutionSurfaceNodeIds(cause, reference.path)) {
+        ownerNodeIds.add(nodeId);
+      }
       const related = valueAtPath(cause, [
         "adoptedAssessment",
         "result",
@@ -129,7 +167,11 @@ export function itemEvidenceScope(
       relationIds.add(relation.id);
     }
   }
-  return relationScope(values, ownerNodeId, [...relationIds], reference.path);
+  const related = relationScope(values, ownerNodeId, [...relationIds], reference.path);
+  return {
+    nodeIds: [...new Set([...related.nodeIds, ...ownerNodeIds])].sort(),
+    relationIds: related.relationIds,
+  };
 }
 
 /** 個人催促原因が参照する関係の所有範囲を得る。 */
@@ -168,5 +210,31 @@ export function causeScope(
       ids.push(id);
     }
   }
-  return relationScope(values, reference.owner.id, ids, reference.path);
+  const relatedScopeValue = relationScope(values, reference.owner.id, ids, reference.path);
+  return {
+    nodeIds: [
+      ...new Set([
+        ...relatedScopeValue.nodeIds,
+        ...causeExecutionSurfaceNodeIds(cause, reference.path),
+      ]),
+    ].sort(),
+    relationIds: relatedScopeValue.relationIds,
+  };
+}
+
+/** 保存済み通知に対応する原因の実行面をsource所有範囲へ加える。 */
+export function pendingNotificationScope(
+  reference: MaterializedEvidenceReference,
+  values: MaterializedReferenceValues,
+): readonly string[] {
+  const pending = valueAtPath(values, reference.path.slice(0, 3));
+  const causeId = valueAtPath(pending, ["target", "causeId"]);
+  if (typeof causeId !== "string") return [reference.owner.id];
+  const item = values.snapshot.items.find((value) => value.nodeId === reference.owner.id);
+  const cause = item?.personalReminderCauses.find((value) => value.causeId === causeId);
+  return cause == null
+    ? [reference.owner.id]
+    : [
+        ...new Set([reference.owner.id, ...causeExecutionSurfaceNodeIds(cause, reference.path)]),
+      ].sort();
 }

@@ -8,6 +8,7 @@ import {
   causeScope,
   isRecord,
   itemEvidenceScope,
+  pendingNotificationScope,
   valueAtPath,
 } from "./run-validation-reference-scope.js";
 
@@ -171,7 +172,7 @@ export function referenceContext(
     return {
       purpose: "previous_notification_pending",
       currentness: "historical_allowed",
-      ownerNodeIds,
+      ownerNodeIds: pendingNotificationScope(reference, values),
       relationIds: [],
     };
   if (
@@ -181,7 +182,7 @@ export function referenceContext(
     return {
       purpose: "personal_reminder_event_basis",
       currentness: "historical_allowed",
-      ownerNodeIds,
+      ownerNodeIds: pendingNotificationScope(reference, values),
       relationIds: [],
     };
   if (

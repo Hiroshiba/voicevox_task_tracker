@@ -22,6 +22,7 @@ import {
   createAiAnalysisRunIdentity,
 } from "./collection-analysis-fingerprint.js";
 import { staleAiAnalysisElementsForLifecycle } from "./collection-lifecycle.js";
+import { personalReminderCauseSourceIds } from "./personal-reminder-cause-references.js";
 
 export type CollectionPlanningReferences = Readonly<{
   adjacentNodeIds: ReadonlySet<GitHubNodeId>;
@@ -249,8 +250,23 @@ export function personalReminderDetailNodeIdsForCollection(
   aiEnabled: boolean,
   relationCandidateConsumerNodeIds: ReadonlySet<GitHubNodeId>,
 ): ReadonlySet<GitHubNodeId> {
+  const snapshot = previousSnapshot(state);
   const previousItemsByNodeId = new Map(
-    (previousSnapshot(state)?.trackedItems ?? []).map((item) => [item.nodeId, item]),
+    (snapshot?.trackedItems ?? []).map((item) => [item.nodeId, item]),
+  );
+  const previousEvidenceSourceIds = new Set([
+    ...(snapshot?.trackedItems ?? []).flatMap((item) =>
+      item.evidence.map((evidence) => evidence.sourceId),
+    ),
+    ...(snapshot?.relations ?? []).flatMap((relation) =>
+      relation.evidence.map((evidence) => evidence.sourceId),
+    ),
+  ]);
+  const missingCauseSourceIds = new Set(
+    [...previousItemsByNodeId.values()]
+      .flatMap((item) => item.personalReminderCauses)
+      .flatMap(personalReminderCauseSourceIds)
+      .filter((sourceId) => !previousEvidenceSourceIds.has(sourceId)),
   );
   const potentialContinuityConflictNodeIds =
     determinePotentialPersonalReminderContinuityConflictNodeIds(
@@ -266,6 +282,9 @@ export function personalReminderDetailNodeIdsForCollection(
       nodeIds.add(item.nodeId);
     }
     if (relationCandidateConsumerNodeIds.has(item.nodeId)) {
+      nodeIds.add(item.nodeId);
+    }
+    if (previous.inputEvents.some((event) => missingCauseSourceIds.has(event.sourceId))) {
       nodeIds.add(item.nodeId);
     }
     if (

@@ -1,4 +1,7 @@
-import type { PersonalReminderTimeBasis } from "../../../domain/personal-reminder-causes.js";
+import type {
+  PersonalReminderCause,
+  PersonalReminderTimeBasis,
+} from "../../../domain/personal-reminder-causes.js";
 import type { SourceId } from "../../../domain/source-id.js";
 import {
   createGitHubNodeId,
@@ -13,6 +16,7 @@ import {
   walkTrackedItemAiAnalysis,
 } from "./evidence-closure-walk-ai.js";
 import { collectEvidenceUses, type EvidenceUseSink } from "./evidence-closure-walk-common.js";
+import { personalReminderCauseSourceIds } from "./personal-reminder-cause-references.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 
 function walkEvidence(
@@ -105,6 +109,15 @@ function relatedScope(
   });
 }
 
+function causeOwnerNodeIds(cause: PersonalReminderCause): readonly string[] {
+  return Object.freeze([
+    cause.itemNodeId,
+    ...(cause.responsibility.scope.kind === "item"
+      ? []
+      : cause.responsibility.scope.surfaces.map((surface) => surface.nodeId)),
+  ]);
+}
+
 function itemEvidenceScope(
   entry: EvidenceClosureOutward["items"][number],
   sourceId: SourceId,
@@ -112,15 +125,14 @@ function itemEvidenceScope(
 ): Readonly<{ nodeIds: readonly string[]; relationIds: readonly string[] }> {
   const itemNodeId = entry.item.nodeId;
   const relationIds = new Set<string>();
+  const ownerNodeIds = new Set<string>([itemNodeId]);
   for (const result of entry.causeResults) {
     const references =
       result.cause.adoptedAssessment.status === "available"
         ? result.cause.adoptedAssessment.result.references
         : undefined;
-    if (
-      result.cause.evidenceSourceIds.includes(sourceId) ||
-      references?.sourceIds.includes(sourceId) === true
-    ) {
+    if (personalReminderCauseSourceIds(result.cause).includes(sourceId)) {
+      for (const nodeId of causeOwnerNodeIds(result.cause)) ownerNodeIds.add(nodeId);
       for (const relationId of references?.relationIds ?? []) relationIds.add(relationId);
     }
   }
@@ -146,12 +158,16 @@ function itemEvidenceScope(
       relationIds.add(relation.id);
     }
   }
-  return relatedScope(itemNodeId, [...relationIds], relationsById, [
+  const related = relatedScope(itemNodeId, [...relationIds], relationsById, [
     "items",
     itemNodeId,
     "evidence",
     sourceId,
   ]);
+  return Object.freeze({
+    nodeIds: Object.freeze([...new Set([...related.nodeIds, ...ownerNodeIds])].sort()),
+    relationIds: related.relationIds,
+  });
 }
 
 function walkItemEvidence(
@@ -245,6 +261,9 @@ function walkItems(
         "references",
         "relationIds",
       ]);
+      const causeNodeIds = Object.freeze(
+        [...new Set([...scope.nodeIds, ...causeOwnerNodeIds(cause)])].sort(),
+      );
       for (const [index, sourceId] of cause.evidenceSourceIds.entries()) {
         emit(
           sourceId,
@@ -252,7 +271,7 @@ function walkItems(
           destination,
           "personal_reminder_cause",
           "historical_allowed",
-          scope.nodeIds,
+          causeNodeIds,
           scope.relationIds,
         );
       }
@@ -264,7 +283,7 @@ function walkItems(
             destination,
             "personal_reminder_assessment",
             "historical_allowed",
-            scope.nodeIds,
+            causeNodeIds,
             scope.relationIds,
           );
         }
@@ -274,7 +293,7 @@ function walkItems(
         cause.obligationSince,
         [...causePath, "obligationSince"],
         destination,
-        scope.nodeIds,
+        causeNodeIds,
         scope.relationIds,
       );
       if (cause.actionableClock.status === "observed") {
@@ -283,7 +302,7 @@ function walkItems(
           cause.actionableClock.actionableSince,
           [...causePath, "actionableClock", "actionableSince"],
           destination,
-          scope.nodeIds,
+          causeNodeIds,
           scope.relationIds,
         );
         walkBasis(
@@ -291,7 +310,7 @@ function walkItems(
           cause.actionableClock.stallSince,
           [...causePath, "actionableClock", "stallSince"],
           destination,
-          scope.nodeIds,
+          causeNodeIds,
           scope.relationIds,
         );
       }
@@ -301,7 +320,7 @@ function walkItems(
           result.staleness.stallSince,
           [...base, "causeResults", causeIndex, "staleness", "stallSince"],
           destination,
-          scope.nodeIds,
+          causeNodeIds,
           scope.relationIds,
         );
       }
@@ -360,26 +379,32 @@ function walkPendingNotification(
   emit: EvidenceUseSink,
   pending: PendingNotification,
   index: number,
+  outward: EvidenceClosureOutward,
 ): void {
-  if (pending.target.kind !== "personal_reminder") return;
+  const target = pending.target;
+  if (target.kind !== "personal_reminder") return;
+  const cause = outward.items
+    .find((entry) => entry.item.nodeId === pending.itemNodeId)
+    ?.causeResults.find((result) => result.cause.causeId === target.causeId)?.cause;
+  const ownerNodeIds = cause == null ? [pending.itemNodeId] : causeOwnerNodeIds(cause);
   const destination: EvidenceUse["destination"] = Object.freeze({
     kind: "item",
     itemNodeId: pending.itemNodeId,
   });
   walkBasis(
     emit,
-    pending.target.actionableSince,
+    target.actionableSince,
     ["pendingNotifications", index, "target", "actionableSince"],
     destination,
-    [pending.itemNodeId],
+    ownerNodeIds,
     [],
   );
   walkBasis(
     emit,
-    pending.target.stallSince,
+    target.stallSince,
     ["pendingNotifications", index, "target", "stallSince"],
     destination,
-    [pending.itemNodeId],
+    ownerNodeIds,
     [],
   );
 }
@@ -447,7 +472,7 @@ export function walkOutwardEvidenceUses(outward: EvidenceClosureOutward): readon
     }
     walkNotifications(emit, outward);
     for (const [index, pending] of outward.pendingNotifications.entries()) {
-      walkPendingNotification(emit, pending, index);
+      walkPendingNotification(emit, pending, index, outward);
     }
   });
 }
