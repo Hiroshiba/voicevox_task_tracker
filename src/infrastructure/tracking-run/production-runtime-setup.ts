@@ -102,6 +102,7 @@ export function requireEnvironmentVariables(
 function readCodexCredentials(
   environment: Readonly<NodeJS.ProcessEnv>,
   config: Config,
+  effectTarget: RunRequest["executionPolicy"]["effectTarget"],
 ): RuntimeCodexCredentials {
   if (!config.ai.enabled) {
     return Object.freeze({
@@ -121,7 +122,7 @@ function readCodexCredentials(
     authentication,
     environment: Object.freeze(codexEnvironment),
     authenticationSync:
-      environment["GITHUB_ACTIONS"] === "true"
+      environment["GITHUB_ACTIONS"] === "true" && effectTarget === "production"
         ? Object.freeze({
             kind: "github-actions",
             tokenPresent: environment["CODEX_AUTH_SYNC_TOKEN_PRESENT"] === "true",
@@ -169,7 +170,7 @@ export function readRuntimeCredentials(
         : ["GH_APP_ID", "GH_APP_PRIVATE_KEY"];
     throw new CliCredentialsError(variableNames, { cause: error });
   }
-  const codex = readCodexCredentials(environment, config);
+  const codex = readCodexCredentials(environment, config, request.executionPolicy.effectTarget);
   const knownSecrets = [github.privateKey, ...codexKnownSecrets(codex)];
   if (
     config.notifications.discord.enabled &&

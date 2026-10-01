@@ -103,27 +103,28 @@ Codex CLIはaccess tokenの残り有効期間が5分未満になるとrefresh to
 `auth-json`で実行候補が1件以上あるrunでは、候補processより先に固定した短文による認証preflightを空の一時directoryで1論理call実行します。候補データと通常のsystem promptは渡さず、preflightの完了後に設定済みの並列度で候補を処理します。候補なし、cache hitだけ、全候補が予算延期のrunでは実行しません。
 `api-key`ではpreflightを実行しません。このpreflightは必要時のtoken更新機会を先に設ける緩和策であり、refreshを強制しません。preflight後に各並列processが更新条件へ入れば、認証競合は残ります。
 preflightに失敗したrunは候補を1件も開始せず、`generic_ai_executed`を失敗させます。
-配置後のmaskまで完了していれば、書き戻しstepは先行stepの成否を問わず実行します。
-実行stepへは`CODEX_AUTH_SYNC_TOKEN`の有無を示す真偽値だけを渡します。`auth-json`で実行候補がある場合、この値が偽ならCodexの起動前に失敗します。
-tokenの値は書き戻しstepだけへ`GH_TOKEN`として渡します。
+認証secretへの書き戻しは本番の`analyze`だけが行います。
+配置後のmaskまで完了していれば、書き戻しstepを先行stepの成否を問わず実行します。
+本番の実行stepへは`CODEX_AUTH_SYNC_TOKEN`の有無を示す真偽値だけを渡します。`auth-json`で実行候補がある場合、この値が偽ならCodexの起動前に失敗します。
+tokenの値は本番の書き戻しstepだけへ`GH_TOKEN`として渡します。
 書き戻しstepは更新後の値をmaskしてから、配置時のsha256と現在の`auth.json`を比較します。
 変更があってtokenが空なら、secretの更新前に失敗します。
 変更がなければsecretを更新せず、変更があれば`gh secret set`で`CODEX_AUTH_JSON`を更新します。
 この同期が成功する限り、手動の再ログインとsecretの再登録なしにtokenの期限が延長され続けます。
-`analyze`は認証ファイルの配置直後とsecretへ書き戻す直前に`.github/scripts/mask-codex-auth-values.sh`を実行します。
+`analyze`は認証ファイルの配置直後に`.github/scripts/mask-codex-auth-values.sh`を実行します。本番の書き戻し直前にも実行します。
 このscriptは`auth.json`内のすべての文字列値を`jq`で取り出し、改行を含む値を行へ分け、16文字以上の各行を`::add-mask::`へ登録します。
 値に含まれる`%`はworkflow commandへ渡す前に`%25`へescapeします。
 GitHub Actionsの自動マスクはrun開始時に読み込んだsecret値と完全一致する文字列だけを隠します。
 `auth.json`内の個々のtokenは`CODEX_AUTH_JSON`の部分文字列であり、自動では隠れません。
 Codexが更新した`auth.json`もjob開始時のsecretとは異なるため、書き戻し前に更新後の値を登録します。
-書き戻し後はjobの最後に`codex-home`と指紋ファイルを削除します。
+jobの最後に`codex-home`と指紋ファイルを削除します。
 Codex認証情報と`CODEX_AUTH_SYNC_TOKEN`を`config.yml`、branch、artifact、run logへ書きません。
 
-同じrepositoryの`analyze`とsandbox jobは、共通の排他groupで認証の使用と書き戻しを一つずつ実行します。
+同じrepositoryの`analyze` jobは、共通の排他groupで認証の使用を直列化します。書き戻しも本番で直列化します。
 repository secretはworkflow runの受付時に読み込まれるため、待機中に別runが認証を更新しても、受付済みrunには反映されません。
 手動実行は、同じ認証を使う前のrunが完了してから起動します。
 この制約は日次workflowとsandbox workflowに共通です。
-真偽値はtokenの登録有無だけを示し、有効期限やsecret更新権限は保証しません。
+同期用の真偽値はtokenの登録有無だけを示し、有効期限やsecret更新権限は保証しません。
 tokenの権限不足やjobの中断が起きた場合、stateの保存と認証secretの同期は原子的に完了しません。
 
 repositoryのWorkflow permissionsは既定の読み取り専用にします。
@@ -154,27 +155,29 @@ manifestはcode revision、lockfile digest、Node・pnpmのtoolchain、全file�
 各stageのreceiptとcheckpointは`tracking-stage-<stage>` artifactへ、公開failureは独立したfailure artifactへ保存します。
 最後のobserveは全jobの結果と、失敗binding・operation-local certaintyを集約します。
 reportとfailure artifactをsnapshotやPagesの入力として使いません。
-詳細なstack、Codex process出力は一時JSONLへ分離し、productionではAES-256-GCMで暗号化したartifactだけを保存します。
-平文は暗号化の成否にかかわらず削除し、暗号化鍵は暗号化stepだけへ渡します。
-詳細診断artifactの保持期間は7日です。
+詳細なstack、Codex process出力は一時JSONLへ分離し、本番とsandboxではそれぞれの鍵でAES-256-GCM暗号化したartifactだけを保存します。
+平文は暗号化の成否にかかわらず削除し、暗号化鍵はsandbox入口の形式検査と各暗号化stepだけへ渡します。
+詳細診断artifactの保持期間は本番で7日、sandboxで30日です。
 
 ### forkの試行用認証を登録する
 
 `Hiroshiba/voicevox_task_tracker`のrepository variableへ`GH_APP_ID`を登録します。
-本番と同じく、repository secretsへ`GH_APP_PRIVATE_KEY`、`CODEX_AUTH_JSON`、`CODEX_AUTH_SYNC_TOKEN`を登録します。
-
-同期用のfine-grained personal access tokenは、Resource ownerを`Hiroshiba`にし、対象repositoryを`Hiroshiba/voicevox_task_tracker`だけに絞ります。
-Repository permissionsには`Secrets`の`Read and write`だけを与えます。
+repository secretsへ`GH_APP_PRIVATE_KEY`、`CODEX_AUTH_JSON`、`VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64`を登録します。
+診断鍵は本番とは別の32 byteの乱数をBase64へ変換し、Git管理外の安全な場所へ権限600で保管します。
 
 ```console
 gh secret set CODEX_AUTH_JSON --repo Hiroshiba/voicevox_task_tracker < "${CODEX_HOME:-$HOME/.codex}/auth.json"
-gh secret set CODEX_AUTH_SYNC_TOKEN --repo Hiroshiba/voicevox_task_tracker
+umask 077
+openssl rand 32 | openssl base64 -A > path/to/sandbox-diagnostics-key.b64
+chmod 600 path/to/sandbox-diagnostics-key.b64
+gh secret set VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64 --repo Hiroshiba/voicevox_task_tracker < path/to/sandbox-diagnostics-key.b64
 ```
 
-認証ファイルに変更があれば、試行処理が失敗した場合も同じrepository secretへ書き戻します。
-書き戻しに失敗した場合はrunを失敗にし、一時ファイルは削除します。
-認証エラーから復旧するときは、再ログインで得た`auth.json`を同じrepository secretへ登録します。
-同期用PATの有効期限は自動延長されないため、期限前に再発行して`CODEX_AUTH_SYNC_TOKEN`を更新します。
+sandboxは`CODEX_AUTH_SYNC_TOKEN`を受け取らず、Codex認証secretを書き戻しません。
+診断鍵が未設定または形式不正なら、環境の準備とCodexの起動前に停止します。
+Codexが`auth.json`を更新しても次のActions runへ引き継がれません。
+自動起動されるcontinuityの2回目や後続scenarioは、古いrefresh tokenが無効になると認証エラーで停止し得ます。
+認証エラーから復旧するときは、再ログインで得た`auth.json`をforkの`CODEX_AUTH_JSON` secretへ登録してから継続実行します。
 
 ## マージゲートの設定
 

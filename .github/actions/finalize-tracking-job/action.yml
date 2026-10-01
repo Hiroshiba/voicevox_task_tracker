@@ -1,9 +1,6 @@
 name: 追跡jobの診断と失敗を保存
 description: 未処理エラー後も診断暗号化と失敗artifact保存を行う
 inputs:
-  effect-target:
-    description: 副作用の対象
-    required: true
   workflow-kind:
     description: artifact名のworkflow種別
     required: true
@@ -31,17 +28,12 @@ runs:
       if: always()
       shell: bash
       env:
-        TRACKING_EFFECT_TARGET: ${{ inputs['effect-target'] }}
         TRACKING_RUNTIME_CLI: ${{ inputs['runtime-cli'] }}
         TRACKING_DIAGNOSTICS_REQUIRED: ${{ inputs['diagnostics-required'] }}
         VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ inputs['diagnostics-key'] }}
       run: |
         if [[ -f "$RUNNER_TEMP/voicevox-task-tracker-diagnostics-$GITHUB_JOB.jsonl" || "$TRACKING_DIAGNOSTICS_REQUIRED" == 'true' ]]; then
-          if [[ "$TRACKING_EFFECT_TARGET" == 'sandbox' && -z "$VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64" ]]; then
-            echo "sandbox診断の暗号化鍵がないため診断artifactを保存しません"
-          else
-            .github/scripts/encrypt-diagnostics.sh "$TRACKING_RUNTIME_CLI"
-          fi
+          .github/scripts/encrypt-diagnostics.sh "$TRACKING_RUNTIME_CLI"
         fi
     - name: 暗号化済み診断artifactを保存
       if: always()

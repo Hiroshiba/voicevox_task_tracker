@@ -81,6 +81,21 @@ on:
         required: false
         default: 7
         type: number
+    secrets:
+      GH_APP_PRIVATE_KEY:
+        required: false
+      CODEX_AUTH_JSON:
+        required: false
+      CODEX_AUTH_SYNC_TOKEN:
+        required: false
+      DISCORD_WEBHOOK_URL:
+        required: false
+      DISCORD_OPERATIONS_WEBHOOK_URL:
+        required: false
+      VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64:
+        required: false
+      VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64:
+        required: false
 
 permissions: {}
 
@@ -181,11 +196,10 @@ jobs:
         if: always()
         uses: ./.github/actions/finalize-tracking-job
         with:
-          effect-target: ${{ inputs.effect_target }}
           workflow-kind: ${{ inputs.effect_target == 'sandbox' && 'sandbox' || 'daily' }}
           runtime-cli: dist/cli/tracker-run.js
           retention-days: ${{ inputs.artifact_retention_days }}
-          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
+          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || inputs.effect_target == 'sandbox' && secrets.VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
 
   prepare-runtime:
     needs: bootstrap
@@ -278,11 +292,10 @@ jobs:
         if: always()
         uses: ./.github/actions/finalize-tracking-job
         with:
-          effect-target: ${{ inputs.effect_target }}
           workflow-kind: ${{ inputs.effect_target == 'sandbox' && 'sandbox' || 'daily' }}
           runtime-cli: artifacts/workflow/runtime/tracker-run.mjs
           retention-days: ${{ inputs.artifact_retention_days }}
-          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
+          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || inputs.effect_target == 'sandbox' && secrets.VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
 
   analyze:
     needs: [quality, prepare-runtime]
@@ -342,7 +355,7 @@ jobs:
         if: steps.route.outputs.next_stage == 'analyze'
         env:
           BACKFILL_MODE: ${{ inputs.backfill }}
-          CODEX_AUTH_SYNC_TOKEN_PRESENT: ${{ secrets.CODEX_AUTH_SYNC_TOKEN != '' }}
+          CODEX_AUTH_SYNC_TOKEN_PRESENT: ${{ inputs.effect_target == 'production' && secrets.CODEX_AUTH_SYNC_TOKEN != '' }}
           CODEX_HOME: ${{ runner.temp }}/codex-home
           GH_APP_ID: ${{ vars.GH_APP_ID }}
           GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
@@ -406,7 +419,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
       - name: 更新されたCodex認証ファイルをsecretへ書き戻す
-        if: always() && steps.codex_auth_placement.outputs.placed == 'true'
+        if: always() && inputs.effect_target == 'production' && steps.codex_auth_placement.outputs.placed == 'true'
         env:
           GH_TOKEN: ${{ secrets.CODEX_AUTH_SYNC_TOKEN }}
         run: |
@@ -429,11 +442,10 @@ jobs:
         if: always()
         uses: ./.github/actions/finalize-tracking-job
         with:
-          effect-target: ${{ inputs.effect_target }}
           workflow-kind: ${{ inputs.effect_target == 'sandbox' && 'sandbox' || 'daily' }}
           runtime-cli: artifacts/workflow/runtime/tracker-run.mjs
           retention-days: ${{ inputs.artifact_retention_days }}
-          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
+          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || inputs.effect_target == 'sandbox' && secrets.VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
 
   commit-initial-state:
     needs: [quality, prepare-runtime, analyze]
@@ -485,11 +497,10 @@ jobs:
         if: always()
         uses: ./.github/actions/finalize-tracking-job
         with:
-          effect-target: ${{ inputs.effect_target }}
           workflow-kind: ${{ inputs.effect_target == 'sandbox' && 'sandbox' || 'daily' }}
           runtime-cli: artifacts/workflow/runtime/tracker-run.mjs
           retention-days: ${{ inputs.artifact_retention_days }}
-          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
+          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || inputs.effect_target == 'sandbox' && secrets.VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
 
   settle-notifications:
     needs: [quality, prepare-runtime, initial-pages]
@@ -562,11 +573,10 @@ jobs:
         if: always()
         uses: ./.github/actions/finalize-tracking-job
         with:
-          effect-target: ${{ inputs.effect_target }}
           workflow-kind: ${{ inputs.effect_target == 'sandbox' && 'sandbox' || 'daily' }}
           runtime-cli: artifacts/workflow/runtime/tracker-run.mjs
           retention-days: ${{ inputs.artifact_retention_days }}
-          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
+          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || inputs.effect_target == 'sandbox' && secrets.VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
 
   finalize-run:
     needs: [quality, prepare-runtime, settle-notifications]
@@ -624,11 +634,10 @@ jobs:
         if: always()
         uses: ./.github/actions/finalize-tracking-job
         with:
-          effect-target: ${{ inputs.effect_target }}
           workflow-kind: ${{ inputs.effect_target == 'sandbox' && 'sandbox' || 'daily' }}
           runtime-cli: artifacts/workflow/runtime/tracker-run.mjs
           retention-days: ${{ inputs.artifact_retention_days }}
-          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
+          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || inputs.effect_target == 'sandbox' && secrets.VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
 
   complete:
     needs: [quality, prepare-runtime, notification-history-pages]
@@ -696,11 +705,10 @@ jobs:
         if: always()
         uses: ./.github/actions/finalize-tracking-job
         with:
-          effect-target: ${{ inputs.effect_target }}
           workflow-kind: ${{ inputs.effect_target == 'sandbox' && 'sandbox' || 'daily' }}
           runtime-cli: artifacts/workflow/runtime/tracker-run.mjs
           retention-days: ${{ inputs.artifact_retention_days }}
-          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
+          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || inputs.effect_target == 'sandbox' && secrets.VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
 
   initial-pages:
     needs: [quality, prepare-runtime, commit-initial-state]

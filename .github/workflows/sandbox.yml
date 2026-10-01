@@ -95,6 +95,19 @@ jobs:
             echo 'source_refはworkflowの作業branchと一致させてください' >&2
             exit 1
           fi
+      - name: sandbox診断暗号化鍵を検査
+        if: inputs.operation != 'dispose'
+        env:
+          SANDBOX_DIAGNOSTICS_KEY: ${{ secrets.VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64 }}
+        run: |
+          if [[ -z "$SANDBOX_DIAGNOSTICS_KEY" ]]; then
+            echo 'sandbox診断暗号化鍵が未設定です' >&2
+            exit 1
+          fi
+          if [[ ! "$SANDBOX_DIAGNOSTICS_KEY" =~ ^[A-Za-z0-9+/]{43}=$ ]] || [[ "$(printf '%s' "$SANDBOX_DIAGNOSTICS_KEY" | base64 --decode | wc -c)" -ne 32 ]]; then
+            echo 'sandbox診断暗号化鍵は32 byteのBase64値にしてください' >&2
+            exit 1
+          fi
 
   prepare:
     needs: guard
@@ -353,7 +366,10 @@ jobs:
       recording_outcome: ${{ needs.prepare.outputs.recording_outcome }}
       recording_message_index: ${{ fromJSON(needs.prepare.outputs.recording_message_index) }}
       artifact_retention_days: 30
-    secrets: inherit
+    secrets:
+      GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
+      VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ secrets.VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64 }}
 
   inspect-ambiguous:
     needs: [prepare, tracking]

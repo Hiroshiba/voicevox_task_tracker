@@ -70,11 +70,10 @@ jobs:
         if: always()
         uses: ./.github/actions/finalize-tracking-job
         with:
-          effect-target: ${{ inputs.effect_target }}
           workflow-kind: ${{ inputs.workflow_kind }}
           runtime-cli: artifacts/workflow/runtime/tracker-run.mjs
           retention-days: ${{ inputs.artifact_retention_days }}
-          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
+          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || inputs.effect_target == 'sandbox' && secrets.VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
 
   notify-operations:
     needs: recovery-router
@@ -142,7 +141,6 @@ jobs:
         if: always()
         uses: ./.github/actions/finalize-tracking-job
         with:
-          effect-target: ${{ inputs.effect_target }}
           workflow-kind: ${{ inputs.workflow_kind }}
           runtime-cli: dist/cli/tracker-run.js
           retention-days: ${{ inputs.artifact_retention_days }}
@@ -218,9 +216,8 @@ jobs:
         if: always()
         uses: ./.github/actions/finalize-tracking-job
         with:
-          effect-target: ${{ inputs.effect_target }}
           workflow-kind: ${{ inputs.workflow_kind }}
           runtime-cli: dist/cli/tracker-run.js
           retention-days: ${{ inputs.artifact_retention_days }}
-          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
+          diagnostics-key: ${{ inputs.effect_target == 'production' && secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 || inputs.effect_target == 'sandbox' && secrets.VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
           diagnostics-required: ${{ steps.report.outcome == 'success' || steps.report.outcome == 'failure' }}
