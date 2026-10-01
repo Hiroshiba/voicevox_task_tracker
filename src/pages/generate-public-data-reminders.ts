@@ -2,28 +2,32 @@ import {
   currentPersonalReminderAssessment,
   PERSONAL_REMINDER_ASSESSMENT_RULES_VERSION,
   PERSONAL_REMINDER_CAUSE_PLANNING_VERSION,
-  type AiAnalysisDependency,
   type CurrentPersonalReminderAssessment,
-  type Evidence,
   type PersonalReminderCause,
-  type SourceId,
-  type TrackedItem,
 } from "../domain/index.js";
 import type { StateSnapshot } from "../persistence/index.js";
 import { UnreachableError } from "../util/index.js";
-import { PublicDtoSemanticError } from "./errors.js";
+import type { EvidenceSourceUrlMap } from "./evidence-source-url.js";
 import {
-  resolveEvidenceSourceUrlForItem,
-  type EvidenceSourceUrlMap,
-} from "./evidence-source-url.js";
+  hasUnverifiedAiDependency,
+  isUnverifiedAiDependency,
+} from "./generate-public-data-ai-analysis.js";
+import {
+  createPersonalReminderResponseEvidence,
+  type EvidenceSourceItem,
+} from "./generate-public-data-evidence.js";
+import {
+  addResponsibleCurrentResponseSubjectChanges,
+  createPublicCurrentResponseSubjectChangesAccumulator,
+  finalizePublicCurrentResponseSubjectChanges,
+} from "./generate-public-data-reminder-subjects.js";
 import type {
   PublicCurrentResponseSubjectChangesDto,
-  PublicCurrentResponseSubjectDto,
-  PublicDetailsDto,
   PublicItemSummaryDto,
   PublicPersonalReminderResponseDto,
   PublicPersonalReminderUnknownReason,
 } from "./public-dto-contracts.js";
+import { compareStrings } from "./public-dto-primitives.js";
 
 type PublicPersonalReminderResponse = PublicPersonalReminderResponseDto;
 type PublicPersonalReminderUnverifiedValue =
@@ -33,34 +37,8 @@ export type PublicPersonalReminderResponses = Readonly<{
   currentResponsesUnverified: boolean;
   currentResponseSubjectChanges: PublicCurrentResponseSubjectChangesDto;
 }>;
-type EvidenceSourceItem = Readonly<Pick<TrackedItem, "nodeId" | "url">>;
-type PublicAiAnalysis = PublicItemSummaryDto["aiAnalysis"];
-type PublicUnverifiedValue = PublicAiAnalysis["unverifiedValues"][number];
 type PublicPersonalReminderCausePlanningStatus =
   PublicItemSummaryDto["personalReminderCausePlanningStatus"];
-
-function isUnverifiedAiDependency(dependency: AiAnalysisDependency): boolean {
-  switch (dependency.status) {
-    case "not_dependent":
-    case "current":
-      return false;
-    case "unverified":
-    case "unknown":
-      return true;
-    default:
-      throw new UnreachableError(dependency);
-  }
-}
-
-function hasUnverifiedAiDependency(dependencies: readonly AiAnalysisDependency[]): boolean {
-  let unverified = false;
-  for (const dependency of dependencies) {
-    if (isUnverifiedAiDependency(dependency)) {
-      unverified = true;
-    }
-  }
-  return unverified;
-}
 
 function createPersonalReminderUnverifiedValues(
   cause: PersonalReminderCause,
@@ -138,284 +116,6 @@ function createPersonalReminderSubjectMembershipUnverified(
 }
 
 /** 項目のAI利用状態を公開値へ写す。 */
-export function createPublicAiAnalysis(
-  item: StateSnapshot["items"][number],
-  effectiveBlockerNodeIds: readonly string[],
-  retainedOnlyBlockerNodeIds: readonly string[],
-): PublicAiAnalysis {
-  const applications = [
-    item.aiAnalysis.applications.status,
-    item.aiAnalysis.applications.waitingOn,
-    item.aiAnalysis.applications.nextAction,
-    item.aiAnalysis.applications.relations,
-    item.aiAnalysis.applications.progress,
-    item.aiAnalysis.applications.importance,
-    item.aiAnalysis.applications.deadline,
-    item.aiAnalysis.applications.notification,
-    item.aiAnalysis.applications.selfCommitment,
-  ];
-  const notRequiredApplicationCount = applications.filter(
-    (application) => application.status === "not_required",
-  ).length;
-  let omission: PublicAiAnalysis["omission"];
-  if (notRequiredApplicationCount === 0) {
-    omission = "none";
-  } else if (notRequiredApplicationCount === applications.length) {
-    omission = "all";
-  } else {
-    omission = "partial";
-  }
-
-  const unverifiedValues: PublicUnverifiedValue[] = [];
-  const dependencies = item.aiDependencies;
-  const primaryWaitingOn = item.waitingOn[0];
-  const primaryBlockerRetainedOnly =
-    item.status === "waiting_for_unblock" &&
-    primaryWaitingOn?.kind === "item" &&
-    primaryWaitingOn.role === "dependency" &&
-    retainedOnlyBlockerNodeIds.includes(primaryWaitingOn.candidateId);
-  if (
-    hasUnverifiedAiDependency([dependencies.status]) ||
-    (retainedOnlyBlockerNodeIds.length > 0 && effectiveBlockerNodeIds.length === 0)
-  ) {
-    unverifiedValues.push("status");
-  }
-  if (
-    hasUnverifiedAiDependency([dependencies.waitingOn]) ||
-    retainedOnlyBlockerNodeIds.length > 0
-  ) {
-    unverifiedValues.push("waitingOn");
-  }
-  if (hasUnverifiedAiDependency([dependencies.primaryWaitingOn]) || primaryBlockerRetainedOnly) {
-    unverifiedValues.push("primaryWaitingOn");
-  }
-  if (hasUnverifiedAiDependency([dependencies.nextAction]) || primaryBlockerRetainedOnly) {
-    unverifiedValues.push("nextAction");
-  }
-  if (hasUnverifiedAiDependency([dependencies.confidence])) {
-    unverifiedValues.push("confidence");
-  }
-  if (hasUnverifiedAiDependency([dependencies.evidence])) {
-    unverifiedValues.push("evidence");
-  }
-  if (hasUnverifiedAiDependency([dependencies.uncertainties])) {
-    unverifiedValues.push("uncertainties");
-  }
-  if (hasUnverifiedAiDependency([dependencies.deadline, dependencies.deadlineLevel])) {
-    unverifiedValues.push("deadline");
-  }
-  if (hasUnverifiedAiDependency([dependencies.stallSince])) {
-    unverifiedValues.push("staleness");
-  }
-  if (hasUnverifiedAiDependency([dependencies.downstreamImpact])) {
-    unverifiedValues.push("downstreamImpact");
-  }
-  if (hasUnverifiedAiDependency([dependencies.importance])) {
-    unverifiedValues.push("importance");
-  }
-  if (hasUnverifiedAiDependency([dependencies.attention])) {
-    unverifiedValues.push("attention");
-  }
-  if (hasUnverifiedAiDependency([dependencies.blockers])) {
-    unverifiedValues.push("blockers");
-  }
-  if (hasUnverifiedAiDependency([dependencies.relationSet])) {
-    unverifiedValues.push("relations");
-  }
-  return {
-    runStatus: item.aiAnalysis.status,
-    omission,
-    unverifiedValues,
-  };
-}
-
-function compareStrings(left: string, right: string): number {
-  if (left < right) {
-    return -1;
-  }
-  if (left > right) {
-    return 1;
-  }
-  return 0;
-}
-
-interface PublicCurrentResponseSubjectChangesAccumulator {
-  addableSubjects: Map<string, PublicCurrentResponseSubjectDto>;
-  removableSubjects: Map<string, PublicCurrentResponseSubjectDto>;
-  unbounded: boolean;
-}
-
-function publicCurrentResponseSubjectKey(subject: PublicCurrentResponseSubjectDto): string {
-  return `${subject.kind}\u0000${subject.candidateId.toLowerCase()}`;
-}
-
-function addPublicCurrentResponseSubject(
-  accumulator: PublicCurrentResponseSubjectChangesAccumulator,
-  change: "addable" | "removable",
-  subject: PublicCurrentResponseSubjectDto,
-): void {
-  const subjects =
-    change === "addable" ? accumulator.addableSubjects : accumulator.removableSubjects;
-  const key = publicCurrentResponseSubjectKey(subject);
-  const existing = subjects.get(key);
-  if (existing == null || compareStrings(subject.candidateId, existing.candidateId) < 0) {
-    subjects.set(key, subject);
-  }
-}
-
-function createPublicCurrentResponseSubjectChangesAccumulator(
-  changes: PublicCurrentResponseSubjectChangesDto,
-): PublicCurrentResponseSubjectChangesAccumulator {
-  const accumulator: PublicCurrentResponseSubjectChangesAccumulator = {
-    addableSubjects: new Map(),
-    removableSubjects: new Map(),
-    unbounded: changes.scope === "unbounded",
-  };
-  if (changes.scope === "unbounded") {
-    return accumulator;
-  }
-  for (const subject of changes.addableSubjects) {
-    addPublicCurrentResponseSubject(accumulator, "addable", subject);
-  }
-  for (const subject of changes.removableSubjects) {
-    addPublicCurrentResponseSubject(accumulator, "removable", subject);
-  }
-  return accumulator;
-}
-
-function addResponsibleCurrentResponseSubjectChanges(
-  accumulator: PublicCurrentResponseSubjectChangesAccumulator,
-  change: "addable" | "removable",
-  responsibleValues: PersonalReminderCause["responsible"],
-): void {
-  for (const responsible of responsibleValues) {
-    const responsibleKind = responsible.kind;
-    switch (responsibleKind) {
-      case "user":
-      case "team":
-        addPublicCurrentResponseSubject(accumulator, change, {
-          kind: responsibleKind,
-          candidateId: responsible.candidateId,
-        });
-        break;
-      case "role":
-        break;
-      default:
-        throw new UnreachableError(responsibleKind);
-    }
-  }
-}
-
-function finalizePublicCurrentResponseSubjectChanges(
-  accumulator: PublicCurrentResponseSubjectChangesAccumulator,
-  responses: readonly PublicPersonalReminderResponse[],
-): PublicCurrentResponseSubjectChangesDto {
-  if (accumulator.unbounded) {
-    return {
-      scope: "unbounded",
-    };
-  }
-  const verifiedSubjectKeys = new Set<string>();
-  for (const response of responses) {
-    if (response.subjectMembershipUnverified) {
-      continue;
-    }
-    for (const responsible of response.responsible) {
-      if (responsible.kind === "role") {
-        continue;
-      }
-      verifiedSubjectKeys.add(
-        publicCurrentResponseSubjectKey({
-          kind: responsible.kind,
-          candidateId: responsible.candidateId,
-        }),
-      );
-    }
-  }
-  for (const key of verifiedSubjectKeys) {
-    accumulator.removableSubjects.delete(key);
-  }
-  const compareSubjects = (
-    left: PublicCurrentResponseSubjectDto,
-    right: PublicCurrentResponseSubjectDto,
-  ): number =>
-    compareStrings(publicCurrentResponseSubjectKey(left), publicCurrentResponseSubjectKey(right));
-  return {
-    scope: "bounded",
-    addableSubjects: [...accumulator.addableSubjects.values()].sort(compareSubjects),
-    removableSubjects: [...accumulator.removableSubjects.values()].sort(compareSubjects),
-  };
-}
-
-function createPublicEvidenceEntry(
-  entry: Evidence,
-  currentSourceItem: EvidenceSourceItem,
-  allSourceItems: readonly EvidenceSourceItem[],
-  sourceOwnersById: EvidenceSourceUrlMap,
-): PublicDetailsDto["items"][number]["evidence"][number] {
-  return {
-    summary: entry.summary,
-    sourceUrl: resolveEvidenceSourceUrlForItem(
-      entry.sourceId,
-      currentSourceItem,
-      allSourceItems,
-      sourceOwnersById,
-    ),
-  };
-}
-
-type PublicEvidence = PublicDetailsDto["items"][number]["evidence"][number];
-
-function publicEvidenceIdentity(evidence: PublicEvidence): string {
-  return JSON.stringify([evidence.summary, evidence.sourceUrl]);
-}
-
-function uniquePublicEvidence(evidence: readonly PublicEvidence[]): PublicEvidence[] {
-  const evidenceByIdentity = new Map<string, PublicEvidence>();
-  for (const entry of evidence) {
-    evidenceByIdentity.set(publicEvidenceIdentity(entry), entry);
-  }
-  return [...evidenceByIdentity.entries()]
-    .sort(([left], [right]) => compareStrings(left, right))
-    .map(([, entry]) => entry);
-}
-
-/** 根拠を公開URL付きの値へ写す。 */
-export function createPublicEvidence(
-  evidence: readonly Evidence[],
-  currentSourceItem: EvidenceSourceItem,
-  allSourceItems: readonly EvidenceSourceItem[],
-  sourceOwnersById: EvidenceSourceUrlMap,
-): PublicDetailsDto["items"][number]["evidence"] {
-  return uniquePublicEvidence(
-    evidence.map((entry) =>
-      createPublicEvidenceEntry(entry, currentSourceItem, allSourceItems, sourceOwnersById),
-    ),
-  );
-}
-
-function createPersonalReminderResponseEvidence(
-  sourceIds: readonly SourceId[],
-  currentSourceItem: StateSnapshot["items"][number],
-  allSourceItems: readonly EvidenceSourceItem[],
-  sourceOwnersById: EvidenceSourceUrlMap,
-): PublicPersonalReminderResponse["evidence"] {
-  const uniqueSourceIds = [...new Set(sourceIds)].sort(compareStrings);
-  return uniquePublicEvidence(
-    uniqueSourceIds.flatMap((sourceId) => {
-      const evidence = currentSourceItem.evidence.filter((entry) => entry.sourceId === sourceId);
-      if (evidence.length === 0) {
-        throw new PublicDtoSemanticError(
-          `personal reminder causeのevidence sourceを公開根拠へ解決できません。対象: ${sourceId}`,
-        );
-      }
-      return evidence.map((entry) =>
-        createPublicEvidenceEntry(entry, currentSourceItem, allSourceItems, sourceOwnersById),
-      );
-    }),
-  );
-}
-
 function personalReminderUnknownReason(
   cause: PersonalReminderCause,
 ): PublicPersonalReminderUnknownReason {
