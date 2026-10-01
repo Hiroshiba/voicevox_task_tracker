@@ -4,6 +4,7 @@ import {
   type PersonalReminderCause,
   type PersonalReminderTimeBasis,
 } from "../../../domain/personal-reminder-causes.js";
+import { createSourceIds } from "../../../domain/personal-reminder-planning-common.js";
 import { parseSourceId, type SourceId } from "../../../domain/source-id.js";
 import type { GitHubNodeId, UtcIsoDateTime } from "../../../domain/types.js";
 import type { GitHubItemDetail } from "../../../github/item-detail-types.js";
@@ -43,7 +44,7 @@ function reconfirmBasis(
 ): PersonalReminderTimeBasis {
   if (basis.source !== "reconfirmation_pending") return basis;
   let observedAt: UtcIsoDateTime | undefined;
-  let allEventSources = true;
+  const eventSources: { sourceId: SourceId; at: UtcIsoDateTime }[] = [];
   for (const sourceId of basis.sourceIds) {
     const detailFacts = (context.clockSources.factsBySourceId.get(sourceId) ?? []).filter(
       (fact): fact is CurrentItemSourceFact =>
@@ -83,16 +84,34 @@ function reconfirmBasis(
       ) {
         throw reconfirmationError("missing_source", sourceId);
       }
-      allEventSources = false;
       continue;
     }
     if (clockEvent.itemNodeId !== owner) throw reconfirmationError("wrong_owner", sourceId);
-    if (clockEvent.occurredAt !== basis.at) {
+    if (clockEvent.occurredAt !== basis.at && kind !== "github_pull_request_commit") {
       throw reconfirmationError("source_id_conflict", sourceId);
     }
+    eventSources.push({ sourceId, at: clockEvent.occurredAt });
   }
-  if (allEventSources) {
-    return Object.freeze({ source: "event", at: basis.at, sourceIds: basis.sourceIds });
+  const matchingSourceIds = eventSources
+    .filter((source) => source.at === basis.at)
+    .map((source) => source.sourceId);
+  if (matchingSourceIds.length > 0) {
+    return Object.freeze({
+      source: "event",
+      at: basis.at,
+      sourceIds: [...createSourceIds(matchingSourceIds)],
+    });
+  }
+  const firstEventSource = eventSources[0];
+  if (
+    firstEventSource != null &&
+    eventSources.every((source) => source.at === firstEventSource.at)
+  ) {
+    return Object.freeze({
+      source: "event",
+      at: firstEventSource.at,
+      sourceIds: [...createSourceIds(eventSources.map((source) => source.sourceId))],
+    });
   }
   const firstSourceId = basis.sourceIds[0];
   assertNonNullable(firstSourceId, "再確認対象のsource IDがありません");
