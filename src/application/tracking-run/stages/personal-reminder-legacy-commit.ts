@@ -85,6 +85,9 @@ export function inspectLegacyCommit(
   if (clockEvent != null) {
     if (clockEvent.itemNodeId !== owner) throw commitError("wrong_owner", sourceId);
     if (clockEvent.kind !== "push") throw commitError("kind_mismatch", sourceId);
+    if (clockEvent.occurredAt !== previousAt) {
+      throw commitError("source_id_conflict", sourceId);
+    }
   }
   if (commit == null) return Object.freeze({ observedAt: detail.observedAt });
   if (commit.sourceId !== buildPullRequestCommitSourceId(owner, commit.nodeId)) {
@@ -97,8 +100,5 @@ export function inspectLegacyCommit(
     throw commitError("source_id_conflict", sourceId);
   }
   if (clockEvent == null) return Object.freeze({ observedAt: detail.observedAt });
-  if (clockEvent.occurredAt !== commit.pushedAt.value) {
-    throw commitError("source_id_conflict", sourceId);
-  }
   return Object.freeze({ observedAt: detail.observedAt, eventAt: clockEvent.occurredAt });
 }

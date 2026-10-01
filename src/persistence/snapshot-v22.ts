@@ -14,6 +14,7 @@ import {
   StateSnapshotSchemaError,
   StateSnapshotSemanticError,
 } from "./errors.js";
+import { normalizePersonalReminderCause } from "./snapshot-normalization.js";
 import {
   assertPersonalReminderEvidenceClosure as assertVersion21EvidenceClosure,
   assertPersonalReminderEvidenceRecordsClosure as assertVersion21EvidenceRecordsClosure,
@@ -114,9 +115,10 @@ function assertReconfirmedProvenance(snapshot: StateSnapshot): void {
       ];
       for (const basis of bases) {
         if (basis.source !== "reconfirmed_observation") continue;
+        const previousAt = Date.parse(basis.previousAt);
         if (
-          basis.previousAt < item.createdAt ||
-          basis.previousAt > basis.at ||
+          previousAt < Date.parse(item.createdAt) ||
+          previousAt > Date.parse(basis.at) ||
           new Set(basis.sourceIds).size !== basis.sourceIds.length
         ) {
           throw new StateSnapshotSemanticError(
@@ -170,7 +172,15 @@ export function createStateSnapshot(value: unknown): StateSnapshot {
   }
   const legacy = createVersion21Snapshot(version21Projection(value));
   const causesByNodeId = new Map(
-    value.items.map((item) => [item.nodeId, item.personalReminderCauses]),
+    value.items.map((item) => [
+      item.nodeId,
+      new Map(
+        item.personalReminderCauses.map((cause) => [
+          cause.causeId,
+          normalizePersonalReminderCause(cause),
+        ]),
+      ),
+    ]),
   );
   const snapshot = Object.freeze({
     ...legacy,
@@ -179,7 +189,16 @@ export function createStateSnapshot(value: unknown): StateSnapshot {
       legacy.items.map((item) => {
         const causes = causesByNodeId.get(item.nodeId);
         if (causes == null) throw new StateSnapshotSchemaError(1);
-        return Object.freeze({ ...item, personalReminderCauses: causes });
+        return Object.freeze({
+          ...item,
+          personalReminderCauses: Object.freeze(
+            item.personalReminderCauses.map((cause) => {
+              const normalized = causes.get(cause.causeId);
+              if (normalized == null) throw new StateSnapshotSchemaError(1);
+              return normalized;
+            }),
+          ),
+        });
       }),
     ),
   } satisfies StateSnapshot);
