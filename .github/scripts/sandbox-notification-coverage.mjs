@@ -12,6 +12,10 @@ import {
 } from "../../dist/infrastructure/tracking-run/sandbox-stage-coverage.js";
 import { sha256 } from "./sandbox-continuity-result.mjs";
 import {
+  readSandboxCheckpointEvidence,
+  unavailableLegacyStageCoverage,
+} from "./sandbox-checkpoint-evidence.mjs";
+import {
   countApplications,
   countPersonal,
   stateCommits,
@@ -84,12 +88,22 @@ function singleReceipt(receipts, type, phase) {
 function main() {
   const context = readJson(required("SANDBOX_CONTEXT_PATH"));
   const control = readJson(required("SANDBOX_CONTROL_PATH"));
-  const checkpointBytes = readFileSync(required("SANDBOX_CHECKPOINT_PATH"));
-  const checkpoint = readJson(required("SANDBOX_CHECKPOINT_PATH"));
-  const sidecar = readJson(required("SANDBOX_SIDECAR_PATH"));
   const chainBytes = readFileSync(required("SANDBOX_RECEIPT_CHAIN_PATH"));
   const chain = readJson(required("SANDBOX_RECEIPT_CHAIN_PATH"));
-  const record = readJson(required("SANDBOX_RECORD_PATH"));
+  const evidence = readSandboxCheckpointEvidence(
+    readJson(required("SANDBOX_RECORD_PATH")),
+    required("SANDBOX_CHECKPOINT_PATH"),
+    required("SANDBOX_SIDECAR_PATH"),
+  );
+  if (evidence.kind === "legacy_without_analysis_proof") {
+    writeFileSync(
+      required("SANDBOX_COVERAGE_OUTPUT_PATH"),
+      `${JSON.stringify(unavailableLegacyStageCoverage(evidence.record, scenario.parse(required("SANDBOX_SCENARIO_ID"))))}\n`,
+    );
+    throw new TypeError("旧V2 runには永続化された解析段階証拠がありません");
+  }
+  const { record, analysis } = evidence;
+  const metrics = record.runFinalizationPolicy.report.metrics;
   const markerBytes = readFileSync(required("SANDBOX_MARKER_PATH"));
   const marker = readJson(required("SANDBOX_MARKER_PATH"));
   const ledger = readJson(required("SANDBOX_LEDGER_PATH"));
@@ -97,7 +111,7 @@ function main() {
   const verification = readFileSync(required("SANDBOX_STATE_VERIFICATION_PATH"), "utf8");
   const scenarioId = scenario.parse(required("SANDBOX_SCENARIO_ID"));
   const phase = z.enum(["first", "resolution"]).parse(required("SANDBOX_NOTIFICATION_PHASE"));
-  const trackingRunId = runId.parse(checkpoint.payload.runIdentity.runId);
+  const trackingRunId = runId.parse(record.runIdentity.runId);
   const finalStateRevision = revision.parse(required("SANDBOX_FINAL_REVISION"));
   const receipts = chain.entries.map((entry) => entry.receipt);
   const initial = singleReceipt(receipts, "initial_state_commit");
@@ -119,12 +133,13 @@ function main() {
       ? completedProofSchema.parse(readJson(required("SANDBOX_COMPLETED_PROOF_PATH")))
       : null;
   const stageCoverage = createSandboxStageCoverage({
-    analysisRecord: readJson(required("SANDBOX_STAGE_RECORD_PATH")),
+    durableRecord: record,
     receiptEntries: chain.entries,
     runId: trackingRunId,
-    invocationId: checkpoint.payload.runIdentity.invocationId,
-    checkpointDigest: checkpoint.checkpointDigest,
-    checkpointFileDigest: sidecar.checkpointFileDigest,
+    invocationId: analysis.invocationId,
+    checkpointDigest: record.checkpointDigest,
+    checkpointFileDigest: record.checkpointFileDigest,
+    baseStateRevision: analysis.baseStateRevision,
   });
   assertCompleteSandboxStageCoverage(stageCoverage);
   const analysisSourceActionsRunId = required("SANDBOX_ANALYSIS_SOURCE_RUN_ID");
@@ -166,16 +181,12 @@ function main() {
     record.executionPolicy.effectTarget !== "sandbox" ||
     record.executionPolicy.executionShape !== "split_workflow" ||
     snapshot.run.id !== trackingRunId ||
-    record.checkpointDigest !== checkpoint.checkpointDigest ||
-    marker.checkpointDigest !== checkpoint.checkpointDigest ||
+    marker.checkpointDigest !== record.checkpointDigest ||
     marker.publicationRecordDigest !== record.recordDigest ||
     settlement.result.action !== record.notificationOutbox.action ||
     finalization.result.resultingStateRevision !== finalStateRevision ||
     completion.result.finalStateRevision !== finalStateRevision ||
     initial.result.resultingStateRevision !== marker.initialStateRevision ||
-    sidecar.checkpointFileDigest !== sha256(checkpointBytes) ||
-    sidecar.byteLength !== checkpointBytes.length ||
-    record.checkpointFileDigest !== sidecar.checkpointFileDigest ||
     context.codeRevision !== required("GITHUB_SHA") ||
     context.sourceRepository !== "Hiroshiba/voicevox_task_tracker" ||
     context.environmentId !== required("SANDBOX_ENVIRONMENT_ID") ||
@@ -190,18 +201,13 @@ function main() {
   }
   const { recordDigest: storedDigest, ...recordPayload } = record;
   same(storedDigest, sha256(Buffer.from(canonicalJson(recordPayload))), "durable record digest");
-  const { checkpointDigest: storedCheckpointDigest, ...checkpointEnvelope } = checkpoint;
-  same(
-    storedCheckpointDigest,
-    sha256(Buffer.from(canonicalJson(checkpointEnvelope))),
-    "checkpoint content digest",
-  );
+  const storedCheckpointDigest = record.checkpointDigest;
   for (const receipt of receipts) {
     same(receipt.binding.runId, trackingRunId, "receipt run ID");
     same(receipt.binding.checkpointDigest, storedCheckpointDigest, "receipt checkpoint digest");
     same(
       receipt.binding.checkpointFileDigest,
-      sidecar.checkpointFileDigest,
+      record.checkpointFileDigest,
       "receipt checkpoint file digest",
     );
   }
@@ -248,7 +254,6 @@ function main() {
   const previousSentCount = verifyPreviousSentMetadata(record, ledger);
   const applications = countApplications(snapshot.items);
   const personal = countPersonal(snapshot.items);
-  const metrics = checkpoint.payload.validatedPayload.runMetadata.metrics;
   const coverage = {
     schemaVersion: 2,
     scenarioId,
@@ -273,8 +278,9 @@ function main() {
     },
     checkpoint: {
       checkpointDigest: digest.parse(storedCheckpointDigest),
-      checkpointFileDigest: digest.parse(sidecar.checkpointFileDigest),
-      sidecarByteLength: sidecar.byteLength,
+      checkpointFileDigest: digest.parse(record.checkpointFileDigest),
+      sidecarByteLength: evidence.kind === "artifact_cross_checked" ? evidence.byteLength : null,
+      evidenceSource: evidence.kind,
     },
     state: {
       verification,
@@ -298,8 +304,7 @@ function main() {
     },
     analysis: {
       genericAi: {
-        plannedLogicalCandidateCount:
-          checkpoint.payload.validatedPayload.validation.core.aiBudgetSummary.logicalCandidateCount,
+        plannedLogicalCandidateCount: analysis.plannedLogicalCandidateCount,
         processAttemptCount: metrics.aiProcessAttemptCount,
         cacheHitCount: metrics.aiCacheHitCount,
         retainedResultCount: metrics.aiRetainedResultCount,
@@ -363,7 +368,7 @@ function main() {
       baseStateRevision: context.baseStateRevision,
       finalStateRevision,
       checkpointDigest: storedCheckpointDigest,
-      checkpointFileDigest: sidecar.checkpointFileDigest,
+      checkpointFileDigest: record.checkpointFileDigest,
       publicationRecordDigest: record.recordDigest,
       receiptChainDigest: sha256(chainBytes),
       markerDigest: sha256(markerBytes),

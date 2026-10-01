@@ -65,7 +65,7 @@ export async function inspectRunStateCommand(
     command.recoveryIntent,
   );
   if (decision.kind === "resume_with_exact_runtime") {
-    if (decision.record.recordSchemaVersion === 2) {
+    if (decision.record.recordSchemaVersion === 2 || decision.record.recordSchemaVersion === 3) {
       const plan = decision.record.runtimeRecoveryPlan;
       if (plan.kind !== "workflow_bundle" || plan.schemaVersion !== 2) {
         throw new TypeError("V2 bootstrapの回復計画が不正です");

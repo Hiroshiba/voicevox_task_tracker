@@ -6,10 +6,13 @@ import { z } from "zod";
 
 import { RUN_TRANSACTION_MARKER_STATE_PATH_V1 } from "../../application/tracking-run/contracts/recovery-paths.js";
 import { decodeReceipt } from "../../application/tracking-run/receipt-codec.js";
+import { serializeCanonicalJson } from "../../canonical-json/value.js";
+import { parseSha256Hash } from "../../canonical-json/sha256.js";
 import { loadConfig } from "../../config/index.js";
 import { GitStateBranchAdapter } from "../../persistence/index.js";
 import { sandboxPendingNotificationSchema } from "../../publication/sandbox-pending-evidence-schema.js";
 import { nodeContentDigestPort } from "./content-digest.js";
+import { decodePublicationArtifact } from "./publication-checkpoint-codec.js";
 import { verifyManualResolutionReceipt } from "./manual-resolution.js";
 import { readNotificationMessageState } from "./notification-message-state.js";
 import { countSandboxReservationCommits } from "./sandbox-reservation-commits.js";
@@ -20,7 +23,6 @@ import {
 import { readSplitReceiptChain } from "./split-stage-receipts.js";
 
 const revisionSchema = z.string().regex(/^[0-9a-f]{40}$/u);
-const digestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const environmentIdSchema = z.string().regex(/^env-[1-9][0-9]*-[1-9][0-9]*$/u);
 
 function required(name: string): string {
@@ -39,6 +41,17 @@ function same(actual: string | number, expected: string | number, label: string)
 
 function sha256(bytes: Uint8Array): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+async function readOptionalFile(path: string): Promise<Uint8Array | undefined> {
+  try {
+    return await readFile(path);
+  } catch (error: unknown) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 async function state() {
@@ -118,29 +131,40 @@ async function inspectPending(): Promise<void> {
     attempt.attemptId,
   );
   same(count, 1, "元送達操作のreservation commit回数");
-  const checkpointBytes = await readFile(required("SANDBOX_CHECKPOINT_PATH"));
-  const checkpoint: unknown = JSON.parse(checkpointBytes.toString("utf8"));
-  const sidecar: unknown = JSON.parse(await readFile(required("SANDBOX_SIDECAR_PATH"), "utf8"));
-  const checkpointBinding = z
-    .strictObject({
-      checkpointDigest: digestSchema,
-      payload: z
-        .strictObject({
-          runIdentity: z.strictObject({ runId: z.string(), invocationId: z.uuid() }).loose(),
-        })
-        .loose(),
-    })
-    .loose()
-    .parse(checkpoint);
-  const fileBinding = z
-    .strictObject({ checkpointFileDigest: digestSchema, byteLength: z.number().int().positive() })
-    .loose()
-    .parse(sidecar);
-  same(checkpointBinding.checkpointDigest, marker.checkpointDigest, "checkpoint content digest");
-  same(fileBinding.checkpointFileDigest, record.checkpointFileDigest, "checkpoint file digest");
-  same(fileBinding.checkpointFileDigest, sha256(checkpointBytes), "checkpoint file bytes");
-  same(fileBinding.byteLength, checkpointBytes.length, "checkpoint file byteLength");
-  same(checkpointBinding.payload.runIdentity.runId, marker.runId, "checkpoint run ID");
+  if (record.schemaVersion !== 3) {
+    throw new TypeError("旧V2永続recordに解析段階の実行証拠がありません");
+  }
+  const analysis = record.analysisStageRecord;
+  const checkpointBytes = await readOptionalFile(required("SANDBOX_CHECKPOINT_PATH"));
+  const sidecarBytes = await readOptionalFile(required("SANDBOX_SIDECAR_PATH"));
+  if ((checkpointBytes == null) !== (sidecarBytes == null)) {
+    throw new TypeError("checkpoint artifactとsidecarの片方だけがあります");
+  }
+  if (checkpointBytes != null && sidecarBytes != null) {
+    const checkpoint = decodePublicationArtifact(
+      checkpointBytes,
+      sidecarBytes,
+      {
+        runtimeIdentity: record.runtimeIdentity,
+        expectedRunId: record.runIdentity.runId,
+        baseStateRevision: record.baseStateRevision,
+        configDigest: parseSha256Hash(record.configDigest),
+        artifactFileName: "validated-run.json",
+      },
+      nodeContentDigestPort,
+    );
+    if (
+      checkpoint.checkpointDigest !== record.checkpointDigest ||
+      checkpoint.checkpointFileDigest !== record.checkpointFileDigest ||
+      checkpoint.checkpoint.runIdentity.invocationId !== analysis.invocationId ||
+      serializeCanonicalJson(checkpoint.checkpoint.analysisCompletedStages) !==
+        serializeCanonicalJson(analysis.completedStages)
+    ) {
+      throw new TypeError("checkpoint artifactと永続解析記録が一致しません");
+    }
+  }
+  same(analysis.checkpointDigest, marker.checkpointDigest, "解析記録 checkpoint digest");
+  same(analysis.runId, marker.runId, "解析記録 run ID");
   const initialChainPath = join(
     required("SANDBOX_INITIAL_RECEIPT_CHAIN_ROOT"),
     marker.runId.slice("tracker-run:".length),
@@ -169,12 +193,13 @@ async function inspectPending(): Promise<void> {
   const markerBytes = markerFile.bytes;
   const ledgerBytes = ledgerFile.bytes;
   const stageCoverage = createSandboxStageCoverage({
-    analysisRecord: JSON.parse(await readFile(required("SANDBOX_STAGE_RECORD_PATH"), "utf8")),
+    durableRecord: record,
     receiptEntries: initialEntries,
     runId: marker.runId,
-    invocationId: checkpointBinding.payload.runIdentity.invocationId,
+    invocationId: analysis.invocationId,
     checkpointDigest: marker.checkpointDigest,
     checkpointFileDigest: record.checkpointFileDigest,
+    baseStateRevision: record.baseStateRevision,
   });
   assertPendingSandboxStageCoverage(stageCoverage);
   const pending = sandboxPendingNotificationSchema.parse({

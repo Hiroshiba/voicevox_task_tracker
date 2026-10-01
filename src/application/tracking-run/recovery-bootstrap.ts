@@ -131,7 +131,7 @@ const recordBootstrapSchema = z.looseObject({
 });
 
 const recordBootstrapV2Schema = recordBootstrapSchema.extend({
-  schemaVersion: z.literal(2),
+  schemaVersion: z.union([z.literal(2), z.literal(3)]),
   runtimeRecoveryPlan: runtimeRecoveryPlanV2Schema,
 });
 
@@ -165,7 +165,7 @@ export type DurablePublicationRecoveryBootstrapV1 = Readonly<{
 /** V2の固定入口を選ぶためだけに読む永続recordの安定部分。 */
 export type DurablePublicationRecoveryBootstrapV2 = Readonly<{
   recoveryBootstrapVersion: 1;
-  recordSchemaVersion: 2;
+  recordSchemaVersion: 2 | 3;
   runId: string;
   checkpointDigest: string;
   checkpointFileDigest: string;
@@ -267,7 +267,7 @@ export function readDurablePublicationRecoveryBootstrapV2(
   }
   return Object.freeze({
     recoveryBootstrapVersion: 1,
-    recordSchemaVersion: 2,
+    recordSchemaVersion: record.schemaVersion,
     runId: record.runIdentity.runId,
     checkpointDigest: record.checkpointDigest,
     checkpointFileDigest: record.checkpointFileDigest,

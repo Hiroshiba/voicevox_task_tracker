@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  analysisRunStageNames,
+  analysisRunStageSchema,
+} from "../../application/tracking-run/contracts/closed-values.js";
 
 import { baseStateRevisionSchema } from "../../application/tracking-run/contracts/run-core.js";
 import { runtimeIdentitySchema } from "../../application/tracking-run/contracts/runtime-identity.js";
@@ -40,17 +44,44 @@ export const publicationPlanPayloadSchema = z.strictObject({
   preview: z.unknown(),
 });
 
-export const publicationCheckpointSchema = z.strictObject({
-  runIdentity: runIdentitySchema,
-  executionPolicy: runExecutionPolicySchema,
-  baseStateRevision: baseStateRevisionSchema,
-  configDigest: sha256Schema,
-  validatedPayload: validatedRunPayloadSchema,
-  publicationPlan: publicationPlanPayloadSchema,
-});
+export const publicationCheckpointSchema = z
+  .strictObject({
+    runIdentity: runIdentitySchema,
+    executionPolicy: runExecutionPolicySchema,
+    baseStateRevision: baseStateRevisionSchema,
+    configDigest: sha256Schema,
+    analysisCompletedStages: z.array(analysisRunStageSchema).optional(),
+    validatedPayload: validatedRunPayloadSchema,
+    publicationPlan: publicationPlanPayloadSchema,
+  })
+  .superRefine((checkpoint, context) => {
+    if (
+      checkpoint.executionPolicy.executionShape === "split_workflow" &&
+      (checkpoint.analysisCompletedStages?.length !== analysisRunStageNames.length ||
+        checkpoint.analysisCompletedStages.some(
+          (stage, index) => stage !== analysisRunStageNames[index],
+        ))
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["analysisCompletedStages"],
+        message: "解析段階の実行記録がcanonical順序と一致しません",
+      });
+    }
+    if (
+      checkpoint.executionPolicy.executionShape !== "split_workflow" &&
+      checkpoint.analysisCompletedStages != null
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["analysisCompletedStages"],
+        message: "直列checkpointへ分割workflowの解析記録を保存できません",
+      });
+    }
+  });
 
 export const publicationArtifactSchema = z.strictObject({
-  schemaVersion: z.literal(19),
+  schemaVersion: z.literal(20),
   kind: z.literal("publication_planned_tracking_run"),
   runtimeIdentity: runtimeIdentitySchema,
   checkpointDigest: sha256Schema,
@@ -67,10 +98,10 @@ export const publicationArtifactSidecarSchema = z.strictObject({
   checkpointFileDigest: sha256Schema,
 });
 
-/** v19 checkpointの公開保存値。 */
+/** v20 checkpointの公開保存値。 */
 export type PublicationCheckpoint = z.output<typeof publicationCheckpointSchema>;
 
-/** v19 artifactの公開保存値。 */
+/** v20 artifactの公開保存値。 */
 export type PublicationArtifact = z.output<typeof publicationArtifactSchema>;
 
 /** artifact bytesを別に照合するsidecar。 */

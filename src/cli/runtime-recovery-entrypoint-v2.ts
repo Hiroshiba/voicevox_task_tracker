@@ -99,7 +99,7 @@ async function executeExactInput(
   });
   if (
     bootstrap.kind !== "resume_with_exact_runtime" ||
-    bootstrap.record.recordSchemaVersion !== 2 ||
+    (bootstrap.record.recordSchemaVersion !== 2 && bootstrap.record.recordSchemaVersion !== 3) ||
     bootstrap.record.recordDigest !== input.expectedRecordDigest ||
     bootstrap.record.runtimeIdentityDigest !== input.expectedRuntimeIdentityDigest ||
     serializeCanonicalJson(bootstrap.record.runtimeRecoveryPlan) !==

@@ -402,6 +402,7 @@ jobs:
           pnpm install --frozen-lockfile
           pnpm build
       - name: 元runのcheckpointを取得
+        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: tracking-checkpoint-${{ github.run_id }}-${{ github.run_attempt }}
@@ -420,7 +421,6 @@ jobs:
           SANDBOX_RECORDING_OUTCOME: ${{ needs.prepare.outputs.recording_outcome }}
           SANDBOX_CHECKPOINT_PATH: ${{ runner.temp }}/checkpoint/validated-run.json
           SANDBOX_SIDECAR_PATH: ${{ runner.temp }}/checkpoint/validated-run.json.sidecar.json
-          SANDBOX_STAGE_RECORD_PATH: ${{ runner.temp }}/checkpoint/analysis-stage-record.json
           SANDBOX_INITIAL_RECEIPT_CHAIN_ROOT: ${{ runner.temp }}/initial-pages
           SANDBOX_PENDING_OUTPUT_PATH: ${{ runner.temp }}/sandbox-pending.json
         run: node dist/cli/sandbox-notification-evidence.js pending
@@ -483,14 +483,16 @@ jobs:
           SANDBOX_ENVIRONMENT_ID: ${{ needs.prepare.outputs.environment_id }}
           SANDBOX_EXPECTED_REVISION: ${{ needs.tracking.outputs.final_state_revision }}
         run: .github/scripts/sandbox-lifecycle.sh finalize
-      - name: 今回のcheckpointと解析段階記録を取得
+      - name: 今回のcheckpointを照合用に取得
         if: needs.prepare.outputs.continuity_phase != 'none' || needs.prepare.outputs.notification_phase == 'first'
+        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: tracking-checkpoint-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/checkpoint
-      - name: 再開元のcheckpointと解析段階記録を取得
+      - name: 再開元のcheckpointを照合用に取得
         if: needs.prepare.outputs.notification_phase == 'resolution'
+        continue-on-error: true
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: tracking-checkpoint-${{ needs.prepare.outputs.notification_source_run_id }}-${{ needs.prepare.outputs.notification_source_run_attempt }}
@@ -564,7 +566,6 @@ jobs:
           SANDBOX_CONTEXT_PATH: ${{ runner.temp }}/context/sandbox-context.json
           SANDBOX_CHECKPOINT_PATH: ${{ runner.temp }}/checkpoint/validated-run.json
           SANDBOX_SIDECAR_PATH: ${{ runner.temp }}/checkpoint/validated-run.json.sidecar.json
-          SANDBOX_STAGE_RECORD_PATH: ${{ runner.temp }}/checkpoint/analysis-stage-record.json
           SANDBOX_ANALYSIS_SOURCE_RUN_ID: ${{ github.run_id }}
           SANDBOX_FINAL_REVISION: ${{ steps.final_state.outputs.state_revision }}
           SANDBOX_STATE_BRANCH: ${{ needs.prepare.outputs.state_branch }}
@@ -600,7 +601,6 @@ jobs:
           SANDBOX_CONTROL_PATH: ${{ runner.temp }}/context/sandbox-control.json
           SANDBOX_CHECKPOINT_PATH: ${{ runner.temp }}/checkpoint/validated-run.json
           SANDBOX_SIDECAR_PATH: ${{ runner.temp }}/checkpoint/validated-run.json.sidecar.json
-          SANDBOX_STAGE_RECORD_PATH: ${{ runner.temp }}/checkpoint/analysis-stage-record.json
           SANDBOX_ANALYSIS_SOURCE_RUN_ID: ${{ needs.prepare.outputs.notification_phase == 'resolution' && needs.prepare.outputs.notification_source_run_id || github.run_id }}
           SANDBOX_BASE_REVISION: ${{ needs.prepare.outputs.base_state_revision }}
           SANDBOX_FINAL_REVISION: ${{ steps.final_state.outputs.state_revision }}
@@ -630,12 +630,12 @@ jobs:
           SANDBOX_LEDGER_PATH="$RUNNER_TEMP/sandbox-state/state/notification-ledger.json" \
             node .github/scripts/sandbox-notification-coverage.mjs
       - name: continuity coverageをartifactへ保存
-        if: needs.prepare.outputs.continuity_phase != 'none' || needs.prepare.outputs.notification_phase != 'none'
+        if: always() && (needs.prepare.outputs.continuity_phase != 'none' || needs.prepare.outputs.notification_phase != 'none')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sandbox-coverage-${{ needs.prepare.outputs.environment_id }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/sandbox-coverage.json
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 30
       - name: sandbox完了情報を保存
         if: needs.prepare.outputs.continuity_phase == 'none' && needs.prepare.outputs.notification_phase == 'none'

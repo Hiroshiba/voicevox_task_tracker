@@ -412,7 +412,7 @@ export class SplitStageRunner {
     });
     if (
       bootstrap.kind !== "resume_with_exact_runtime" ||
-      bootstrap.record.recordSchemaVersion !== 2 ||
+      bootstrap.record.recordSchemaVersion !== DURABLE_PUBLICATION_RECORD_SCHEMA_VERSION ||
       bootstrap.record.runtimeRecoveryPlan.schemaVersion !== 2 ||
       bootstrap.record.runtimeRecoveryPlan.kind !== "workflow_bundle"
     ) {

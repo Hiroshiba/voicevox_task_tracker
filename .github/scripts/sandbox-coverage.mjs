@@ -8,6 +8,10 @@ import {
   createSandboxStageCoverage,
 } from "../../dist/infrastructure/tracking-run/sandbox-stage-coverage.js";
 import { readVerifiedFirstResult, resultSchema, sha256 } from "./sandbox-continuity-result.mjs";
+import {
+  readSandboxCheckpointEvidence,
+  unavailableLegacyStageCoverage,
+} from "./sandbox-checkpoint-evidence.mjs";
 
 const revision = z.string().regex(/^[0-9a-f]{40}$/u);
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
@@ -98,12 +102,22 @@ function stateCommits(receipts) {
 
 function createCoverage() {
   const context = readJson(required("SANDBOX_CONTEXT_PATH"));
-  const checkpointBytes = readFileSync(required("SANDBOX_CHECKPOINT_PATH"));
-  const checkpoint = readJson(required("SANDBOX_CHECKPOINT_PATH"));
-  const sidecar = readJson(required("SANDBOX_SIDECAR_PATH"));
   const chainBytes = readFileSync(required("SANDBOX_RECEIPT_CHAIN_PATH"));
   const chain = readJson(required("SANDBOX_RECEIPT_CHAIN_PATH"));
-  const record = readJson(required("SANDBOX_RECORD_PATH"));
+  const evidence = readSandboxCheckpointEvidence(
+    readJson(required("SANDBOX_RECORD_PATH")),
+    required("SANDBOX_CHECKPOINT_PATH"),
+    required("SANDBOX_SIDECAR_PATH"),
+  );
+  if (evidence.kind === "legacy_without_analysis_proof") {
+    writeFileSync(
+      required("SANDBOX_COVERAGE_OUTPUT_PATH"),
+      `${JSON.stringify(unavailableLegacyStageCoverage(evidence.record, "continuity"))}\n`,
+    );
+    throw new TypeError("旧V2 runには永続化された解析段階証拠がありません");
+  }
+  const { record, analysis } = evidence;
+  const metrics = record.runFinalizationPolicy.report.metrics;
   const marker = readJson(required("SANDBOX_MARKER_PATH"));
   const snapshot = readJson(required("SANDBOX_SNAPSHOT_PATH"));
   const ledger = readJson(required("SANDBOX_LEDGER_PATH"));
@@ -124,21 +138,13 @@ function createCoverage() {
     }
     return matches[0];
   };
-  const checkpointDigest = digest.parse(checkpoint.checkpointDigest);
-  const checkpointFileDigest = digest.parse(sidecar.checkpointFileDigest);
-  const trackingRunId = runId.parse(checkpoint.payload.runIdentity.runId);
+  const checkpointDigest = digest.parse(record.checkpointDigest);
+  const checkpointFileDigest = digest.parse(record.checkpointFileDigest);
+  const trackingRunId = runId.parse(record.runIdentity.runId);
   const baseStateRevision = revision.parse(context.baseStateRevision);
   const finalStateRevision = revision.parse(required("SANDBOX_FINAL_REVISION"));
   assertEqual(context.codeRevision, required("GITHUB_SHA"), "sandbox code revision");
   assertEqual(context.environmentId, required("SANDBOX_ENVIRONMENT_ID"), "sandbox environment ID");
-  assertEqual(sidecar.byteLength, checkpointBytes.length, "checkpoint byteLength");
-  assertEqual(checkpointFileDigest, sha256(checkpointBytes), "checkpoint file digest");
-  const { checkpointDigest: storedCheckpointDigest, ...checkpointEnvelope } = checkpoint;
-  assertEqual(
-    storedCheckpointDigest,
-    sha256(canonicalJson(checkpointEnvelope)),
-    "checkpoint content digest",
-  );
   const { recordDigest: storedRecordDigest, ...recordPayload } = record;
   assertEqual(storedRecordDigest, sha256(canonicalJson(recordPayload)), "durable record digest");
   assertEqual(record.runIdentity.runId, trackingRunId, "durable record run ID");
@@ -159,11 +165,7 @@ function createCoverage() {
   assertEqual(marker.publicationRecordDigest, record.recordDigest, "marker record digest");
   assertEqual(marker.phase, "run_finalized", "marker phase");
   assertEqual(snapshot.run.id, trackingRunId, "snapshot run ID");
-  assertEqual(
-    checkpoint.payload.baseStateRevision.revision,
-    baseStateRevision,
-    "checkpoint base revision",
-  );
+  assertEqual(analysis.baseStateRevision.revision, baseStateRevision, "checkpoint base revision");
   assertEqual(record.baseStateRevision.revision, baseStateRevision, "record base revision");
   assertEqual(marker.baseStateRevision, baseStateRevision, "marker base revision");
   assertEqual(
@@ -200,7 +202,6 @@ function createCoverage() {
     .filter((entry) => entry.status === "sent")
     .map((entry) => entry.notificationKey);
   const sentLedgerKeyDigests = sentKeys.map((key) => sha256(key)).sort();
-  const metrics = checkpoint.payload.validatedPayload.runMetadata.metrics;
   const applications = countApplications(snapshot.items);
   const personal = countPersonal(snapshot.items);
   const continuityPhase = required("SANDBOX_CONTINUITY_PHASE");
@@ -242,12 +243,13 @@ function createCoverage() {
     throw new TypeError("sandbox Pagesと通知の記録結果が不正です");
   }
   const stages = createSandboxStageCoverage({
-    analysisRecord: readJson(required("SANDBOX_STAGE_RECORD_PATH")),
+    durableRecord: record,
     receiptEntries: chain.entries,
     runId: trackingRunId,
-    invocationId: checkpoint.payload.runIdentity.invocationId,
+    invocationId: analysis.invocationId,
     checkpointDigest,
     checkpointFileDigest,
+    baseStateRevision: analysis.baseStateRevision,
   });
   assertCompleteSandboxStageCoverage(stages);
   const coverage = {
@@ -270,7 +272,12 @@ function createCoverage() {
       analysisStageRecordDigest: stages.analysisStageRecordDigest,
       finalReceiptChainDigest: sha256(chainBytes),
     },
-    checkpoint: { checkpointDigest, checkpointFileDigest, sidecarByteLength: sidecar.byteLength },
+    checkpoint: {
+      checkpointDigest,
+      checkpointFileDigest,
+      sidecarByteLength: evidence.kind === "artifact_cross_checked" ? evidence.byteLength : null,
+      evidenceSource: evidence.kind,
+    },
     state: {
       verification: stateVerification,
       snapshotSchemaVersion: snapshot.schemaVersion,
@@ -296,8 +303,7 @@ function createCoverage() {
         itemCount: metrics.itemCount,
       },
       genericAi: {
-        plannedLogicalCandidateCount:
-          checkpoint.payload.validatedPayload.validation.core.aiBudgetSummary.logicalCandidateCount,
+        plannedLogicalCandidateCount: analysis.plannedLogicalCandidateCount,
         processAttemptCount: metrics.aiProcessAttemptCount,
         cacheHitCount: metrics.aiCacheHitCount,
         retainedResultCount: metrics.aiRetainedResultCount,

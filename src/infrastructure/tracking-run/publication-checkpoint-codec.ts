@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { AnalysisRunStageName } from "../../application/tracking-run/contracts/closed-values.js";
 import type { BaseStateRevision } from "../../application/tracking-run/contracts/run-core.js";
 import type { RuntimeIdentity } from "../../application/tracking-run/contracts/runtime-identity.js";
 import type { ContentDigestPort } from "../../application/tracking-run/ports.js";
@@ -25,12 +26,13 @@ import {
 const MAX_CHECKPOINT_BYTES = 128 * 1024 * 1024;
 const issuedArtifacts = new WeakSet<object>();
 
-/** 保存前のv19 checkpoint入力。 */
+/** 保存前のv20 checkpoint入力。 */
 export type EncodePublicationCheckpointInput = Readonly<{
   planned: PublicationPlannedRun;
   validatedPayload: ValidatedRunPayload;
   runtimeIdentity: RuntimeIdentity;
   artifactFileName: string;
+  analysisCompletedStages?: readonly AnalysisRunStageName[];
 }>;
 
 /** sidecarとruntimeを照合して復元したartifact。 */
@@ -118,7 +120,7 @@ function parsePublicationCheckpoint(
   });
 }
 
-/** v19 checkpointとsidecarを同じcodecから生成する。 */
+/** v20 checkpointとsidecarを同じcodecから生成する。 */
 export function encodePublicationCheckpoint(
   input: EncodePublicationCheckpointInput,
   digest: ContentDigestPort,
@@ -138,11 +140,14 @@ export function encodePublicationCheckpoint(
     executionPolicy: input.planned.validated.core.executionPolicy,
     baseStateRevision: input.planned.validated.core.baseRevision,
     configDigest: input.planned.validated.core.configDigest,
+    ...(input.analysisCompletedStages == null
+      ? {}
+      : { analysisCompletedStages: input.analysisCompletedStages }),
     validatedPayload: validatedRunSerializablePayload(input.validatedPayload),
     publicationPlan: input.planned.publicationPlan,
   });
   const envelope = Object.freeze({
-    schemaVersion: 19,
+    schemaVersion: 20,
     kind: "publication_planned_tracking_run",
     runtimeIdentity: input.runtimeIdentity,
     payload: checkpoint,
@@ -173,7 +178,7 @@ export function encodePublicationCheckpoint(
   return Object.freeze({ artifactBytes, sidecarBytes, decoded });
 }
 
-/** sidecar、二重digest、識別と参照閉包を検証してv19 artifactを読む。 */
+/** sidecar、二重digest、識別と参照閉包を検証してv20 artifactを読む。 */
 export function decodePublicationArtifact(
   artifactBytes: Uint8Array,
   sidecarBytes: Uint8Array,

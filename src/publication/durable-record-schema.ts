@@ -25,10 +25,11 @@ import { pendingNotificationSchema } from "../domain/index.js";
 import { PUBLIC_DTO_SCHEMA_VERSION } from "../pages/public-dto-primitives.js";
 import { NOTIFICATION_LEDGER_REASON_CODE_VALUES } from "../persistence/state-documents.js";
 import { runMetricsSchema } from "./run-report.js";
+import { analysisStageRecordSchema } from "./analysis-stage-record.js";
 
 const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const MAX_RECORD_BYTES = 8 * 1024 * 1024;
-export const DURABLE_PUBLICATION_RECORD_SCHEMA_VERSION = 2;
+export const DURABLE_PUBLICATION_RECORD_SCHEMA_VERSION = 3;
 const acknowledgedLedgerEntrySchema = z.strictObject({
   notificationKey: z.string().min(1).max(1000),
   itemNodeId: z.string().min(1).max(1000),
@@ -169,9 +170,15 @@ const durablePublicationRecordV2Schema = durablePublicationRecordV1Schema.extend
   runtimeRecoveryPlan: runtimeRecoveryPlanV2Schema,
 });
 
+const durablePublicationRecordV3Schema = durablePublicationRecordV2Schema.extend({
+  schemaVersion: z.literal(3),
+  analysisStageRecord: analysisStageRecordSchema,
+});
+
 export const durablePublicationRecordSchema = z.discriminatedUnion("schemaVersion", [
   durablePublicationRecordV1Schema,
   durablePublicationRecordV2Schema,
+  durablePublicationRecordV3Schema,
 ]);
 
 /** checkpoint成立前に確定できる業務値だけのrecord template。 */
@@ -213,8 +220,19 @@ export function parseDurablePublicationRecord(
       digest,
     );
     if (record.executionPolicy.executionShape !== "split_workflow") {
-      throw new TypeError("V2永続recordは分割workflowだけに使用できます");
+      throw new TypeError("V2以降の永続recordは分割workflowだけに使用できます");
     }
+  }
+  if (
+    record.schemaVersion === 3 &&
+    (record.analysisStageRecord.runId !== record.runIdentity.runId ||
+      record.analysisStageRecord.invocationId !== record.runIdentity.invocationId ||
+      record.analysisStageRecord.checkpointDigest !== record.checkpointDigest ||
+      record.analysisStageRecord.checkpointFileDigest !== record.checkpointFileDigest ||
+      serializeCanonicalJson(record.analysisStageRecord.baseStateRevision) !==
+        serializeCanonicalJson(record.baseStateRevision))
+  ) {
+    throw new TypeError("解析段階記録と永続recordの結合が一致しません");
   }
   if (
     record.initialStateContentDigests.snapshot !== record.initialPagesProjection.snapshot.digest ||

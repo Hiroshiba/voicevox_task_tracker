@@ -104,7 +104,7 @@ export async function inspectRunBootstrapState(
     const recordVersion = readDurablePublicationRecordSchemaVersion(recordFile.bytes);
     if (recordVersion === 1) {
       record = readDurablePublicationRecoveryBootstrap(recordFile.bytes, nodeContentDigestPort);
-    } else if (recordVersion === 2) {
+    } else if (recordVersion === 2 || recordVersion === 3) {
       record = readDurablePublicationRecoveryBootstrapV2(recordFile.bytes, nodeContentDigestPort);
     } else {
       throw new TypeError("未対応のdurable record schemaです");

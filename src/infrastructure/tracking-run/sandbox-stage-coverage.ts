@@ -8,7 +8,7 @@ import {
 import { verifyReceiptChain } from "../../application/tracking-run/receipt-chain.js";
 import type { Receipt } from "../../application/tracking-run/receipt-schema.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
-import { analysisStageRecordSchema } from "./analysis-stage-record.js";
+import { parseDurablePublicationRecord } from "../../publication/durable-record-schema.js";
 import { nodeContentDigestPort } from "./content-digest.js";
 
 const digestSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
@@ -59,20 +59,27 @@ function publicationReceipt(receipt: Receipt): boolean {
 /** 解析記録とreceipt chainからcanonical段階の実行状況を再構築する。 */
 export function createSandboxStageCoverage(
   input: Readonly<{
-    analysisRecord: unknown;
+    durableRecord: unknown;
     receiptEntries: readonly unknown[];
     runId: string;
     invocationId: string;
     checkpointDigest: string;
     checkpointFileDigest: string;
+    baseStateRevision: unknown;
   }>,
 ): StageCoverage {
-  const record = analysisStageRecordSchema.parse(input.analysisRecord);
+  const durable = parseDurablePublicationRecord(input.durableRecord, nodeContentDigestPort);
+  if (durable.schemaVersion !== 3) {
+    throw new TypeError("旧V2永続recordに解析段階の実行証拠がありません");
+  }
+  const record = durable.analysisStageRecord;
   if (
     record.runId !== input.runId ||
     record.invocationId !== input.invocationId ||
     record.checkpointDigest !== input.checkpointDigest ||
-    record.checkpointFileDigest !== input.checkpointFileDigest
+    record.checkpointFileDigest !== input.checkpointFileDigest ||
+    serializeCanonicalJson(record.baseStateRevision) !==
+      serializeCanonicalJson(input.baseStateRevision)
   ) {
     throw new TypeError("解析段階記録とcheckpointの結合が一致しません");
   }
