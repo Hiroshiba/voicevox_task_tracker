@@ -129,7 +129,8 @@ export function resolveEvidenceUse(
       });
     }
   }
-  const facts = currentById.get(use.sourceId) ?? [];
+  const previousNotification = use.purpose === "previous_notification_pending";
+  const facts = previousNotification ? [] : (currentById.get(use.sourceId) ?? []);
   if (facts.length > 0) {
     for (const fact of facts) {
       if (fact.sourceKind !== sourceKind) {

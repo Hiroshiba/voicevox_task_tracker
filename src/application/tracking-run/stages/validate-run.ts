@@ -365,6 +365,7 @@ export function validateRun<
     input.closure,
     run.data.historicalEvidence,
     run.data.historicalAiResults,
+    input.graphReconciled.core.personalReminderInput,
     run.data.aiItems,
     run.data.sourceRecords.evaluatedAt,
     run.data.approvedRepositories,

@@ -9,6 +9,7 @@ import type {
 import { RunCompletenessError } from "./run-completeness-error.js";
 import { assertEventBasisReference, referenceContext } from "./run-validation-reference-context.js";
 import { isRecord, valueAtPath } from "./run-validation-reference-scope.js";
+import type { PreviousPendingCauseContext } from "./run-validation-previous-ledger-history.js";
 
 export type MaterializedSourceUse = Readonly<{
   reference: MaterializedEvidenceReference;
@@ -34,8 +35,11 @@ function annotationAt(
 export function collectMaterializedSourceUses(
   references: readonly MaterializedEvidenceReference[],
   values: MaterializedReferenceValues,
+  previousPendingCauses: readonly PreviousPendingCauseContext[],
 ): readonly MaterializedSourceUse[] {
-  const contexts = references.map((reference) => referenceContext(reference, values));
+  const contexts = references.map((reference) =>
+    referenceContext(reference, values, previousPendingCauses),
+  );
   for (const reference of references) assertEventBasisReference(reference, values);
   const uses = collectEvidenceUses((emit) => {
     for (const [index, reference] of references.entries()) {

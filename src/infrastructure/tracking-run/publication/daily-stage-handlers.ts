@@ -9,6 +9,8 @@ import {
 import type { ReceiptChainEvidence } from "../../../application/tracking-run/receipt-chain-schema.js";
 import { verifyReceiptChain } from "../../../application/tracking-run/receipt-chain.js";
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
+import { readExactStateSnapshot } from "../../../persistence/index.js";
+import { loadStateNotificationLedgers } from "../../../persistence/state-ledger-files.js";
 import { nodeContentDigestPort } from "../content-digest.js";
 import { parseInitialPagesBuildArtifact } from "../initial-pages-build-artifact.js";
 import {
@@ -42,7 +44,7 @@ export async function prepareDailyCheckpoint(
   }>,
   input: SequentialPublicationInput,
 ): Promise<BoundPublicationCheckpoint> {
-  const { configuration, state, planned } = input;
+  const { configuration, planned } = input;
   if (
     nodeContentDigestPort.sha256Utf8(serializeCanonicalJson(configuration.config)) !==
     planned.validated.core.configDigest
@@ -69,7 +71,18 @@ export async function prepareDailyCheckpoint(
     },
     nodeContentDigestPort,
   );
-  const snapshot = state.snapshot;
+  const adapter = dependencies.adapters.createStateBranchAdapter();
+  const snapshot = await readExactStateSnapshot(
+    adapter,
+    configuration.target.state,
+    configuration.config.staleness.timezone,
+    planned.validated.core.baseRevision,
+  );
+  const previousNotificationLedger = await loadStateNotificationLedgers(
+    adapter,
+    configuration.target.state,
+    planned.validated.core.baseRevision,
+  );
   const bound = bindPublicationCheckpoint(
     encoded.decoded,
     {
@@ -78,13 +91,8 @@ export async function prepareDailyCheckpoint(
     },
     {
       revision: planned.validated.core.baseRevision,
-      previousAiSnapshot:
-        snapshot.status === "available"
-          ? {
-              trackedItems: snapshot.snapshot.items,
-              collectionRepositories: snapshot.snapshot.collection.repositories,
-            }
-          : undefined,
+      previousSnapshot: snapshot,
+      previousNotificationLedger,
     },
     nodeContentDigestPort,
   );

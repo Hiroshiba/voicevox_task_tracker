@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-import type { HistoricalAiSnapshotInput } from "../../application/tracking-run/contracts/evidence-closure.js";
 import {
   baseStateRevisionSchema,
   type BaseStateRevision,
@@ -8,10 +7,16 @@ import {
 import type { RuntimeIdentity } from "../../application/tracking-run/contracts/runtime-identity.js";
 import type { ContentDigestPort } from "../../application/tracking-run/ports.js";
 import { runtimeRecoveryPlanSchema } from "../../application/tracking-run/recovery-bootstrap.js";
-import { assertHistoricalAiWitnessMatchesBaseSnapshot } from "../../application/tracking-run/stages/run-validation-artifact-witness.js";
+import {
+  assertHistoricalAiWitnessMatchesBaseSnapshot,
+  assertHistoricalEvidenceWitnessMatchesBaseSnapshot,
+} from "../../application/tracking-run/stages/run-validation-artifact-witness.js";
+import { assertPreviousPendingCausesMatchBase } from "../../application/tracking-run/stages/run-validation-previous-ledger-history.js";
 import { parseSha256Hash, type Sha256Hash } from "../../canonical-json/sha256.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import type { PublicationPlannedRun } from "../../publication/publication-plan-contracts.js";
+import type { StateNotificationLedger } from "../../persistence/state-documents.js";
+import type { StateSnapshotReadResult } from "../../persistence/state-persistence-session.js";
 import {
   assertDecodedPublicationArtifact,
   type DecodedPublicationArtifact,
@@ -51,10 +56,11 @@ export type BoundPublicationCheckpoint = Readonly<{
   bindingProof: CheckpointBindingProof;
 }>;
 
-/** exact base treeから読んだ前回AI履歴の検証文脈。 */
+/** exact base treeから読んだ前回snapshotと通知管理記録。 */
 export type CheckpointBaseWitness = Readonly<{
   revision: BaseStateRevision;
-  previousAiSnapshot: HistoricalAiSnapshotInput | undefined;
+  previousSnapshot: StateSnapshotReadResult;
+  previousNotificationLedger: StateNotificationLedger;
 }>;
 
 function assertRecoveryPlanMatchesRuntime(
@@ -108,12 +114,34 @@ export function bindPublicationCheckpoint(
   ) {
     throw new TypeError("checkpointとsidecarまたはexact base revisionが一致しません");
   }
-  if (revision.status === "missing" && baseWitness.previousAiSnapshot != null) {
-    throw new TypeError("存在しないbase revisionに前回AI snapshotがあります");
+  if (
+    (revision.status === "missing") !==
+    (baseWitness.previousSnapshot.status === "missing_branch")
+  ) {
+    throw new TypeError("exact base revisionと前回snapshotの有無が一致しません");
   }
+  const snapshot =
+    baseWitness.previousSnapshot.status === "available"
+      ? baseWitness.previousSnapshot.snapshot
+      : undefined;
   assertHistoricalAiWitnessMatchesBaseSnapshot(
     decoded.validated.evidenceClosureWitness,
-    baseWitness.previousAiSnapshot,
+    snapshot == null
+      ? undefined
+      : {
+          trackedItems: snapshot.items,
+          collectionRepositories: snapshot.collection.repositories,
+        },
+  );
+  assertHistoricalEvidenceWitnessMatchesBaseSnapshot(
+    decoded.validated.evidenceClosureWitness,
+    snapshot == null ? undefined : { items: snapshot.items, relations: snapshot.relations },
+  );
+  assertPreviousPendingCausesMatchBase(
+    decoded.validated.evidenceClosureWitness.previousPendingCauses,
+    decoded.validated.previousNotificationLedger,
+    baseWitness.previousNotificationLedger,
+    snapshot == null ? undefined : { items: snapshot.items, relations: snapshot.relations },
   );
   assertRecoveryPlanMatchesRuntime(decoded.runtimeIdentity, metadata.runtimeRecoveryPlan, digest);
   if (

@@ -10,10 +10,13 @@ import {
   itemEvidenceScope,
   notificationReasonScope,
   pendingNotificationScope,
-  previousPendingNotificationScope,
   relationScope,
   valueAtPath,
 } from "./run-validation-reference-scope.js";
+import {
+  previousPendingCauseScope,
+  type PreviousPendingCauseContext,
+} from "./run-validation-previous-ledger-history.js";
 
 type Path = readonly (string | number)[];
 export type ReferenceContext = Readonly<{
@@ -52,6 +55,7 @@ function evidencePurpose(
 export function referenceContext(
   reference: MaterializedEvidenceReference,
   values: MaterializedReferenceValues,
+  previousPendingCauses: readonly PreviousPendingCauseContext[],
 ): ReferenceContext {
   const path = reference.path;
   const ownerNodeIds = [reference.owner.id];
@@ -185,11 +189,15 @@ export function referenceContext(
     };
   }
   if (path[0] === "previousNotificationLedger" && path[1] === "pendingNotifications") {
+    const pendingIndex = path[2];
+    if (typeof pendingIndex !== "number")
+      throw new RunCompletenessError("invalid_reference", reference.sourceId, path, undefined);
+    const scope = previousPendingCauseScope(pendingIndex, previousPendingCauses);
     return {
       purpose: "previous_notification_pending",
       currentness: "historical_allowed",
-      ownerNodeIds: previousPendingNotificationScope(reference, values),
-      relationIds: [],
+      ownerNodeIds: scope.nodeIds,
+      relationIds: scope.relationIds,
     };
   }
   if (

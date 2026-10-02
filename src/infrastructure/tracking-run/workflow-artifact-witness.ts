@@ -12,7 +12,12 @@ import {
   createGitHubRepositoryId,
   createUtcIsoDateTime,
 } from "../../domain/index.js";
-import { personalReminderCauseIdSchema } from "../../domain/personal-reminder-causes.js";
+import {
+  personalReminderCauseIdSchema,
+  personalReminderReasonCodeSchema,
+  personalReminderResponsibilityIdSchema,
+  personalReminderTimeBasisSchema,
+} from "../../domain/personal-reminder-causes.js";
 import { buildSourceId, parseSourceId } from "../../domain/source-id.js";
 
 const sourceIdSchema = z.string().transform((value) => {
@@ -160,6 +165,25 @@ const witnessSchema = z.strictObject({
   currentSources: z.array(currentSourceSchema),
   historicalEvidence: z.array(historicalEvidenceSchema),
   historicalAiResults: z.array(historicalAiResultSchema),
+  previousPendingCauses: z.array(
+    z.strictObject({
+      pendingIndex: z.number().int().nonnegative(),
+      itemNodeId: nodeIdSchema,
+      causeId: personalReminderCauseIdSchema,
+      responsibilityId: personalReminderResponsibilityIdSchema,
+      reasonCode: personalReminderReasonCodeSchema,
+      actionableSince: personalReminderTimeBasisSchema,
+      stallSince: personalReminderTimeBasisSchema,
+      executionSurfaceNodeIds: z.array(nodeIdSchema),
+      relations: z.array(
+        z.strictObject({
+          id: z.string().min(1),
+          fromNodeId: nodeIdSchema,
+          toNodeId: nodeIdSchema,
+        }),
+      ),
+    }),
+  ),
   aiResultOrigins: z.array(
     z.strictObject({
       path: z.array(z.union([z.string(), z.number().int().nonnegative()])),

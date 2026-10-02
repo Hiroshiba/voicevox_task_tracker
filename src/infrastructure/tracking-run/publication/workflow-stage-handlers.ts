@@ -7,6 +7,7 @@ import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type { Config } from "../../../config/index.js";
 import type { StateBranchAdapter } from "../../../persistence/index.js";
 import { joinStatePath, readExactStateSnapshot } from "../../../persistence/index.js";
+import { loadStateNotificationLedgers } from "../../../persistence/state-ledger-files.js";
 import type { PublicationValidatedRun } from "../../../publication/publication-plan-contracts.js";
 import type { VerifyCheckpointCliCommand } from "../command-input.js";
 import { nodeContentDigestPort } from "../content-digest.js";
@@ -97,6 +98,11 @@ async function readWorkflowCheckpoint(
     config.staleness.timezone,
     baseRevision,
   );
+  const previousNotificationLedger = await loadStateNotificationLedgers(
+    adapter,
+    config.state,
+    baseRevision,
+  );
   const runtime = await readPublicationRuntimeContext(
     adapters.repositoryPath,
     header.executionPolicy,
@@ -109,13 +115,8 @@ async function readWorkflowCheckpoint(
     runtime,
     baseWitness: {
       revision: baseRevision,
-      previousAiSnapshot:
-        previousSnapshot.status === "available"
-          ? {
-              trackedItems: previousSnapshot.snapshot.items,
-              collectionRepositories: previousSnapshot.snapshot.collection.repositories,
-            }
-          : undefined,
+      previousSnapshot,
+      previousNotificationLedger,
     },
   });
   assertBoundPublicationCheckpoint(bound);

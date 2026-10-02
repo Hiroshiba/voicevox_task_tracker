@@ -1,12 +1,26 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
-import type { Relation } from "../../../domain/types.js";
-import type { PersonalReminderPlanningInput } from "../contracts/run-core.js";
+import type { Evidence, GitHubNodeId, GitHubRepositoryId } from "../../../domain/types.js";
 import type { OwnedHistoricalEvidence } from "../contracts/evidence-closure.js";
+
+/** 前回snapshotの根拠と保存位置を読み取るための最小入力。 */
+export type HistoricalEvidenceSnapshotInput = Readonly<{
+  items: readonly Readonly<{
+    nodeId: GitHubNodeId;
+    repositoryId: GitHubRepositoryId;
+    evidence: readonly Evidence[];
+  }>[];
+  relations: readonly Readonly<{
+    id: string;
+    fromNodeId: string;
+    toNodeId: string;
+    evidence: readonly Evidence[];
+  }>[];
+}>;
 
 /** 前回項目と関係の根拠を元の所有位置付きで保持する。 */
 export function collectOwnedHistoricalEvidence(
-  previousItems: PersonalReminderPlanningInput["previousItems"],
-  previousRelations: readonly Relation[],
+  previousItems: HistoricalEvidenceSnapshotInput["items"],
+  previousRelations: HistoricalEvidenceSnapshotInput["relations"],
 ): readonly OwnedHistoricalEvidence[] {
   const records: OwnedHistoricalEvidence[] = [];
   for (const [itemIndex, item] of previousItems.entries()) {

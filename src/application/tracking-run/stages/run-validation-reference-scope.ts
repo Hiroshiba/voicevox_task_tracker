@@ -241,22 +241,6 @@ function causeForItem(
   return item?.personalReminderCauses.find((value) => value.causeId === causeId);
 }
 
-/** 前回通知に対応する原因の実行面をsource所有範囲へ加える。 */
-export function previousPendingNotificationScope(
-  reference: MaterializedEvidenceReference,
-  values: MaterializedReferenceValues,
-): readonly string[] {
-  const pending = valueAtPath(values, reference.path.slice(0, 3));
-  const causeId = valueAtPath(pending, ["target", "causeId"]);
-  if (typeof causeId !== "string") return [reference.owner.id];
-  const cause = causeForItem(values, reference.owner.id, causeId);
-  return cause == null
-    ? [reference.owner.id]
-    : [
-        ...new Set([reference.owner.id, ...causeExecutionSurfaceNodeIds(cause, reference.path)]),
-      ].sort();
-}
-
 /** 保存済み通知に対応する原因の関係と実行面をsource所有範囲へ加える。 */
 export function pendingNotificationScope(
   reference: MaterializedEvidenceReference,

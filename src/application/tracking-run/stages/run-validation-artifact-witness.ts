@@ -27,7 +27,12 @@ import {
 } from "./evidence-ai-results.js";
 import { assertAiResultOrigins, createAiResultOrigins } from "./evidence-ai-provenance.js";
 import type { GenericAiItemAdoption } from "./generic-ai-adoption-contracts.js";
+import type { PersonalReminderPlanningInput } from "../contracts/run-core.js";
 import { resolveEvidenceUse } from "./evidence-closure-resolve.js";
+import {
+  collectOwnedHistoricalEvidence,
+  type HistoricalEvidenceSnapshotInput,
+} from "./evidence-closure-historical.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 import {
   assertMaterializedReferenceBindings,
@@ -37,6 +42,11 @@ import { assertSourceReferenceCoverage } from "./run-validation-source-audit.js"
 import { isRecord, valueAtPath } from "./run-validation-reference-scope.js";
 import { assertStageSourceValuesMatch } from "./run-validation-stage-source-binding.js";
 import { assertRunValueMatches } from "./run-validation-compare.js";
+import {
+  assertPreviousPendingCauseContexts,
+  createPreviousPendingCauseContexts,
+  type PreviousPendingCauseContext,
+} from "./run-validation-previous-ledger-history.js";
 import {
   assertCacheOwnerWitness,
   createCacheOwnerWitness,
@@ -55,6 +65,7 @@ export type EvidenceClosureWitness = Readonly<{
   currentSources: readonly CurrentSourceFact[];
   historicalEvidence: readonly OwnedHistoricalEvidence[];
   historicalAiResults: readonly OwnedHistoricalAiResult[];
+  previousPendingCauses: readonly PreviousPendingCauseContext[];
   aiResultOrigins: readonly AiResultOrigin[];
   resolvedUses: readonly ResolvedEvidenceUse[];
   materializedReferences: readonly MaterializedEvidenceReference[];
@@ -184,6 +195,28 @@ export function assertHistoricalAiWitnessMatchesBaseSnapshot(
   }
 }
 
+/** 固定base revisionの前回Evidenceが公開witnessの保存位置と所有者に一致することを確認する。 */
+export function assertHistoricalEvidenceWitnessMatchesBaseSnapshot(
+  witness: EvidenceClosureWitness,
+  snapshot: HistoricalEvidenceSnapshotInput | undefined,
+): void {
+  const actual =
+    snapshot == null
+      ? Object.freeze([])
+      : collectOwnedHistoricalEvidence(snapshot.items, snapshot.relations);
+  const identities = new Set(actual.map(serializeCanonicalJson));
+  for (const record of witness.historicalEvidence) {
+    if (!identities.has(serializeCanonicalJson(record))) {
+      throw new RunCompletenessError(
+        "missing_source",
+        record.record.evidence.sourceId,
+        record.record.location.path,
+        undefined,
+      );
+    }
+  }
+}
+
 function resolvedAiSlot(
   path: readonly (string | number)[],
   slots: readonly AiResultSlot[],
@@ -242,6 +275,7 @@ export function createEvidenceClosureWitness(
   closure: EvidenceClosureResult,
   historicalEvidence: readonly OwnedHistoricalEvidence[],
   historicalAiResults: readonly OwnedHistoricalAiResult[],
+  previousInput: Pick<PersonalReminderPlanningInput, "previousItems" | "previousRelations">,
   aiItems: readonly GenericAiItemAdoption[],
   evaluatedAt: UtcIsoDateTime,
   approvedRepositories: readonly PublicRepository[],
@@ -252,7 +286,16 @@ export function createEvidenceClosureWitness(
   assertStageSourceValuesMatch(closure, values);
   const cacheOwners = createCacheOwnerWitness(outward, values, digest);
   const materializedReferences = collectMaterializedReferences(values, cacheOwners);
-  const sourceUses = collectMaterializedSourceUses(materializedReferences, values);
+  const previousPendingCauses = createPreviousPendingCauseContexts(
+    values.previousNotificationLedger,
+    previousInput.previousItems,
+    previousInput.previousRelations,
+  );
+  const sourceUses = collectMaterializedSourceUses(
+    materializedReferences,
+    values,
+    previousPendingCauses,
+  );
   const tracked = values.snapshot.items.map((item, index) => ({
     item,
     path: ["snapshot", "items", index],
@@ -327,6 +370,7 @@ export function createEvidenceClosureWitness(
     currentSources,
     historicalEvidence: usedHistoricalEvidence,
     historicalAiResults: selectedAi,
+    previousPendingCauses,
     aiResultOrigins,
     resolvedUses,
     materializedReferences,
@@ -563,13 +607,21 @@ export function assertEvidenceClosureWitness(
     ["evidenceClosureWitness", "historicalAiResults"],
     "closure",
   );
+  assertPreviousPendingCauseContexts(
+    witness.previousPendingCauses,
+    values.previousNotificationLedger,
+  );
   assertRunValueMatches(
     collectMaterializedReferences(values, witness.cacheOwners),
     witness.materializedReferences,
     ["evidenceClosureWitness", "materializedReferences"],
     "closure",
   );
-  const sourceUses = collectMaterializedSourceUses(witness.materializedReferences, values);
+  const sourceUses = collectMaterializedSourceUses(
+    witness.materializedReferences,
+    values,
+    witness.previousPendingCauses,
+  );
   const aiSlots = collectSavedAiResultSlots(values);
   assertSavedAiOriginShape(values, witness.aiResultOrigins);
   assertRunValueMatches(
