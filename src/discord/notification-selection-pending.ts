@@ -68,6 +68,20 @@ function pendingReplacementKey(pending: PendingNotification): string {
   return JSON.stringify([pending.itemNodeId, pending.reason.reasonCode]);
 }
 
+function pendingMatchesDraft(pending: PendingNotification, draft: PendingNotification): boolean {
+  if (pending.notificationKey !== draft.notificationKey) return false;
+  if (pending.target.kind !== "personal_reminder") {
+    return draft.target.kind !== "personal_reminder";
+  }
+  if (draft.target.kind !== "personal_reminder") return false;
+  return (
+    pending.target.causeId === draft.target.causeId &&
+    pending.target.responsibilityId === draft.target.responsibilityId &&
+    samePersonalReminderTimeBasis(pending.target.actionableSince, draft.target.actionableSince) &&
+    samePersonalReminderTimeBasis(pending.target.stallSince, draft.target.stallSince)
+  );
+}
+
 function legacyPendingEpisodeMatchesCurrent(
   item: DiscordNotificationItem,
   pending: PendingNotification,
@@ -284,6 +298,12 @@ function personalReminderPendingState(
   if (input.cause.reasonCode !== pending.reason.reasonCode) {
     return "drop";
   }
+  if (input.cause.actionableClock.status !== "observed") {
+    return "hold";
+  }
+  if (!personalReminderPendingClockMatchesCurrent(input, pending)) {
+    return "drop";
+  }
   const assessment = currentPersonalReminderAssessment(input.cause);
   if (assessment.status !== "available") {
     return "hold";
@@ -297,12 +317,6 @@ function personalReminderPendingState(
       return "hold";
     case "actionable":
       break;
-  }
-  if (input.cause.actionableClock.status !== "observed") {
-    return "hold";
-  }
-  if (!personalReminderPendingClockMatchesCurrent(input, pending)) {
-    return "drop";
   }
   if (input.staleness.status !== "eligible") {
     return "hold";
@@ -469,7 +483,7 @@ function mergePendingNotifications(
       );
       pendingByReplacementKey.set(
         pendingReplacementKey(reason.pendingNotification),
-        existing?.notificationKey === reason.pendingNotification.notificationKey
+        existing != null && pendingMatchesDraft(existing, reason.pendingNotification)
           ? existing
           : reason.pendingNotification,
       );

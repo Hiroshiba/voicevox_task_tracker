@@ -33,7 +33,10 @@ import {
   assertMaterializedReferenceBindings,
   collectMaterializedSourceUses,
 } from "./run-validation-artifact-reference-binding.js";
-import { assertSourceReferenceCoverage } from "./run-validation-source-audit.js";
+import {
+  assertSourceReferenceCoverage,
+  retiredPreviousPendingClockPaths,
+} from "./run-validation-source-audit.js";
 import { isRecord, valueAtPath } from "./run-validation-reference-scope.js";
 import { assertStageSourceValuesMatch } from "./run-validation-stage-source-binding.js";
 import { assertRunValueMatches } from "./run-validation-compare.js";
@@ -251,7 +254,11 @@ export function createEvidenceClosureWitness(
 ): EvidenceClosureWitness {
   assertStageSourceValuesMatch(closure, values);
   const cacheOwners = createCacheOwnerWitness(outward, values, digest);
-  const materializedReferences = collectMaterializedReferences(values, cacheOwners);
+  const materializedReferences = collectMaterializedReferences(
+    values,
+    cacheOwners,
+    historicalEvidence,
+  );
   const sourceUses = collectMaterializedSourceUses(materializedReferences, values);
   const tracked = values.snapshot.items.map((item, index) => ({
     item,
@@ -395,8 +402,10 @@ function walkReferences(
 export function collectMaterializedReferences(
   values: MaterializedReferenceValues,
   cacheOwners: CacheOwnerWitness,
+  historicalEvidence: readonly OwnedHistoricalEvidence[],
 ): readonly MaterializedEvidenceReference[] {
   const references: MaterializedEvidenceReference[] = [];
+  const retiredPaths = retiredPreviousPendingClockPaths(values, historicalEvidence);
   for (const [index, item] of values.snapshot.items.entries()) {
     walkReferences(
       item,
@@ -505,8 +514,10 @@ export function collectMaterializedReferences(
       references,
     );
   }
-  const sorted = canonicalSort(references);
-  assertSourceReferenceCoverage(values, sorted);
+  const sorted = canonicalSort(
+    references.filter((reference) => !retiredPaths.has(serializeCanonicalJson(reference.path))),
+  );
+  assertSourceReferenceCoverage(values, sorted, retiredPaths);
   return sorted;
 }
 
@@ -564,7 +575,7 @@ export function assertEvidenceClosureWitness(
     "closure",
   );
   assertRunValueMatches(
-    collectMaterializedReferences(values, witness.cacheOwners),
+    collectMaterializedReferences(values, witness.cacheOwners, witness.historicalEvidence),
     witness.materializedReferences,
     ["evidenceClosureWitness", "materializedReferences"],
     "closure",

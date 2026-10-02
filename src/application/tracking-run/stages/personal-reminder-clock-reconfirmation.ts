@@ -229,7 +229,9 @@ function basisAtOrAfter(
       undefined,
     );
   }
-  const previousAt = basis.source === "reconfirmed_observation" ? basis.previousAt : basis.at;
+  let previousAt = basis.at;
+  if (basis.source === "first_observation") previousAt = earlier.previousAt;
+  if (basis.source === "reconfirmed_observation") previousAt = basis.previousAt;
   return Object.freeze({
     source: "reconfirmed_observation",
     at: earlier.at,
