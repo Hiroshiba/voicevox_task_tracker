@@ -68,7 +68,11 @@ productionのPages deployはActionsのaction境界で行います。
 
 ## checkpoint、receipt、markerで公開順序を検証する
 
-公開計画からcanonical JSONのcheckpointとsidecarを作り、payload digest、file digest、runtime identity、base revisionを照合して結合します。
+公開計画からschema version 21のcanonical JSON checkpointとsidecarを作り、payload digest、file digest、runtime identity、base revisionを照合して結合します。
+checkpointには前回の送信待ち通知の原因と所有範囲を示すwitnessを必ず含めます。
+旧snapshotの移行で原因の時計が`reconfirmation_pending`になった場合は、前回通知の`event`時計と時刻、source IDが一致するときだけ対応を認めます。
+前回通知のsource参照は固定baseの前回snapshotにあるEvidenceで証明し、現行観測を根拠にしません。
+結合時には同じ固定baseからwitnessを再構成し、前回通知台帳との一致も検査します。
 proofは非公開brandとconstructorを持つvalidatorだけが発行します。
 初回commitの入力は結合済みcheckpointに限定します。
 保存後はメモリ上の計画を破棄し、結果revisionからsnapshot、record、markerとledgerを再読み込みます。

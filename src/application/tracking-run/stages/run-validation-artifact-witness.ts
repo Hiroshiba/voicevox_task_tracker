@@ -275,7 +275,7 @@ export function createEvidenceClosureWitness(
   closure: EvidenceClosureResult,
   historicalEvidence: readonly OwnedHistoricalEvidence[],
   historicalAiResults: readonly OwnedHistoricalAiResult[],
-  previousInput: Pick<PersonalReminderPlanningInput, "previousItems" | "previousRelations">,
+  previousInput: PersonalReminderPlanningInput["previousBaseSnapshot"],
   aiItems: readonly GenericAiItemAdoption[],
   evaluatedAt: UtcIsoDateTime,
   approvedRepositories: readonly PublicRepository[],
@@ -288,8 +288,8 @@ export function createEvidenceClosureWitness(
   const materializedReferences = collectMaterializedReferences(values, cacheOwners);
   const previousPendingCauses = createPreviousPendingCauseContexts(
     values.previousNotificationLedger,
-    previousInput.previousItems,
-    previousInput.previousRelations,
+    previousInput.items,
+    previousInput.relations,
   );
   const sourceUses = collectMaterializedSourceUses(
     materializedReferences,

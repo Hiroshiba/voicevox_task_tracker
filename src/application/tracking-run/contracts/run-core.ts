@@ -62,6 +62,16 @@ export type GraphReconciliationInput = Readonly<{
 export type PersonalReminderPlanningInput = Readonly<{
   config: Pick<Config, "ai" | "labels" | "staleness">;
   previousAiSnapshot: HistoricalAiSnapshotInput;
+  previousBaseSnapshot: Readonly<{
+    items: readonly Pick<
+      Extract<AnalysisPreviousState["snapshot"], { status: "available" }>["trackedItems"][number],
+      "nodeId" | "repositoryId" | "personalReminderCauses" | "evidence"
+    >[];
+    relations: readonly Pick<
+      Extract<AnalysisPreviousState["snapshot"], { status: "available" }>["relations"][number],
+      "id" | "fromNodeId" | "toNodeId" | "evidence"
+    >[];
+  }>;
   previousItems: readonly Pick<
     Extract<AnalysisPreviousState["snapshot"], { status: "available" }>["trackedItems"][number],
     | "nodeId"
@@ -161,6 +171,34 @@ export function projectGenericAiRunCore(analyzed: AnalysisRunCore): GenericAiRun
         ai: analyzed.config.ai,
         labels: analyzed.config.labels,
         staleness: analyzed.config.staleness,
+      }),
+      previousBaseSnapshot: Object.freeze({
+        items:
+          analyzed.previousState.snapshot.status === "available"
+            ? Object.freeze(
+                analyzed.previousState.snapshot.trackedItems.map((item) =>
+                  Object.freeze({
+                    nodeId: item.nodeId,
+                    repositoryId: item.repositoryId,
+                    personalReminderCauses: item.personalReminderCauses,
+                    evidence: item.evidence,
+                  }),
+                ),
+              )
+            : Object.freeze([]),
+        relations:
+          analyzed.previousState.snapshot.status === "available"
+            ? Object.freeze(
+                analyzed.previousState.snapshot.relations.map((relation) =>
+                  Object.freeze({
+                    id: relation.id,
+                    fromNodeId: relation.fromNodeId,
+                    toNodeId: relation.toNodeId,
+                    evidence: relation.evidence,
+                  }),
+                ),
+              )
+            : Object.freeze([]),
       }),
       previousItems:
         analyzed.previousState.snapshot.status === "available"

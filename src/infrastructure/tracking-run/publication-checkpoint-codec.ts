@@ -26,7 +26,7 @@ import {
 const MAX_CHECKPOINT_BYTES = 128 * 1024 * 1024;
 const issuedArtifacts = new WeakSet<object>();
 
-/** 保存前のv20 checkpoint入力。 */
+/** 保存前のv21 checkpoint入力。 */
 export type EncodePublicationCheckpointInput = Readonly<{
   planned: PublicationPlannedRun;
   validatedPayload: ValidatedRunPayload;
@@ -120,7 +120,7 @@ function parsePublicationCheckpoint(
   });
 }
 
-/** v20 checkpointとsidecarを同じcodecから生成する。 */
+/** v21 checkpointとsidecarを同じcodecから生成する。 */
 export function encodePublicationCheckpoint(
   input: EncodePublicationCheckpointInput,
   digest: ContentDigestPort,
@@ -147,7 +147,7 @@ export function encodePublicationCheckpoint(
     publicationPlan: input.planned.publicationPlan,
   });
   const envelope = Object.freeze({
-    schemaVersion: 20,
+    schemaVersion: 21,
     kind: "publication_planned_tracking_run",
     runtimeIdentity: input.runtimeIdentity,
     payload: checkpoint,
@@ -178,7 +178,7 @@ export function encodePublicationCheckpoint(
   return Object.freeze({ artifactBytes, sidecarBytes, decoded });
 }
 
-/** sidecar、二重digest、識別と参照閉包を検証してv20 artifactを読む。 */
+/** sidecar、二重digest、識別と参照閉包を検証してv21 artifactを読む。 */
 export function decodePublicationArtifact(
   artifactBytes: Uint8Array,
   sidecarBytes: Uint8Array,

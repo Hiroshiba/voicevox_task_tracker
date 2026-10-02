@@ -45,7 +45,12 @@ function hasEventClock(
 }
 
 function sameTimeBasis(left: PersonalReminderTimeBasis, right: PersonalReminderTimeBasis): boolean {
-  if (left.source !== right.source || left.at !== right.at) return false;
+  if (
+    left.at !== right.at ||
+    (left.source !== right.source &&
+      !(left.source === "reconfirmation_pending" && right.source === "event"))
+  )
+    return false;
   if (left.source === "first_observation" || right.source === "first_observation") {
     return left.source === right.source;
   }

@@ -465,8 +465,8 @@ export function finalizePersonalReminders(
       snapshotProjection: run.data.snapshotProjection,
       personalReminderStatus,
       historicalEvidence: collectOwnedHistoricalEvidence(
-        run.core.personalReminderInput.previousItems,
-        run.core.personalReminderInput.previousRelations,
+        run.core.personalReminderInput.previousBaseSnapshot.items,
+        run.core.personalReminderInput.previousBaseSnapshot.relations,
       ),
       historicalAiResults: collectOwnedHistoricalAiResults(
         run.core.personalReminderInput.previousAiSnapshot,

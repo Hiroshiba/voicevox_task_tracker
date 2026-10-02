@@ -17,6 +17,12 @@ export function assertRunStageLineage(
   assertRunValueMatches(adopted.core.identity, graph.core.identity, ["core", "identity"], "run");
   assertRunValueMatches(graph.core.identity, finalized.core.identity, ["core", "identity"], "run");
   assertRunValueMatches(
+    adopted.core.personalReminderInput.previousBaseSnapshot,
+    graph.core.personalReminderInput.previousBaseSnapshot,
+    ["core", "personalReminderInput", "previousBaseSnapshot"],
+    "run",
+  );
+  assertRunValueMatches(
     adopted.core.executionPolicy,
     finalized.core.executionPolicy,
     ["core", "executionPolicy"],

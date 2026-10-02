@@ -81,7 +81,7 @@ export const publicationCheckpointSchema = z
   });
 
 export const publicationArtifactSchema = z.strictObject({
-  schemaVersion: z.literal(20),
+  schemaVersion: z.literal(21),
   kind: z.literal("publication_planned_tracking_run"),
   runtimeIdentity: runtimeIdentitySchema,
   checkpointDigest: sha256Schema,
@@ -98,10 +98,10 @@ export const publicationArtifactSidecarSchema = z.strictObject({
   checkpointFileDigest: sha256Schema,
 });
 
-/** v20 checkpointの公開保存値。 */
+/** v21 checkpointの公開保存値。 */
 export type PublicationCheckpoint = z.output<typeof publicationCheckpointSchema>;
 
-/** v20 artifactの公開保存値。 */
+/** v21 artifactの公開保存値。 */
 export type PublicationArtifact = z.output<typeof publicationArtifactSchema>;
 
 /** artifact bytesを別に照合するsidecar。 */
