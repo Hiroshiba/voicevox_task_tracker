@@ -91,8 +91,6 @@ export function createAiResultOrigins(
   const origins: AiResultOrigin[] = [];
   for (const { item, path } of tracked) {
     const adoption = adoptionsById.get(item.nodeId);
-    if (adoption == null)
-      throw new RunCompletenessError("missing_value", item.nodeId, path, undefined);
     for (const slot of itemSlots(item, [...path, "aiAnalysis"])) {
       const origin = slotOrigin(slot, adoption);
       if (origin === "historical") matchingHistoricalAiResults(slot, historical);

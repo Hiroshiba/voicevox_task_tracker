@@ -255,11 +255,10 @@ function assertSavedAiOriginShape(
       const analysis = valueAtPath(values, entry.path.slice(0, index + 1));
       const applications = isRecord(analysis) ? analysis["applications"] : undefined;
       const application = isRecord(applications) ? applications[element] : undefined;
-      const current =
-        isRecord(application) &&
-        application["status"] === "current_ai" &&
-        (application["origin"] === "executed" || application["origin"] === "cache");
-      if (entry.origin !== (current ? "current" : "historical"))
+      if (!isRecord(application) || application["status"] !== "current_ai")
+        throw new RunCompletenessError("invalid_reference", "ai", entry.path, undefined);
+      const current = application["origin"] === "executed" || application["origin"] === "cache";
+      if (entry.origin === "current" && !current)
         throw new RunCompletenessError("invalid_reference", "ai", entry.path, undefined);
     }
     if (entry.path[index + 3] === "generation") {

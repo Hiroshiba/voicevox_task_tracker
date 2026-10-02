@@ -23,6 +23,12 @@ export function assertRunStageLineage(
     "run",
   );
   assertRunValueMatches(
+    adopted.core.personalReminderInput.previousAiSnapshot,
+    graph.core.personalReminderInput.previousAiSnapshot,
+    ["core", "personalReminderInput", "previousAiSnapshot"],
+    "run",
+  );
+  assertRunValueMatches(
     adopted.core.executionPolicy,
     finalized.core.executionPolicy,
     ["core", "executionPolicy"],
@@ -60,6 +66,7 @@ export function assertRunStageLineage(
     (item) => item.nodeId,
     ["aiItems"],
   );
+  assertRunValueMatches(adopted.data.facts, graph.data.facts, ["facts"], "run");
   assertRunValuesMatch(
     graph.data.aiItems,
     finalized.data.aiItems,

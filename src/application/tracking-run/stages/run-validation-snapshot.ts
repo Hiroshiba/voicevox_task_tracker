@@ -1,10 +1,15 @@
 import { AI_ANALYSIS_ELEMENTS } from "../../../domain/ai-analysis-elements.js";
-import type { EvidenceClosureResult } from "../contracts/evidence-closure.js";
+import type {
+  EvidenceClosureResult,
+  HistoricalAiSnapshotInput,
+} from "../contracts/evidence-closure.js";
 import type { FinalSnapshotCandidate } from "../contracts/final-snapshot.js";
 import type { ContentDigestPort } from "../ports.js";
 import { buildFinalSnapshot } from "./final-snapshot.js";
+import { collectOwnedHistoricalAiResults } from "./evidence-closure-historical-ai.js";
 import { adoptionProvenance } from "./generic-ai-adoption-provenance.js";
 import { trackedItemAiAnalysisFromAdoption } from "./graph-reconciliation-ai-analysis.js";
+import type { GenericAiAdoptedRun } from "./generic-ai-adoption.js";
 import type { PersonalReminderFinalizedRun } from "./personal-reminder-finalization.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 import {
@@ -18,6 +23,8 @@ export function assertFinalSnapshotCandidateMatches(
   run: PersonalReminderFinalizedRun,
   closure: EvidenceClosureResult,
   candidate: FinalSnapshotCandidate,
+  analyzedItems: GenericAiAdoptedRun["data"]["facts"]["items"],
+  previousAiSnapshot: HistoricalAiSnapshotInput,
   digest: ContentDigestPort,
 ): void {
   const expected = buildFinalSnapshot(run, closure, digest);
@@ -98,8 +105,14 @@ export function assertFinalSnapshotCandidateMatches(
     (item) => item.nodeId,
     ["aiItems"],
   );
+  assertRunValueMatches(
+    collectOwnedHistoricalAiResults(previousAiSnapshot),
+    run.data.historicalAiResults,
+    ["historicalAiResults"],
+    "ai",
+  );
   assertFinalizedItemsMatch(run, closure, candidate);
-  assertAiElementsMatch(run, candidate);
+  assertAiElementsMatch(run, candidate, analyzedItems, previousAiSnapshot);
   assertGraphRelationsMatch(run, closure);
 }
 
@@ -151,9 +164,24 @@ function assertFinalizedItemsMatch(
 function assertAiElementsMatch(
   run: PersonalReminderFinalizedRun,
   candidate: FinalSnapshotCandidate,
+  analyzedItems: GenericAiAdoptedRun["data"]["facts"]["items"],
+  previousAiSnapshot: HistoricalAiSnapshotInput,
 ): void {
   const saved = runValuesById(candidate.items, (item) => item.nodeId, ["items"]);
   const aiItems = runValuesById(run.data.aiItems, (item) => item.nodeId, ["aiItems"]);
+  const analyzed = runValuesById(analyzedItems, (entry) => entry.item.nodeId, ["facts", "items"]);
+  const previous = runValuesById(previousAiSnapshot.trackedItems, (item) => item.nodeId, [
+    "previousAiSnapshot",
+    "trackedItems",
+  ]);
+  for (const nodeId of analyzed.keys()) {
+    if (!aiItems.has(nodeId)) {
+      throw new RunCompletenessError("missing_value", nodeId, ["aiItems"], undefined);
+    }
+  }
+  if (aiItems.size !== analyzed.size) {
+    throw new RunCompletenessError("missing_value", "aiItems", ["aiItems"], undefined);
+  }
   for (const [nodeId, aiItem] of aiItems) {
     const item = saved.get(nodeId);
     if (item == null) {
@@ -204,8 +232,24 @@ function assertAiElementsMatch(
       );
     }
   }
-  if (aiItems.size !== saved.size) {
-    throw new RunCompletenessError("missing_value", "aiItems", ["aiItems"], undefined);
+  for (const [nodeId, item] of saved) {
+    if (aiItems.has(nodeId)) continue;
+    const retained = previous.get(nodeId);
+    if (retained == null) {
+      throw new RunCompletenessError("wrong_owner", nodeId, ["items", nodeId], undefined);
+    }
+    assertRunValueMatches(
+      retained.repositoryId,
+      item.repositoryId,
+      ["items", nodeId, "repositoryId"],
+      nodeId,
+    );
+    assertRunValueMatches(
+      retained.aiAnalysis,
+      item.aiAnalysis,
+      ["items", nodeId, "aiAnalysis"],
+      nodeId,
+    );
   }
 }
 

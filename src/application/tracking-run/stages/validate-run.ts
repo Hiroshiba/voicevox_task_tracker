@@ -227,7 +227,14 @@ export function validateRun<
     "run",
   );
   assertRunStageLineage(input.genericAiAdopted, input.graphReconciled, run);
-  assertFinalSnapshotCandidateMatches(run, input.closure, input.candidate, input.digest);
+  assertFinalSnapshotCandidateMatches(
+    run,
+    input.closure,
+    input.candidate,
+    input.genericAiAdopted.data.facts.items,
+    input.graphReconciled.core.personalReminderInput.previousAiSnapshot,
+    input.digest,
+  );
   assertActualOutwardMatches(run, input.closure, input.candidate, input.actualOutwardAdditions);
   assertRunValueMatches(
     input.historyInputEvents,
