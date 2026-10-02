@@ -1,4 +1,4 @@
-import type { GitHubReadPort } from "../../application/tracking-run/ports.js";
+import type { CollectionGitHubReadPort } from "../../application/tracking-run/ports.js";
 import type {
   InventoryCollectedRun,
   RepositoryInventoryPort,
@@ -6,19 +6,14 @@ import type {
 import type { Repository } from "../../domain/index.js";
 import type { CreateGitHubClientOptions, GitHubClient } from "../../github/client.js";
 import type { GitHubAppCredentials } from "../../github/credentials.js";
-import type { GitHubRateLimitSnapshot } from "../../github/errors.js";
 import { GitHubPublicBoundaryViolationError } from "../../github/errors.js";
 import type { collectGitHubItemDetails } from "../../github/item-detail-collection.js";
-import type { GitHubItemDetail } from "../../github/item-detail-types.js";
+import { inspectLegacyReviewRequests } from "../../github/legacy-review-request.js";
 import {
-  type EnumeratedGitHubItem,
   type enumerateGitHubItemsByIdentifiers,
   type enumerateOpenGitHubItems,
 } from "../../github/item-enumeration.js";
-import {
-  normalizeObservedGitHubItems,
-  type FreshObservedGitHubItem,
-} from "../../github/item-normalization.js";
+import { normalizeObservedGitHubItems } from "../../github/item-normalization.js";
 import { containsPrivateRepositoryReference } from "../../github/private-repository-reference.js";
 import { createPublicRepositoryAllowlist } from "../../github/public-repository-allowlist.js";
 import type { discoverRepositoryInventory } from "../../github/repository-inventory.js";
@@ -148,12 +143,7 @@ export function createGitHubReadPort(
   run: InventoryCollectedRun,
   sessions: GitHubRunSessions,
   dependencies: GitHubReadDependencies,
-): GitHubReadPort<
-  EnumeratedGitHubItem,
-  GitHubItemDetail,
-  FreshObservedGitHubItem,
-  GitHubRateLimitSnapshot
-> {
+): CollectionGitHubReadPort {
   const allowlist = run.data.allowlist;
   const client = sessions.require(run.core.identity.runId);
   return Object.freeze({
@@ -215,6 +205,9 @@ export function createGitHubReadPort(
           isBot,
         }),
       });
+    },
+    async inspectLegacyReviewRequests(sourceIds) {
+      return inspectLegacyReviewRequests(sourceIds, allowlist, client.graphql);
     },
     rateLimitSnapshot() {
       return client.getRateLimitSnapshot();

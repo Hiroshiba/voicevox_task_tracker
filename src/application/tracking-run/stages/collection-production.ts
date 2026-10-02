@@ -5,7 +5,10 @@ import type {
 } from "../../../domain/types.js";
 import type { ExternalGhostNode } from "../../../domain/tracking-selection.js";
 import type { EnumeratedGitHubItem } from "../../../github/item-enumeration.js";
-import type { GitHubItemDetail } from "../../../github/item-detail-types.js";
+import type {
+  GitHubItemDetail,
+  LegacyReviewRequestInspection,
+} from "../../../github/item-detail-types.js";
 import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";
 import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
 import type { RelationCandidate } from "../../../graph/relation-candidate-types.js";
@@ -51,6 +54,7 @@ export type CollectedItemObservations = Readonly<{
   evaluatedAt: RunEvaluatedAt;
   enumeratedItems: readonly EnumeratedGitHubItem[];
   details: readonly GitHubItemDetail[];
+  legacyReviewRequests: readonly LegacyReviewRequestInspection[];
   observedItems: readonly FreshObservedGitHubItem[];
   staleItems: readonly StaleObservedGitHubItem<PreviousCollectionItem>[];
   trackedNodeIds: ReadonlySet<GitHubNodeId>;
@@ -292,6 +296,7 @@ export async function collectProductionItems(
       evaluatedAt: expanded.evaluatedAt,
       enumeratedItems: uniqueEnumeratedItems,
       details: uniqueDetails,
+      legacyReviewRequests: Object.freeze([]),
       observedItems: uniqueObservedItems,
       staleItems: Object.freeze(staleItems),
       trackedNodeIds,

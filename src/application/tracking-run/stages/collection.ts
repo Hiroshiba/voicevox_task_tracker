@@ -11,6 +11,7 @@ import type {
 } from "../ports.js";
 import type { InventoryCollectedRun } from "./inventory.js";
 import type { CollectionPlanningContext } from "./collection-incremental-plan.js";
+import { legacyReviewRequestInspectionSourceIds } from "./collection-legacy-review-requests.js";
 import { collectInitialRepositoryItems } from "./collection-repositories.js";
 import {
   previousGraphAdjacentNodeIds,
@@ -125,6 +126,9 @@ export async function collectRunItems(
   if (observation.value.evaluatedAt < inventory.core.identity.startedAt) {
     throw new RangeError("評価時刻がrun開始時刻より前です");
   }
+  const legacyReviewRequests = await port.read.inspectLegacyReviewRequests(
+    legacyReviewRequestInspectionSourceIds(inventory.core.previousState, observation.value.details),
+  );
   const {
     trackedNodeIds,
     trackingNotificationClassByNodeId,
@@ -136,6 +140,7 @@ export async function collectRunItems(
   } = observation.value;
   const collection = Object.freeze({
     ...collectionFields,
+    legacyReviewRequests,
     trackedNodeIds: Object.freeze([...trackedNodeIds].sort()),
     trackingNotificationClassByNodeId: Object.freeze(
       [...trackingNotificationClassByNodeId]

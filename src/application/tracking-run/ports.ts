@@ -3,8 +3,12 @@ import type { BotPredicate } from "../../domain/actor-resolution.js";
 import type { GitHubNodeId, GitHubRepositoryId, UtcIsoDateTime } from "../../domain/types.js";
 import type { PublicRepository } from "../../github/public-repository-allowlist.js";
 import type { EnumeratedGitHubItem } from "../../github/item-enumeration.js";
-import type { GitHubItemDetail } from "../../github/item-detail-types.js";
+import type {
+  GitHubItemDetail,
+  LegacyReviewRequestInspection,
+} from "../../github/item-detail-types.js";
 import type { FreshObservedGitHubItem } from "../../github/item-normalization.js";
+import type { SourceId } from "../../domain/source-id.js";
 import type { GitHubRateLimitSnapshot } from "../../github/errors.js";
 
 /** canonical bytesのSHA-256計算を副作用層へ委ねる。 */
@@ -59,4 +63,9 @@ export type CollectionGitHubReadPort = GitHubReadPort<
   GitHubItemDetail,
   FreshObservedGitHubItem,
   GitHubRateLimitSnapshot
->;
+> &
+  Readonly<{
+    inspectLegacyReviewRequests: (
+      sourceIds: readonly SourceId[],
+    ) => Promise<readonly LegacyReviewRequestInspection[]>;
+  }>;

@@ -7,6 +7,7 @@ import {
   type PersonalReminderResponsible,
   type UtcIsoDateTime,
 } from "../domain/index.js";
+import { parseSourceId } from "../domain/source-id.js";
 import { assertNonNullable } from "../util/index.js";
 import type {
   DiscordNotificationItem,
@@ -186,6 +187,15 @@ function personalReminderNotificationState(
     throw new TypeError("個人催促通知のseverity閾値が未記録です");
   }
   const context = signal.source.context;
+  const reviewRequestReconfirmation =
+    signal.reason.reasonCode === "review_overdue" &&
+    [context.obligationSince, context.actionableSince].some(
+      (basis) =>
+        basis.source === "reconfirmed_observation" &&
+        basis.sourceIds.some(
+          (sourceId) => parseSourceId(sourceId).kind === "github_review_request",
+        ),
+    );
   const reconfirmedBases = [
     context.obligationSince,
     context.actionableSince,
@@ -203,11 +213,15 @@ function personalReminderNotificationState(
     context.responsibilityId,
     normalizedResponsibilityForComparison(context.responsible),
     context.action.kind,
-    context.actionableSince.at,
-    context.stallSince.at,
+    reviewRequestReconfirmation && context.actionableSince.source === "reconfirmed_observation"
+      ? context.actionableSince.previousAt
+      : context.actionableSince.at,
+    reviewRequestReconfirmation && context.stallSince.source === "reconfirmed_observation"
+      ? context.stallSince.previousAt
+      : context.stallSince.at,
     signal.severity,
     signal.reason.threshold.hours,
-    ...(reconfirmedBases.length === 0 ? [] : [reconfirmedBases]),
+    ...(reconfirmedBases.length === 0 || reviewRequestReconfirmation ? [] : [reconfirmedBases]),
   ]);
 }
 

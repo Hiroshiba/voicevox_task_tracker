@@ -7,13 +7,15 @@ import {
 import { createSourceIds } from "../../../domain/personal-reminder-planning-common.js";
 import { parseSourceId, type SourceId } from "../../../domain/source-id.js";
 import type { GitHubNodeId, UtcIsoDateTime } from "../../../domain/types.js";
+import type { LegacyReviewRequestInspection } from "../../../github/item-detail-types.js";
 import { assertNonNullable } from "../../../util/index.js";
 import type { CurrentItemSourceFact } from "../contracts/evidence-catalog.js";
 import type { GraphReconciledRun } from "./graph-reconciliation.js";
+import { inspectLegacyCommit } from "./personal-reminder-legacy-commit.js";
 import {
-  inspectLegacyCommit,
-  type LegacyCommitContext,
-} from "./personal-reminder-legacy-commit.js";
+  inspectLegacyReviewRequestClock,
+  type LegacyReviewRequestContext,
+} from "./personal-reminder-legacy-review-request.js";
 import {
   indexCurrentClockEvidenceSources,
   verifiedCurrentClockEvidence,
@@ -21,7 +23,7 @@ import {
 import { personalReminderCauseScope } from "./personal-reminder-related-scope.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 
-type ClockReconfirmationContext = LegacyCommitContext;
+type ClockReconfirmationContext = LegacyReviewRequestContext;
 
 function reconfirmationError(
   code: "missing_source" | "future_source" | "wrong_owner" | "kind_mismatch" | "source_id_conflict",
@@ -54,6 +56,11 @@ function assertReappearingEventClocks(
       for (const sourceId of basis.sourceIds) {
         if (parseSourceId(sourceId).kind === "github_pull_request_commit") {
           inspectLegacyCommit(sourceId, basis.previousAt, context, false);
+        } else if (
+          parseSourceId(sourceId).kind === "github_review_request" &&
+          (context.clockSources.factsBySourceId.get(sourceId)?.length ?? 0) > 0
+        ) {
+          inspectLegacyReviewRequestClock(sourceId, basis.previousAt, cause, context, true);
         }
       }
     }
@@ -91,12 +98,14 @@ function assertReappearingEventClocks(
 
 function reconfirmBasis(
   basis: PersonalReminderTimeBasis,
+  cause: PersonalReminderCause,
   context: ClockReconfirmationContext,
 ): PersonalReminderTimeBasis {
   if (basis.source !== "reconfirmation_pending") return basis;
   let observedAt: UtcIsoDateTime | undefined;
   const eventSources: { sourceId: SourceId; at: UtcIsoDateTime }[] = [];
   let hasUnavailableCommit = false;
+  let hasUnavailableReviewRequest = false;
   for (const sourceId of basis.sourceIds) {
     const kind = parseSourceId(sourceId).kind;
     if (kind === "github_pull_request_commit") {
@@ -107,6 +116,19 @@ function reconfirmBasis(
       observedAt = inspected.observedAt;
       if (inspected.eventAt == null) {
         hasUnavailableCommit = true;
+      } else {
+        eventSources.push({ sourceId, at: inspected.eventAt });
+      }
+      continue;
+    }
+    if (kind === "github_review_request") {
+      const inspected = inspectLegacyReviewRequestClock(sourceId, basis.at, cause, context, false);
+      if (observedAt != null && observedAt !== inspected.observedAt) {
+        throw reconfirmationError("source_id_conflict", sourceId);
+      }
+      observedAt = inspected.observedAt;
+      if (inspected.eventAt == null) {
+        hasUnavailableReviewRequest = true;
       } else {
         eventSources.push({ sourceId, at: inspected.eventAt });
       }
@@ -160,7 +182,7 @@ function reconfirmBasis(
   const matchingSourceIds = eventSources
     .filter((source) => source.at === basis.at)
     .map((source) => source.sourceId);
-  if (!hasUnavailableCommit && matchingSourceIds.length > 0) {
+  if (!hasUnavailableCommit && !hasUnavailableReviewRequest && matchingSourceIds.length > 0) {
     return Object.freeze({
       source: "event",
       at: basis.at,
@@ -170,6 +192,7 @@ function reconfirmBasis(
   const firstEventSource = eventSources[0];
   if (
     !hasUnavailableCommit &&
+    !hasUnavailableReviewRequest &&
     firstEventSource != null &&
     eventSources.every((source) => source.at === firstEventSource.at)
   ) {
@@ -206,11 +229,12 @@ function basisAtOrAfter(
       undefined,
     );
   }
+  const previousAt = basis.source === "reconfirmed_observation" ? basis.previousAt : basis.at;
   return Object.freeze({
     source: "reconfirmed_observation",
     at: earlier.at,
-    previousAt: earlier.previousAt,
-    sourceIds: earlier.sourceIds,
+    previousAt,
+    sourceIds: basis.source === "first_observation" ? earlier.sourceIds : basis.sourceIds,
   });
 }
 
@@ -218,16 +242,16 @@ function reconfirmCause(
   cause: PersonalReminderCause,
   context: ClockReconfirmationContext,
 ): PersonalReminderCause {
-  const obligationSince = reconfirmBasis(cause.obligationSince, context);
+  const obligationSince = reconfirmBasis(cause.obligationSince, cause, context);
   if (cause.actionableClock.status === "not_observed") {
     return personalReminderCauseSchema.parse({ ...cause, obligationSince });
   }
   const actionableSince = basisAtOrAfter(
-    reconfirmBasis(cause.actionableClock.actionableSince, context),
+    reconfirmBasis(cause.actionableClock.actionableSince, cause, context),
     obligationSince,
   );
   const stallSince = basisAtOrAfter(
-    reconfirmBasis(cause.actionableClock.stallSince, context),
+    reconfirmBasis(cause.actionableClock.stallSince, cause, context),
     actionableSince,
   );
   return personalReminderCauseSchema.parse({
@@ -281,6 +305,11 @@ export function reconfirmPreviousPersonalReminderClocks(
   const previousRelationsById = new Map(
     run.core.personalReminderInput.previousRelations.map((relation) => [relation.id, relation]),
   );
+  const inspectionsBySourceId = new Map<SourceId, LegacyReviewRequestInspection[]>();
+  for (const inspection of run.data.collection.legacyReviewRequests) {
+    const inspections = inspectionsBySourceId.get(inspection.sourceId) ?? [];
+    inspectionsBySourceId.set(inspection.sourceId, [...inspections, inspection]);
+  }
   const causesByNodeId = new Map(
     previousItems.map((item) => [
       item.nodeId,
@@ -307,6 +336,7 @@ export function reconfirmPreviousPersonalReminderClocks(
           evaluatedAt: run.data.collection.evaluatedAt,
           allowedOwnerNodeIds: new Set(scope.nodeIds),
           previousOwnersBySourceId,
+          inspectionsBySourceId,
         };
         assertReappearingEventClocks(cause, context);
         return personalReminderCauseNeedsClockReconfirmation(cause)
