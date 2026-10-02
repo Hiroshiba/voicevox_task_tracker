@@ -68,11 +68,15 @@ productionのPages deployはActionsのaction境界で行います。
 
 ## checkpoint、receipt、markerで公開順序を検証する
 
-公開計画からschema version 21のcanonical JSON checkpointとsidecarを作り、payload digest、file digest、runtime identity、base revisionを照合して結合します。
+公開計画からschema version 22のcanonical JSON checkpointとsidecarを作り、payload digest、file digest、runtime identity、base revisionを照合して結合します。
 checkpointには前回の送信待ち通知の原因と所有範囲を示すwitnessを必ず含めます。
+最終追跡項目の汎用AI状態が今回の解析値か前回からの保持値かを、全項目分の由来記録としてcheckpointへ保存します。
+由来記録は項目ID順で重複を認めず、追跡項目との一対一対応、repositoryの所有、同じ項目が収集値にもある場合のAI状態の一致を再読込時に検証します。
+結合時には固定baseの前回snapshotを読み直し、保持項目のrepositoryと`aiAnalysis`全体を比較します。結果が空でも実行状態、適用元、証明を省きません。
 旧snapshotの移行で原因の時計が`reconfirmation_pending`になった場合は、前回通知の`event`時計と時刻、source IDが一致するときだけ対応を認めます。
 前回通知のsource参照は固定baseの前回snapshotにあるEvidenceで証明し、現行観測を根拠にしません。
 結合時には同じ固定baseからwitnessを再構成し、前回通知台帳との一致も検査します。
+artifact内のdigestは保存値同士の整合性を検査するもので、独立した生成元の認証ではありません。
 proofは非公開brandとconstructorを持つvalidatorだけが発行します。
 初回commitの入力は結合済みcheckpointに限定します。
 保存後はメモリ上の計画を破棄し、結果revisionからsnapshot、record、markerとledgerを再読み込みます。
@@ -574,7 +578,7 @@ freshなopen項目の列挙が完了すれば原因0件でも`completed`にし�
 | `not_recorded` | 項目単位のAI利用状況が記録されていない             |
 
 要素ごとの生成結果と正常に完了した評価を`aiAnalysis.elements`へ保存します。現在入力で検証済みのAI採用値だけを`aiAnalysis.adoptedElements`へ、現在使わない採用履歴を`aiAnalysis.retainedElements`へ保存します。各要素の最終適用元は`aiAnalysis.applications`へ保存し、`current_ai`以外の要素に現在採用値を持たせません。graph、Pages、通知、個人催促は採用履歴を現在値として読みません。
-汎用AIの採用記録は今回解析した項目だけに作り、失敗・延期も含めて解析対象と一対一で照合します。今回解析しなかった追跡項目は、前回snapshotの同じ項目と`aiAnalysis`全体が一致する場合に保持します。保持した`adoptedElements`の適用元が`current_ai`でも、このrunのAI生成元としては扱いません。各AI結果は前回snapshotの所有項目、repository、要素、resultと照合します。
+汎用AIの採用記録は今回解析した項目だけに作り、失敗・延期も含めて解析対象と一対一で照合します。今回解析しなかった追跡項目は、前回snapshotの同じ項目と`aiAnalysis`全体が一致する場合に保持します。保存前とcheckpointの結合時にこの一致を検証します。保持した`adoptedElements`の適用元が`current_ai`でも、このrunのAI生成元としては扱いません。各AI結果は前回snapshotの所有項目、repository、要素、resultと照合します。
 追跡項目の`aiDependencies`は、状態、待ち相手、期限、重要度、要対応度、blocker、関係集合などの最終値ごとに、AI非依存、現在入力で検証済み、未検証、proof不明を区別します。producerを識別できる依存は寄与したproducerを保持し、旧形式から識別できない依存はproducerを推測せずproof不明として保持します。関係と個人原因もそれぞれのAI依存を保存します。
 AI依存の`unknown`は、空でない`reasons`配列に理由を保存します。理由とproducerは合成時に和集合を取り、理由は重複を除いて`migration`、`not_recorded`、`proof_unknown`、`stale_repository`の順で保存します。この順序は直列化のためのもので、理由の優先度を表しません。`proof_unknown`を含む依存にはproducerが必須です。AI要素の適用元を表す`applications`は単一の`reason`を使います。
 保存時はproducerから依存を再計算し、要素ごとに許可した移行・未記録・staleの理由だけを加えた結果と照合します。`proof_unknown`を含む場合は関係候補を未判定として照合し、理由の合成によって検証済みへ変わることを防ぎます。producerのない移行値の特例は、理由が`migration`だけの場合に限ります。blocker、関係集合、下流影響、severity、attentionの依存が必要なproducerと状態を含むことも検証します。

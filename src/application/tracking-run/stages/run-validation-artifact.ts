@@ -22,6 +22,7 @@ import {
 } from "./run-validation-compare.js";
 import { assertPublicUrls } from "./run-validation-final-checks.js";
 import { assertEvidenceClosureWitness } from "./run-validation-artifact-witness.js";
+import { assertFinalItemAiLineage } from "./run-validation-ai-lineage.js";
 import { createRunArtifactValueDigests } from "./run-validation-value-digests.js";
 
 /** JSONへ保存する証明以外の確定済みrun。 */
@@ -224,6 +225,11 @@ export function assertSerializedValidatedRun(
     ["snapshot", "collection", "repositories"],
   );
   const items = runValuesById(run.snapshot.items, (item) => item.nodeId, ["snapshot", "items"]);
+  assertFinalItemAiLineage(
+    run.snapshot,
+    run.finalItemAiLineage,
+    run.evidenceClosureWitness.aiResultOrigins,
+  );
   for (const [index, event] of run.historyInputEvents.entries()) {
     if (!items.has(event.itemNodeId)) {
       throw new RunCompletenessError(

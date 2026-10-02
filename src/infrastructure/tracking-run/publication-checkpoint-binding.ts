@@ -11,6 +11,7 @@ import {
   assertHistoricalAiWitnessMatchesBaseSnapshot,
   assertHistoricalEvidenceWitnessMatchesBaseSnapshot,
 } from "../../application/tracking-run/stages/run-validation-artifact-witness.js";
+import { assertRetainedItemAiAnalysisMatchesBase } from "../../application/tracking-run/stages/run-validation-ai-lineage.js";
 import { assertPreviousPendingCausesMatchBase } from "../../application/tracking-run/stages/run-validation-previous-ledger-history.js";
 import { parseSha256Hash, type Sha256Hash } from "../../canonical-json/sha256.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
@@ -132,6 +133,11 @@ export function bindPublicationCheckpoint(
           trackedItems: snapshot.items,
           collectionRepositories: snapshot.collection.repositories,
         },
+  );
+  assertRetainedItemAiAnalysisMatchesBase(
+    decoded.validated.snapshot,
+    decoded.validated.finalItemAiLineage,
+    snapshot,
   );
   assertHistoricalEvidenceWitnessMatchesBaseSnapshot(
     decoded.validated.evidenceClosureWitness,

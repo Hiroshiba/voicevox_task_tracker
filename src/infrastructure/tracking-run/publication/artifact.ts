@@ -74,6 +74,7 @@ export function createCollectAnalyzePayload(
         diagnostics: input.validated.diagnostics,
         evidenceClosureSummary: input.validated.evidenceClosureSummary,
         evidenceClosureWitness: input.validated.evidenceClosureWitness,
+        finalItemAiLineage: input.validated.finalItemAiLineage,
         publicDiagnosticsSummary: input.validated.publicDiagnosticsSummary,
         artifactValueDigests: input.validated.artifactValueDigests,
       },

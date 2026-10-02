@@ -676,6 +676,7 @@ export function parseValidatedRunPayload(
       diagnostics: validated.diagnostics,
       evidenceClosureSummary: validated.evidenceClosureSummary,
       evidenceClosureWitness: validated.evidenceClosureWitness,
+      finalItemAiLineage: validated.finalItemAiLineage,
       publicDiagnosticsSummary: validated.publicDiagnosticsSummary,
       artifactValueDigests: validated.artifactValueDigests,
     }),

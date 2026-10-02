@@ -8,7 +8,11 @@ import {
   runIdentitySchema,
 } from "../../application/tracking-run/request.js";
 import { parseSha256Hash } from "../../canonical-json/sha256.js";
-import { createUtcIsoDateTime } from "../../domain/index.js";
+import {
+  createGitHubNodeId,
+  createGitHubRepositoryId,
+  createUtcIsoDateTime,
+} from "../../domain/index.js";
 import { createStateNotificationLedger } from "../../persistence/index.js";
 import type { PublicationValidatedRun } from "../../publication/publication-plan-contracts.js";
 import { runMetricsSchema } from "../../publication/run-report.js";
@@ -88,6 +92,13 @@ const validationSchema = z.strictObject({
     sourceIds: z.array(z.string().min(1)),
   }),
   evidenceClosureWitness: z.unknown(),
+  finalItemAiLineage: z.array(
+    z.strictObject({
+      nodeId: z.string().min(1).transform(createGitHubNodeId),
+      repositoryId: z.string().min(1).transform(createGitHubRepositoryId),
+      kind: z.enum(["analyzed", "retained"]),
+    }),
+  ),
   publicDiagnosticsSummary: z.strictObject({
     status: z.enum(["success", "fallback"]),
     pendingNotificationCount: nonNegativeIntegerSchema,
@@ -108,6 +119,7 @@ const validationSchema = z.strictObject({
     diagnostics: sha256Schema,
     evidenceClosureSummary: sha256Schema,
     evidenceClosureWitness: sha256Schema,
+    finalItemAiLineage: sha256Schema,
     publicDiagnosticsSummary: sha256Schema,
   }),
 });
@@ -136,6 +148,7 @@ export type WorkflowValidation = Pick<
   | "diagnostics"
   | "evidenceClosureSummary"
   | "evidenceClosureWitness"
+  | "finalItemAiLineage"
   | "publicDiagnosticsSummary"
   | "artifactValueDigests"
 >;

@@ -33,6 +33,7 @@ import {
 import { assertActualOutwardMatches } from "./run-validation-outward.js";
 import { assertFinalSnapshotCandidateMatches } from "./run-validation-snapshot.js";
 import { assertRunStageLineage } from "./run-validation-lineage.js";
+import { createFinalItemAiLineage, type FinalItemAiLineage } from "./run-validation-ai-lineage.js";
 import { assertAiBudgetLedgerMatches } from "./run-validation-budget.js";
 import {
   createRunArtifactValueDigests,
@@ -128,6 +129,7 @@ export type ValidatedRun<
     sourceIds: readonly string[];
   }>;
   evidenceClosureWitness: EvidenceClosureWitness;
+  finalItemAiLineage: readonly FinalItemAiLineage[];
   publicDiagnosticsSummary: Readonly<{
     status: "success" | "fallback";
     pendingNotificationCount: number;
@@ -368,6 +370,11 @@ export function validateRun<
     (observation) => observation.nodeId,
     ["snapshot", "graphNodeStateObservations"],
   );
+  const finalItemAiLineage = createFinalItemAiLineage(
+    snapshot.items,
+    input.genericAiAdopted.data.facts.items,
+    run.data.aiItems,
+  );
   const evidenceClosureWitness = createEvidenceClosureWitness(
     input.closure,
     run.data.historicalEvidence,
@@ -423,6 +430,7 @@ export function validateRun<
       sourceIds,
     },
     evidenceClosureWitness,
+    finalItemAiLineage,
     publicDiagnosticsSummary: {
       status: snapshot.run.status,
       pendingNotificationCount: input.notificationLedger.pendingNotifications.length,

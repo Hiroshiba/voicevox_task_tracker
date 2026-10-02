@@ -18,6 +18,7 @@ type RunDigestValues = Readonly<{
   diagnostics: unknown;
   evidenceClosureSummary: unknown;
   evidenceClosureWitness: unknown;
+  finalItemAiLineage: unknown;
   publicDiagnosticsSummary: unknown;
 }>;
 
@@ -48,6 +49,7 @@ export function createRunArtifactValueDigests(
     diagnostics: hash(values.diagnostics),
     evidenceClosureSummary: hash(values.evidenceClosureSummary),
     evidenceClosureWitness: hash(values.evidenceClosureWitness),
+    finalItemAiLineage: hash(values.finalItemAiLineage),
     publicDiagnosticsSummary: hash(values.publicDiagnosticsSummary),
   });
 }
