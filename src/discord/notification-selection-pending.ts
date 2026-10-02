@@ -269,6 +269,36 @@ function personalReminderPendingClockMatchesCurrent(
   );
 }
 
+function personalReminderPendingTargetMatchesCurrent(
+  item: DiscordNotificationItem,
+  pending: PendingNotification,
+): boolean {
+  const target = pending.target;
+  if (target.kind !== "personal_reminder") {
+    return true;
+  }
+  const input = item.personalReminderCauses.find(
+    (candidate) => candidate.cause.causeId === target.causeId,
+  );
+  if (input == null) {
+    if (item.personalReminderCausePlanning.status === "pending") {
+      throw new TypeError(`${item.nodeId}の個人催促送信待ち通知の現在の原因を照合できません`);
+    }
+    return false;
+  }
+  if (
+    input.cause.itemNodeId !== pending.itemNodeId ||
+    input.cause.reasonCode !== pending.reason.reasonCode ||
+    input.cause.responsibilityId !== target.responsibilityId
+  ) {
+    return false;
+  }
+  if (input.cause.actionableClock.status !== "observed") {
+    throw new TypeError(`${item.nodeId}の個人催促送信待ち通知の現在の時計を照合できません`);
+  }
+  return personalReminderPendingClockMatchesCurrent(input, pending);
+}
+
 type PersonalReminderPendingState = "send" | "hold" | "drop";
 
 function personalReminderPendingState(
@@ -465,6 +495,9 @@ function mergePendingNotifications(
     const item = itemsByNodeId.get(pending.itemNodeId);
     const migrated = item == null ? pending : migrateLegacyPersonalPending(item, pending);
     if (migrated == null) {
+      continue;
+    }
+    if (item != null && !personalReminderPendingTargetMatchesCurrent(item, migrated)) {
       continue;
     }
     const replacementKey = pendingReplacementKey(migrated);
