@@ -2,6 +2,7 @@ import { serializeCanonicalJson } from "../canonical-json/value.js";
 import type { BuildDiscordDigestPlanInput } from "../discord/payload-contracts.js";
 import { buildDiscordDigestPlan } from "../discord/payload.js";
 import type { DurablePublicationRecord } from "../publication/durable-record-schema.js";
+import { notificationSelectionFromRecord } from "./notification-selection-from-record.js";
 import { normalNotificationLedgerValue } from "../publication/publication-order.js";
 import type { StatePersistenceConfiguration } from "./branch-adapter.js";
 import { parseStateSnapshot as parseStateSnapshotV23 } from "./snapshot-v23.js";
@@ -26,22 +27,6 @@ function snapshotForPlan(
 ): Pick<BuildDiscordDigestPlanInput, "items" | "generatedAt"> {
   const source = requiredSource(initial, configuration.snapshotPath);
   return parseStateSnapshotV23(source);
-}
-
-function selectedCandidates(
-  record: DurablePublicationRecord,
-): BuildDiscordDigestPlanInput["candidates"] {
-  const outbox = record.notificationOutbox;
-  if (outbox.action !== "send" || outbox.selectedContext.action !== "create_digest") {
-    throw new TypeError("固定outboxに送信予定の候補がありません");
-  }
-  return outbox.selectedContext.candidates.map((candidate) => {
-    const [first, ...rest] = candidate.reasons;
-    if (first == null) {
-      throw new TypeError("固定outboxの通知候補に理由がありません");
-    }
-    return { ...candidate, reasons: [first, ...rest] };
-  });
 }
 
 /** 固定outboxからsettlementへ直接進めるphaseか検証する。 */
@@ -131,7 +116,7 @@ export function assertSettledOutboxLedger(
             throw new TypeError("固定outboxの生成時刻が初回snapshotと一致しません");
           }
           return buildDiscordDigestPlan({
-            candidates: selectedCandidates(record),
+            candidates: notificationSelectionFromRecord(record).candidates,
             ledgerReservations: outbox.selectedContext.ledgerReservations,
             items: snapshot.items,
             pagesUrl: evidence.pageUrl,

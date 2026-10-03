@@ -1,8 +1,8 @@
 import { hashCanonicalJson } from "../../canonical-json/index.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
-import { createUtcIsoDateTime, resolveTrackingStartAt } from "../../domain/index.js";
 import { createStateSnapshot, type StateSnapshot } from "../../persistence/snapshot-v23.js";
-import { createStateRunReport, type StateRunReport } from "../../persistence/state-run-report.js";
+import type { StateRunReport } from "../../persistence/state-run-report.js";
+import { deriveFinalRunValues } from "../../persistence/state-finalization-values.js";
 import type { DurablePublicationRecord } from "../../publication/durable-record-schema.js";
 import type { NotificationMessageState } from "./notification-message-state.js";
 
@@ -12,61 +12,18 @@ export function finalRunValues(
   settled: NotificationMessageState,
   finishedAt: string,
 ): Readonly<{ report: StateRunReport; snapshot: StateSnapshot; notificationCount: number }> {
-  const policy = record.runFinalizationPolicy;
   if (
     settled.transaction.marker.phase !== "notifications_settled" ||
     settled.transaction.record.recordDigest !== record.recordDigest ||
-    settled.snapshot.run.id !== policy.report.runId ||
-    settled.snapshot.run.status !== policy.report.status ||
-    settled.transaction.initialPagesEvidence == null ||
-    settled.ledger.entries.some((entry) => entry.status === "delivery_started") ||
-    serializeCanonicalJson(policy.completeSuccessRequires) !==
-      serializeCanonicalJson(["initial_pages_deployed", "notifications_settled"])
+    settled.transaction.initialPagesEvidence == null
   ) {
-    throw new TypeError("run finalizationの保存済み規則とsettlement stateが一致しません");
+    throw new TypeError("run finalizationのsettlement stateが一致しません");
   }
-  const completedAt = createUtcIsoDateTime(finishedAt);
-  const trackingStartAt = resolveTrackingStartAt({
-    configuredStartAt: policy.configuredTrackingStartAt,
-    previousState: settled.snapshot.trackingStartAt,
-    run: { outcome: "complete_success", finishedAt: completedAt },
-  });
-  if (trackingStartAt.status !== "fixed") {
-    throw new TypeError("完了済みrunのtracking.startAtを確定できません");
-  }
-  const entries = new Map(settled.ledger.entries.map((entry) => [entry.notificationKey, entry]));
-  const selectedKeys =
-    record.notificationOutbox.action === "send" &&
-    record.notificationOutbox.selectedContext.action === "create_digest"
-      ? new Set(
-          record.notificationOutbox.selectedContext.candidates.flatMap((candidate) =>
-            candidate.reasons.map((reason) => reason.notificationKey),
-          ),
-        )
-      : new Set<string>();
-  const notificationCount = [...selectedKeys].filter(
-    (key) => entries.get(key)?.status === "sent",
-  ).length;
-  const report = createStateRunReport({
-    schemaVersion: "3",
-    runId: policy.report.runId,
-    date: policy.report.startedAt.slice(0, 10),
-    status: policy.report.status,
-    complete: true,
-    scheduledFor: policy.report.scheduledFor,
-    startedAt: policy.report.startedAt,
-    finishedAt: completedAt,
-    metrics: {
-      ...policy.report.metrics,
-      notificationCount,
-      durationMilliseconds: Date.parse(completedAt) - Date.parse(policy.report.startedAt),
-    },
-    diagnostics: policy.report.diagnostics,
-  });
+  const values = deriveFinalRunValues(record, settled.snapshot, settled.ledger, finishedAt);
   return Object.freeze({
-    report,
-    snapshot: createStateSnapshot({ ...settled.snapshot, trackingStartAt }),
-    notificationCount,
+    report: values.report,
+    snapshot: createStateSnapshot({ ...settled.snapshot, trackingStartAt: values.trackingStartAt }),
+    notificationCount: values.notificationCount,
   });
 }
 

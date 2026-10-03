@@ -1,20 +1,44 @@
-import { hashCanonicalJson } from "../../canonical-json/index.js";
-import {
-  type DiscordDigestDelivery,
-  type DiscordNotificationCandidate,
-  type DiscordNotificationSelection,
-} from "../../discord/index.js";
+import { hashCanonicalJson } from "../canonical-json/index.js";
+import type { DiscordDigestDelivery } from "../discord/delivery.js";
+import type {
+  DiscordNotificationCandidate,
+  DiscordNotificationSelection,
+} from "../discord/notification-selection-contracts.js";
 import {
   createNotificationReason,
   type GitHubNodeId,
   type NotificationLedgerEntry,
   type UtcIsoDateTime,
-} from "../../domain/index.js";
-import { assertConfirmedPersonalReminderTimeBasis } from "../../domain/personal-reminder-causes.js";
-import { resolveStateHistoryNotificationItemDisplayReference } from "../../persistence/history-contracts.js";
-import type { StateHistoryNotificationEvent, StateSnapshot } from "../../persistence/index.js";
-import { version19SnapshotFields } from "../../persistence/snapshot-v23.js";
-import { UnreachableError, assertNonNullable } from "../../util/index.js";
+} from "../domain/index.js";
+import { assertConfirmedPersonalReminderTimeBasis } from "../domain/personal-reminder-causes.js";
+import { UnreachableError, assertNonNullable } from "../util/index.js";
+import { resolveStateHistoryNotificationItemDisplayReference } from "./history-contracts.js";
+import type { StateHistoryNotificationEvent } from "./history-contracts.js";
+import {
+  version19SnapshotFields as version21Fields,
+  type StateSnapshot as StateSnapshotV21,
+} from "./snapshot-v21.js";
+import {
+  version19SnapshotFields as version22Fields,
+  type StateSnapshot as StateSnapshotV22,
+} from "./snapshot-v22.js";
+import {
+  version19SnapshotFields as version23Fields,
+  type StateSnapshot as StateSnapshotV23,
+} from "./snapshot-v23.js";
+
+type StateSnapshot = StateSnapshotV21 | StateSnapshotV22 | StateSnapshotV23;
+
+function version19SnapshotFields(snapshot: StateSnapshot): ReturnType<typeof version23Fields> {
+  switch (snapshot.schemaVersion) {
+    case "21":
+      return version21Fields(snapshot);
+    case "22":
+      return version22Fields(snapshot);
+    case "23":
+      return version23Fields(snapshot);
+  }
+}
 
 function createNotificationWaitingOn(
   item: StateSnapshot["items"][number],

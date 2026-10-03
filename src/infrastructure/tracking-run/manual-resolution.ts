@@ -17,6 +17,7 @@ import { writeStateCas, type StateCasCommitRequestFactory } from "../../persiste
 import { createStateLedgerUpdates } from "../../persistence/state-ledger-files.js";
 import { MAX_INTERVENING_COMMITS } from "../../persistence/state-orthogonal-advance.js";
 import { verifyRunTransactionFiles } from "../../persistence/state-transaction-files.js";
+import { advanceMessageMarker } from "../../persistence/state-notification-transition.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import {
   manualResolutionOperationId,
@@ -27,10 +28,7 @@ import {
   startedManualResolutionAttempt,
   type ManualResolutionTarget,
 } from "./manual-resolution-state.js";
-import {
-  advanceMessageMarker,
-  readNotificationMessageState,
-} from "./notification-message-state.js";
+import { readNotificationMessageState } from "./notification-message-state.js";
 
 /** 手動解決の状態変更に必要な副作用境界。 */
 export type ManualResolutionPort = Readonly<{

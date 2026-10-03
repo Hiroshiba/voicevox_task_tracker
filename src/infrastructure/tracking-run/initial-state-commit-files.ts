@@ -40,6 +40,7 @@ import { createPersonalReminderEvidenceSourceIndex } from "../../persistence/sna
 import { readAiCacheMigrationPlan } from "../../persistence/state-ai-cache-migration-plan.js";
 import { cachePath, personalReminderAiCachePath } from "../../persistence/state-cache-paths.js";
 import { createStateNotificationLedger } from "../../persistence/state-documents.js";
+import { initialNotificationLedger } from "../../persistence/state-initial-notification-transition.js";
 import {
   createStateLedgerUpdates,
   loadStateNotificationLedgers,
@@ -218,6 +219,14 @@ export async function prepareInitialStateFiles(
     ...ledger,
     operationsAlerts: previousLedger.operationsAlerts,
   });
+  if (
+    serializeCanonicalJson(normalNotificationLedgerValue(mergedLedger)) !==
+    serializeCanonicalJson(
+      normalNotificationLedgerValue(initialNotificationLedger(previousLedger, record)),
+    )
+  ) {
+    throw new TypeError("初回commitのledgerが固定outboxと親stateから導出した値と一致しません");
+  }
   const marker = parseRunTransactionMarker({
     recoveryBootstrapVersion: 1,
     schemaVersion: 1,

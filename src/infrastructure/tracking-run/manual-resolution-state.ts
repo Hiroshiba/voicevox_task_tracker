@@ -1,10 +1,7 @@
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import type { NotificationDeliveryAttempt } from "../../domain/notification-delivery-attempt.js";
-import {
-  createStateNotificationLedger,
-  type StateNotificationLedger,
-} from "../../persistence/state-documents.js";
-import type { DurablePublicationRecord } from "../../publication/durable-record-schema.js";
+import type { StateNotificationLedger } from "../../persistence/state-documents.js";
+import { transitionManualNotificationLedger } from "../../persistence/state-notification-transition.js";
 import { describeNotificationMessage } from "./notification-message-context.js";
 import type { NotificationMessageState } from "./notification-message-state.js";
 
@@ -91,64 +88,17 @@ export function resolveManualNotificationLedger(
   operationId: string,
   resolvedAt: string,
 ): StateNotificationLedger {
-  const attempt = startedManualResolutionAttempt(state, target);
-  if (resolvedAt < attempt.startedAt) {
-    throw new TypeError("手動解決時刻は送信開始以後にしてください");
-  }
-  const record: DurablePublicationRecord = state.transaction.record;
-  if (
-    record.notificationOutbox.action !== "send" ||
-    record.notificationOutbox.selectedContext.action !== "create_digest"
-  ) {
-    throw new TypeError("手動解決の固定予約がありません");
-  }
-  const selection = record.notificationOutbox.selectedContext;
-  const reservations = new Map(
-    selection.ledgerReservations.map((entry) => [entry.notificationKey, entry]),
+  startedManualResolutionAttempt(state, target);
+  return transitionManualNotificationLedger(
+    state.ledger,
+    state.transaction.record,
+    {
+      deliveryId: target.deliveryId,
+      attemptId: target.attemptId,
+      operationId,
+      decision: target.decision,
+      resolvedAt,
+    },
+    target.notificationKeys,
   );
-  const keys = new Set(target.notificationKeys);
-  const resolution = {
-    deliveryId: target.deliveryId,
-    attemptId: target.attemptId,
-    operationId,
-    decision: target.decision,
-    resolvedAt,
-  } as const;
-  const entries = state.ledger.entries.map((entry) => {
-    if (!keys.has(entry.notificationKey)) {
-      return entry;
-    }
-    const reservation = reservations.get(entry.notificationKey);
-    if (
-      reservation?.status !== "reserved" ||
-      entry.status !== "delivery_started" ||
-      entry.itemNodeId !== reservation.itemNodeId ||
-      entry.reasonCode !== reservation.reasonCode ||
-      entry.severity !== reservation.severity ||
-      entry.reservedAt !== reservation.reservedAt
-    ) {
-      throw new TypeError("手動解決のledger entryが固定予約と一致しません");
-    }
-    const base = {
-      notificationKey: entry.notificationKey,
-      itemNodeId: entry.itemNodeId,
-      reasonCode: entry.reasonCode,
-      severity: entry.severity,
-      reservedAt: entry.reservedAt,
-      lastDeliveryAttempt: attempt,
-      manualResolution: resolution,
-    };
-    return target.decision === "retry"
-      ? { ...base, status: "reserved" as const, expiresAt: reservation.expiresAt }
-      : { ...base, status: "acknowledged" as const, acknowledgedAt: resolvedAt };
-  });
-  return createStateNotificationLedger({
-    schemaVersion: state.ledger.schemaVersion,
-    entries,
-    operationsAlerts: state.ledger.operationsAlerts,
-    pendingNotifications:
-      target.decision === "retry"
-        ? state.ledger.pendingNotifications
-        : state.ledger.pendingNotifications.filter((pending) => !keys.has(pending.notificationKey)),
-  });
 }

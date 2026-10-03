@@ -1,14 +1,12 @@
 import type { InitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence-codec.js";
 import type { ManualResolutionReceipt } from "../../application/tracking-run/receipt-schema.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
-import type {
-  DiscordNotificationCandidate,
-  DiscordNotificationSelection,
-} from "../../discord/notification-selection-contracts.js";
+import type { DiscordNotificationSelection } from "../../discord/notification-selection-contracts.js";
 import type { PreparedDiscordDigestMessage } from "../../discord/payload-contracts.js";
 import { buildDiscordDigestPlan } from "../../discord/payload.js";
 import type { StateSnapshot } from "../../persistence/snapshot-v23.js";
 import type { StateNotificationLedger } from "../../persistence/state-documents.js";
+import { notificationSelectionFromRecord } from "../../persistence/notification-selection-from-record.js";
 import type { DurablePublicationRecord } from "../../publication/durable-record-schema.js";
 import { NotificationStructureError } from "./notification-structure-error.js";
 
@@ -78,40 +76,14 @@ export function describeNotificationMessage(
 export function restoreNotificationSelection(
   record: DurablePublicationRecord,
 ): Extract<DiscordNotificationSelection, { action: "create_digest" }> {
-  const outbox = record.notificationOutbox;
-  if (outbox.action !== "send" || outbox.selectedContext.action !== "create_digest") {
-    throw new NotificationStructureError("永続outboxに送信対象の通知候補がありません", "no_effect");
-  }
-  const candidates = outbox.selectedContext.candidates.map((candidate) => {
-    const [firstReason, ...otherReasons] = candidate.reasons;
-    if (firstReason == null) {
-      throw new NotificationStructureError("通知候補に送信理由がありません", "no_effect");
+  try {
+    return notificationSelectionFromRecord(record);
+  } catch (cause: unknown) {
+    if (!(cause instanceof TypeError)) {
+      throw cause;
     }
-    const reasons: DiscordNotificationCandidate["reasons"] = Object.freeze([
-      firstReason,
-      ...otherReasons,
-    ]);
-    return Object.freeze({ ...candidate, reasons });
-  });
-  const [firstCandidate, ...otherCandidates] = candidates;
-  const [firstReservation, ...otherReservations] = outbox.selectedContext.ledgerReservations;
-  if (firstCandidate == null || firstReservation == null) {
-    throw new NotificationStructureError("永続outboxの通知候補または予約が空です", "no_effect");
+    throw new NotificationStructureError("永続outboxの送信候補が不正です", "no_effect", { cause });
   }
-  const selectedCandidates: Extract<
-    DiscordNotificationSelection,
-    { action: "create_digest" }
-  >["candidates"] = Object.freeze([firstCandidate, ...otherCandidates]);
-  const selectedReservations: Extract<
-    DiscordNotificationSelection,
-    { action: "create_digest" }
-  >["ledgerReservations"] = Object.freeze([firstReservation, ...otherReservations]);
-  return Object.freeze({
-    action: "create_digest",
-    candidates: selectedCandidates,
-    ledgerReservations: selectedReservations,
-    pendingNotifications: outbox.selectedContext.pendingNotifications,
-  });
 }
 
 /** 保存済みsnapshot、outbox、ledgerとPages URLから送信対象を照合する。 */

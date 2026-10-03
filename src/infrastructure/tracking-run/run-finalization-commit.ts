@@ -1,9 +1,6 @@
 import { RUN_TRANSACTION_MARKER_STATE_PATH_V1 } from "../../application/tracking-run/contracts/recovery-paths.js";
 import { stateCommitReceiptOperationId } from "../../application/tracking-run/observed-state-commit.js";
-import {
-  parseRunTransactionMarker,
-  serializeRunTransactionMarker,
-} from "../../application/tracking-run/run-transaction-marker.js";
+import { serializeRunTransactionMarker } from "../../application/tracking-run/run-transaction-marker.js";
 import { hashCanonicalJson } from "../../canonical-json/index.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import { createGitHubRepositoryId } from "../../domain/index.js";
@@ -16,6 +13,7 @@ import {
   serializeStateRunReport,
 } from "../../persistence/state-run-report.js";
 import { verifyRunTransactionFiles } from "../../persistence/state-transaction-files.js";
+import { advanceFinalizationMarker } from "../../persistence/state-finalization-values.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import {
   readNotificationMessageState,
@@ -79,14 +77,12 @@ export async function commitRunFinalization(
         throw new TypeError("run finalizationのCAS親がsettlement正本と一致しません");
       }
       const values = finalRunValues(record, current, finishedAt);
-      const marker = parseRunTransactionMarker({
-        ...current.transaction.marker,
-        phase: "run_finalized",
-        phaseSequence: current.transaction.marker.phaseSequence + 1,
-        expectedParentStateRevision: parent.revision,
-        snapshotDigest: hashCanonicalJson(values.snapshot),
-        finalRunReportDigest: hashCanonicalJson(values.report),
-      });
+      const marker = advanceFinalizationMarker(
+        current.transaction.marker,
+        values.snapshot,
+        values.report,
+        parent.revision,
+      );
       assertStatePublicSafety({
         snapshot: values.snapshot,
         repositoryInventory: port.repositoryInventory,

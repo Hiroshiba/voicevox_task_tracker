@@ -20,8 +20,8 @@ import { normalNotificationLedgerValue, sortByKey } from "../../publication/publ
 import {
   createNotificationHistoryContext,
   createNotificationHistoryEventsForMessage,
-} from "./notification-history-runtime.js";
-import { notificationLedgerEntry } from "./notification-ledger-normalization.js";
+} from "../../persistence/notification-history-events.js";
+import { notificationLedgerEntry } from "../../persistence/notification-ledger-normalization.js";
 import { restoreNotificationSelection } from "./notification-message-context.js";
 import type { NotificationMessageState } from "./notification-message-state.js";
 import { NotificationStructureError } from "./notification-structure-error.js";

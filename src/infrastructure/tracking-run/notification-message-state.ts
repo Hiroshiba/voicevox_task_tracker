@@ -7,11 +7,9 @@ import {
   type InitialPagesPublicationEvidence,
 } from "../../application/tracking-run/initial-pages-evidence-codec.js";
 import {
-  parseRunTransactionMarker,
   serializeRunTransactionMarker,
   type RunTransactionMarker,
 } from "../../application/tracking-run/run-transaction-marker.js";
-import { hashCanonicalJson } from "../../canonical-json/index.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import { createGitHubRepositoryId, type Repository } from "../../domain/index.js";
 import type { NotificationDeliveryAttempt } from "../../domain/notification-delivery-attempt.js";
@@ -30,6 +28,7 @@ import {
 } from "../../persistence/history.js";
 import { assertStatePublicSafety } from "../../persistence/public-safety.js";
 import { parseStateSnapshot, type StateSnapshot } from "../../persistence/snapshot-v23.js";
+import { transitionNotificationMessageLedger } from "../../persistence/state-notification-transition.js";
 import {
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
   createStateNotificationLedger,
@@ -43,13 +42,12 @@ import {
   type VerifiedRunTransactionFiles,
 } from "../../persistence/state-transaction-files.js";
 import type { DurablePublicationRecord } from "../../publication/durable-record-schema.js";
-import { normalNotificationLedgerValue } from "../../publication/publication-order.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import {
   createNotificationHistoryContext,
   createNotificationHistoryEventsForMessage,
-} from "./notification-history-runtime.js";
-import { notificationLedgerEntry } from "./notification-ledger-normalization.js";
+} from "../../persistence/notification-history-events.js";
+import { notificationLedgerEntry } from "../../persistence/notification-ledger-normalization.js";
 import {
   restoreNotificationSelection,
   type NotificationMessageContext,
@@ -144,103 +142,31 @@ export type MessageAttempt = NotificationDeliveryAttempt;
 /** 一つのmessageに含まれる全keyを同じ試行へ遷移させる。 */
 export function transitionMessageLedger(
   ledger: StateNotificationLedger,
+  record: DurablePublicationRecord,
   context: NotificationMessageContext,
   attempt: MessageAttempt,
-  result: "started" | "sent" | "clear_rejection",
-  reservations: readonly Readonly<{ notificationKey: string; expiresAt: string }>[],
 ): StateNotificationLedger {
-  const keys = new Set(context.notificationKeys);
-  const reservationByKey = new Map(reservations.map((entry) => [entry.notificationKey, entry]));
-  const entries = ledger.entries.map((entry) => {
-    if (!keys.has(entry.notificationKey)) {
-      return entry;
-    }
-    const reservation = reservationByKey.get(entry.notificationKey);
-    if (reservation == null) {
-      throw new NotificationStructureError("通知messageの元予約がありません", "no_effect");
-    }
-    if (result === "started") {
-      if (
-        entry.status !== "reserved" ||
-        (attempt.startedAt > entry.expiresAt && context.manualResolutionReceipt == null) ||
-        (entry.manualResolution != null &&
-          entry.manualResolution.operationId !== context.manualResolutionReceipt?.operationId)
-      ) {
-        throw new NotificationStructureError("通知messageの開始前予約が無効です", "no_effect");
-      }
-      return {
-        notificationKey: entry.notificationKey,
-        itemNodeId: entry.itemNodeId,
-        reasonCode: entry.reasonCode,
-        severity: entry.severity,
-        reservedAt: entry.reservedAt,
-        status: "delivery_started",
+  try {
+    return transitionNotificationMessageLedger(
+      ledger,
+      record,
+      {
         deliveryId: context.deliveryId,
-        startedAt: attempt.startedAt,
-        lastDeliveryAttempt: attempt,
-      };
+        notificationKeys: context.notificationKeys,
+        ...(context.manualResolutionReceipt == null
+          ? {}
+          : { manualResolutionOperationId: context.manualResolutionReceipt.operationId }),
+      },
+      attempt,
+    );
+  } catch (cause: unknown) {
+    if (!(cause instanceof TypeError)) {
+      throw cause;
     }
-    if (
-      entry.status !== "delivery_started" ||
-      entry.deliveryId !== context.deliveryId ||
-      entry.lastDeliveryAttempt?.attemptId !== attempt.attemptId
-    ) {
-      throw new NotificationStructureError(
-        "通知messageの結果が開始済みledgerと一致しません",
-        "no_effect",
-      );
-    }
-    const base = {
-      notificationKey: entry.notificationKey,
-      itemNodeId: entry.itemNodeId,
-      reasonCode: entry.reasonCode,
-      severity: entry.severity,
-      reservedAt: entry.reservedAt,
-      lastDeliveryAttempt: attempt,
-    };
-    if (result === "sent") {
-      if (attempt.completedAt == null || attempt.discordMessageId == null) {
-        throw new TypeError("送信済みmessageに結果時刻またはDiscord IDがありません");
-      }
-      return {
-        ...base,
-        status: "sent",
-        sentAt: attempt.completedAt,
-        discordMessageId: attempt.discordMessageId,
-      };
-    }
-    return { ...base, status: "reserved", expiresAt: reservation.expiresAt };
-  });
-  return createStateNotificationLedger({
-    schemaVersion: ledger.schemaVersion,
-    entries,
-    operationsAlerts: ledger.operationsAlerts,
-    pendingNotifications:
-      result === "sent"
-        ? ledger.pendingNotifications.filter((pending) => !keys.has(pending.notificationKey))
-        : ledger.pendingNotifications,
-  });
-}
-
-/** message commitに対応するmarkerを同じphaseで進める。 */
-export function advanceMessageMarker(
-  previous: RunTransactionMarker,
-  ledger: StateNotificationLedger,
-  evidence: InitialPagesPublicationEvidence,
-  initialStateRevision: string,
-  parentRevision: string,
-  deliveryId: string,
-): RunTransactionMarker {
-  return parseRunTransactionMarker({
-    ...previous,
-    phase: "notifications_in_progress",
-    phaseSequence: previous.phaseSequence + 1,
-    expectedParentStateRevision: parentRevision,
-    initialStateRevision,
-    initialPagesPublicationEvidenceDigest: evidence.evidenceDigest,
-    notificationLedgerDigest: hashCanonicalJson(normalNotificationLedgerValue(ledger)),
-    lastMessageDeliveryId: deliveryId,
-  });
+    throw new NotificationStructureError("通知messageのledger遷移が不正です", "no_effect", {
+      cause,
+    });
+  }
 }
 
 /** 成功したmessageの履歴eventと安全なstate更新を組み立てる。 */

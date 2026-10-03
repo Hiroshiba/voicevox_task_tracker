@@ -4,15 +4,17 @@ import {
   RUN_TRANSACTION_MARKER_STATE_PATH_V1,
 } from "../application/tracking-run/contracts/recovery-paths.js";
 import { stateCommitReceiptOperationId } from "../application/tracking-run/observed-state-commit.js";
-import { receiptIdentifiers } from "../application/tracking-run/receipt-codec.js";
 import { assertRunTransactionMarkerTransition } from "../application/tracking-run/run-transaction-marker.js";
 import { serializeCanonicalJson } from "../canonical-json/value.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
-import { assertNonNullable } from "../util/index.js";
 import type { StateBranchAdapter, StatePersistenceConfiguration } from "./branch-adapter.js";
-import { parseRunTransactionNotificationLedger } from "./state-documents.js";
 import { OPERATIONS_ALERT_LEDGER_STATE_PATH_V1 } from "./state-documents.js";
-import { createStateCommitOperationId } from "./state-commit-metadata.js";
+import { parseRunTransactionNotificationLedger } from "./state-documents.js";
+import { initialNotificationLedger } from "./state-initial-notification-transition.js";
+import { loadStateNotificationLedgers } from "./state-ledger-files.js";
+import { normalNotificationLedgerValue } from "../publication/publication-order.js";
+import { assertFinalizationTransition } from "./state-commit-chain-finalization.js";
+import { assertNotificationCommitTransition } from "./state-commit-chain-notification.js";
 import {
   assertTrackingCommitPaths,
   type VerifiedCommitTree as VerifiedTree,
@@ -21,6 +23,7 @@ import {
   assertSettledOutboxLedger,
   assertSettlementParentPhase,
 } from "./state-commit-chain-settlement.js";
+import { advanceSettlementMarker } from "./state-notification-transition.js";
 import {
   authorizeAdvanceAfterOrthogonalCommits,
   MAX_INTERVENING_COMMITS,
@@ -89,19 +92,6 @@ async function previousTrackingRevision(
   throw new TypeError("追跡runのcommit探索が上限を超えています");
 }
 
-function notificationLedger(
-  tree: VerifiedTree,
-  configuration: StatePersistenceConfiguration,
-): ReturnType<typeof parseRunTransactionNotificationLedger>["ledger"] {
-  const file = tree.files.get(configuration.notificationLedgerPath);
-  if (file?.status !== "present") {
-    throw new TypeError("Git祖先の通常ledgerがありません");
-  }
-  return parseRunTransactionNotificationLedger(
-    new TextDecoder("utf-8", { fatal: true }).decode(file.bytes),
-  ).ledger;
-}
-
 function assertCommitOperation(
   scope: "tracking_run" | "manual_resolution",
   operationId: string,
@@ -109,184 +99,34 @@ function assertCommitOperation(
   previous: VerifiedTree | undefined,
   configuration: StatePersistenceConfiguration,
 ): void {
-  const { marker, record } = current.transaction;
-  let expected: string;
-  if (marker.phase === "initial_state_committed") {
-    if (scope !== "tracking_run" || previous != null) {
-      throw new TypeError("初回state commitのscopeが不正です");
-    }
-    expected = stateCommitReceiptOperationId(
-      "initial_state_commit",
-      marker.runId,
-      marker.checkpointDigest,
-      nodeContentDigestPort,
-    );
-  } else if (marker.phase === "notifications_settled") {
-    if (scope !== "tracking_run") {
-      throw new TypeError("通知settlementのcommit scopeが不正です");
-    }
-    expected = stateCommitReceiptOperationId(
-      "notification_settlement",
-      marker.runId,
-      marker.checkpointDigest,
-      nodeContentDigestPort,
-    );
-  } else if (marker.phase === "run_finalized") {
-    if (scope !== "tracking_run") {
-      throw new TypeError("run finalizationのcommit scopeが不正です");
-    }
-    expected = stateCommitReceiptOperationId(
-      "run_finalization",
-      marker.runId,
-      marker.checkpointDigest,
-      nodeContentDigestPort,
-    );
-  } else {
+  const marker = current.transaction.marker;
+  if (marker.phase === "notifications_in_progress") {
     if (previous == null) {
       throw new TypeError("通知commitの追跡祖先がありません");
     }
-    const prior = notificationLedger(previous, configuration);
-    const next = notificationLedger(current, configuration);
-    const priorByKey = new Map(prior.entries.map((entry) => [entry.notificationKey, entry]));
-    if (scope === "manual_resolution") {
-      if (previous.transaction.marker.phase !== "notifications_in_progress") {
-        throw new TypeError("手動解決の前に通知開始済みmarkerが必要です");
-      }
-      if (
-        priorByKey.size !== prior.entries.length ||
-        priorByKey.size !== next.entries.length ||
-        next.entries.some((entry) => !priorByKey.has(entry.notificationKey))
-      ) {
-        throw new TypeError("手動解決commitで通常ledger entry集合が変化しています");
-      }
-      const resolutions = next.entries.flatMap((entry) => {
-        const resolution = entry.manualResolution;
-        const priorEntry = priorByKey.get(entry.notificationKey);
-        assertNonNullable(priorEntry, "手動解決commitの元ledger entryがありません");
-        const before = priorEntry.manualResolution;
-        const changed =
-          resolution != null &&
-          (before == null || serializeCanonicalJson(resolution) !== serializeCanonicalJson(before));
-        if (
-          changed &&
-          (before != null ||
-            priorEntry.status !== "delivery_started" ||
-            priorEntry.deliveryId !== resolution.deliveryId ||
-            priorEntry.lastDeliveryAttempt?.attemptId !== resolution.attemptId ||
-            priorEntry.lastDeliveryAttempt.result !== "started")
-        ) {
-          throw new TypeError("手動解決の元となる開始済み送達試行がありません");
-        }
-        if (!changed && serializeCanonicalJson(entry) !== serializeCanonicalJson(priorEntry)) {
-          throw new TypeError("手動解決commitで対象外の通常ledger entryが変化しています");
-        }
-        return changed ? [resolution] : [];
-      });
-      const resolution = resolutions[0];
-      if (
-        resolution == null ||
-        new Set(resolutions.map((value) => serializeCanonicalJson(value))).size !== 1
-      ) {
-        throw new TypeError("手動解決commitのoperation IDをledgerから特定できません");
-      }
-      const changedKeys = next.entries
-        .filter((entry) => entry.manualResolution?.operationId === resolution.operationId)
-        .map((entry) => entry.notificationKey)
-        .sort();
-      const firstChangedKey = changedKeys[0];
-      assertNonNullable(firstChangedKey, "手動解決commitの対象keyがありません");
-      const startedKeys = priorByKey.get(firstChangedKey)?.lastDeliveryAttempt?.notificationKeys;
-      const expectedPending =
-        resolution.decision === "retry"
-          ? prior.pendingNotifications
-          : prior.pendingNotifications.filter(
-              (pending) => !changedKeys.includes(pending.notificationKey),
-            );
-      if (
-        startedKeys == null ||
-        serializeCanonicalJson(changedKeys) !== serializeCanonicalJson([...startedKeys].sort()) ||
-        serializeCanonicalJson(next.pendingNotifications) !==
-          serializeCanonicalJson(expectedPending)
-      ) {
-        throw new TypeError("手動解決commitの対象keyまたは未送信候補が開始済み試行と一致しません");
-      }
-      expected = receiptIdentifiers(
-        {
-          binding: {
-            bindingKind: "checkpoint",
-            runId: record.runIdentity.runId,
-            checkpointDigest: record.checkpointDigest,
-            checkpointFileDigest: record.checkpointFileDigest,
-            runtimeIdentityDigest: nodeContentDigestPort.sha256Utf8(
-              serializeCanonicalJson(record.runtimeIdentity),
-            ),
-          },
-          stage: "notifications_settled",
-          phase: "notification",
-          logicalTarget: `manual:${record.checkpointDigest}:${resolution.deliveryId}:${resolution.attemptId}:${resolution.decision}`,
-          invocationId: record.runIdentity.invocationId,
-          localAttemptIndex: 0,
-        },
-        nodeContentDigestPort,
-      ).operationId;
-      if (resolution.operationId !== expected) {
-        throw new TypeError("手動解決のledgerと論理操作IDが一致しません");
-      }
-    } else {
-      const attempts = next.entries.flatMap((entry) => {
-        const attempt = entry.lastDeliveryAttempt;
-        const before = priorByKey.get(entry.notificationKey)?.lastDeliveryAttempt;
-        return attempt != null &&
-          (before == null || serializeCanonicalJson(attempt) !== serializeCanonicalJson(before))
-          ? [attempt]
-          : [];
-      });
-      const attempt = attempts[0];
-      if (
-        attempt == null ||
-        new Set(attempts.map((value) => serializeCanonicalJson(value))).size !== 1
-      ) {
-        throw new TypeError("通知commitの送達試行をledgerから特定できません");
-      }
-      if (record.notificationOutbox.action !== "send") {
-        throw new TypeError("通知commitの送達試行が不正です");
-      }
-      const changedKeys = next.entries
-        .filter((entry) =>
-          attempts.some((value) => entry.lastDeliveryAttempt?.attemptId === value.attemptId),
-        )
-        .map((entry) => entry.notificationKey)
-        .sort();
-      if (
-        serializeCanonicalJson(changedKeys) !==
-          serializeCanonicalJson([...attempt.notificationKeys].sort()) ||
-        attempt.notificationKeys.some((key) => {
-          const before = priorByKey.get(key);
-          const after = next.entries.find((entry) => entry.notificationKey === key);
-          if (after?.lastDeliveryAttempt?.attemptId !== attempt.attemptId) {
-            return true;
-          }
-          if (attempt.result === "started") {
-            return before?.status !== "reserved" || after.status !== "delivery_started";
-          }
-          return (
-            before?.status !== "delivery_started" ||
-            before.lastDeliveryAttempt?.attemptId !== attempt.attemptId ||
-            before.lastDeliveryAttempt.result !== "started" ||
-            after.status !== (attempt.result === "sent" ? "sent" : "reserved")
-          );
-        })
-      ) {
-        throw new TypeError("通知commitの送達試行とledger遷移が一致しません");
-      }
-      expected = createStateCommitOperationId({
-        kind: "notification_message",
-        deliveryOperationId: attempt.operationId,
-        deliveryAttemptId: attempt.attemptId,
-        transition: attempt.result === "started" ? "reservation" : "result",
-      });
-    }
+    assertNotificationCommitTransition(previous, current, configuration, scope, operationId);
+    return;
   }
+  if (scope !== "tracking_run") {
+    throw new TypeError("state commitのscopeが不正です");
+  }
+  let receiptType: "initial_state_commit" | "notification_settlement" | "run_finalization";
+  if (marker.phase === "initial_state_committed") {
+    receiptType = "initial_state_commit";
+  } else if (marker.phase === "notifications_settled") {
+    receiptType = "notification_settlement";
+  } else {
+    receiptType = "run_finalization";
+  }
+  if (marker.phase === "initial_state_committed" && previous != null) {
+    throw new TypeError("初回state commitの追跡祖先が不正です");
+  }
+  const expected = stateCommitReceiptOperationId(
+    receiptType,
+    marker.runId,
+    marker.checkpointDigest,
+    nodeContentDigestPort,
+  );
   if (operationId !== expected) {
     throw new TypeError("state commitのoperation IDが保存済み値と一致しません");
   }
@@ -347,6 +187,27 @@ export async function assertStateCommitChain(
         undefined,
         configuration,
       );
+      const parentLedger = await loadStateNotificationLedgers(
+        adapter,
+        configuration,
+        commit.parent,
+      );
+      const expectedLedger = initialNotificationLedger(parentLedger, current.transaction.record);
+      const actualFile = current.files.get(configuration.notificationLedgerPath);
+      if (actualFile?.status !== "present") {
+        throw new TypeError("初回state commitの通常ledgerがありません");
+      }
+      const actualLedger = parseRunTransactionNotificationLedger(
+        new TextDecoder("utf-8", { fatal: true }).decode(actualFile.bytes),
+      ).ledger;
+      if (
+        serializeCanonicalJson(normalNotificationLedgerValue(actualLedger)) !==
+        serializeCanonicalJson(normalNotificationLedgerValue(expectedLedger))
+      ) {
+        throw new TypeError(
+          "初回state commitのledgerが固定outboxと親stateから導出した値と一致しません",
+        );
+      }
       await assertTrackingCommitPaths(adapter, configuration, commit, current, undefined);
       if (settled != null) {
         assertSettledOutboxLedger(current, settled, configuration);
@@ -388,9 +249,32 @@ export async function assertStateCommitChain(
       parentRevision,
       current.transaction.initialPagesEvidence,
     );
+    if (
+      current.transaction.initialPagesEvidence?.pageUrl !==
+      current.transaction.record.initialPagesProjection.settings.url
+    ) {
+      throw new TypeError("Git祖先のPages証拠が固定公開URLと一致しません");
+    }
     if (current.transaction.marker.phase === "notifications_settled") {
       assertSettlementParentPhase(current.transaction.record, previous.transaction.marker.phase);
+      const evidence = current.transaction.initialPagesEvidence;
+      const expectedMarker = advanceSettlementMarker(
+        previous.transaction.marker,
+        evidence,
+        evidence.sourceStateRevision,
+        parentRevision,
+        previous.transaction.notificationLedgerDigest,
+      );
+      if (
+        serializeCanonicalJson(expectedMarker) !==
+        serializeCanonicalJson(current.transaction.marker)
+      ) {
+        throw new TypeError("通知settlementのmarkerが親stateから導出した値と一致しません");
+      }
       settled = current;
+    }
+    if (current.transaction.marker.phase === "run_finalized") {
+      assertFinalizationTransition(previous, current, configuration);
     }
     assertCommitOperation(
       commit.metadata.commitScope,

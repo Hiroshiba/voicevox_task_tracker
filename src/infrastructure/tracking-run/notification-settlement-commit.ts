@@ -11,16 +11,14 @@ import type {
   ManualResolutionReceipt,
   NotificationMessageReceipt,
 } from "../../application/tracking-run/receipt-schema.js";
-import {
-  parseRunTransactionMarker,
-  serializeRunTransactionMarker,
-} from "../../application/tracking-run/run-transaction-marker.js";
+import { serializeRunTransactionMarker } from "../../application/tracking-run/run-transaction-marker.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import type { PreparedDiscordDigestMessage } from "../../discord/payload-contracts.js";
 import { createGitHubRepositoryId } from "../../domain/index.js";
 import { assertStatePublicSafety } from "../../persistence/public-safety.js";
 import { writeStateCas, type StateCasCommitRequestFactory } from "../../persistence/state-cas.js";
 import { verifyRunTransactionFiles } from "../../persistence/state-transaction-files.js";
+import { advanceSettlementMarker } from "../../persistence/state-notification-transition.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import {
   readNotificationMessageState,
@@ -95,15 +93,13 @@ export async function commitNotificationSettlement(
         receipts,
         port.configuration,
       );
-      const marker = parseRunTransactionMarker({
-        ...previousMarker,
-        phase: "notifications_settled",
-        phaseSequence: previousMarker.phaseSequence + 1,
-        expectedParentStateRevision: parent.revision,
-        initialStateRevision: input.initialStateReceipt.result.resultingStateRevision,
-        initialPagesPublicationEvidenceDigest: evidence.evidenceDigest,
-        notificationLedgerDigest: content.ledgerDigest,
-      });
+      const marker = advanceSettlementMarker(
+        previousMarker,
+        evidence,
+        input.initialStateReceipt.result.resultingStateRevision,
+        parent.revision,
+        content.ledgerDigest,
+      );
       const updates = [
         ...(messages.length === 0
           ? [

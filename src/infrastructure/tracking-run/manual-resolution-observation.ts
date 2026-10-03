@@ -20,16 +20,14 @@ import {
   authorizeAdvanceAfterOrthogonalCommits,
 } from "../../persistence/state-orthogonal-advance.js";
 import type { DurablePublicationRecord } from "../../publication/durable-record-schema.js";
+import { advanceMessageMarker } from "../../persistence/state-notification-transition.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import {
   resolveManualNotificationLedger,
   startedManualResolutionAttempt,
   type ManualResolutionTarget,
 } from "./manual-resolution-state.js";
-import {
-  advanceMessageMarker,
-  readNotificationMessageState,
-} from "./notification-message-state.js";
+import { readNotificationMessageState } from "./notification-message-state.js";
 
 function binding(
   record: DurablePublicationRecord,

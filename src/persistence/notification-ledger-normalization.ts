@@ -3,8 +3,8 @@ import {
   createUtcIsoDateTime,
   type NotificationLedgerEntry,
   type OperationsAlertLedgerEntry,
-} from "../../domain/index.js";
-import type { StateNotificationLedger } from "../../persistence/index.js";
+} from "../domain/index.js";
+import type { StateNotificationLedger } from "./state-documents.js";
 
 /** 保存済み運用通知ledgerを送達用の型へ変換する。 */
 export function operationsAlertLedgerEntry(

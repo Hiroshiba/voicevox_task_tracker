@@ -36,7 +36,7 @@ import {
   type StateSnapshot,
   type StateSnapshotReadResult,
 } from "../../persistence/index.js";
-import { operationsAlertLedgerEntry } from "./notification-ledger-normalization.js";
+import { operationsAlertLedgerEntry } from "../../persistence/notification-ledger-normalization.js";
 import { requireEnvironmentValue } from "./production-runtime-setup.js";
 
 type NotificationDeliveryRuntimeAdapters = Readonly<{

@@ -5,6 +5,7 @@ import { createStateCommitOperationId } from "../../persistence/state-commit-met
 import { parseStateNotificationLedger } from "../../persistence/state-documents.js";
 import type { OrthogonalCommitAdvance } from "../../persistence/state-orthogonal-advance.js";
 import { verifyRunTransactionFiles } from "../../persistence/state-transaction-files.js";
+import { advanceMessageMarker } from "../../persistence/state-notification-transition.js";
 import {
   prepareNotificationMessageContext,
   type NotificationMessageContext,
@@ -14,7 +15,6 @@ import type {
   NotificationMessageDeliveryPort,
 } from "./notification-message-delivery.js";
 import {
-  advanceMessageMarker,
   assertCurrentState,
   assertMessageCandidate,
   messageStateUpdates,
@@ -22,7 +22,6 @@ import {
   transitionMessageLedger,
   type MessageAttempt,
 } from "./notification-message-state.js";
-import { NotificationStructureError } from "./notification-structure-error.js";
 
 /** 一つのmessageに対応するCAS遷移を確定する。 */
 export async function commitMessageTransition(
@@ -81,17 +80,7 @@ export async function commitMessageTransition(
           input.manualResolutionReceipt,
         );
       }
-      const outbox = input.record.notificationOutbox;
-      if (outbox.action !== "send" || outbox.selectedContext.action !== "create_digest") {
-        throw new NotificationStructureError("通知messageの送信対象がありません", "no_effect");
-      }
-      const nextLedger = transitionMessageLedger(
-        state.ledger,
-        context,
-        attempt,
-        result,
-        outbox.selectedContext.ledgerReservations,
-      );
+      const nextLedger = transitionMessageLedger(state.ledger, input.record, context, attempt);
       const marker = advanceMessageMarker(
         state.transaction.marker,
         nextLedger,
