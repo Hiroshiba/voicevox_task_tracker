@@ -12,9 +12,9 @@ import type {
   StatePersistenceConfiguration,
 } from "../../persistence/branch-adapter.js";
 import { GitStateBranchAdapter } from "../../persistence/git-state-branch-adapter.js";
+import { assertStateCommitChain } from "../../persistence/state-commit-chain-verification.js";
 import { verifyRunTransactionFiles } from "../../persistence/state-transaction-files.js";
 import { readBaseStateIngress } from "./base-state-ingress.js";
-import { assertStateCommitChain } from "./state-commit-chain-verification.js";
 
 function localRevisionAdapter(
   repositoryPath: string,

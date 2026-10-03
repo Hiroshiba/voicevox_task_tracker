@@ -77,6 +77,9 @@ export function decodeRunTransactionMarker(bytes: Uint8Array): RunTransactionMar
   const bootstrap = readRunTransactionMarkerRecoveryBootstrap(bytes);
   const value: unknown = JSON.parse(source);
   const marker = parseRunTransactionMarker(value);
+  if (source !== serializeCanonicalJsonLine(marker)) {
+    throw new TypeError("markerがcanonical JSONではありません");
+  }
   if (
     marker.runId !== bootstrap.runId ||
     marker.checkpointDigest !== bootstrap.checkpointDigest ||

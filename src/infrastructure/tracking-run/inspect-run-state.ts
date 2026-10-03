@@ -33,7 +33,7 @@ import {
 import { inspectRunBootstrapState } from "./bootstrap-state.js";
 import { nodeContentDigestPort } from "./content-digest.js";
 import { selectRecoveryStage, type RecoveryStageInput } from "./recovery-stage.js";
-import { assertStateCommitChain } from "./state-commit-chain-verification.js";
+import { assertStateCommitChain } from "../../persistence/state-commit-chain-verification.js";
 import { observeStateCommitAtRevision } from "./state-receipt-observation.js";
 
 /** 現行run開始と特定runのexact再開を区別する要求。 */
@@ -171,6 +171,28 @@ export async function inspectRunState(
       kind: "start_new",
     });
     if (bootstrap.kind === "start_with_current_runtime") {
+      if (bootstrap.observedStateHead.status === "present") {
+        const tree = await readExactStateTree(adapter, configuration.branch);
+        if (
+          tree.observedHead.status !== "present" ||
+          tree.observedHead.revision !== bootstrap.observedStateHead.revision
+        ) {
+          throw new TypeError("new runのstate headがbootstrap後に変化しました");
+        }
+        const verified = verifyRunTransactionFiles(tree.files, configuration);
+        if (verified != null) {
+          if (verified.marker.phase !== "run_finalized") {
+            throw new TypeError("未完了runから新しいrunを開始できません");
+          }
+          await assertStateCommitChain(
+            adapter,
+            configuration,
+            tree.observedHead.revision,
+            verified,
+            verified.marker.initialStateRevision,
+          );
+        }
+      }
       return Object.freeze({ kind: "start_new", observedStateHead: bootstrap.observedStateHead });
     }
     if (bootstrap.kind === "manual_resolution_required") {

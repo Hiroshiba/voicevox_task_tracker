@@ -12,6 +12,7 @@ import {
   type RunTransactionMarker,
 } from "../application/tracking-run/run-transaction-marker.js";
 import { hashCanonicalJson } from "../canonical-json/index.js";
+import { z } from "zod";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
 import {
   decodeDurablePublicationRecord,
@@ -20,7 +21,15 @@ import {
 import { normalNotificationLedgerValue } from "../publication/publication-order.js";
 import { type StateFileReadResult, type StatePersistenceConfiguration } from "./branch-adapter.js";
 import { StateFormatError } from "./errors.js";
+import {
+  parseStateSnapshot as parseStateSnapshotV21,
+  serializeStateSnapshot as serializeStateSnapshotV21,
+} from "./snapshot-v21.js";
 import { parseStateSnapshot, serializeStateSnapshot } from "./snapshot-v22.js";
+import {
+  finalizedHistoryDigest,
+  finalizedRunReportDigest,
+} from "./state-transaction-finalization.js";
 import {
   isCanonicalStateOperationsAlertLedgerSource,
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
@@ -34,6 +43,7 @@ export type VerifiedRunTransactionFiles = Readonly<{
   record: DurablePublicationRecord;
   initialPagesEvidence?: InitialPagesPublicationEvidence;
   snapshotDigest: string;
+  snapshotSchemaVersion: "21" | "22";
   notificationLedgerDigest: string;
   operationsAlertLedgerDigest?: string;
 }>;
@@ -61,7 +71,7 @@ function source(bytes: Uint8Array): string {
 /** marker、record、snapshot、通常ledger、Pages証拠を同じtreeで照合する。 */
 export function verifyRunTransactionFiles(
   files: ReadonlyMap<string, StateFileReadResult>,
-  configuration: Pick<StatePersistenceConfiguration, "snapshotPath" | "notificationLedgerPath">,
+  configuration: StatePersistenceConfiguration,
 ): VerifiedRunTransactionFiles | undefined {
   const markerBytes = optionalFile(files, RUN_TRANSACTION_MARKER_STATE_PATH_V1);
   const recordBytes = optionalFile(files, DURABLE_PUBLICATION_RECORD_STATE_PATH_V1);
@@ -85,13 +95,35 @@ export function verifyRunTransactionFiles(
     });
   }
   const snapshotSource = source(requiredFile(files, configuration.snapshotPath));
-  const snapshot = parseStateSnapshot(snapshotSource);
-  if (snapshotSource !== serializeStateSnapshot(snapshot)) {
+  const snapshotValue: unknown = JSON.parse(snapshotSource);
+  const snapshotVersion = z
+    .object({ schemaVersion: z.string() })
+    .parse(snapshotValue).schemaVersion;
+  let snapshotDigest: string;
+  let snapshotRunId: string;
+  if (snapshotVersion === "21") {
+    const snapshot = parseStateSnapshotV21(snapshotSource);
+    if (snapshotSource !== serializeStateSnapshotV21(snapshot)) {
+      throw new StateFormatError("snapshot", {
+        cause: new TypeError("旧snapshotがcanonical JSONではありません"),
+      });
+    }
+    snapshotDigest = hashCanonicalJson(snapshot);
+    snapshotRunId = snapshot.run.id;
+  } else if (snapshotVersion === "22") {
+    const snapshot = parseStateSnapshot(snapshotSource);
+    if (snapshotSource !== serializeStateSnapshot(snapshot)) {
+      throw new StateFormatError("snapshot", {
+        cause: new TypeError("snapshotがcanonical JSONではありません"),
+      });
+    }
+    snapshotDigest = hashCanonicalJson(snapshot);
+    snapshotRunId = snapshot.run.id;
+  } else {
     throw new StateFormatError("snapshot", {
-      cause: new TypeError("snapshotがcanonical JSONではありません"),
+      cause: new TypeError("snapshotのschemaVersionは未対応です"),
     });
   }
-  const snapshotDigest = hashCanonicalJson(snapshot);
   const ledgerSource = source(requiredFile(files, configuration.notificationLedgerPath));
   const { ledger, legacyDigestValue } = parseRunTransactionNotificationLedger(ledgerSource);
   const notificationLedgerDigest = hashCanonicalJson(
@@ -111,6 +143,7 @@ export function verifyRunTransactionFiles(
   }
   if (
     marker.runId !== record.runIdentity.runId ||
+    marker.runId !== snapshotRunId ||
     marker.checkpointDigest !== record.checkpointDigest ||
     marker.baseStateRevision !==
       (record.baseStateRevision.status === "missing"
@@ -127,6 +160,10 @@ export function verifyRunTransactionFiles(
       cause: new TypeError("marker、record、snapshot、通常ledgerのdigestが一致しません"),
     });
   }
+  if (marker.phase === "run_finalized") {
+    finalizedHistoryDigest(files, configuration, marker, record);
+    finalizedRunReportDigest(files, configuration, marker, record);
+  }
   if (marker.phase === "initial_state_committed") {
     if (evidenceBytes != null) {
       throw new StateFormatError("initial Pages evidence", {
@@ -137,6 +174,7 @@ export function verifyRunTransactionFiles(
       marker,
       record,
       snapshotDigest,
+      snapshotSchemaVersion: snapshotVersion,
       notificationLedgerDigest,
       ...(operationsAlertLedgerDigest == null ? {} : { operationsAlertLedgerDigest }),
     });
@@ -165,7 +203,22 @@ export function verifyRunTransactionFiles(
     record,
     initialPagesEvidence,
     snapshotDigest,
+    snapshotSchemaVersion: snapshotVersion,
     notificationLedgerDigest,
     ...(operationsAlertLedgerDigest == null ? {} : { operationsAlertLedgerDigest }),
   });
+}
+
+/** 新しいstate候補のsnapshotが現行形式であることを検証する。 */
+export function verifyCurrentRunTransactionFiles(
+  files: ReadonlyMap<string, StateFileReadResult>,
+  configuration: StatePersistenceConfiguration,
+): VerifiedRunTransactionFiles {
+  const verified = verifyRunTransactionFiles(files, configuration);
+  if (verified?.snapshotSchemaVersion !== "22") {
+    throw new StateFormatError("snapshot", {
+      cause: new TypeError("新しいtracking state候補にはv22のrun transactionが必要です"),
+    });
+  }
+  return verified;
 }

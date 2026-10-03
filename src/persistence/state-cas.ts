@@ -8,6 +8,7 @@ import {
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
 import { StateBranchConflictError } from "./errors.js";
+import { assertStateCommitChain } from "./state-commit-chain-verification.js";
 import { verifyStateCasCandidate } from "./state-cas-candidate.js";
 import {
   materializeCommitRequest,
@@ -21,7 +22,10 @@ import {
   findInitialStateRevision,
   type OrthogonalCommitAdvance,
 } from "./state-orthogonal-advance.js";
-import { verifyRunTransactionFiles } from "./state-transaction-files.js";
+import {
+  verifyCurrentRunTransactionFiles,
+  verifyRunTransactionFiles,
+} from "./state-transaction-files.js";
 
 export {
   type StateCasCommitRequestFactory,
@@ -112,6 +116,36 @@ export async function writeStateCas(
       throw error;
     }
   }
+  const previousFiles =
+    observedHead.status === "present"
+      ? await adapter.readFiles(
+          observedHead.revision,
+          await adapter.listFiles(observedHead.revision, "state"),
+        )
+      : new Map<string, StateFileReadResult>();
+  const previousVerified = verifyRunTransactionFiles(previousFiles, configuration);
+  if (previousVerified != null && observedHead.status === "present") {
+    if (
+      previousVerified.snapshotSchemaVersion === "21" &&
+      previousVerified.marker.phase !== "run_finalized"
+    ) {
+      throw new TypeError("旧版の未完了runはexact runtimeで再開してください");
+    }
+    await assertStateCommitChain(
+      adapter,
+      configuration,
+      observedHead.revision,
+      previousVerified,
+      previousVerified.marker.phase === "initial_state_committed"
+        ? await findInitialStateRevision(
+            adapter,
+            configuration,
+            observedHead.revision,
+            previousVerified.marker.runId,
+          )
+        : previousVerified.marker.initialStateRevision,
+    );
+  }
   const request = await materializeCommitRequest(requestInput, observedHead, advance);
   let commit: StateBranchCommitResult;
   try {
@@ -149,15 +183,10 @@ export async function writeStateCas(
   if ("build" in requestInput) {
     await requestInput.verifyCandidate?.(candidateFiles, commit.revision, request);
   }
-  const verifiedCandidate = verifyRunTransactionFiles(candidateFiles, configuration);
-  const previousFiles =
-    observedHead.status === "present"
-      ? await adapter.readFiles(
-          observedHead.revision,
-          await adapter.listFiles(observedHead.revision, "state"),
-        )
-      : new Map<string, StateFileReadResult>();
-  const previousVerified = verifyRunTransactionFiles(previousFiles, configuration);
+  const verifiedCandidate =
+    commit.metadata.commitScope === "operations_alert"
+      ? verifyRunTransactionFiles(candidateFiles, configuration)
+      : verifyCurrentRunTransactionFiles(candidateFiles, configuration);
   if (previousVerified != null && verifiedCandidate == null) {
     throw new TypeError("既存run transactionをcommit候補から削除できません");
   }
@@ -186,6 +215,17 @@ export async function writeStateCas(
       }
     } else if (previousMarker == null) {
       throw new TypeError("運用通知commitがmarkerを新設しています");
+    }
+    if (commit.metadata.commitScope !== "operations_alert") {
+      await assertStateCommitChain(
+        adapter,
+        configuration,
+        commit.revision,
+        verifiedCandidate,
+        verifiedCandidate.marker.phase === "initial_state_committed"
+          ? commit.revision
+          : verifiedCandidate.marker.initialStateRevision,
+      );
     }
   }
   try {

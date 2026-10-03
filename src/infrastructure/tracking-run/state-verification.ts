@@ -339,6 +339,32 @@ async function verifyRunTransaction(
     const bytes = await readOptionalBytes(localStatePath(stateDirectory, path));
     files.set(path, bytes == null ? { status: "missing" } : { status: "present", bytes });
   }
+  for (const directory of [configuration.historyDirectory, configuration.runReportsDirectory]) {
+    const localDirectory = localStatePath(stateDirectory, directory);
+    let entries: Dirent[];
+    try {
+      entries = await readdir(localDirectory, { withFileTypes: true });
+    } catch (error: unknown) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        continue;
+      }
+      throw verificationError(localDirectory, error);
+    }
+    for (const entry of entries) {
+      if (!entry.isFile()) {
+        throw verificationError(
+          localDirectory,
+          new TypeError("run transaction参照先の種別が不正です"),
+        );
+      }
+      const path = `${directory}/${entry.name}`;
+      const bytes = await readOptionalBytes(localStatePath(stateDirectory, path));
+      if (bytes == null) {
+        throw verificationError(path, new TypeError("一覧にあるrun transaction参照先がありません"));
+      }
+      files.set(path, { status: "present", bytes });
+    }
+  }
   try {
     const verified = verifyRunTransactionFiles(files, configuration);
     return verified == null ? createVerification(0, [], []) : createVerification(1, ["1"], ["1"]);

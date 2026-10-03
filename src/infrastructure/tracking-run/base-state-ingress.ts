@@ -23,6 +23,8 @@ import { snapshotEffectiveGraphStateByNodeId } from "../../persistence/snapshot-
 import type { StateNotificationLedger } from "../../persistence/state-documents.js";
 import type { StateSnapshotReadResult } from "../../persistence/state-persistence-session.js";
 import { StatePersistenceSession } from "../../persistence/state-persistence-session.js";
+import { assertStateCommitChain } from "../../persistence/state-commit-chain-verification.js";
+import { verifyRunTransactionFiles } from "../../persistence/state-transaction-files.js";
 
 /** 現行形式へ変換したbase stateと保存session。 */
 export type BaseStateIngress = Readonly<{
@@ -138,6 +140,23 @@ export async function readBaseStateIngress(
   migrationTimezone: string,
   expectedHead: StateBranchHead,
 ): Promise<BaseStateIngress> {
+  if (expectedHead.status === "present") {
+    const paths = await adapter.listFiles(expectedHead.revision, "state");
+    const files = await adapter.readFiles(expectedHead.revision, paths);
+    const verified = verifyRunTransactionFiles(files, configuration);
+    if (verified != null) {
+      if (verified.marker.phase !== "run_finalized") {
+        throw new TypeError("未完了runの業務stateはexact runtimeだけが読み取れます");
+      }
+      await assertStateCommitChain(
+        adapter,
+        configuration,
+        expectedHead.revision,
+        verified,
+        verified.marker.initialStateRevision,
+      );
+    }
+  }
   const session =
     expectedHead.status === "present"
       ? await StatePersistenceSession.openAtRevision(

@@ -10,6 +10,7 @@ import {
 } from "./branch-adapter.js";
 import { StateBranchConflictError } from "./errors.js";
 import { verifyStateCasCandidate } from "./state-cas-candidate.js";
+import { assertStateCommitChain } from "./state-commit-chain-verification.js";
 import type { StateCommitIdentity } from "./state-commit-metadata.js";
 import { createStateChangedPathManifest, digestStateManifest } from "./state-commit-metadata.js";
 import {
@@ -19,6 +20,7 @@ import {
   type OrthogonalCommitAdvance,
 } from "./state-orthogonal-advance.js";
 import {
+  verifyCurrentRunTransactionFiles,
   verifyRunTransactionFiles,
   type VerifiedRunTransactionFiles,
 } from "./state-transaction-files.js";
@@ -222,6 +224,9 @@ export async function observeCommittedStateWrite(
       }
       try {
         const candidateFiles = await verifyStateCasCandidate(adapter, inspected, request);
+        if (inspected.metadata.commitScope !== "operations_alert") {
+          verifyCurrentRunTransactionFiles(candidateFiles, configuration);
+        }
         if ("build" in requestInput) {
           await requestInput.verifyCandidate?.(candidateFiles, inspected.revision, request);
         }
@@ -230,6 +235,23 @@ export async function observeCommittedStateWrite(
       }
       try {
         await authorizeObservedSuccessors(adapter, configuration, inspected, successorsNewestFirst);
+        const latest = await verifiedFilesAtRevision(adapter, configuration, observedHeadRevision);
+        if (latest != null) {
+          await assertStateCommitChain(
+            adapter,
+            configuration,
+            observedHeadRevision,
+            latest,
+            latest.marker.phase === "initial_state_committed"
+              ? await findInitialStateRevision(
+                  adapter,
+                  configuration,
+                  observedHeadRevision,
+                  latest.marker.runId,
+                )
+              : latest.marker.initialStateRevision,
+          );
+        }
       } catch (error: unknown) {
         throw new StateBranchConflictError({ cause: error });
       }

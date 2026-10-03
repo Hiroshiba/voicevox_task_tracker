@@ -11,26 +11,21 @@ import type {
   RunFinalizationReceipt,
 } from "../../application/tracking-run/receipt-schema.js";
 import { assertRunTransactionMarkerTransition } from "../../application/tracking-run/run-transaction-marker.js";
-import { hashCanonicalJson } from "../../canonical-json/index.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import {
-  joinStatePath,
   type StateBranchAdapter,
   type StateFileReadResult,
   type StatePersistenceConfiguration,
 } from "../../persistence/branch-adapter.js";
 import {
-  parseStateHistoryRecords,
-  serializeStateHistoryRecords,
-} from "../../persistence/history.js";
-import {
   authorizeAdvanceAfterOrthogonalCommits,
   MAX_INTERVENING_COMMITS,
 } from "../../persistence/state-orthogonal-advance.js";
+import { assertStateCommitChain } from "../../persistence/state-commit-chain-verification.js";
 import {
-  createStateRunReport,
-  serializeStateRunReport,
-} from "../../persistence/state-run-report.js";
+  finalizedHistoryDigest,
+  finalizedRunReportDigest,
+} from "../../persistence/state-transaction-finalization.js";
 import {
   verifyRunTransactionFiles,
   type VerifiedRunTransactionFiles,
@@ -62,54 +57,6 @@ async function readVerifiedTree(
     throw new TypeError("観測対象のexact stateにrun transactionがありません");
   }
   return { files, transaction };
-}
-
-function requiredSource(files: ReadonlyMap<string, StateFileReadResult>, path: string): string {
-  const file = files.get(path);
-  if (file?.status !== "present") {
-    throw new TypeError(`state commitの観測に必要なfileがありません。対象: ${path}`);
-  }
-  return new TextDecoder("utf-8", { fatal: true }).decode(file.bytes);
-}
-
-function notificationHistoryDigest(
-  files: ReadonlyMap<string, StateFileReadResult>,
-  configuration: StatePersistenceConfiguration,
-  transaction: VerifiedRunTransactionFiles,
-): string {
-  const date = transaction.record.initialPagesProjection.generatedAt.slice(0, 10);
-  const path = joinStatePath(configuration.historyDirectory, `${date}.jsonl`);
-  const source = requiredSource(files, path);
-  const records = parseStateHistoryRecords(source);
-  if (serializeStateHistoryRecords(records) !== source) {
-    throw new TypeError("通知履歴のstate fileがcanonical JSON Linesではありません");
-  }
-  const matching = records.filter((record) => record.runId === transaction.marker.runId);
-  if (matching.length !== 1 || matching[0]?.date !== date) {
-    throw new TypeError("通知履歴のrun recordを一意に特定できません");
-  }
-  return hashCanonicalJson(matching[0]);
-}
-
-function runReportDigest(
-  files: ReadonlyMap<string, StateFileReadResult>,
-  configuration: StatePersistenceConfiguration,
-  transaction: VerifiedRunTransactionFiles,
-): string {
-  const date = transaction.record.runFinalizationPolicy.report.startedAt.slice(0, 10);
-  const path = joinStatePath(configuration.runReportsDirectory, `${date}.json`);
-  const source = requiredSource(files, path);
-  const report: unknown = JSON.parse(source);
-  const parsed = createStateRunReport(report);
-  if (
-    serializeStateRunReport(parsed) !== source ||
-    parsed.runId !== transaction.marker.runId ||
-    transaction.marker.phase !== "run_finalized" ||
-    transaction.marker.finalRunReportDigest !== hashCanonicalJson(parsed)
-  ) {
-    throw new TypeError("最終run reportとmarkerのdigestが一致しません");
-  }
-  return hashCanonicalJson(parsed);
 }
 
 async function previousTrackingRevision(
@@ -214,6 +161,13 @@ export async function observeStateCommitAtRevision(
     adapter.readCommit(revision),
   ]);
   const { marker, record } = tree.transaction;
+  await assertStateCommitChain(
+    adapter,
+    configuration,
+    revision,
+    tree.transaction,
+    initialStateRevision,
+  );
   if (
     commit.metadata.commitScope !== "tracking_run" ||
     commit.metadata.runId !== marker.runId ||
@@ -282,17 +236,13 @@ export async function observeStateCommitAtRevision(
     evidence = {
       ...common,
       receiptType,
-      notificationHistoryDigest: notificationHistoryDigest(
-        tree.files,
-        configuration,
-        tree.transaction,
-      ),
+      notificationHistoryDigest: finalizedHistoryDigest(tree.files, configuration, marker, record),
     };
   } else {
     evidence = {
       ...common,
       receiptType,
-      runReportDigest: runReportDigest(tree.files, configuration, tree.transaction),
+      runReportDigest: finalizedRunReportDigest(tree.files, configuration, marker, record),
     };
   }
   const receipt = observeStateCommitReceipt(evidence, observation, nodeContentDigestPort);
