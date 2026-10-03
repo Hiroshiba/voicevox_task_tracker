@@ -6,7 +6,7 @@ import {
   notificationDeliveryAttemptSchema,
   notificationManualResolutionSchema,
 } from "../domain/notification-delivery-attempt.js";
-import { pendingNotificationSchema } from "../domain/types.js";
+import { pendingNotificationSchema } from "../domain/pending-notification.js";
 import { StateFormatError } from "./errors.js";
 import {
   type LegacyNotificationReasonCode,
@@ -545,12 +545,6 @@ const notificationLedgerVersion6Schema = z
       }
     }
   });
-export type NotificationLedgerWithPending = Readonly<{
-  entries: readonly z.output<typeof ledgerEntryVersion10Schema>[];
-  operationsAlerts: readonly z.output<typeof operationsAlertEntrySchema>[];
-  pendingNotifications: readonly z.output<typeof pendingNotificationSchema>[];
-}>;
-
 const notificationLedgerVersion7Schema = z
   .strictObject({
     schemaVersion: z.literal(NOTIFICATION_LEDGER_SCHEMA_VERSION_7),

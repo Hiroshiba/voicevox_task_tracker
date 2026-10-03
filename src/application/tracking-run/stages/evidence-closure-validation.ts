@@ -1,4 +1,5 @@
-import type { Evidence, PendingNotification } from "../../../domain/types.js";
+import type { Evidence } from "../../../domain/types.js";
+import type { PendingNotification } from "../../../domain/pending-notification.js";
 import type { PersonalReminderTimeBasis } from "../../../domain/personal-reminder-causes.js";
 import type {
   EvidenceClosureContext,

@@ -1,7 +1,7 @@
 import type {
   GenericAiItemPlan,
   GenericAiPlan,
-} from "../application/tracking-run/stages/generic-ai-plan.js";
+} from "../application/tracking-run/stages/generic-ai-plan-contracts.js";
 import { createAnalysisElementExactInput } from "./analysis-element-dependencies.js";
 import { AI_ANALYSIS_ELEMENTS } from "./analysis-elements.js";
 import type {

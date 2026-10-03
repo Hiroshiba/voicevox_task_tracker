@@ -6,8 +6,8 @@ import type {
 import type {
   PendingNotification,
   PendingPersonalReminderTarget,
-  Relation,
-} from "../../../domain/types.js";
+} from "../../../domain/pending-notification.js";
+import type { Relation } from "../../../domain/relation.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 import type { RunValidationLedger } from "./run-validation-final-checks.js";
 

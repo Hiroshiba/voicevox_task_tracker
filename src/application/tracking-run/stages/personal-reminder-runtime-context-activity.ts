@@ -40,17 +40,6 @@ function timeBasisFromTransitionBasis(
   });
 }
 
-export type PersonalReminderDecisionWaitingOn = PersonalReminderLocalDecision["waitingOn"][number];
-
-export type PersonalReminderResponsibleWaitingOn = Omit<
-  PersonalReminderDecisionWaitingOn,
-  "kind" | "role"
-> &
-  Readonly<{
-    kind: "user" | "team" | "role";
-    role: Exclude<PersonalReminderDecisionWaitingOn["role"], "dependency" | "ci">;
-  }>;
-
 function isRelevantProgressEvent(
   event: NormalizedEvent,
   actionKind: PersonalReminderActionKind | undefined,

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { ContentDigestPort } from "../application/tracking-run/ports.js";
+import type { ContentDigestPort } from "../application/tracking-run/contracts/content-digest-port.js";
 import { serializeCanonicalJson } from "../canonical-json/value.js";
 import { PERSONAL_REMINDER_AI_INPUT_SCHEMA_VERSION } from "../domain/personal-reminder-causes.js";
 import type { PersonalReminderCauseId } from "../domain/personal-reminder-causes.js";

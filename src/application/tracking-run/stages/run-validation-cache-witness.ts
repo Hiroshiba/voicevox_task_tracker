@@ -5,9 +5,9 @@ import type {
   AiAnalysisElementGeneration,
 } from "../../../domain/ai-analysis-elements.js";
 import type { PersonalReminderAiGeneration } from "../../../domain/personal-reminder-causes.js";
-import type { TrackedItemAiAnalysis } from "../../../domain/types.js";
+import type { TrackedItemAiAnalysis } from "../../../domain/tracked-item-ai-analysis.js";
 import type { EvidenceClosureAdditions } from "./evidence-closure.js";
-import type { ContentDigestPort } from "../ports.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 import { assertRunValueMatches, runValuesById } from "./run-validation-compare.js";
 

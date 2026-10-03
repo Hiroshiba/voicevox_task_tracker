@@ -10,7 +10,8 @@ import type { DryRunCliCommand } from "./command-input.js";
 import type { CoordinatedRunResult } from "./run-coordinator.js";
 import type { ProductionRuntimeAdapters } from "./runtime/adapters.js";
 import { createDailyDependencies } from "./runtime/daily-dependencies.js";
-import { SequentialRunRunner, type DailyRunExecutionResult } from "./sequential-run.js";
+import type { DailyRunExecutionResult } from "./sequential-result.js";
+import { SequentialRunRunner } from "./sequential-run.js";
 
 const execFileAsync = promisify(execFile);
 

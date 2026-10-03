@@ -5,7 +5,8 @@ import {
   type AiAnalysisElementResult,
   type AiAnalysisElementMigrationResult,
 } from "../../../domain/ai-analysis-elements.js";
-import type { GitHubNodeId, TrackedItemAiAnalysis } from "../../../domain/types.js";
+import type { GitHubNodeId } from "../../../domain/types.js";
+import type { TrackedItemAiAnalysis } from "../../../domain/tracked-item-ai-analysis.js";
 import type { GenericAiItemAdoption } from "./generic-ai-adoption-contracts.js";
 import type { EvidenceUse } from "../contracts/evidence-closure.js";
 import type { EvidenceUseSink } from "./evidence-closure-walk-common.js";

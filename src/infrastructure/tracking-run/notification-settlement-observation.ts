@@ -25,7 +25,7 @@ import type {
   NotificationSettlementOutcome,
   NotificationSettlementPort,
   SettledMessageReceipt,
-} from "./notification-settlement.js";
+} from "./notification-settlement-contracts.js";
 import { observeStateCommitAtRevision } from "./state-receipt-observation.js";
 
 export function assertNextReceipt(

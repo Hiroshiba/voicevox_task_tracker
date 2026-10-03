@@ -5,7 +5,8 @@ import {
   settleNotifications,
 } from "../notification-settlement.js";
 import { createNotificationSettlementPort } from "../notification-stage-runtime.js";
-import type { DailyPublicationStageHandlers, RunPublicationAdapters } from "./contracts.js";
+import type { DailyPublicationStageHandlers } from "./stage-handler-contracts.js";
+import type { RunPublicationAdapters } from "./contracts.js";
 
 type NotificationAdapters = Pick<
   RunPublicationAdapters,

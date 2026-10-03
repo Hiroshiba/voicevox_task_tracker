@@ -1,7 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
-import type { ContentDigestPort } from "../../application/tracking-run/ports.js";
+import type { ContentDigestPort } from "../../application/tracking-run/contracts/content-digest-port.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import {
   workflowV1AdapterSourcePaths,

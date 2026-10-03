@@ -6,8 +6,8 @@ import {
 import { projectGraphReconciledRunCore, type StageState } from "../contracts/run-core.js";
 import type { GenericAiAdoptedRun } from "./generic-ai-adoption.js";
 import type { GenericAiItemAdoption } from "./generic-ai-adoption-contracts.js";
+import type { GraphFinalItem } from "../contracts/graph-final-item.js";
 import type {
-  GraphFinalItem,
   GraphReconciliationResult,
   GraphReduction,
   GraphWorkingReduction,

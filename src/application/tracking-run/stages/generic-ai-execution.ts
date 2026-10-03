@@ -5,7 +5,7 @@ import {
 } from "../contracts/ai-budget-ledger.js";
 import { createGenericAiExecutedStageProof } from "../contracts/proofs.js";
 import type { StageState } from "../contracts/run-core.js";
-import type { GenericAiItemPlan, GenericAiPlannedRun } from "./generic-ai-plan.js";
+import type { GenericAiItemPlan, GenericAiPlannedRun } from "./generic-ai-plan-contracts.js";
 
 /** 一つの計画項目に対応する汎用AI実行結果。 */
 export type GenericAiExecutionOutcome =

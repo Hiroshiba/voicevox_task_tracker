@@ -10,7 +10,7 @@ import {
 } from "../../application/tracking-run/stages/validate-run.js";
 import type { PublicationValidatedRun } from "../../publication/publication-plan-contracts.js";
 
-import type { ContentDigestPort } from "../../application/tracking-run/ports.js";
+import type { ContentDigestPort } from "../../application/tracking-run/contracts/content-digest-port.js";
 import type { Sha256Hash } from "../../canonical-json/index.js";
 import { parseSha256Hash, serializeCanonicalJson } from "../../canonical-json/index.js";
 import {

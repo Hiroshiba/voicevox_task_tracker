@@ -1,6 +1,6 @@
 import { type PersonalReminderCause } from "./personal-reminder-causes.js";
 import { responsibleSignatures } from "./personal-reminder-planning-common.js";
-import { type PersonalReminderCauseDraft } from "./personal-reminder-planning.js";
+import { type PersonalReminderCauseDraft } from "./personal-reminder-planning-contracts.js";
 
 /** 原因候補の同一性keyを作る。 */
 export function draftKey(draft: PersonalReminderCauseDraft): string {

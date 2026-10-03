@@ -4,7 +4,7 @@ import {
   INITIAL_PAGES_PUBLICATION_EVIDENCE_SCHEMA_VERSION,
   parseInitialPagesPublicationEvidence,
 } from "./initial-pages-evidence-codec.js";
-import type { ContentDigestPort } from "./ports.js";
+import type { ContentDigestPort } from "./contracts/content-digest-port.js";
 import { parseReceipt } from "./receipt-codec.js";
 import { type PagesBuildReceipt, type PagesDeploymentReceipt } from "./receipt-schema.js";
 

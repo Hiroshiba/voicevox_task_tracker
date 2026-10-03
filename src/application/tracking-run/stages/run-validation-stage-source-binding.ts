@@ -2,7 +2,7 @@ import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type { Evidence } from "../../../domain/types.js";
 import type { EvidenceClosureResult } from "../contracts/evidence-closure.js";
 import { assertEvidenceClosureMatches } from "./evidence-closure.js";
-import type { MaterializedReferenceValues } from "./run-validation-artifact-witness.js";
+import type { MaterializedReferenceValues } from "./run-validation-reference-contracts.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 import { assertRunValueMatches, runValuesById } from "./run-validation-compare.js";
 

@@ -5,7 +5,7 @@ import snapshotVersion19Schema from "../../schemas/snapshot.schema.json" with { 
 import {
   AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS,
   AI_ANALYSIS_ELEMENT_REVISIONS,
-} from "../codex/analysis-elements.js";
+} from "../codex/generic-ai-definition.js";
 import { AI_ANALYSIS_ELEMENTS } from "../domain/ai-analysis-elements.js";
 import { StateSnapshotSchemaError, StateSnapshotSemanticError } from "./errors.js";
 

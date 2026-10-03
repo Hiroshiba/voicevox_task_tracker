@@ -1,7 +1,8 @@
 import { readNotificationMessageState } from "../notification-message-state.js";
 import { createNotificationSettlementPort } from "../notification-stage-runtime.js";
 import { finalizeRun } from "../run-finalization.js";
-import type { DailyPublicationStageHandlers, RunPublicationAdapters } from "./contracts.js";
+import type { DailyPublicationStageHandlers } from "./stage-handler-contracts.js";
+import type { RunPublicationAdapters } from "./contracts.js";
 
 type FinalizationAdapters = Pick<
   RunPublicationAdapters,

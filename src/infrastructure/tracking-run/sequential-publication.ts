@@ -7,7 +7,7 @@ import type { StateCommitReceiptEvidence } from "../../application/tracking-run/
 import type { ReceiptChainEntry } from "../../application/tracking-run/receipt-chain-schema.js";
 import type { Receipt } from "../../application/tracking-run/receipt-schema.js";
 import { nodeContentDigestPort } from "./content-digest.js";
-import type { NotificationSettlementOutcome } from "./notification-settlement.js";
+import type { NotificationSettlementOutcome } from "./notification-settlement-contracts.js";
 import type { BoundPublicationCheckpoint } from "./publication-checkpoint-binding.js";
 import type {
   InitialPagesPreparedRun,
@@ -16,10 +16,10 @@ import type {
   NotificationHistoryPublishedRun,
   PersistedRun,
 } from "./publication/contracts.js";
-import type { FinalizeRunOutcome } from "./run-finalization.js";
+import type { FinalizeRunOutcome } from "./run-finalization-contracts.js";
 import type { SequentialPublicationInput } from "./sequential-publication-input.js";
 import type { SequentialRunDependencies } from "./sequential-run-contracts.js";
-import type { DailyRunRuntime, NotificationStageResult } from "./sequential-run.js";
+import type { DailyRunRuntime, NotificationStageResult } from "./sequential-result.js";
 
 /** 公開境界へ渡す完全性検証済みの値。 */
 export type PublicationStageInput = SequentialPublicationInput;

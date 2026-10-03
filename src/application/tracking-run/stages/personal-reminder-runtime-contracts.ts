@@ -39,13 +39,8 @@ import type {
 import { reconcilePersonalReminderCauseSeeds } from "../../../domain/personal-reminder-planning.js";
 import type { PullRequestStateDecision } from "../../../domain/pull-request-state-contracts.js";
 import type { SourceId } from "../../../domain/source-id.js";
-import type {
-  Evidence,
-  GitHubNodeId,
-  GraphNodeId,
-  TrackedItemAiAnalysisApplications,
-  UtcIsoDateTime,
-} from "../../../domain/types.js";
+import type { Evidence, GitHubNodeId, GraphNodeId, UtcIsoDateTime } from "../../../domain/types.js";
+import type { TrackedItemAiAnalysisApplications } from "../../../domain/tracked-item-ai-analysis.js";
 import type { GitHubItemDetail } from "../../../github/item-detail-types.js";
 import type {
   ReconciledGraphEdge,
@@ -54,6 +49,17 @@ import type {
   RelationCandidateId,
   RelationCandidateResolution,
 } from "../../../graph/index.js";
+
+export type PersonalReminderDecisionWaitingOn = PersonalReminderLocalDecision["waitingOn"][number];
+
+export type PersonalReminderResponsibleWaitingOn = Omit<
+  PersonalReminderDecisionWaitingOn,
+  "kind" | "role"
+> &
+  Readonly<{
+    kind: "user" | "team" | "role";
+    role: Exclude<PersonalReminderDecisionWaitingOn["role"], "dependency" | "ci">;
+  }>;
 
 /** item種別と一致するblock適用前のlocal decision。 */
 export type PersonalReminderRuntimeLocalDecision =

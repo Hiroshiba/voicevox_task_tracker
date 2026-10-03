@@ -3,10 +3,6 @@ import { type Repository } from "../domain/index.js";
 import { StateFormatError, StateHistoryError } from "./errors.js";
 import type {
   StateHistoryEvent,
-  StateHistoryEventVersion3,
-  StateHistoryEventVersion4,
-  StateHistoryEventVersion5,
-  StateHistoryEventVersion6,
   StateHistoryInputEvent,
   StateHistoryProjection,
 } from "./history-contracts.js";
@@ -45,31 +41,6 @@ export function createStateHistoryInputEvents(value: unknown): readonly StateHis
       }),
     ),
   );
-}
-
-export function historyEventKey(
-  event:
-    | StateHistoryEvent
-    | StateHistoryEventVersion3
-    | StateHistoryEventVersion4
-    | StateHistoryEventVersion5
-    | StateHistoryEventVersion6,
-): string {
-  switch (event.kind) {
-    case "responsibility_set":
-    case "responsibility_removed":
-      return `responsibility:${event.nodeId}`;
-    case "severity_set":
-    case "severity_removed":
-      return `severity:${event.nodeId}`;
-    case "edge_set":
-    case "edge_removed":
-      return `edge:${event.relationId}`;
-    case "repository_excluded":
-      return `repository_excluded:${event.repositoryFullName}`;
-    case "notification_sent":
-      return `notification_sent:${event.deliveryId}:${event.itemNodeId}`;
-  }
 }
 
 export function createRepositoryExclusionEvents(

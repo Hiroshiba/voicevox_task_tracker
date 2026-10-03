@@ -2,7 +2,7 @@ import {
   parseInitialPagesPublicationEvidence,
   type InitialPagesEvidenceState,
 } from "./initial-pages-evidence-codec.js";
-import type { ContentDigestPort } from "./ports.js";
+import type { ContentDigestPort } from "./contracts/content-digest-port.js";
 import { sealObservedReceipt } from "./receipt-core-codec.js";
 import type { PagesDeploymentReceipt } from "./receipt-schema.js";
 

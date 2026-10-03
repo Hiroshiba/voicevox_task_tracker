@@ -14,7 +14,7 @@ import {
 } from "../contracts/ai-budget-ledger.js";
 import { createPersonalReminderExecutedStageProof } from "../contracts/proofs.js";
 import type { StageState } from "../contracts/run-core.js";
-import type { ContentDigestPort } from "../ports.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import type {
   PersonalReminderCauseDecision,
   PersonalReminderPlannedBatch,

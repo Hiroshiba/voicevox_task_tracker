@@ -7,7 +7,7 @@ import type {
   FinalSnapshotRepository,
 } from "../contracts/final-snapshot.js";
 import type { PreviousCollectionRepository } from "../contracts/previous-state.js";
-import type { ContentDigestPort } from "../ports.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import { collectVerifiedExternalReferences } from "../verified-external-references.js";
 import {
   analysisPlanFingerprintForItem,
@@ -17,8 +17,8 @@ import { resolveConfiguredTrackingStartAt } from "./collection-tracking-request.
 import type { CollectedItemObservations } from "./collection-production.js";
 import type { DeterministicallyAnalyzedRun } from "./deterministic.js";
 import type { GenericAiAdoptedRun } from "./generic-ai-adoption.js";
-import type { GenericAiPlan } from "./generic-ai-plan.js";
-import type { GraphFinalItem } from "./graph-reconciliation-contracts.js";
+import type { GenericAiPlan } from "./generic-ai-plan-contracts.js";
+import type { GraphFinalItem } from "../contracts/graph-final-item.js";
 
 function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;

@@ -21,11 +21,11 @@ import type { DurablePublicationRecord } from "../../publication/durable-record-
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import { observeManualResolutionAtRevision } from "./manual-resolution-observation.js";
 import { describeNotificationMessage } from "./notification-message-context.js";
-import type { NotificationInitialPagesSource } from "./notification-message-delivery.js";
+import type { NotificationInitialPagesSource } from "./notification-message-contracts.js";
 import { observeNotificationMessageDelivery } from "./notification-message-observation.js";
 import { readNotificationMessageState } from "./notification-message-state.js";
 import { assertNextReceipt } from "./notification-settlement-observation.js";
-import type { SettledMessageReceipt } from "./notification-settlement.js";
+import type { SettledMessageReceipt } from "./notification-settlement-contracts.js";
 
 type HistoryPort = Readonly<{
   adapter: StateBranchAdapter;

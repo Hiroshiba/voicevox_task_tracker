@@ -7,13 +7,11 @@ import {
   personalReminderCauseSeedSchema,
   type PersonalReminderCause,
   type PersonalReminderCauseId,
-  type PersonalReminderCausePlanning,
 } from "../../../domain/personal-reminder-causes.js";
 import {
   calculatePersonalReminderStaleness,
   updatePersonalReminderActionableClock,
   updatePersonalReminderLastConfirmedActionability,
-  type PersonalReminderStaleness,
 } from "../../../domain/personal-reminder-staleness.js";
 import type { Evidence, GitHubNodeId } from "../../../domain/types.js";
 import { assertNonNullable } from "../../../util/index.js";
@@ -23,11 +21,13 @@ import type {
   OwnedHistoricalAiResult,
   OwnedHistoricalEvidence,
 } from "../contracts/evidence-closure.js";
-import type { ContentDigestPort } from "../ports.js";
-import {
-  adoptPersonalReminderAssessment,
-  type PersonalReminderAssessmentAdoption,
-} from "./personal-reminder-adoption.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
+import type {
+  PersonalReminderAssessmentAdoption,
+  PersonalReminderFinalizedCause,
+  PersonalReminderFinalizedItem,
+} from "../contracts/personal-reminder-outcome.js";
+import { adoptPersonalReminderAssessment } from "./personal-reminder-adoption.js";
 import type {
   PersonalReminderExecutedRun,
   PersonalReminderExecutionOutcome,
@@ -45,28 +45,6 @@ import { reconcileRetainedPersonalReminderCause } from "./personal-reminder-reta
 import { normalizeLabelRules } from "./collection-label-rules.js";
 import { collectOwnedHistoricalEvidence } from "./evidence-closure-historical.js";
 import { collectOwnedHistoricalAiResults } from "./evidence-closure-historical-ai.js";
-
-/** 確定済み原因と通知適格性の唯一の結果。 */
-export type PersonalReminderFinalizedCause = Readonly<{
-  cause: PersonalReminderCause;
-  staleness: PersonalReminderStaleness;
-  assessment: Readonly<{
-    applicationSource: PersonalReminderAssessmentAdoption["applicationSource"];
-    currentness: PersonalReminderAssessmentAdoption["currentness"];
-    reason: PersonalReminderCauseDecision["reason"] | "retained_without_evaluation";
-  }>;
-}>;
-
-/** 最終graphの項目と個人催促の確定値。 */
-export type PersonalReminderFinalizedItem = Readonly<{
-  item: Omit<
-    PersonalReminderExecutedRun["data"]["finalItems"][number],
-    "personalReminderCauses" | "personalReminderCausePlanning"
-  >;
-  causeResults: readonly PersonalReminderFinalizedCause[];
-  evidence: readonly Evidence[];
-  planning: PersonalReminderCausePlanning;
-}>;
 
 /** 個人催促の採用、時計、根拠、停滞を確定したrun。 */
 export type PersonalReminderFinalizedRun = StageState<

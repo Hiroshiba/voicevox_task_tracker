@@ -6,7 +6,7 @@ import {
   planAiAnalysisBudgetWithPreflight,
 } from "../../../codex/budget.js";
 import type { AiAnalysisPriority } from "../../../codex/analysis-selection.js";
-import type { ContentDigestPort } from "../ports.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import type { PreviousPersonalReminderAiCacheEntry } from "../contracts/previous-state.js";
 import { createPersonalReminderCauseInputFingerprint } from "../../../codex/personal-reminder-input-assessment.js";
 import { preparePersonalReminderAiBatch } from "../../../codex/personal-reminder-input-transport.js";

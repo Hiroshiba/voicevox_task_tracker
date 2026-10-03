@@ -13,7 +13,7 @@ import {
 import type {
   NotificationMessageDeliveryInput,
   NotificationMessageDeliveryPort,
-} from "./notification-message-delivery.js";
+} from "./notification-message-contracts.js";
 import {
   assertCurrentState,
   assertMessageCandidate,

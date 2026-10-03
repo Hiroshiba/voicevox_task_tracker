@@ -20,7 +20,7 @@ import {
   type NotificationMessageState,
 } from "./notification-message-state.js";
 import { finalRunValues } from "./run-finalization-state.js";
-import type { FinalizeRunInput, FinalizeRunPort } from "./run-finalization.js";
+import type { FinalizeRunInput, FinalizeRunPort } from "./run-finalization-contracts.js";
 
 /** report、snapshot、markerを一つのtracking CASへ保存する。 */
 export async function commitRunFinalization(

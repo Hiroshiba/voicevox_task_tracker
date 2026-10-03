@@ -17,7 +17,7 @@ import type { NotificationMessageContext } from "./notification-message-context.
 import type {
   NotificationInitialPagesSource,
   NotificationMessageDeliveryInput,
-} from "./notification-message-delivery.js";
+} from "./notification-message-contracts.js";
 import { NotificationStructureError } from "./notification-structure-error.js";
 
 function requireCheckpointReceipt(

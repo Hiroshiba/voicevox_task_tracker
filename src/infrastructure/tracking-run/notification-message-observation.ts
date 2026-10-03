@@ -25,7 +25,7 @@ import {
 import { assertNonNullable } from "../../util/index.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import { describeNotificationMessage } from "./notification-message-context.js";
-import type { NotificationMessageDeliveryInput } from "./notification-message-delivery.js";
+import type { NotificationMessageDeliveryInput } from "./notification-message-contracts.js";
 import {
   readNotificationMessageState,
   type NotificationMessageState,

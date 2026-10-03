@@ -10,7 +10,7 @@ import type { PublicRepository } from "../../../github/public-repository-allowli
 import type { VerifiedExternalReference } from "../../../domain/verified-external-reference.js";
 import type { FinalGraphProjection } from "../../../graph/final-graph-projection.js";
 import type { AnalysisPreviousState, PreviousCollectionRepository } from "./previous-state.js";
-import type { GraphFinalItem } from "../stages/graph-reconciliation-contracts.js";
+import type { GraphFinalItem } from "./graph-final-item.js";
 import type { GraphReconciliationResult } from "../stages/graph-reconciliation-contracts.js";
 
 /** 最終graphで埋める前に確定する収集計画と前回管理値。 */

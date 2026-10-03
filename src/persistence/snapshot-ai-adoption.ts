@@ -4,7 +4,7 @@ import { hashCanonicalJson } from "../canonical-json/index.js";
 import {
   AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS,
   AI_ANALYSIS_ELEMENT_REVISIONS,
-} from "../codex/analysis-elements.js";
+} from "../codex/generic-ai-definition.js";
 import {
   aiAnalysisDependencyForApplication,
   aiAnalysisDependencyForMissingRelationCandidateAssessment,

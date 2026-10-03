@@ -2,7 +2,7 @@ import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type { Sha256Hash } from "../../../canonical-json/sha256.js";
 import type { PublicRepositoryAllowlist } from "../../../github/public-repository-allowlist.js";
 import type { PreparedRun } from "../prepare-run.js";
-import type { ContentDigestPort } from "../ports.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import { createInventoryCollectedStageProof } from "../contracts/proofs.js";
 import { projectAnalysisRunCore, type StageState } from "../contracts/run-core.js";
 

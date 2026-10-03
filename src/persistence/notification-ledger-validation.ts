@@ -1,9 +1,9 @@
 import type { RefinementCtx } from "zod";
 
-import type { NotificationLedgerWithPending } from "./state-documents.js";
+import type { NotificationLedgerValidationInput } from "./notification-ledger-validation-contracts.js";
 
 export function validateNotificationLedger(
-  ledger: NotificationLedgerWithPending,
+  ledger: NotificationLedgerValidationInput,
   context: RefinementCtx,
 ): void {
   const keys = ledger.entries.map((entry) => entry.notificationKey);

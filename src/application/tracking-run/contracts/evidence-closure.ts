@@ -10,12 +10,12 @@ import type {
   GitHubNodeId,
   GitHubRepositoryId,
   NormalizedEvent,
-  PendingNotification,
-  TrackedItemAiAnalysis,
   UtcIsoDateTime,
 } from "../../../domain/types.js";
+import type { PendingNotification } from "../../../domain/pending-notification.js";
+import type { TrackedItemAiAnalysis } from "../../../domain/tracked-item-ai-analysis.js";
 import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
-import type { PersonalReminderFinalizedItem } from "../stages/personal-reminder-finalization.js";
+import type { PersonalReminderFinalizedItem } from "./personal-reminder-outcome.js";
 import type { ReconciledGraphEdge } from "../../../graph/reconcile-graph-types.js";
 import type { GenericAiItemAdoption } from "../stages/generic-ai-adoption-contracts.js";
 import type { EvidenceCatalogSnapshot, HistoricalEvidenceRecord } from "./evidence-catalog.js";

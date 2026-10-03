@@ -5,7 +5,7 @@ import { collectEvidenceUses } from "./evidence-closure-walk-common.js";
 import type {
   MaterializedEvidenceReference,
   MaterializedReferenceValues,
-} from "./run-validation-artifact-witness.js";
+} from "./run-validation-reference-contracts.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 import { assertEventBasisReference, referenceContext } from "./run-validation-reference-context.js";
 import { isRecord, valueAtPath } from "./run-validation-reference-scope.js";

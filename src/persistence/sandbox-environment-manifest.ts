@@ -1,11 +1,11 @@
+import { SANDBOX_ENVIRONMENT_MANIFEST_PATH } from "./sandbox-environment-path.js";
+export { SANDBOX_ENVIRONMENT_MANIFEST_PATH } from "./sandbox-environment-path.js";
 import { z } from "zod";
 
 import { RUN_TRANSACTION_MARKER_STATE_PATH_V1 } from "../application/tracking-run/contracts/recovery-paths.js";
 import { parseRunTransactionMarker } from "../application/tracking-run/run-transaction-marker.js";
 import { serializeCanonicalJson } from "../canonical-json/value.js";
 import type { StateBranchAdapter, StateBranchCommitInspection } from "./branch-adapter.js";
-
-export const SANDBOX_ENVIRONMENT_MANIFEST_PATH = "state/sandbox-environment.json";
 
 const revision = z.string().regex(/^[0-9a-f]{40}$|^[0-9a-f]{64}$/u);
 const environmentId = z.string().regex(/^env-[1-9][0-9]*-[1-9][0-9]*$/u);

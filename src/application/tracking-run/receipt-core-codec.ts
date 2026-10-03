@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../../canonical-json/value.js";
-import type { ContentDigestPort } from "./ports.js";
+import type { ContentDigestPort } from "./contracts/content-digest-port.js";
 import { receiptSchema, type Receipt } from "./receipt-schema.js";
 
 const MAX_RECEIPT_BYTES = 1024 * 1024;

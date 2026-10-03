@@ -1,5 +1,5 @@
 import { INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1 } from "../application/tracking-run/contracts/recovery-paths.js";
-import type { ContentDigestPort } from "../application/tracking-run/ports.js";
+import type { ContentDigestPort } from "../application/tracking-run/contracts/content-digest-port.js";
 import { assertValidatedRun } from "../application/tracking-run/stages/validate-run.js";
 import { serializeCanonicalJson } from "../canonical-json/value.js";
 import { PUBLIC_DTO_SCHEMA_VERSION } from "../pages/public-dto-primitives.js";

@@ -10,7 +10,7 @@ import {
 } from "../../publication/run-report.js";
 import { VerifiedPendingRuntimeFailureError } from "./failure-context-error.js";
 import type { RunInvocation } from "./run-invocation.js";
-import type { DailyRunRuntime } from "./sequential-run.js";
+import type { DailyRunRuntime } from "./sequential-result.js";
 
 /** dry-runの共通完了receiptと本番効果ゼロを示す成果物。 */
 export type DryRunArtifact<Value> = Readonly<{

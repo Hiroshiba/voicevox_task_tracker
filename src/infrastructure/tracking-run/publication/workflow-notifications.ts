@@ -1,3 +1,4 @@
+import type { NotificationSettlementOutcome } from "../notification-settlement-contracts.js";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -26,13 +27,13 @@ import { readNotificationMessageState } from "../notification-message-state.js";
 import {
   NotificationSettlementFailureError,
   settleNotificationsWithPreflight,
-  type NotificationSettlementOutcome,
 } from "../notification-settlement.js";
 import { createNotificationSettlementPort } from "../notification-stage-runtime.js";
 import { NotificationStructureError } from "../notification-structure-error.js";
 import { requireEnvironmentValue } from "../production-runtime-setup.js";
 import { observeInitialPagesFromState } from "../publication-resume-inputs.js";
-import { finalizeRun, type FinalizeRunOutcome } from "../run-finalization.js";
+import { finalizeRun } from "../run-finalization.js";
+import type { FinalizeRunOutcome } from "../run-finalization-contracts.js";
 import type { RunPublicationAdapters } from "./contracts.js";
 import type {
   WorkflowNotificationSettlementInput,

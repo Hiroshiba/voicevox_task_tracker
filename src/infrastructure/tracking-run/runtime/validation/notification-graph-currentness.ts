@@ -1,7 +1,5 @@
-import type {
-  GraphFinalItem,
-  GraphReconciliationResult,
-} from "../../../../application/tracking-run/stages/graph-reconciliation-contracts.js";
+import type { GraphFinalItem } from "../../../../application/tracking-run/contracts/graph-final-item.js";
+import type { GraphReconciliationResult } from "../../../../application/tracking-run/stages/graph-reconciliation-contracts.js";
 import { previousGraphIndex } from "../../../../application/tracking-run/stages/graph-reconciliation-previous.js";
 import type { GraphNodeId } from "../../../../domain/index.js";
 import {

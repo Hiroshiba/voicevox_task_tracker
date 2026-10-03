@@ -7,13 +7,13 @@ import {
   currentPersonalReminderAssessment,
   type CurrentPersonalReminderAssessment,
   type PersonalReminderAdoptedAssessment,
-  type PersonalReminderCause,
   type PersonalReminderEvaluationAttempt,
 } from "../../../domain/personal-reminder-causes.js";
 import type { UtcIsoDateTime } from "../../../domain/types.js";
 import type { ReasoningEffort } from "../../../domain/types.js";
 import { assertNonNullable } from "../../../util/index.js";
-import type { ContentDigestPort } from "../ports.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
+import type { PersonalReminderAssessmentAdoption } from "../contracts/personal-reminder-outcome.js";
 import {
   assertPersonalReminderAssessment,
   assertPersonalReminderGeneration,
@@ -24,17 +24,6 @@ import type { PersonalReminderCauseDecision } from "./personal-reminder-plan-con
 import type { CanonicalPersonalReminderCausePlan } from "./personal-reminder-plan-contracts.js";
 
 type CanonicalEntry = CanonicalPersonalReminderCausePlan["entries"][number];
-
-/** 個人催促評価の採用元と現入力での利用可否。 */
-export type PersonalReminderAssessmentAdoption = Readonly<{
-  causeId: PersonalReminderCause["causeId"];
-  inputFingerprint: PersonalReminderCause["currentInput"]["fingerprint"];
-  applicationSource: "fixed" | "new" | "cache" | "snapshot" | "retained" | "none";
-  currentness: "available" | "unverified";
-  latestAttempt: PersonalReminderEvaluationAttempt;
-  adoptedAssessment: PersonalReminderAdoptedAssessment;
-  currentAssessment: CurrentPersonalReminderAssessment;
-}>;
 
 function hash(
   value: unknown,

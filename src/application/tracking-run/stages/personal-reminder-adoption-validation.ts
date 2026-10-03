@@ -19,7 +19,7 @@ import {
   type PersonalReminderCauseAssessment,
   type PersonalReminderResponsible,
 } from "../../../domain/personal-reminder-causes.js";
-import type { ContentDigestPort } from "../ports.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import type { PersonalReminderCauseDecision } from "./personal-reminder-plan-contracts.js";
 
 /** 個人催促候補を採用できない意味検証エラー。 */

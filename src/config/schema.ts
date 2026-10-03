@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { ConfigError, type ConfigIssue } from "./config-error.js";
-import { CODEX_AUTHENTICATIONS } from "../codex/index.js";
+import { CODEX_AUTHENTICATIONS } from "../codex/authentication.js";
 import { REASONING_EFFORTS } from "../domain/index.js";
 import { assertNonNullable } from "../util/assert-non-nullable.js";
 

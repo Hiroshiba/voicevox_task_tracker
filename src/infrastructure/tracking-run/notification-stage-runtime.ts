@@ -5,7 +5,7 @@ import type { StatePersistenceConfiguration } from "../../persistence/branch-ada
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import { safeErrorDiagnostic } from "./error-diagnostic.js";
 import { createProductionNotificationMessageSendPort } from "./notification-message-http.js";
-import type { NotificationSettlementPort } from "./notification-settlement.js";
+import type { NotificationSettlementPort } from "./notification-settlement-contracts.js";
 import { requireEnvironmentValue } from "./production-runtime-setup.js";
 import type { ProductionRuntimeAdapters } from "./runtime/adapters.js";
 

@@ -1,3 +1,15 @@
+import { assertValidStatePath } from "./state-path.js";
+export { assertValidStatePath } from "./state-path.js";
+import type {
+  StateBranchHead,
+  StateFileReadResult,
+  StateFileUpdate,
+} from "./branch-adapter-contracts.js";
+export type {
+  StateBranchHead,
+  StateFileReadResult,
+  StateFileUpdate,
+} from "./branch-adapter-contracts.js";
 import {
   DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
   INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1,
@@ -12,7 +24,6 @@ import type {
 } from "./state-commit-metadata.js";
 
 const STATE_ROOT_DIRECTORY = "state";
-const STATE_PATH_PREFIX = "state/";
 const STATE_BRANCH_PATTERN = /^(?:tracker-state|sandbox-state\/env-[1-9][0-9]*-[1-9][0-9]*)$/u;
 const OPERATIONS_ALERT_BRANCH_PATTERN =
   /^(?:tracker-operations-alerts|sandbox-operations-alerts\/env-[1-9][0-9]*-[1-9][0-9]*)$/u;
@@ -30,36 +41,10 @@ export type StatePersistenceConfiguration = Readonly<{
   canonicalJson: boolean;
 }>;
 
-/** branchが未作成か特定revisionを指すかを表す。 */
-export type StateBranchHead =
-  | Readonly<{
-      status: "missing";
-    }>
-  | Readonly<{
-      status: "present";
-      revision: string;
-    }>;
-
 /** state branch adapterが解決したoriginのfetch先とpush先。 */
 export type StateRemoteUrls = Readonly<{
   fetchUrls: readonly string[];
   pushUrls: readonly string[];
-}>;
-
-/** state branch内のファイル読み取り結果。 */
-export type StateFileReadResult =
-  | Readonly<{
-      status: "missing";
-    }>
-  | Readonly<{
-      status: "present";
-      bytes: Uint8Array;
-    }>;
-
-/** 一つのcommitで置き換えるstateファイル。 */
-export type StateFileUpdate = Readonly<{
-  path: string;
-  bytes: Uint8Array;
 }>;
 
 /** state branchのatomic commit要求。 */
@@ -135,20 +120,6 @@ export function operationsAlertBranchForStateBranch(branch: string): string {
   return branch === "tracker-state"
     ? "tracker-operations-alerts"
     : branch.replace(/^sandbox-state\//u, "sandbox-operations-alerts/");
-}
-
-/** state branch内で利用できる正規化済み相対パスか検証する。 */
-export function assertValidStatePath(path: string): void {
-  const segments = path.split("/");
-  if (
-    !path.startsWith(STATE_PATH_PREFIX) ||
-    path.endsWith("/") ||
-    path.includes("\\") ||
-    !/^[A-Za-z0-9._/-]+$/u.test(path) ||
-    segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
-  ) {
-    throw new StateConfigurationError("state配下の正規化された相対パスが必要です");
-  }
 }
 
 /** state配下またはstateルートの一覧取得用directoryか検証する。 */

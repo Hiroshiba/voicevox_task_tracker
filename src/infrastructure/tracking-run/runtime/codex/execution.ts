@@ -3,7 +3,7 @@ import {
   completeGenericAiExecution,
   type GenericAiExecutedRun,
 } from "../../../../application/tracking-run/stages/generic-ai-execution.js";
-import type { GenericAiPlannedRun } from "../../../../application/tracking-run/stages/generic-ai-plan.js";
+import type { GenericAiPlannedRun } from "../../../../application/tracking-run/stages/generic-ai-plan-contracts.js";
 import {
   recordCodexDiagnostic,
   runPlannedAiAnalyses,

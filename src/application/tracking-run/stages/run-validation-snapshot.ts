@@ -4,7 +4,7 @@ import type {
   HistoricalAiSnapshotInput,
 } from "../contracts/evidence-closure.js";
 import type { FinalSnapshotCandidate } from "../contracts/final-snapshot.js";
-import type { ContentDigestPort } from "../ports.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import { buildFinalSnapshot } from "./final-snapshot.js";
 import { collectOwnedHistoricalAiResults } from "./evidence-closure-historical-ai.js";
 import { adoptionProvenance } from "./generic-ai-adoption-provenance.js";

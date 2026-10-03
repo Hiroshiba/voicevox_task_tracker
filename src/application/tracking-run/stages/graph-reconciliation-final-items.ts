@@ -13,8 +13,8 @@ import type { GenericAiItemAdoption } from "./generic-ai-adoption-contracts.js";
 import { aiDependencyReconciliationContext } from "./graph-reconciliation-ai-dependency-context.js";
 import { combineSelectedAiDependencies } from "./graph-reconciliation-ai-selection.js";
 import { blockerValueAiDependencies } from "./graph-reconciliation-blocker-values.js";
+import type { GraphFinalItem } from "../contracts/graph-final-item.js";
 import type {
-  GraphFinalItem,
   GraphItemWithImportanceAssessment,
   GraphReducedItem,
   GraphWorkingCollection,

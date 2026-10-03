@@ -94,8 +94,3 @@ export type AnalysisElementReuseRecord<Element extends AiAnalysisElement = AiAna
 export type CodexPreservedElements = Readonly<
   Partial<Record<AiAnalysisElement, AiAnalysisElementMigrationResult>>
 >;
-
-export {
-  AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS,
-  AI_ANALYSIS_ELEMENT_REVISIONS,
-} from "./generic-ai-definition.js";

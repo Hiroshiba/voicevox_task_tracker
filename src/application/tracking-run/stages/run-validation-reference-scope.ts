@@ -1,7 +1,7 @@
 import type {
   MaterializedEvidenceReference,
   MaterializedReferenceValues,
-} from "./run-validation-artifact-witness.js";
+} from "./run-validation-reference-contracts.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 
 type Path = readonly (string | number)[];

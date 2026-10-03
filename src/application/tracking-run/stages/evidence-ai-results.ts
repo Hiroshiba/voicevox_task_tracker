@@ -7,7 +7,7 @@ import {
   type AiAnalysisElementResult,
   type AiAnalysisElementMigrationResult,
 } from "../../../domain/ai-analysis-elements.js";
-import type { TrackedItemAiAnalysis } from "../../../domain/types.js";
+import type { TrackedItemAiAnalysis } from "../../../domain/tracked-item-ai-analysis.js";
 import type { OwnedHistoricalAiResult } from "../contracts/evidence-closure.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
-import type { ContentDigestPort } from "./ports.js";
+import type { ContentDigestPort } from "./contracts/content-digest-port.js";
 import { pagesPublicUrlSchema } from "./receipt-schema.js";
 
 const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);

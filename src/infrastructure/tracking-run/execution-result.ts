@@ -1,4 +1,4 @@
-import { type DailyRunExecutionResult } from "./sequential-run.js";
+import type { DailyRunExecutionResult } from "./sequential-result.js";
 
 /** CLI実行後の終了codeとreport種別。 */
 export type CliExecutionResult =

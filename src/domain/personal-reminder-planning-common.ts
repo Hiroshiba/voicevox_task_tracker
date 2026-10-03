@@ -1,10 +1,10 @@
+export type { PersonalReminderResponsibilityBasis } from "./personal-reminder-planning-contracts.js";
 import { UnreachableError, assertNonNullable } from "../util/index.js";
 import {
   aiAnalysisDependencyForApplication,
   type AiAnalysisDependency,
 } from "./ai-analysis-dependencies.js";
 import { type AiAnalysisElement } from "./ai-analysis-elements.js";
-import type { IssueTransitionBasis } from "./issue-state-contracts.js";
 import {
   personalReminderResponsibilitySchema,
   type PersonalReminderCauseSeed,
@@ -18,17 +18,11 @@ import {
   type PersonalReminderCauseDraftUnavailableReason,
   type PersonalReminderItem,
   type PersonalReminderLocalDecision,
-} from "./personal-reminder-planning.js";
-import type { PullRequestTransitionBasis } from "./pull-request-state-contracts.js";
+} from "./personal-reminder-planning-contracts.js";
 import { type SourceId } from "./source-id.js";
 import { type StalenessWaitClass } from "./staleness.js";
-import {
-  type GitHubNodeId,
-  type TrackedItemAiAnalysisApplications,
-  type UtcIsoDateTime,
-} from "./types.js";
-
-export type PersonalReminderResponsibilityBasis = IssueTransitionBasis | PullRequestTransitionBasis;
+import { type GitHubNodeId, type UtcIsoDateTime } from "./types.js";
+import { type TrackedItemAiAnalysisApplications } from "./tracked-item-ai-analysis.js";
 
 export const PERSONAL_REMINDER_ID_VERSION = "personal-reminder-v1";
 

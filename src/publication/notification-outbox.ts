@@ -1,4 +1,4 @@
-import type { ContentDigestPort } from "../application/tracking-run/ports.js";
+import type { ContentDigestPort } from "../application/tracking-run/contracts/content-digest-port.js";
 import { serializeCanonicalJson } from "../canonical-json/value.js";
 import type { DiscordNotificationSelection } from "../discord/index.js";
 import type { StateNotificationLedger, StateSnapshot } from "../persistence/index.js";

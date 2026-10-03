@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import type { ContentDigestPort } from "../../application/tracking-run/ports.js";
+import type { ContentDigestPort } from "../../application/tracking-run/contracts/content-digest-port.js";
 import { parseSha256Hash, type Sha256Hash } from "../../canonical-json/sha256.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 

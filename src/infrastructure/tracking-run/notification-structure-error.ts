@@ -1,4 +1,7 @@
-import type { NotificationCasOutcome, NotificationHttpOutcome } from "./notification-recovery.js";
+import type {
+  NotificationCasOutcome,
+  NotificationHttpOutcome,
+} from "./notification-recovery-contracts.js";
 
 /** 通知stateの構造違反と失敗した操作の副作用確度。 */
 export class NotificationStructureError extends TypeError {

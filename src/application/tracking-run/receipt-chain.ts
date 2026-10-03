@@ -4,7 +4,7 @@ import {
   assertObservedStateCommitReceipt,
   type ObservedStateCommitPosition,
 } from "./observed-state-commit.js";
-import type { ContentDigestPort } from "./ports.js";
+import type { ContentDigestPort } from "./contracts/content-digest-port.js";
 import {
   manualResolutionStateEvidenceSchema,
   notificationMessageStateEvidenceSchema,

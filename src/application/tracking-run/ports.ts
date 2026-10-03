@@ -1,4 +1,3 @@
-import type { Sha256Hash } from "../../canonical-json/sha256.js";
 import type { BotPredicate } from "../../domain/actor-resolution.js";
 import type { GitHubNodeId, GitHubRepositoryId, UtcIsoDateTime } from "../../domain/types.js";
 import type { PublicRepository } from "../../github/public-repository-allowlist.js";
@@ -10,12 +9,6 @@ import type {
 import type { FreshObservedGitHubItem } from "../../github/item-normalization.js";
 import type { SourceId } from "../../domain/source-id.js";
 import type { GitHubRateLimitSnapshot } from "../../github/errors.js";
-
-/** canonical bytesのSHA-256計算を副作用層へ委ねる。 */
-export type ContentDigestPort = Readonly<{
-  sha256Utf8: (value: string) => Sha256Hash;
-  sha256Bytes: (value: Uint8Array) => Sha256Hash;
-}>;
 
 /** 判定に用いる現在時刻を供給する。 */
 export type ClockPort = Readonly<{

@@ -1,10 +1,8 @@
 import type { CliCommand, DryRunCliCommand } from "../infrastructure/tracking-run/command-input.js";
 import type { CliExecutionResult } from "../infrastructure/tracking-run/execution-result.js";
 import type { CoordinatedRunResult } from "../infrastructure/tracking-run/run-coordinator.js";
-import {
-  SequentialRunRunner,
-  type DailyRunExecutionResult,
-} from "../infrastructure/tracking-run/sequential-run.js";
+import type { DailyRunExecutionResult } from "../infrastructure/tracking-run/sequential-result.js";
+import { SequentialRunRunner } from "../infrastructure/tracking-run/sequential-run.js";
 import { SplitStageRunner } from "../infrastructure/tracking-run/split-stage-runner.js";
 import { formatCliUsage } from "./command-usage.js";
 import { parseCliArguments } from "./command.js";

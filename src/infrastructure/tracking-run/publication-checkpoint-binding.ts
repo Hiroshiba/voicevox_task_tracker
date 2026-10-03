@@ -5,7 +5,7 @@ import {
   type BaseStateRevision,
 } from "../../application/tracking-run/contracts/run-core.js";
 import type { RuntimeIdentity } from "../../application/tracking-run/contracts/runtime-identity.js";
-import type { ContentDigestPort } from "../../application/tracking-run/ports.js";
+import type { ContentDigestPort } from "../../application/tracking-run/contracts/content-digest-port.js";
 import { runtimeRecoveryPlanSchema } from "../../application/tracking-run/recovery-bootstrap.js";
 import {
   assertHistoricalAiWitnessMatchesBaseSnapshot,

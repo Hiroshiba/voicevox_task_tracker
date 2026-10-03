@@ -1,21 +1,11 @@
 import { type NotificationAction } from "../../application/tracking-run/contracts/closed-values.js";
-import { type UtcIsoDateTime } from "../../domain/index.js";
+import type { CliSchedule } from "./command-schedule.js";
 import type { NotifyOperationsCliCommand } from "./operations-command-input.js";
 import type {
   RecoverRuntimeV2CliCommand,
   RouteStageCliCommand,
   RunStageCliCommand,
 } from "./split-command-input.js";
-
-/** runの予定時刻を現在時刻または明示値から決める指定。 */
-export type CliSchedule =
-  | Readonly<{
-      kind: "current_time";
-    }>
-  | Readonly<{
-      kind: "specified";
-      value: UtcIsoDateTime;
-    }>;
 
 export type OnlineCommandFields = Readonly<{
   configPath: string;

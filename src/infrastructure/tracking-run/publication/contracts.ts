@@ -25,7 +25,6 @@ import type {
 import type { InitialStateCommitResult } from "../initial-state-commit.js";
 import type { NotificationHistoryPagesBuildArtifact } from "../notification-history-pages-build-artifact.js";
 import type { NotificationHistoryPagesDeploymentOutcome } from "../notification-history-pages-deployment-outcome.js";
-import type { SequentialRunDependencies } from "../sequential-run-contracts.js";
 
 import type { RuntimeCredentials, RuntimeExecutionTarget } from "../production-runtime-setup.js";
 
@@ -115,13 +114,3 @@ export type RunPublicationAdapters = Readonly<{
   deployProductionPages: (intent: PagesDeploymentIntent) => Promise<SequentialPagesResult>;
   sendDiscord: typeof sendDiscordDigest;
 }>;
-
-/** 完全性検証後の出力・永続化stageだけを受け持つ依存。 */
-export type DailyPublicationStageHandlers = Pick<
-  SequentialRunDependencies,
-  | "buildPages"
-  | "deployPages"
-  | "settleNotifications"
-  | "finalizeRun"
-  | "writeCollectAnalyzeArtifact"
->;

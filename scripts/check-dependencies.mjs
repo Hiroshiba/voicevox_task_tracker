@@ -5,7 +5,7 @@ import process from "node:process";
 
 import ts from "typescript";
 
-const CHECKER_VERSION = 2;
+const CHECKER_VERSION = 3;
 const CACHE_PATH = "node_modules/.cache/voicevox-task-tracker/dependency-graph.json";
 
 function digest(value) {
@@ -31,28 +31,7 @@ function sourcePath(path) {
     : undefined;
 }
 
-function isTypeOnly(node) {
-  if (ts.isImportDeclaration(node)) {
-    const clause = node.importClause;
-    if (clause?.isTypeOnly === true) return true;
-    return (
-      clause?.name == null &&
-      clause?.namedBindings != null &&
-      ts.isNamedImports(clause.namedBindings) &&
-      clause.namedBindings.elements.length !== 0 &&
-      clause.namedBindings.elements.every((element) => element.isTypeOnly)
-    );
-  }
-  return (
-    node.isTypeOnly ||
-    (node.exportClause != null &&
-      ts.isNamedExports(node.exportClause) &&
-      node.exportClause.elements.length !== 0 &&
-      node.exportClause.elements.every((element) => element.isTypeOnly))
-  );
-}
-
-function runtimeDependencies(file, bytes, options, resolutionCache) {
+function staticDependencies(file, bytes, options, resolutionCache) {
   const source = ts.createSourceFile(file, bytes.toString("utf8"), ts.ScriptTarget.Latest, true);
   const dependencies = new Set();
   function add(specifier) {
@@ -78,7 +57,7 @@ function runtimeDependencies(file, bytes, options, resolutionCache) {
   }
   function visit(node) {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
-      if (!isTypeOnly(node)) add(node.moduleSpecifier);
+      add(node.moduleSpecifier);
       return;
     }
     if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
@@ -163,7 +142,7 @@ function main() {
       const dependencies =
         cached?.sha256 === sha256
           ? cached.dependencies
-          : runtimeDependencies(file, bytes, project.options, resolutionCache);
+          : staticDependencies(file, bytes, project.options, resolutionCache);
       next[path] = { sha256, dependencies };
       graph.set(path, dependencies);
     }

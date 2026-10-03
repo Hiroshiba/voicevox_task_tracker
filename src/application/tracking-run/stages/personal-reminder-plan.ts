@@ -6,7 +6,7 @@ import type { GitHubNodeId } from "../../../domain/types.js";
 import { assertNonNullable } from "../../../util/index.js";
 import { createPersonalReminderPlannedStageProof } from "../contracts/proofs.js";
 import type { StageState } from "../contracts/run-core.js";
-import type { ContentDigestPort } from "../ports.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import type { GraphReconciledRun } from "./graph-reconciliation.js";
 import { planPersonalReminderAi } from "./personal-reminder-plan-ai.js";
 import {

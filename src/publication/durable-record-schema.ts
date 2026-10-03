@@ -4,7 +4,7 @@ import { publicRunDiagnosticsSchema } from "../application/tracking-run/contract
 import { publicationInputsSchema } from "../application/tracking-run/contracts/publication-inputs.js";
 import { baseStateRevisionSchema } from "../application/tracking-run/contracts/run-core.js";
 import { runtimeIdentitySchema } from "../application/tracking-run/contracts/runtime-identity.js";
-import type { ContentDigestPort } from "../application/tracking-run/ports.js";
+import type { ContentDigestPort } from "../application/tracking-run/contracts/content-digest-port.js";
 import { pagesPublicUrlSchema } from "../application/tracking-run/receipt-schema.js";
 import {
   readDurablePublicationRecoveryBootstrap,

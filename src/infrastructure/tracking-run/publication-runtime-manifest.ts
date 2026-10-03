@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { z } from "zod";
 
 import { runtimeToolchainIdentitySchema } from "../../application/tracking-run/contracts/runtime-identity.js";
-import type { ContentDigestPort } from "../../application/tracking-run/ports.js";
+import type { ContentDigestPort } from "../../application/tracking-run/contracts/content-digest-port.js";
 import {
   normalizedBundlePathSchema,
   runtimeRecoveryPlanSchema,

@@ -23,8 +23,8 @@ import {
 } from "../../../graph/relation-candidate-endpoints.js";
 import { assertNonNullable } from "../../../util/index.js";
 import { relationAiDependenciesForCandidates } from "./graph-reconciliation-candidate-dependencies.js";
+import type { GraphFinalItem } from "../contracts/graph-final-item.js";
 import type {
-  GraphFinalItem,
   GraphWorkingCollection,
   GraphWorkingResult,
   GraphWorkingState,

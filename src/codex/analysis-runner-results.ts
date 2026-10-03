@@ -3,12 +3,12 @@ import type { DiagnosticsJsonValue } from "../diagnostics/error-serializer.js";
 import { createUtcIsoDateTime, type AnalysisMetadata } from "../domain/index.js";
 import { assertNonNullable } from "../util/index.js";
 import {
-  AI_ANALYSIS_ELEMENT_REVISIONS,
   aiAnalysisElementGenerationSchema,
   type AiAnalysisElement,
   type AiAnalysisElementGeneration,
   type AiAnalysisElementResult,
 } from "./analysis-elements.js";
+import { AI_ANALYSIS_ELEMENT_REVISIONS } from "./generic-ai-definition.js";
 import type {
   AiAnalysisRunElementResult,
   AiAnalysisRunFailure,

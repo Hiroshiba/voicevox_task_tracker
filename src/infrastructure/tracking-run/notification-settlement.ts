@@ -1,3 +1,14 @@
+import type {
+  NotificationCasOutcome,
+  NotificationHttpOutcome,
+} from "./notification-recovery-contracts.js";
+import type {
+  NotificationSettlementInput,
+  NotificationSettlementPreflightInput,
+  NotificationSettlementPort,
+  NotificationSettlementOutcome,
+  SettledMessageReceipt,
+} from "./notification-settlement-contracts.js";
 import { randomUUID } from "node:crypto";
 
 import { ZodError } from "zod";
@@ -11,10 +22,6 @@ import type { ReceiptChainEvidence } from "../../application/tracking-run/receip
 import { verifyReceiptChain } from "../../application/tracking-run/receipt-chain.js";
 import { parseReceipt } from "../../application/tracking-run/receipt-codec.js";
 import type {
-  InitialStateCommitReceipt,
-  ManualResolutionReceipt,
-  NotificationMessageReceipt,
-  NotificationSettlementReceipt,
   PagesDeploymentReceipt,
   Receipt,
 } from "../../application/tracking-run/receipt-schema.js";
@@ -25,31 +32,19 @@ import {
   StateHistoryError,
 } from "../../persistence/errors.js";
 import { loadStateNotificationLedgers } from "../../persistence/state-ledger-files.js";
-import {
-  parseDurablePublicationRecord,
-  type DurablePublicationRecord,
-} from "../../publication/durable-record-schema.js";
+import { parseDurablePublicationRecord } from "../../publication/durable-record-schema.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import { verifyInitialStateCommitReceiptAtRevision } from "./initial-pages-source.js";
 import { verifyManualResolutionReceipt } from "./manual-resolution.js";
 import { prepareNotificationMessageContext } from "./notification-message-context.js";
-import {
-  deliverNotificationMessage,
-  type NotificationInitialPagesSource,
-  type NotificationMessageDeliveryPort,
-} from "./notification-message-delivery.js";
+import { deliverNotificationMessage } from "./notification-message-delivery.js";
 import { validatePagesSource } from "./notification-message-receipt.js";
 import {
   readNotificationMessageState,
   type NotificationMessageState,
 } from "./notification-message-state.js";
 import { restoreNotificationReceiptHistory } from "./notification-receipt-history.js";
-import {
-  classifyNotificationRecovery,
-  type NotificationCasOutcome,
-  type NotificationHttpOutcome,
-  type NotificationRecoveryDecision,
-} from "./notification-recovery.js";
+import { classifyNotificationRecovery } from "./notification-recovery.js";
 import { commitNotificationSettlement } from "./notification-settlement-commit.js";
 import {
   assertNextReceipt,
@@ -61,77 +56,6 @@ import {
   plannedNotificationMessages,
 } from "./notification-settlement-validation.js";
 import { NotificationStructureError } from "./notification-structure-error.js";
-
-/** 初回Pages公開後の固定outboxとstateを結合する通知settlement入力。 */
-export type NotificationSettlementInput = Readonly<{
-  record: DurablePublicationRecord;
-  initialStateReceipt: InitialStateCommitReceipt;
-  initialPages: NotificationInitialPagesSource;
-  pagesReceipt: PagesDeploymentReceipt;
-  manualResolutionReceipt?: ManualResolutionReceipt;
-}>;
-
-/** 通知の初回stateとPages artifact読込を同じ失敗境界へ渡す。 */
-export type NotificationSettlementPreflightInput = Readonly<{
-  record: DurablePublicationRecord;
-  initialStateReceipt: InitialStateCommitReceipt;
-  loadPages: () => Promise<Pick<NotificationSettlementInput, "initialPages" | "pagesReceipt">>;
-  manualResolutionReceipt?: ManualResolutionReceipt;
-}>;
-
-/** 通知message、state、診断の副作用境界。 */
-export type NotificationSettlementPort = NotificationMessageDeliveryPort;
-
-/** settlementに先行する各messageのreceiptと観測証拠。 */
-export type SettledMessageReceipt = Readonly<{
-  receipt: NotificationMessageReceipt | ManualResolutionReceipt;
-  evidence: ReceiptChainEvidence;
-}>;
-
-/** 後続finalizationまたは失敗処理へ渡す通知stage結果。 */
-export type NotificationSettlementOutcome =
-  | Readonly<{
-      kind: "settled";
-      receipt: NotificationSettlementReceipt;
-      receiptEvidence: ReceiptChainEvidence;
-      messageReceipts: readonly SettledMessageReceipt[];
-      stateRevision: string;
-      notificationCount: number;
-    }>
-  | Readonly<{
-      kind: "manual_resolution_required";
-      receipt: NotificationMessageReceipt;
-      messageReceipts: readonly SettledMessageReceipt[];
-      stateRevision: string;
-    }>
-  | Readonly<{
-      kind: "state_unconfirmed";
-      messageReceipts: readonly SettledMessageReceipt[];
-      stateRevision: string;
-      markerPhase: NotificationRecoveryDecision["markerPhase"];
-      effectCertainty: "committed" | "no_effect" | "ambiguous";
-      casOutcome: NotificationCasOutcome;
-      httpOutcome: NotificationHttpOutcome;
-      observationError?: Error;
-      recoveryDisposition:
-        "operator_conflict_resolution" | "manual_resolution_required" | "resume_from_receipt";
-      lastReceipt?: Receipt;
-      discordMessageId?: string;
-    }>
-  | Readonly<{
-      kind: "structural_failure";
-      messageReceipts: readonly SettledMessageReceipt[];
-      stateRevision: string;
-      markerPhase: NotificationRecoveryDecision["markerPhase"];
-      lastReceipt?: Receipt;
-      failedOperationEffectCertainty: "no_effect" | "committed";
-      casOutcome: NotificationCasOutcome;
-      httpOutcome: NotificationHttpOutcome;
-      observationError?: Error;
-      recoveryDisposition:
-        "operator_conflict_resolution" | "manual_resolution_required" | "resume_from_receipt";
-      cause: NotificationStructureError;
-    }>;
 
 /** 通知stageの失敗結果と元の診断をCLI境界へ渡す。 */
 export class NotificationSettlementFailureError extends Error {

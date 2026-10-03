@@ -10,10 +10,8 @@ import { parseCliArguments } from "../cli/command.js";
 import type { Config } from "../config/index.js";
 import type { UtcIsoDateTime } from "../domain/index.js";
 import { createDailyDependencies } from "../infrastructure/tracking-run/runtime/daily-dependencies.js";
-import {
-  SequentialRunRunner,
-  type DailyRunExecutionResult,
-} from "../infrastructure/tracking-run/sequential-run.js";
+import type { DailyRunExecutionResult } from "../infrastructure/tracking-run/sequential-result.js";
+import { SequentialRunRunner } from "../infrastructure/tracking-run/sequential-run.js";
 import type { GeneratedPublicData } from "../pages/generate-public-data-v20.js";
 import type { RunMetrics } from "../publication/run-report.js";
 import {

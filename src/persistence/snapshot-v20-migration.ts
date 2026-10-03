@@ -5,7 +5,8 @@ import type { LegacyAiCacheEntry } from "./ai-cache-migration.js";
 import { StateFormatError } from "./errors.js";
 import { migrateVersion19FinalGraphProjection } from "./snapshot-final-graph-migration.js";
 import { migrateStateSnapshot as migrateVersion19Snapshot } from "./snapshot-migration.js";
-import { parseStateSnapshot, type StateSnapshot } from "./snapshot-v20.js";
+import { parseStateSnapshot } from "./snapshot-v20.js";
+import type { StateSnapshot } from "./snapshot-v20-contracts.js";
 
 const snapshotVersionSchema = z.object({ schemaVersion: z.string() });
 

@@ -11,7 +11,7 @@ import {
   type WaitingOn,
 } from "../domain/index.js";
 import { type DependencyCycleId } from "../graph/index.js";
-import { notificationCauseSchema, type NotificationCause } from "./notification-cause.js";
+import { notificationCauseSchema, type NotificationCause } from "./notification-cause-contracts.js";
 import type {
   DiscordNotificationItem,
   DiscordNotificationReasonCode,

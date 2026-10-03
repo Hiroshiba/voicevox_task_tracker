@@ -6,7 +6,7 @@ import { serializeCanonicalJsonLine, type Sha256Hash } from "../canonical-json/i
 import {
   AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS,
   AI_ANALYSIS_ELEMENT_REVISIONS,
-} from "../codex/analysis-elements.js";
+} from "../codex/generic-ai-definition.js";
 import { AI_ANALYSIS_ELEMENTS } from "../domain/ai-analysis-elements.js";
 import type {
   Evidence,
@@ -28,7 +28,7 @@ import {
   assertPersonalReminderEvidenceRecordsClosure as assertVersion19PersonalReminderEvidenceRecordsClosure,
 } from "./snapshot-evidence-closure.js";
 import { assertFinalGraphProjectionSemantics } from "./snapshot-final-graph-validation.js";
-import type { StateSnapshot as StateSnapshotVersion20 } from "./snapshot-v20.js";
+import type { StateSnapshot as StateSnapshotVersion20 } from "./snapshot-v20-contracts.js";
 import { createStateSnapshot as createVersion20Snapshot } from "./snapshot-v20.js";
 import { createStateSnapshot as createVersion19Snapshot } from "./snapshot.js";
 

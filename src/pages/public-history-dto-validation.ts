@@ -1,11 +1,25 @@
 import { assertNonNullable } from "../util/index.js";
 import { PublicDtoSemanticError } from "./errors.js";
-import type { PublicNotificationHistoryEntryDto } from "./public-dto-contracts.js";
+type PublicNotificationHistoryEntryInput = Readonly<{
+  sentAt: string;
+  item: Readonly<{
+    displayReference: string;
+    url: string;
+    number: number;
+    type: "issue" | "pull_request";
+    nodeId: string;
+  }>;
+  waitingOn: readonly (
+    | Readonly<{ kind: "item"; displayReference: string }>
+    | Readonly<{ kind: "user" | "team" | "role" | "automation" | "unknown" }>
+  )[];
+  reasons: readonly Readonly<{ reasonCode: string; threshold: unknown }>[];
+}>;
 
 /** 通知履歴entryを送信時刻降順と表示情報で比較する。 */
 export function comparePublicNotificationHistoryEntries(
-  left: PublicNotificationHistoryEntryDto,
-  right: PublicNotificationHistoryEntryDto,
+  left: PublicNotificationHistoryEntryInput,
+  right: PublicNotificationHistoryEntryInput,
 ): number {
   if (left.sentAt > right.sentAt) {
     return -1;
@@ -138,7 +152,7 @@ export function parsePublicItemUrl(urlValue: string): PublicItemUrlIdentity {
 }
 
 export function assertPublicNotificationHistoryEntryItem(
-  entry: PublicNotificationHistoryEntryDto,
+  entry: PublicNotificationHistoryEntryInput,
 ): void {
   const displayIdentity = parsePublicItemDisplayReference(entry.item.displayReference);
   const urlIdentity = parsePublicItemUrl(entry.item.url);

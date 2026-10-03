@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { AnalysisRunStageName } from "../../application/tracking-run/contracts/closed-values.js";
 import type { BaseStateRevision } from "../../application/tracking-run/contracts/run-core.js";
 import type { RuntimeIdentity } from "../../application/tracking-run/contracts/runtime-identity.js";
-import type { ContentDigestPort } from "../../application/tracking-run/ports.js";
+import type { ContentDigestPort } from "../../application/tracking-run/contracts/content-digest-port.js";
 import type { Sha256Hash } from "../../canonical-json/sha256.js";
 import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../../canonical-json/value.js";
 import { planPublication } from "../../publication/plan-publication.js";

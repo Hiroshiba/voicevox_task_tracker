@@ -1,6 +1,9 @@
+import {
+  codexAdapterConfigurationSchema,
+  type CodexAdapterConfiguration,
+  type CodexAdapterDependencies,
+} from "./adapter-contracts.js";
 import { rm } from "node:fs/promises";
-
-import { z } from "zod";
 
 import type {
   AiBudgetAttemptKind,
@@ -9,7 +12,6 @@ import type {
 import type { PersonalReminderPlannedBatch } from "../application/tracking-run/stages/personal-reminder-plan-contracts.js";
 import { hashCanonicalJson, serializeCanonicalJson } from "../canonical-json/index.js";
 import type { DiagnosticsJsonValue } from "../diagnostics/error-serializer.js";
-import { REASONING_EFFORTS } from "../domain/index.js";
 import {
   CODEX_COMMAND,
   createAuthenticationPreflightProcessRequest,
@@ -33,11 +35,10 @@ import {
 } from "./adapter-process-output.js";
 import {
   CodexAttemptBudgetExceededError,
-  type CodexAttemptBudget,
   type CodexInitialAttemptTicket,
 } from "./attempt-budget.js";
 import { estimateAiInputCost } from "./budget.js";
-import { recordCodexDiagnostic, type CodexDiagnosticsContext } from "./diagnostics.js";
+import { recordCodexDiagnostic } from "./diagnostics.js";
 import { createCodexElementOutputSchema } from "./element-output-schema.js";
 import {
   CodexAttemptError,
@@ -66,7 +67,6 @@ import {
   type CodexApiErrorDiagnostic,
   type CodexProcessRequest,
   type CodexProcessResult,
-  type CodexProcessRunner,
 } from "./process-runner.js";
 import { type CodexElementOutput } from "./semantic-validation.js";
 import {
@@ -83,7 +83,6 @@ export {
 
 const OUTPUT_SCHEMA_FILE_NAME = "codex-element-output.schema.json";
 const PERSONAL_REMINDER_OUTPUT_SCHEMA_FILE_NAME = "personal-reminder-output.schema.json";
-const MAX_TIMEOUT_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 1000);
 const TEMPORARY_PROCESS_ERROR_CODES = new Set([
   "EAGAIN",
   "EBUSY",
@@ -94,39 +93,6 @@ const TEMPORARY_PROCESS_ERROR_CODES = new Set([
   "EPIPE",
   "ETIMEDOUT",
 ]);
-
-/** Codex adapterが利用できる認証方式の一覧。 */
-export const CODEX_AUTHENTICATIONS = ["api-key", "auth-json"] as const;
-
-const codexAuthenticationSchema = z.enum(CODEX_AUTHENTICATIONS);
-
-/** Codex adapterが利用する認証方式。 */
-export type CodexAuthentication = z.output<typeof codexAuthenticationSchema>;
-
-const codexAdapterConfigurationSchema = z.strictObject({
-  authentication: codexAuthenticationSchema,
-  model: z.string().min(1, "modelは空にできません"),
-  inputCostUsdPerMillionTokens: z.number().positive(),
-  execution: z.strictObject({
-    timeoutSeconds: z.number().int().positive().max(MAX_TIMEOUT_SECONDS),
-    maxAttempts: z.number().int().positive(),
-    maxSemanticGenerations: z.number().int().min(1).max(3),
-    sandbox: z.literal("read-only"),
-    approvalPolicy: z.literal("never"),
-    reasoningEffort: z.enum(REASONING_EFFORTS),
-  }),
-  retry: z
-    .strictObject({
-      initialDelaySeconds: z.number().nonnegative(),
-      maxDelaySeconds: z.number().nonnegative(),
-    })
-    .refine((retry) => retry.initialDelaySeconds <= retry.maxDelaySeconds, {
-      message: "Codex retryの初期待機時間は最大待機時間以下にしてください",
-    }),
-});
-
-/** Codex adapterのモデルと隔離実行設定。 */
-export type CodexAdapterConfiguration = z.output<typeof codexAdapterConfigurationSchema>;
 
 function parseCodexAdapterConfiguration(
   configurationValue: CodexAdapterConfiguration,
@@ -139,21 +105,6 @@ function parseCodexAdapterConfiguration(
     retry: configurationValue.retry,
   });
 }
-
-/** Codex adapterへ注入する副作用境界。 */
-export type CodexAdapterDependencies = Readonly<{
-  environment: NodeJS.ProcessEnv;
-  processRunner: CodexProcessRunner;
-  attemptBudget: CodexAttemptBudget;
-  initialAttemptTicket?: CodexInitialAttemptTicket;
-  attemptOwner?: Readonly<{ kind: "generic" | "personal"; id: string }>;
-  runtime: Readonly<{
-    sleep: (delayMilliseconds: number) => Promise<void>;
-    random: () => number;
-  }>;
-  diagnostics?: CodexDiagnosticsContext;
-  semanticGenerationObserver?: CodexSemanticGenerationObserver;
-}>;
 
 type AttemptOutcome =
   | Readonly<{

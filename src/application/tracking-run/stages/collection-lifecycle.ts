@@ -1,7 +1,7 @@
 import {
   AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS,
   AI_ANALYSIS_ELEMENT_REVISIONS,
-} from "../../../codex/analysis-elements.js";
+} from "../../../codex/generic-ai-definition.js";
 import {
   AI_ANALYSIS_ELEMENTS,
   aiAnalysisElementReuseProofSchema,
@@ -9,7 +9,7 @@ import {
   type AiAnalysisElementReuseProof,
 } from "../../../domain/ai-analysis-elements.js";
 import { AI_ANALYSIS_DEPENDENCY_ELEMENTS } from "../../../domain/ai-analysis-dependencies.js";
-import type { TrackedItemAiAnalysis } from "../../../domain/types.js";
+import type { TrackedItemAiAnalysis } from "../../../domain/tracked-item-ai-analysis.js";
 import type { PreviousTrackedItem } from "../contracts/previous-state.js";
 
 function hasCurrentAnalysisReuseProof(

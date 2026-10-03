@@ -75,7 +75,5 @@ export type RepositoryInventory = Readonly<{
   allowlistDigest: InventoryCollectedRun["data"]["allowlistDigest"];
 }>;
 
-export type { CanonicalCollectedItems } from "./analysis-contracts.js";
-
 type WithoutImportance<T> = T extends unknown ? Omit<T, "importance"> : never;
 export type PendingTrackedItem = WithoutImportance<TrackedItem>;

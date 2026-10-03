@@ -1,22 +1,12 @@
-import type {
-  GitHubNodeId,
-  GitHubRepositoryId,
-  TrackedItemAiAnalysis,
-} from "../../../domain/types.js";
+import type { GitHubNodeId, GitHubRepositoryId } from "../../../domain/types.js";
+import type { TrackedItemAiAnalysis } from "../../../domain/tracked-item-ai-analysis.js";
 import type { GenericAiItemAdoption } from "./generic-ai-adoption-contracts.js";
 import type { GenericAiAdoptedRun } from "./generic-ai-adoption.js";
 import type { AiResultOrigin } from "./evidence-ai-results.js";
 import { trackedItemAiAnalysisFromAdoption } from "./graph-reconciliation-ai-analysis.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 import { assertRunValueMatches, runValuesById } from "./run-validation-compare.js";
-import type { RunSnapshot } from "./validate-run.js";
-
-/** 最終追跡項目の汎用AI状態が今回の解析値か前回からの保持値かを示す。 */
-export type FinalItemAiLineage = Readonly<{
-  nodeId: GitHubNodeId;
-  repositoryId: GitHubRepositoryId;
-  kind: "analyzed" | "retained";
-}>;
+import type { RunSnapshot, FinalItemAiLineage } from "./run-validation-contracts.js";
 
 /** 今回の解析対象と採用結果から全追跡項目の由来を確定する。 */
 export function createFinalItemAiLineage(

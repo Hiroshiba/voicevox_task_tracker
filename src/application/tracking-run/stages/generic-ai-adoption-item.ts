@@ -12,10 +12,10 @@ import { createAiAnalysisElementSourceGenerationSchema } from "../../../domain/a
 import { isTerminalStatus } from "../../../domain/status.js";
 import { assertNonNullable } from "../../../util/assert-non-nullable.js";
 import { UnreachableError } from "../../../util/unreachable-error.js";
-import type { ContentDigestPort } from "../ports.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import type { DeterministicItemAnalysis } from "./deterministic-item.js";
 import type { GenericAiExecutionOutcome } from "./generic-ai-execution.js";
-import type { GenericAiInputFailurePlan, GenericAiItemPlan } from "./generic-ai-plan.js";
+import type { GenericAiInputFailurePlan, GenericAiItemPlan } from "./generic-ai-plan-contracts.js";
 import type {
   GenericAiAdoptedValue,
   GenericAiElementAdoption,

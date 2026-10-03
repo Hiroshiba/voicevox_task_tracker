@@ -29,7 +29,8 @@ import {
 } from "./publication/workflow-notifications.js";
 import { buildWorkflowPages } from "./publication/workflow-stage-handlers.js";
 import type { ProductionRuntimeAdapters } from "./runtime/adapters.js";
-import { SequentialRunRunner, type DailyRunExecutionResult } from "./sequential-run.js";
+import type { DailyRunExecutionResult } from "./sequential-result.js";
+import { SequentialRunRunner } from "./sequential-run.js";
 import type { RunStageCliCommand } from "./split-command-input.js";
 import { splitStagePaths } from "./split-stage-paths.js";
 import { initialPagesEvidenceForSplitReceipt } from "./split-stage-receipts.js";

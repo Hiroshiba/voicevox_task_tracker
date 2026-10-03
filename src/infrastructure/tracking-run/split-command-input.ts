@@ -2,7 +2,7 @@ import { z } from "zod";
 import { runtimeRecoveryStageV2Schema } from "../../application/tracking-run/contracts/runtime-recovery-v2.js";
 
 import type { NotificationAction } from "../../application/tracking-run/contracts/closed-values.js";
-import type { CliSchedule } from "./command-input.js";
+import type { CliSchedule } from "./command-schedule.js";
 
 export const splitTrackingStageNames = [
   "analyze",

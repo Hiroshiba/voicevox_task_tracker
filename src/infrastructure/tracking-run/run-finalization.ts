@@ -1,3 +1,8 @@
+import type {
+  FinalizeRunInput,
+  FinalizeRunPort,
+  FinalizeRunOutcome,
+} from "./run-finalization-contracts.js";
 import { randomUUID } from "node:crypto";
 
 import { RUN_TRANSACTION_MARKER_STATE_PATH_V1 } from "../../application/tracking-run/contracts/recovery-paths.js";
@@ -5,17 +10,13 @@ import { stateCommitReceiptOperationId } from "../../application/tracking-run/ob
 import type { ReceiptChainEvidence } from "../../application/tracking-run/receipt-chain-schema.js";
 import { verifyReceiptChain } from "../../application/tracking-run/receipt-chain.js";
 import { createReceipt, parseReceipt } from "../../application/tracking-run/receipt-codec.js";
-import type {
-  InitialStateCommitReceipt,
-  NotificationSettlementReceipt,
-  RunFinalizationReceipt,
-} from "../../application/tracking-run/receipt-schema.js";
+import type { StateRunReport } from "../../persistence/state-run-report.js";
+import type { DurablePublicationRecord } from "../../publication/durable-record-schema.js";
+import type {} from "../../application/tracking-run/receipt-schema.js";
 import { hashCanonicalJson } from "../../canonical-json/index.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
-import type { Repository } from "../../domain/index.js";
 import {
   joinStatePath,
-  type StateBranchAdapter,
   type StateBranchCommitInspection,
   type StatePersistenceConfiguration,
 } from "../../persistence/branch-adapter.js";
@@ -27,12 +28,8 @@ import { isOrthogonalStateCommitScope } from "../../persistence/state-commit-met
 import {
   createStateRunReport,
   serializeStateRunReport,
-  type StateRunReport,
 } from "../../persistence/state-run-report.js";
-import {
-  parseDurablePublicationRecord,
-  type DurablePublicationRecord,
-} from "../../publication/durable-record-schema.js";
+import { parseDurablePublicationRecord } from "../../publication/durable-record-schema.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import { verifyInitialStateCommitReceiptAtRevision } from "./initial-pages-source.js";
 import {
@@ -42,35 +39,6 @@ import {
 import { commitRunFinalization } from "./run-finalization-commit.js";
 import { assertFinalRunValues } from "./run-finalization-state.js";
 import { observeStateCommitAtRevision } from "./state-receipt-observation.js";
-
-/** settlementと初回state receiptから最終commitを開始する入力。 */
-export type FinalizeRunInput = Readonly<{
-  record: DurablePublicationRecord;
-  initialStateReceipt: InitialStateCommitReceipt;
-  settlementReceipt: NotificationSettlementReceipt;
-}>;
-
-/** run finalizationのstateと診断境界。 */
-export type FinalizeRunPort = Readonly<{
-  adapter: StateBranchAdapter;
-  configuration: StatePersistenceConfiguration;
-  repositoryInventory: readonly Repository[];
-  knownSecrets: readonly string[];
-  recordDiagnostic: (cause: unknown) => Promise<void>;
-  now: () => Date;
-}>;
-
-/** finalizationの確定状態または未確定状態。 */
-export type FinalizeRunOutcome =
-  | Readonly<{
-      kind: "finalized";
-      receipt: RunFinalizationReceipt;
-      receiptEvidence: ReceiptChainEvidence;
-      stateRevision: string;
-      report: StateRunReport;
-    }>
-  | Readonly<{ kind: "state_unconfirmed"; stateRevision: string }>
-  | Readonly<{ kind: "conflict"; observedHeadRevision: string }>;
 
 async function settledState(
   input: FinalizeRunInput,

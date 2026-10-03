@@ -1,6 +1,6 @@
 import type { InitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence-codec.js";
 import type { StateCommitReceiptEvidence } from "../../application/tracking-run/observed-state-commit.js";
-import type { ContentDigestPort } from "../../application/tracking-run/ports.js";
+import type { ContentDigestPort } from "../../application/tracking-run/contracts/content-digest-port.js";
 import type {
   NotificationMessageReceipt,
   PagesBuildReceipt,

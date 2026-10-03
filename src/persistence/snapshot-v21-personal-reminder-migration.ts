@@ -12,7 +12,7 @@ import {
   type PersonalReminderSubject,
 } from "../domain/personal-reminder-causes.js";
 import { StateSnapshotSemanticError } from "./errors.js";
-import type { StateSnapshot as StateSnapshotVersion20 } from "./snapshot-v20.js";
+import type { StateSnapshot as StateSnapshotVersion20 } from "./snapshot-v20-contracts.js";
 
 type SnapshotItem = StateSnapshotVersion20["items"][number];
 type SnapshotRelation = StateSnapshotVersion20["relations"][number];

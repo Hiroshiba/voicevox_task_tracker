@@ -1,13 +1,12 @@
+import type {
+  NotificationRecoveryDecision,
+  NotificationRecoveryInput,
+} from "./notification-recovery-contracts.js";
 import { randomUUID } from "node:crypto";
 import { ZodError } from "zod";
 
-import type { InitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence-codec.js";
 import { stateCommitReceiptOperationId } from "../../application/tracking-run/observed-state-commit.js";
-import type {
-  InitialStateCommitReceipt,
-  PagesDeploymentReceipt,
-  Receipt,
-} from "../../application/tracking-run/receipt-schema.js";
+import type { Receipt } from "../../application/tracking-run/receipt-schema.js";
 import { assertRunTransactionMarkerTransition } from "../../application/tracking-run/run-transaction-marker.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import type {
@@ -32,38 +31,6 @@ import { nodeContentDigestPort as digest } from "./content-digest.js";
 import { observeManualResolutionAtRevision } from "./manual-resolution-observation.js";
 import { describeNotificationMessage } from "./notification-message-context.js";
 import { readNotificationMessageState } from "./notification-message-state.js";
-
-/** 失敗した通知操作のstate CAS結果。 */
-export type NotificationCasOutcome = "not_attempted" | "no_effect" | "observed" | "unknown";
-
-/** 失敗した通知操作のDiscord HTTP結果。 */
-export type NotificationHttpOutcome = "not_started" | "no_effect" | "committed" | "ambiguous";
-
-/** exact stateと別々の副作用結果から決めた通知の復旧先。 */
-export type NotificationRecoveryDecision = Readonly<{
-  stateRevision: string;
-  markerPhase:
-    | "initial_state_committed"
-    | "notifications_in_progress"
-    | "notifications_settled"
-    | "run_finalized"
-    | "unreadable";
-  recoveryDisposition:
-    "operator_conflict_resolution" | "manual_resolution_required" | "resume_from_receipt";
-  casOutcome: NotificationCasOutcome;
-  httpOutcome: NotificationHttpOutcome;
-  observationError?: Error;
-}>;
-
-export type NotificationRecoveryInput = Readonly<{
-  record: DurablePublicationRecord;
-  initialStateReceipt: InitialStateCommitReceipt;
-  pagesReceipt?: PagesDeploymentReceipt;
-  pagesEvidence?: InitialPagesPublicationEvidence;
-  lastVerifiedReceipt?: Receipt;
-  casOutcome: NotificationCasOutcome;
-  httpOutcome: NotificationHttpOutcome;
-}>;
 
 function receiptRevision(receipt: Receipt | undefined): string | undefined {
   if (receipt?.receiptType === "notification_message") {

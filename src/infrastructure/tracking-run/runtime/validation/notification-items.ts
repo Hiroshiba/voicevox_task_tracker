@@ -1,5 +1,5 @@
+import type { GraphFinalItem } from "../../../../application/tracking-run/contracts/graph-final-item.js";
 import type {
-  GraphFinalItem,
   GraphReconciliationResult,
   GraphReducedItem,
   GraphTrackedItemStaleness,

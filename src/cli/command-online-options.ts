@@ -1,12 +1,10 @@
+import type { CliSchedule } from "../infrastructure/tracking-run/command-schedule.js";
 import {
   notificationActionSchema,
   type NotificationAction,
 } from "../application/tracking-run/contracts/closed-values.js";
 import { createUtcIsoDateTime } from "../domain/index.js";
-import type {
-  BackfillCliCommand,
-  CliSchedule,
-} from "../infrastructure/tracking-run/command-input.js";
+import type { BackfillCliCommand } from "../infrastructure/tracking-run/command-input.js";
 import {
   optionalSingleOption,
   singleOption,

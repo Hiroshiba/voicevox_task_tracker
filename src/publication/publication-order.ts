@@ -4,7 +4,7 @@ import {
   type DiscordNotificationCandidate,
   type DiscordNotificationSelection,
 } from "../discord/index.js";
-import type { StateNotificationLedger } from "../persistence/index.js";
+import type { StateNotificationLedger } from "../persistence/state-documents.js";
 
 function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;

@@ -18,14 +18,10 @@ import {
   type PersonalReminderLocalDecision,
   type PersonalReminderReviewRequestTarget,
   type PersonalReminderStructuralEndInput,
-} from "./personal-reminder-planning.js";
+} from "./personal-reminder-planning-contracts.js";
 import { isPullRequestRevisionResponsibilityResolved } from "./pull-request-state-owner.js";
-import {
-  type GitHubNodeId,
-  type GraphNodeId,
-  type Relation,
-  type UtcIsoDateTime,
-} from "./types.js";
+import { type GitHubNodeId, type GraphNodeId, type UtcIsoDateTime } from "./types.js";
+import { type Relation } from "./relation.js";
 
 function targetMatchesResponsible(
   target: PersonalReminderReviewRequestTarget,

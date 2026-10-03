@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../../canonical-json/value.js";
-import type { ContentDigestPort } from "./ports.js";
+import type { ContentDigestPort } from "./contracts/content-digest-port.js";
 import { trackingRunStageNames } from "./contracts/closed-values.js";
 import { baseStateRevisionSchema } from "./contracts/run-core.js";
 import { preCheckpointFailureStageSchema, type Receipt } from "./receipt-schema.js";

@@ -7,7 +7,7 @@ import type {
   WaitingOn,
 } from "../domain/index.js";
 import { assertNonNullable, UnreachableError } from "../util/index.js";
-import type { CreateNotificationCausesInput } from "./notification-cause.js";
+import type { CreateNotificationCausesInput } from "./notification-cause-contracts.js";
 
 type FreshObservedGitHubItem = FreshObservedGitHubIssue | FreshObservedGitHubPullRequest;
 

@@ -30,7 +30,7 @@ import {
   type PersonalReminderCauseDraft,
   type PersonalReminderCauseSeedReconciliation,
   type PersonalReminderItem,
-} from "./personal-reminder-planning.js";
+} from "./personal-reminder-planning-contracts.js";
 import { type SourceId } from "./source-id.js";
 import { type NormalizedEvent, type UtcIsoDateTime } from "./types.js";
 

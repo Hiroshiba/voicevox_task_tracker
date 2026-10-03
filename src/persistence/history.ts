@@ -1,3 +1,4 @@
+import { historyEventKey } from "./history-event-key.js";
 import { z } from "zod";
 
 import { serializeCanonicalJsonLine } from "../canonical-json/index.js";
@@ -26,7 +27,6 @@ import {
   createProjection,
   createRepositoryExclusionEvents,
   createSetAndRemoveEvents,
-  historyEventKey,
   valuesEqual,
 } from "./history-projection.js";
 import type { StateSnapshot } from "./snapshot-contracts.js";

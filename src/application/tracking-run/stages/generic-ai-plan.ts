@@ -1,3 +1,8 @@
+import type {
+  GenericAiItemPlan,
+  GenericAiPlan,
+  GenericAiPlannedRun,
+} from "./generic-ai-plan-contracts.js";
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import {
   elementInputFingerprints,
@@ -42,17 +47,15 @@ import {
   type AiAnalysisElementInputFingerprint,
 } from "../../../domain/ai-analysis-elements.js";
 import { reusableAiAdoptedElements } from "../../../domain/ai-analysis-current.js";
-import type { GitHubNodeId } from "../../../domain/types.js";
 import { z } from "zod";
 import type { AiAnalysisElementSourceGeneration } from "../../../domain/ai-analysis-source-generations.js";
 import type {
   TrackedItemAiAnalysisCurrentElements,
   TrackedItemAiAnalysisMigrationAdoptedElements,
-} from "../../../domain/types.js";
+} from "../../../domain/tracked-item-ai-analysis.js";
 import { createGenericAiPlannedStageProof } from "../contracts/proofs.js";
-import { projectGenericAiRunCore, type StageState } from "../contracts/run-core.js";
-import type { ContentDigestPort } from "../ports.js";
-import type { FinalSnapshotPlanProjection } from "../contracts/final-snapshot.js";
+import { projectGenericAiRunCore } from "../contracts/run-core.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import { createAiAnalysisRunIdentity } from "./collection-analysis-fingerprint.js";
 import { projectFinalSnapshotPlan } from "./final-snapshot-collection.js";
 import type { DeterministicallyAnalyzedRun } from "./deterministic.js";
@@ -60,64 +63,10 @@ import type { DeterministicItemAnalysis } from "./deterministic-item.js";
 import {
   planGenericAiCachedElements,
   type GenericAiCacheLookupPort,
-  type GenericAiElementPlan,
 } from "./generic-ai-cache-plan.js";
 import type { GenericAiBudgetPlan } from "./generic-ai-budget-plan.js";
 
 export type { GenericAiElementPlan } from "./generic-ai-cache-plan.js";
-
-/** 1項目の全要素と実行用候補を保持する。 */
-export type GenericAiItemPlan = Readonly<{
-  nodeId: GitHubNodeId;
-  selectedElements: readonly AiAnalysisElement[];
-  elements: readonly GenericAiElementPlan[];
-  planning: AnalysisElementPlanning;
-  previousAdopted: TrackedItemAiAnalysisMigrationAdoptedElements;
-  previousEvaluated: TrackedItemAiAnalysisCurrentElements;
-  deterministicStatePriority: boolean;
-  candidate: PreparedAiAnalysisCandidate;
-  executionCandidate?: PreparedAiAnalysisCandidate;
-}>;
-
-/** 汎用AIの全項目について確定した候補と入力。 */
-export type GenericAiInputFailurePlan = Readonly<{
-  candidateId: GitHubNodeId;
-  reason: "input_validation_failed";
-  errorType: string;
-  previousAdopted: TrackedItemAiAnalysisMigrationAdoptedElements;
-  previousEvaluated: TrackedItemAiAnalysisCurrentElements;
-}>;
-
-/** 汎用AIの全項目について確定した候補と入力。 */
-export type GenericAiPlan = Readonly<{
-  identity: AiAnalysisRunIdentity;
-  aiEnabled: boolean;
-  minimumConfidence: number;
-  target?: AiAnalysisTarget;
-  items: readonly GenericAiItemPlan[];
-  budget: GenericAiBudgetPlan;
-  failures: readonly GenericAiInputFailurePlan[];
-  analysisImpactDecisions: readonly Readonly<{
-    candidateId: string;
-    element: AiAnalysisElement;
-    role: "adopted" | "evaluated";
-    decision: AnalysisImpactDecisionForDiagnostics;
-  }>[];
-}>;
-
-/** 汎用AIの候補、厳密な意味入力、再利用判断が確定したrun。 */
-export type GenericAiPlannedRun = StageState<
-  "generic_ai_planned",
-  {
-    approvedRepositories: DeterministicallyAnalyzedRun["data"]["approvedRepositories"];
-    allowlistDigest: DeterministicallyAnalyzedRun["data"]["allowlistDigest"];
-    collection: DeterministicallyAnalyzedRun["data"]["collection"];
-    sourceCatalog: DeterministicallyAnalyzedRun["data"]["sourceCatalog"];
-    facts: DeterministicallyAnalyzedRun["data"]["facts"];
-    plan: GenericAiPlan;
-    snapshotPlan: FinalSnapshotPlanProjection;
-  }
->;
 
 /** 旧stateから計画に必要な事実だけを投影した項目入力。 */
 export type GenericAiPlanningItemSource = Readonly<{

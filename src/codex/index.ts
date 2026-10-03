@@ -1,18 +1,14 @@
+export type { CodexAdapterConfiguration, CodexAdapterDependencies } from "./adapter-contracts.js";
 export {
-  CODEX_AUTHENTICATIONS,
   createCodexEnvironment,
   executeCodexAnalysis,
   executeCodexAuthenticationPreflight,
   executeCodexPersonalReminderAnalysis,
   getCodexEnvironmentVariableAllowlist,
-  type CodexAdapterConfiguration,
-  type CodexAdapterDependencies,
-  type CodexAuthentication,
 } from "./adapter.js";
+export { CODEX_AUTHENTICATIONS, type CodexAuthentication } from "./authentication.js";
 export {
   AI_ANALYSIS_ELEMENTS,
-  AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS,
-  AI_ANALYSIS_ELEMENT_REVISIONS,
   AI_ANALYSIS_ELEMENT_SCHEMA_VERSION,
   AI_ANALYSIS_REUSE_PROOF_SCHEMA_VERSION,
   aiAnalysisDeadlineSchema,
@@ -78,6 +74,10 @@ export {
   type AnalysisElementSourceGeneration,
   type CodexPreservedElements,
 } from "./analysis-elements.js";
+export {
+  AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS,
+  AI_ANALYSIS_ELEMENT_REVISIONS,
+} from "./generic-ai-definition.js";
 export {
   analysisImpactSchema,
   assessAnalysisImpact,

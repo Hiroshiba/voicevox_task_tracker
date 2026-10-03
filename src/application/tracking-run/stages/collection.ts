@@ -3,12 +3,8 @@ import type { GitHubNodeId, TrackingNotificationClass } from "../../../domain/ty
 import { createRunEvaluatedAt, type RunEvaluatedAt } from "../contracts/evaluation-time.js";
 import { createCollectedStageProof } from "../contracts/proofs.js";
 import type { StageState } from "../contracts/run-core.js";
-import type {
-  ClockPort,
-  CollectionGitHubReadPort,
-  ContentDigestPort,
-  DelayPort,
-} from "../ports.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
+import type { ClockPort, CollectionGitHubReadPort, DelayPort } from "../ports.js";
 import type { InventoryCollectedRun } from "./inventory.js";
 import type { CollectionPlanningContext } from "./collection-incremental-plan.js";
 import { legacyReviewRequestInspectionSourceIds } from "./collection-legacy-review-requests.js";

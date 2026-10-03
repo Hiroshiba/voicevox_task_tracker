@@ -7,7 +7,7 @@ import type {
   TrackedItemAiAnalysisCurrentAdoptedElement,
   TrackedItemAiAnalysisMigrationAdoptedElement,
   TrackedItemAiAnalysisMigrationAdoptedElements,
-} from "./types.js";
+} from "./tracked-item-ai-analysis.js";
 
 /** 現在の適用元に対応するAI採用値だけを返す。 */
 export function currentAiAdoptedElement<Element extends AiAnalysisElement>(

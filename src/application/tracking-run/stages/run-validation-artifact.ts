@@ -1,8 +1,8 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import { parsePublicationInputs } from "../contracts/publication-inputs.js";
 import { parsePublicRunDiagnostics } from "../contracts/public-diagnostics.js";
-import type { ContentDigestPort } from "../ports.js";
-import type { RunSnapshot, ValidatedRun } from "./validate-run.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
+import type { RunSnapshot, ValidatedRunPayload } from "./run-validation-contracts.js";
 import type {
   RunAiCacheAddition,
   RunPersonalCacheAddition,
@@ -26,17 +26,14 @@ import { assertFinalItemAiLineage } from "./run-validation-ai-lineage.js";
 import { createRunArtifactValueDigests } from "./run-validation-value-digests.js";
 
 /** JSONへ保存する証明以外の確定済みrun。 */
-export type SerializedValidatedRun = Omit<
-  ValidatedRun<
-    RunSnapshot,
-    readonly EvidenceHistoryInputEvent[],
-    readonly RunAiCacheAddition[],
-    readonly RunPersonalCacheAddition[],
-    RunValidationLedger,
-    RunNotificationSelection,
-    RunValidationMetrics
-  >,
-  "proof"
+export type SerializedValidatedRun = ValidatedRunPayload<
+  RunSnapshot,
+  readonly EvidenceHistoryInputEvent[],
+  readonly RunAiCacheAddition[],
+  readonly RunPersonalCacheAddition[],
+  RunValidationLedger,
+  RunNotificationSelection,
+  RunValidationMetrics
 >;
 
 function assertLedgerTransition(run: SerializedValidatedRun): void {

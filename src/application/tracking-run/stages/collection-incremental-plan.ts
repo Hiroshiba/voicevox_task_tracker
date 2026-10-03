@@ -18,7 +18,7 @@ import type { EnumeratedGitHubItem } from "../../../github/item-enumeration.js";
 import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
 import type { RunExecutionPolicy } from "../request.js";
 import type { AnalysisPreviousState, PreviousCollectionItem } from "../contracts/previous-state.js";
-import type { ContentDigestPort } from "../ports.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import {
   analysisPlanFingerprintForItem,
   createAiAnalysisRunIdentity,

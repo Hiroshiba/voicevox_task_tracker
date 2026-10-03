@@ -3,13 +3,13 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { serializeCanonicalJson } from "../canonical-json/value.js";
-import { SANDBOX_ENVIRONMENT_MANIFEST_PATH } from "./sandbox-environment-manifest.js";
+import { SANDBOX_ENVIRONMENT_MANIFEST_PATH } from "./sandbox-environment-path.js";
 import {
-  assertValidStatePath,
   type StateBranchHead,
   type StateFileReadResult,
   type StateFileUpdate,
-} from "./branch-adapter.js";
+} from "./branch-adapter-contracts.js";
+import { assertValidStatePath } from "./state-path.js";
 
 const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const operationIdSchema = z.string().regex(/^operation:v1:[0-9a-f]{64}$/u);

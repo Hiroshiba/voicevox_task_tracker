@@ -30,7 +30,8 @@ import {
 } from "../publication-runtime.js";
 import { sequentialPagesArtifactPath } from "../sequential-pages-artifact-path.js";
 import { createCollectAnalyzePayload } from "./artifact.js";
-import type { DailyPublicationStageHandlers, RunPublicationAdapters } from "./contracts.js";
+import type { DailyPublicationStageHandlers } from "./stage-handler-contracts.js";
+import type { RunPublicationAdapters } from "./contracts.js";
 import { buildPublicPages } from "./pages.js";
 import { persistValidatedRun } from "./persistence.js";
 

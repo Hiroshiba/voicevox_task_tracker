@@ -4,11 +4,8 @@ import { join } from "node:path";
 
 import { serializeCanonicalJson } from "../canonical-json/index.js";
 import { UnreachableError } from "../util/index.js";
-import type {
-  CodexAdapterConfiguration,
-  CodexAdapterDependencies,
-  CodexAuthentication,
-} from "./adapter.js";
+import type { CodexAdapterConfiguration, CodexAdapterDependencies } from "./adapter-contracts.js";
+import type { CodexAuthentication } from "./authentication.js";
 import { CodexResourceError, CodexTemporaryWorkspaceError } from "./errors.js";
 import { CODEX_AUTHENTICATION_PREFLIGHT_PROMPT } from "./preflight.js";
 import type { CodexProcessRequest } from "./process-runner.js";

@@ -1,5 +1,5 @@
 import { summarizeAiBudgetLedger } from "../application/tracking-run/contracts/ai-budget-ledger.js";
-import type { GenericAiPlan } from "../application/tracking-run/stages/generic-ai-plan.js";
+import type { GenericAiPlan } from "../application/tracking-run/stages/generic-ai-plan-contracts.js";
 import { assertNonNullable } from "../util/index.js";
 import type {
   AiAnalysisRunConfiguration,

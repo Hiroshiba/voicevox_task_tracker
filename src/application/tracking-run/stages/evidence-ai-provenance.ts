@@ -1,6 +1,6 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import { AI_ANALYSIS_ELEMENTS } from "../../../domain/ai-analysis-elements.js";
-import type { TrackedItemAiAnalysis } from "../../../domain/types.js";
+import type { TrackedItemAiAnalysis } from "../../../domain/tracked-item-ai-analysis.js";
 import type { OwnedHistoricalAiResult } from "../contracts/evidence-closure.js";
 import type { GenericAiItemAdoption } from "./generic-ai-adoption-contracts.js";
 import {

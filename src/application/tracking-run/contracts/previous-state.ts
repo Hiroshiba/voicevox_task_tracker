@@ -22,14 +22,14 @@ import type {
   GraphNodeId,
   NotificationLedgerReasonCode,
   OperationsAlertLedgerKind,
-  PendingNotification,
-  Relation,
   Severity,
-  TrackedItem,
-  TrackedItemAiAnalysis,
   TrackedItemState,
   UtcIsoDateTime,
 } from "../../../domain/types.js";
+import type { PendingNotification } from "../../../domain/pending-notification.js";
+import type { Relation } from "../../../domain/relation.js";
+import type { TrackedItem } from "../../../domain/tracked-item.js";
+import type { TrackedItemAiAnalysis } from "../../../domain/tracked-item-ai-analysis.js";
 import type { PublicRepositoryId } from "../../../github/public-repository-allowlist.js";
 import type { VerifiedExternalReference } from "../../../domain/verified-external-reference.js";
 

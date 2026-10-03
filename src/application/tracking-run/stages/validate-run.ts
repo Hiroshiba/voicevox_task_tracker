@@ -1,28 +1,21 @@
+import type { RunSnapshot, ValidatedRunPayload } from "./run-validation-contracts.js";
+export type { RunSnapshot } from "./run-validation-contracts.js";
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type { Sha256Hash } from "../../../canonical-json/sha256.js";
 import { parsePublicationInputs, type PublicationInputs } from "../contracts/publication-inputs.js";
 import { parsePublicRunDiagnostics } from "../contracts/public-diagnostics.js";
 import type { NotificationLedgerEntry, UtcIsoDateTime } from "../../../domain/index.js";
-import type {
-  GitHubNodeId,
-  GitHubRepositoryId,
-  TrackedItemAiAnalysis,
-} from "../../../domain/types.js";
 import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
 import type {
   EvidenceClosureResult,
   EvidenceHistoryInputEvent,
 } from "../contracts/evidence-closure.js";
 import type { FinalSnapshotCandidate } from "../contracts/final-snapshot.js";
-import type { AiBudgetLedgerSummary } from "../contracts/ai-budget-ledger.js";
 import type { BaseStateRevision } from "../contracts/run-core.js";
-import type { ContentDigestPort } from "../ports.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import type { RunExecutionPolicy, RunIdentity } from "../request.js";
 import type { EvidenceClosureAdditions } from "./evidence-closure.js";
-import {
-  createEvidenceClosureWitness,
-  type EvidenceClosureWitness,
-} from "./run-validation-artifact-witness.js";
+import { createEvidenceClosureWitness } from "./run-validation-artifact-witness.js";
 import type { PersonalReminderFinalizedRun } from "./personal-reminder-finalization.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 import {
@@ -33,12 +26,9 @@ import {
 import { assertActualOutwardMatches } from "./run-validation-outward.js";
 import { assertFinalSnapshotCandidateMatches } from "./run-validation-snapshot.js";
 import { assertRunStageLineage } from "./run-validation-lineage.js";
-import { createFinalItemAiLineage, type FinalItemAiLineage } from "./run-validation-ai-lineage.js";
+import { createFinalItemAiLineage } from "./run-validation-ai-lineage.js";
 import { assertAiBudgetLedgerMatches } from "./run-validation-budget.js";
-import {
-  createRunArtifactValueDigests,
-  type RunArtifactValueDigests,
-} from "./run-validation-value-digests.js";
+import { createRunArtifactValueDigests } from "./run-validation-value-digests.js";
 import type {
   RunAiCacheAddition,
   RunPersonalCacheAddition,
@@ -59,39 +49,9 @@ import type { GenericAiAdoptedRun } from "./generic-ai-adoption.js";
 import type { GraphReconciledRun } from "./graph-reconciliation.js";
 
 const runCompletenessProofBrand: unique symbol = Symbol("runCompletenessProof");
-const issuedValidatedRuns = new WeakSet<object>();
 
 /** validatorだけが発行する公開前の完全性証明。 */
 export type RunCompletenessProof = Readonly<{ [runCompletenessProofBrand]: true }>;
-
-export type RunSnapshot = Readonly<{
-  schemaVersion: "23";
-  generatedAt: FinalSnapshotCandidate["generatedAt"];
-  trackingStartAt: FinalSnapshotCandidate["trackingStartAt"];
-  ai: FinalSnapshotCandidate["ai"];
-  finalGraphProjection: FinalSnapshotCandidate["finalGraphProjection"];
-  finalGraphProjectionDigest: FinalSnapshotCandidate["finalGraphProjectionDigest"];
-  items: readonly Readonly<{
-    nodeId: GitHubNodeId;
-    repositoryId: GitHubRepositoryId;
-    aiAnalysis: TrackedItemAiAnalysis;
-    personalReminderCauses: readonly Readonly<{ causeId: string }>[];
-  }>[];
-  relations: readonly Readonly<{ id: string; active: boolean }>[];
-  repositories: readonly Readonly<{
-    id: string;
-    owner: string;
-    name: string;
-    visibility: "public";
-    archived: false;
-    disabled: false;
-  }>[];
-  collection: FinalSnapshotCandidate["collection"];
-  externalReferences: readonly Readonly<{ nodeId: string }>[];
-  verifiedExternalReferences: FinalSnapshotCandidate["verifiedExternalReferences"];
-  graphNodeStateObservations: readonly Readonly<{ nodeId: string }>[];
-  run: Readonly<{ id: string; status: "success" | "fallback"; complete: true }>;
-}>;
 
 /** 完全性を満たし公開段階へ渡すrun。 */
 export type ValidatedRun<
@@ -102,42 +62,10 @@ export type ValidatedRun<
   Ledger extends RunValidationLedger,
   Selection extends RunNotificationSelection,
   Metrics extends RunValidationMetrics,
-> = Readonly<{
-  core: Readonly<{
-    identity: RunIdentity;
-    executionPolicy: RunExecutionPolicy;
-    baseRevision: BaseStateRevision;
-    configDigest: Sha256Hash;
-    allowlistDigest: Sha256Hash;
-    generatedAt: Snapshot["generatedAt"];
-    aiBudget: PersonalReminderFinalizedRun["core"]["aiBudget"];
-    aiBudgetSummary: AiBudgetLedgerSummary;
-  }>;
-  snapshot: Snapshot;
-  historyInputEvents: History;
-  aiCacheAdditions: AiCache;
-  personalReminderAiCacheAdditions: PersonalCache;
-  previousNotificationLedger: Ledger;
-  notificationLedger: Ledger;
-  notificationSelection: Selection;
-  notificationPreview: Selection;
-  publicationInputs: PublicationInputs;
-  repositoryAllowlist: readonly PublicRepository[];
-  metrics: Metrics;
-  diagnostics: readonly string[];
-  evidenceClosureSummary: Readonly<{
-    referenceCount: number;
-    sourceIds: readonly string[];
-  }>;
-  evidenceClosureWitness: EvidenceClosureWitness;
-  finalItemAiLineage: readonly FinalItemAiLineage[];
-  publicDiagnosticsSummary: Readonly<{
-    status: "success" | "fallback";
-    pendingNotificationCount: number;
-  }>;
-  artifactValueDigests: RunArtifactValueDigests;
-  proof: RunCompletenessProof;
-}>;
+> = ValidatedRunPayload<Snapshot, History, AiCache, PersonalCache, Ledger, Selection, Metrics> &
+  Readonly<{ proof: RunCompletenessProof }>;
+
+const issuedValidatedRuns = new WeakSet<object>();
 
 /** validatorへ渡す実保存値と公開安全性の検査口。 */
 export type ValidateRunInput<

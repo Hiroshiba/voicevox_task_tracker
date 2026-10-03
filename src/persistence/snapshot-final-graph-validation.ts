@@ -2,7 +2,7 @@ import { hashCanonicalJson, serializeCanonicalJson } from "../canonical-json/ind
 import { determineDeadlineLevel, type TrackedItemState } from "../domain/index.js";
 import { createFinalGraphProjection } from "../graph/final-graph-projection.js";
 import { StateSnapshotSemanticError } from "./errors.js";
-import type { StateSnapshot } from "./snapshot-v20.js";
+import type { StateSnapshot } from "./snapshot-v20-contracts.js";
 
 function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;

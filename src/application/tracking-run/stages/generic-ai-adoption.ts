@@ -1,4 +1,4 @@
-import type { ContentDigestPort } from "../ports.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import { assertNonNullable } from "../../../util/assert-non-nullable.js";
 import { createGenericAiAdoptedStageProof } from "../contracts/proofs.js";
 import type { StageState } from "../contracts/run-core.js";

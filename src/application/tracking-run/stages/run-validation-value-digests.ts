@@ -1,6 +1,6 @@
 import type { Sha256Hash } from "../../../canonical-json/sha256.js";
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
-import type { ContentDigestPort } from "../ports.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 
 type RunDigestValues = Readonly<{
   core: unknown;

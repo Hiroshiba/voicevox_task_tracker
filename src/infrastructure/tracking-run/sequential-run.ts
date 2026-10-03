@@ -6,8 +6,12 @@ import { assertNonNullable } from "../../util/index.js";
 import type { RunInvocation } from "./run-invocation.js";
 import type { AnalysisStages } from "./runtime/analysis-contracts.js";
 import type { SequentialRunDependencies } from "./sequential-run-contracts.js";
+import type {
+  DailyRunEffects,
+  DailyRunExecutionResult,
+  DailyRunRuntime,
+} from "./sequential-result.js";
 
-import type { CompletedRun } from "../../application/tracking-run/complete-run.js";
 import type { BaseStateRevision } from "../../application/tracking-run/contracts/run-core.js";
 import {
   runTrackingAnalysis,
@@ -15,7 +19,6 @@ import {
   type NewRunStagePorts,
   type TrackingRunFailurePort,
 } from "../../application/tracking-run/engine.js";
-import type { FailedRun } from "../../application/tracking-run/failure-artifact.js";
 import { createFailedRun } from "../../application/tracking-run/failure-artifact.js";
 import type { PreparedRun } from "../../application/tracking-run/prepare-run.js";
 import type { Receipt } from "../../application/tracking-run/receipt-schema.js";
@@ -24,7 +27,7 @@ import type { CollectedRun } from "../../application/tracking-run/stages/collect
 import type { DeterministicallyAnalyzedRun } from "../../application/tracking-run/stages/deterministic.js";
 import type { GenericAiAdoptedRun } from "../../application/tracking-run/stages/generic-ai-adoption.js";
 import type { GenericAiExecutedRun } from "../../application/tracking-run/stages/generic-ai-execution.js";
-import type { GenericAiPlannedRun } from "../../application/tracking-run/stages/generic-ai-plan.js";
+import type { GenericAiPlannedRun } from "../../application/tracking-run/stages/generic-ai-plan-contracts.js";
 import type { GraphReconciledRun } from "../../application/tracking-run/stages/graph-reconciliation.js";
 import type { InventoryCollectedRun } from "../../application/tracking-run/stages/inventory.js";
 import type { UtcIsoDateTime } from "../../domain/index.js";
@@ -72,12 +75,9 @@ import { createRunIdentity } from "./tracking-run/identity.js";
 
 export type { DryRunArtifact } from "./sequential-report.js";
 
+import type { CanonicalCollectedItems } from "./runtime/analysis-contracts.js";
 import type { PublicationValidatedRun } from "../../publication/publication-plan-contracts.js";
-import type {
-  CanonicalCollectedItems,
-  RuntimeConfiguration,
-  RuntimeState,
-} from "./runtime/contracts.js";
+import type { RuntimeConfiguration, RuntimeState } from "./runtime/contracts.js";
 
 /** ネットワークを利用する日次transaction系のサブコマンド。 */
 export type OnlineCliCommand =
@@ -102,36 +102,6 @@ type SequentialEngineStageValues = Readonly<{
   validated: PublicationValidatedRun;
 }> &
   DailyPublicationStageValues;
-
-/** 通知段階の値と送信指標。 */
-export type NotificationStageResult<Value> = Readonly<{
-  value: Value;
-  notificationCount: number;
-  discordSentAt: UtcIsoDateTime | null;
-}>;
-
-/** 日次transaction実行後に生じた副作用を表す。 */
-export type DailyRunEffects = Readonly<{
-  stateCommitted: boolean;
-  pagesBuilt: boolean;
-  discordAttempted: boolean;
-  artifactWritten: boolean;
-}>;
-
-/** 日次transactionのreportと副作用実績。 */
-export type DailyRunExecutionResult = Readonly<{
-  report: RunReport;
-  effects: DailyRunEffects;
-  completedRun?: CompletedRun;
-  failedRun?: FailedRun;
-  failureDiagnosticRecordId?: string;
-  failureEvidence?: FailedRun["evidence"];
-}>;
-
-/** 日次transactionの時刻を注入する境界。 */
-export type DailyRunRuntime = Readonly<{
-  now: () => Date;
-}>;
 
 interface MutableEffects {
   stateCommitted: boolean;

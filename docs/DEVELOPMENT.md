@@ -35,16 +35,16 @@ GitHub App、実Codex、Pages deploy、Discordの認証は不要です。
 `tracker:run`はビルド済みCLIの起動だけを行うため、sourceを変更したら先に`pnpm build`を実行します。
 変更したTaskのcontractと呼出元を確認し、対象のcodec・schema・入力検証を必要な範囲で検証してください。
 
-| command                  | 検査・出力                                                |
-| ------------------------ | --------------------------------------------------------- |
-| `typecheck`              | Nodeとwebのincremental型検査                              |
-| `lint`                   | 実行時import循環、source上限、層の依存方向、ESLint規則    |
-| `check:dependencies`     | srcとwebの実行時import循環。型専用importは除く            |
-| `check:source-lines`     | generated/mockを除いた直接編集sourceの1000行上限          |
-| `format`、`format:check` | Prettierの整形と差分確認                                  |
-| `build`                  | Node向けの`dist/`                                         |
-| `build:workflow-cli`     | 固定entrypointを含む`artifacts/workflow/runtime/`のbundle |
-| `build:web`              | `dist/web/`の静的サイト                                   |
+| command                  | 検査・出力                                                     |
+| ------------------------ | -------------------------------------------------------------- |
+| `typecheck`              | Nodeとwebのincremental型検査                                   |
+| `lint`                   | 静的importとexportの循環、source上限、層の依存方向、ESLint規則 |
+| `check:dependencies`     | srcとwebの静的importとexportの循環。型専用の辺も含む           |
+| `check:source-lines`     | generated/mockを除いた直接編集sourceの1000行上限               |
+| `format`、`format:check` | Prettierの整形と差分確認                                       |
+| `build`                  | Node向けの`dist/`                                              |
+| `build:workflow-cli`     | 固定entrypointを含む`artifacts/workflow/runtime/`のbundle      |
+| `build:web`              | `dist/web/`の静的サイト                                        |
 
 cacheは`node_modules/.cache/voicevox-task-tracker/`へ保存します。
 型検査はincremental、Prettierとsource-lines・依存検査はcacheを使います。

@@ -1,8 +1,6 @@
 import type { AiAnalysisDependency } from "../../../domain/ai-analysis-dependencies.js";
-import type { TrackedItemAiAnalysisApplications } from "../../../domain/types.js";
+import type { TrackedItemAiAnalysisApplications } from "../../../domain/tracked-item-ai-analysis.js";
 import type {
-  Attention,
-  DeadlineLevel,
   ExternalGhostNode,
   GitHubAccountActor,
   GitHubNodeId,
@@ -40,6 +38,7 @@ import type {
 import type { EffectiveAssigneeCandidateContext } from "./deterministic-responsibility.js";
 import type { CollectedItemObservations } from "./collection-production.js";
 import type { GraphReconciliationInput } from "../contracts/run-core.js";
+import type { GraphFinalItem } from "../contracts/graph-final-item.js";
 import type {
   PreviousSnapshotProjection,
   PreviousTrackedItem,
@@ -225,14 +224,3 @@ export type GraphNodeStateObservation = Readonly<{
   state: TrackedItemState;
   observedAt: UtcIsoDateTime;
 }>;
-
-/** 最終グラフを反映した個人催促前の項目値。 */
-export type GraphFinalItem = TrackedItem &
-  Readonly<{
-    importanceAssessment: NaturalLanguageImportanceAssessmentState;
-    deadlineAssessment: NaturalLanguageDeadlineAssessmentState;
-    deadlineLevel: DeadlineLevel;
-    attention: Attention;
-    severity: Severity;
-    severityContext: StalenessSeverityContext;
-  }>;

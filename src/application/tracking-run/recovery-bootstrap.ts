@@ -6,7 +6,7 @@ import {
   runtimeIdentitySchema,
   runtimeToolchainIdentitySchema,
 } from "./contracts/runtime-identity.js";
-import type { ContentDigestPort } from "./ports.js";
+import type { ContentDigestPort } from "./contracts/content-digest-port.js";
 
 const MAX_BOOTSTRAP_BYTES = 8 * 1024 * 1024;
 const MAX_BOOTSTRAP_DEPTH = 64;

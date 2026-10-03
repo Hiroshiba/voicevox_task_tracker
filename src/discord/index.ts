@@ -1,4 +1,11 @@
 export {
+  notificationCauseSchema,
+  type NotificationCause,
+  type NotificationCauseEvidence,
+  type NotificationCauses,
+  type NotificationDependencyCause,
+} from "./notification-cause-contracts.js";
+export {
   sendDiscordDigest,
   sendDiscordOperationsAlert,
   type DiscordDeliveryDependencies,
@@ -23,13 +30,7 @@ export {
   DiscordWebhookSecretMissingError,
   DiscordWebhookSecretReadError,
 } from "./errors.js";
-export {
-  createNotificationCauses,
-  type NotificationCause,
-  type NotificationCauseEvidence,
-  type NotificationCauses,
-  type NotificationDependencyCause,
-} from "./notification-cause.js";
+export { createNotificationCauses } from "./notification-cause.js";
 export type {
   DiscordNotificationCandidate,
   DiscordNotificationCurrentState,

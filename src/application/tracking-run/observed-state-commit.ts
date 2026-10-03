@@ -1,6 +1,6 @@
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import { z } from "zod";
-import type { ContentDigestPort } from "./ports.js";
+import type { ContentDigestPort } from "./contracts/content-digest-port.js";
 import { sealObservedReceipt, type ReceiptDraft } from "./receipt-codec.js";
 import type {
   InitialStateCommitReceipt,

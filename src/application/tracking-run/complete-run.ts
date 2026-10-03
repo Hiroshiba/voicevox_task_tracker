@@ -1,4 +1,4 @@
-import type { ContentDigestPort } from "./ports.js";
+import type { ContentDigestPort } from "./contracts/content-digest-port.js";
 import { verifyReceiptChain, type VerifiedReceiptChain } from "./receipt-chain.js";
 import type { ReceiptChainEntry } from "./receipt-chain-schema.js";
 import { createReceipt } from "./receipt-codec.js";

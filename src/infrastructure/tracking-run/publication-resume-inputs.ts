@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { InitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence-codec.js";
 import { parseInitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence-codec.js";
 import type { StateCommitReceiptEvidence } from "../../application/tracking-run/observed-state-commit.js";
-import type { ContentDigestPort } from "../../application/tracking-run/ports.js";
+import type { ContentDigestPort } from "../../application/tracking-run/contracts/content-digest-port.js";
 import type { ReceiptChainEvidence } from "../../application/tracking-run/receipt-chain-schema.js";
 import {
   verifyReceiptChain,

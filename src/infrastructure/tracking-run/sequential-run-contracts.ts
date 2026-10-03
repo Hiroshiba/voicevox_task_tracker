@@ -11,7 +11,7 @@ import type {
 } from "./runtime/analysis-contracts.js";
 import type { RuntimeConfiguration, RuntimeState } from "./runtime/contracts.js";
 import type { SequentialPublicationInput } from "./sequential-publication-input.js";
-import type { NotificationStageResult } from "./sequential-run.js";
+import type { NotificationStageResult } from "./sequential-result.js";
 
 import type { CompletedRun } from "../../application/tracking-run/complete-run.js";
 import type { AnalysisRunStageName } from "../../application/tracking-run/contracts/closed-values.js";
@@ -33,7 +33,7 @@ import type { RunIdentity, RunRequest } from "../../application/tracking-run/req
 import type { DiagnosticsJsonlRecorder } from "../../diagnostics/recorder.js";
 import type { StateRunReport } from "../../persistence/state-run-report.js";
 import { type RunMetrics, type RunReport } from "../../publication/run-report.js";
-import type { NotificationSettlementOutcome } from "./notification-settlement.js";
+import type { NotificationSettlementOutcome } from "./notification-settlement-contracts.js";
 import type { BoundPublicationCheckpoint } from "./publication-checkpoint-binding.js";
 import type {
   InitialPagesPreparedRun,
@@ -42,7 +42,7 @@ import type {
   NotificationHistoryPublishedRun,
 } from "./publication/contracts.js";
 import type { RecoveryStageInput } from "./recovery-stage.js";
-import type { FinalizeRunOutcome } from "./run-finalization.js";
+import type { FinalizeRunOutcome } from "./run-finalization-contracts.js";
 import { type DryRunArtifact } from "./sequential-report.js";
 
 export type { DryRunArtifact } from "./sequential-report.js";

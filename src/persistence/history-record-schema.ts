@@ -24,7 +24,7 @@ import {
   notificationSentEventVersion4Schema,
   notificationSentEventVersion6Schema,
 } from "./history-notification-schema.js";
-import { historyEventKey } from "./history-projection.js";
+import { historyEventKey } from "./history-event-key.js";
 
 export const historyEventVersion6Schema = z.discriminatedUnion("kind", [
   stateHistoryStateEventSchema.options[0],

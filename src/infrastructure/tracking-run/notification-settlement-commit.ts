@@ -28,7 +28,7 @@ import { assertSettledNotificationContent } from "./notification-settlement-vali
 import type {
   NotificationSettlementInput,
   NotificationSettlementPort,
-} from "./notification-settlement.js";
+} from "./notification-settlement-contracts.js";
 import { NotificationStructureError } from "./notification-structure-error.js";
 
 /** 全message確定後にmarkerと必要な初回Pages証拠を一度のCASへ保存する。 */

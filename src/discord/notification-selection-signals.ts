@@ -10,7 +10,7 @@ import {
 } from "../domain/index.js";
 import { type DependencyCycleId } from "../graph/index.js";
 import { UnreachableError } from "../util/index.js";
-import { type NotificationCause } from "./notification-cause.js";
+import { type NotificationCause } from "./notification-cause-contracts.js";
 import type {
   DiscordNotificationItem,
   DiscordNotificationReasonCode,

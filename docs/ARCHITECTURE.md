@@ -19,8 +19,8 @@ VOICEVOX Task Trackerは、GitHubから得た確定情報を決定論的に評�
 application、domain、graphからCLI、infrastructure、環境変数、ファイルシステム、ネットワークへ依存しません。
 副作用を持つbarrelからpure contractをimportせず、所有するleafを直接参照します。
 CLIがinfraのadapterを組み立て、applicationがportを通して副作用を要求します。
-`pnpm lint`はこの依存方向を検査し、`check:dependencies`はsrcとwebの実行時importの循環を拒否します。
-型専用importは実行時の循環検査から除きます。
+`pnpm lint`はこの依存方向を検査し、`check:dependencies`はsrcとwebの静的importとexportの循環を拒否します。
+型専用のimportとexportも依存辺として検査します。
 
 ## canonical stageは直前の成果物を受け取る
 

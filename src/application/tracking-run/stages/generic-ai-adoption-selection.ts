@@ -12,7 +12,7 @@ import { createAiAnalysisElementSourceGenerationSchema } from "../../../domain/a
 import { assertNonNullable } from "../../../util/assert-non-nullable.js";
 import type { GenericAiExecutionOutcome } from "./generic-ai-execution.js";
 import type { GenericAiElementPlan } from "./generic-ai-cache-plan.js";
-import type { GenericAiItemPlan } from "./generic-ai-plan.js";
+import type { GenericAiItemPlan } from "./generic-ai-plan-contracts.js";
 import type {
   GenericAiAdoptedValue,
   GenericAiElementAdoption,

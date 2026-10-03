@@ -2,7 +2,7 @@ import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type {
   MaterializedEvidenceReference,
   MaterializedReferenceValues,
-} from "./run-validation-artifact-witness.js";
+} from "./run-validation-reference-contracts.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 
 type SourcePath = Readonly<{ sourceId: string; path: readonly (string | number)[] }>;

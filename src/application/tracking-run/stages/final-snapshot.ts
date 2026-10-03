@@ -3,7 +3,7 @@ import type { Evidence, Relation } from "../../../domain/index.js";
 import type { ReconciledGraphEdge } from "../../../graph/index.js";
 import type { EvidenceClosureResult } from "../contracts/evidence-closure.js";
 import type { FinalSnapshotCandidate } from "../contracts/final-snapshot.js";
-import type { ContentDigestPort } from "../ports.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import type { PersonalReminderFinalizedRun } from "./personal-reminder-finalization.js";
 
 function compareStrings(left: string, right: string): number {

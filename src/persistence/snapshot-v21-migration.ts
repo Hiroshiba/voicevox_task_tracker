@@ -14,7 +14,7 @@ import type { LegacyAiCacheEntry } from "./ai-cache-migration.js";
 import { StateFormatError, StateSnapshotSemanticError } from "./errors.js";
 import { migrateVersion19FinalGraphProjection } from "./snapshot-final-graph-migration.js";
 import { migrateStateSnapshot as migrateVersion20Snapshot } from "./snapshot-v20-migration.js";
-import type { StateSnapshot as StateSnapshotVersion20 } from "./snapshot-v20.js";
+import type { StateSnapshot as StateSnapshotVersion20 } from "./snapshot-v20-contracts.js";
 import { version19SnapshotFields } from "./snapshot-v20.js";
 import {
   normalizeLegacyProofForValidation,

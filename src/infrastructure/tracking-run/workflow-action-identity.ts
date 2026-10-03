@@ -4,7 +4,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { parseDocument } from "yaml";
 import { z } from "zod";
 
-import type { ContentDigestPort } from "../../application/tracking-run/ports.js";
+import type { ContentDigestPort } from "../../application/tracking-run/contracts/content-digest-port.js";
 import { normalizedBundlePathSchema } from "../../application/tracking-run/recovery-bootstrap.js";
 import { assertNonNullable } from "../../util/assert-non-nullable.js";
 

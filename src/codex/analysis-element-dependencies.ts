@@ -10,11 +10,11 @@ import {
   type AiAnalysisElementReuseProof,
 } from "../domain/ai-analysis-elements.js";
 import { type AiAnalysisElementSourceGeneration } from "../domain/ai-analysis-source-generations.js";
+import { type AnalysisElementReuseRecord } from "./analysis-elements.js";
 import {
   AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS,
   AI_ANALYSIS_ELEMENT_REVISIONS,
-  type AnalysisElementReuseRecord,
-} from "./analysis-elements.js";
+} from "./generic-ai-definition.js";
 import {
   assessAnalysisImpact,
   type AnalysisImpactAssessment,

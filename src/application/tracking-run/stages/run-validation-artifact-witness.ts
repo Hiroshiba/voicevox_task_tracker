@@ -1,9 +1,9 @@
-import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type {
-  GitHubNodeId,
-  GitHubRepositoryId,
-  TrackedItemAiAnalysis,
-} from "../../../domain/types.js";
+  MaterializedEvidenceReference,
+  MaterializedReferenceValues,
+  ReferenceOwner,
+} from "./run-validation-reference-contracts.js";
+import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type { UtcIsoDateTime } from "../../../domain/index.js";
 import { buildSourceId, parseSourceId, type SourceId } from "../../../domain/source-id.js";
 import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
@@ -15,7 +15,7 @@ import type {
   OwnedHistoricalEvidence,
   ResolvedEvidenceUse,
 } from "../contracts/evidence-closure.js";
-import type { ContentDigestPort } from "../ports.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import { EvidenceCatalog } from "./evidence-catalog.js";
 import { collectOwnedHistoricalAiResults } from "./evidence-closure-historical-ai.js";
 import {
@@ -51,14 +51,8 @@ import {
   assertCacheOwnerWitness,
   createCacheOwnerWitness,
   type CacheOwnerWitness,
-  type RunAiCacheAddition,
-  type RunPersonalCacheAddition,
 } from "./run-validation-cache-witness.js";
 import type { EvidenceClosureAdditions } from "./evidence-closure.js";
-import type {
-  RunNotificationSelection,
-  RunValidationLedger,
-} from "./run-validation-final-checks.js";
 
 /** 分割workflowでsourceと所有範囲を再照合する公開可能な記録。 */
 export type EvidenceClosureWitness = Readonly<{
@@ -70,44 +64,6 @@ export type EvidenceClosureWitness = Readonly<{
   resolvedUses: readonly ResolvedEvidenceUse[];
   materializedReferences: readonly MaterializedEvidenceReference[];
   cacheOwners: CacheOwnerWitness;
-}>;
-
-type ReferenceOwner =
-  Readonly<{ kind: "item"; id: string }> | Readonly<{ kind: "relation"; id: string }>;
-
-export type MaterializedEvidenceReference = Readonly<{
-  sourceId: string;
-  path: readonly (string | number)[];
-  owner: ReferenceOwner;
-}>;
-
-export type MaterializedReferenceValues = Readonly<{
-  snapshot: Readonly<{
-    generatedAt: UtcIsoDateTime;
-    items: readonly Readonly<{
-      nodeId: GitHubNodeId;
-      repositoryId: GitHubRepositoryId;
-      aiAnalysis: TrackedItemAiAnalysis;
-      personalReminderCauses: readonly Readonly<{ causeId: string }>[];
-    }>[];
-    relations: readonly Readonly<{ id: string }>[];
-    collection: Readonly<{
-      repositories: readonly Readonly<{
-        repositoryId: GitHubRepositoryId;
-        items: readonly Readonly<{
-          nodeId: GitHubNodeId;
-          repositoryId: GitHubRepositoryId;
-          aiAnalysis: TrackedItemAiAnalysis;
-        }>[];
-      }>[];
-    }>;
-  }>;
-  historyInputEvents: readonly Readonly<{ itemNodeId: string }>[];
-  aiCacheAdditions: readonly RunAiCacheAddition[];
-  personalReminderAiCacheAdditions: readonly RunPersonalCacheAddition[];
-  previousNotificationLedger: RunValidationLedger;
-  notificationLedger: RunValidationLedger;
-  notificationSelection: RunNotificationSelection;
 }>;
 
 function canonicalSort<Value>(values: readonly Value[]): readonly Value[] {

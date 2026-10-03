@@ -15,7 +15,8 @@ import {
 import { assertNonNullable } from "../util/index.js";
 import { StateSnapshotSemanticError } from "./errors.js";
 import type { StateSnapshot as StateSnapshotVersion19 } from "./snapshot-contracts.js";
-import { createStateSnapshot, type StateSnapshot } from "./snapshot-v20.js";
+import { createStateSnapshot } from "./snapshot-v20.js";
+import type { StateSnapshot } from "./snapshot-v20-contracts.js";
 
 function snapshotGraphEdge(relation: Relation): ReconciledGraphEdge {
   if (!relation.id.startsWith("rel:") || relation.id.length === "rel:".length) {

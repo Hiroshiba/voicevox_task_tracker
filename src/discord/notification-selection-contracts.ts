@@ -22,7 +22,7 @@ import {
   type WaitingOn,
 } from "../domain/index.js";
 import { type DependencyCycleId, type DownstreamImpact } from "../graph/index.js";
-import { type NotificationCauses } from "./notification-cause.js";
+import { type NotificationCauses } from "./notification-cause-contracts.js";
 
 export const MILLISECONDS_PER_HOUR = 60 * 60 * 1000;
 const MILLISECONDS_PER_DAY = 24 * MILLISECONDS_PER_HOUR;

@@ -1,4 +1,4 @@
-import type { ContentDigestPort } from "../application/tracking-run/ports.js";
+import type { ContentDigestPort } from "../application/tracking-run/contracts/content-digest-port.js";
 import { serializeCanonicalJson } from "../canonical-json/value.js";
 import type { AiAnalysisElementInputFingerprint } from "../domain/ai-analysis-elements.js";
 import type {

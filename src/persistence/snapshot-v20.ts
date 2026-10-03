@@ -1,59 +1,19 @@
+import type { StateSnapshot } from "./snapshot-v20-contracts.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 
 import snapshotSchema from "../../schemas/snapshot-v20.schema.json" with { type: "json" };
 import snapshotVersion19Schema from "../../schemas/snapshot.schema.json" with { type: "json" };
-import { serializeCanonicalJsonLine, type Sha256Hash } from "../canonical-json/index.js";
-import type {
-  Evidence,
-  GraphNodeId,
-  SourceId,
-  TrackedItemAiAnalysis,
-  TrackedItemAiAnalysisMigrationAdoptedElements,
-  TrackedItemState,
-} from "../domain/index.js";
-import type { FinalGraphProjection } from "../graph/final-graph-projection.js";
+import { serializeCanonicalJsonLine } from "../canonical-json/index.js";
+import type { Evidence, GraphNodeId, SourceId, TrackedItemState } from "../domain/index.js";
 import { StateFormatError, StateSnapshotSchemaError } from "./errors.js";
-import type {
-  SnapshotCollectionItem,
-  SnapshotTrackedItem,
-  StateSnapshot as StateSnapshotVersion19,
-} from "./snapshot-contracts.js";
+import type { StateSnapshot as StateSnapshotVersion19 } from "./snapshot-contracts.js";
 import {
   assertPersonalReminderEvidenceClosure as assertVersion19PersonalReminderEvidenceClosure,
   assertPersonalReminderEvidenceRecordsClosure as assertVersion19PersonalReminderEvidenceRecordsClosure,
 } from "./snapshot-evidence-closure.js";
 import { assertFinalGraphProjectionSemantics } from "./snapshot-final-graph-validation.js";
 import { createStateSnapshot as createVersion19Snapshot } from "./snapshot.js";
-
-type Version20AiAnalysis =
-  | Omit<Extract<TrackedItemAiAnalysis, { origin: "current" }>, "retainedElements">
-  | (Omit<
-      Extract<TrackedItemAiAnalysis, { origin: "migration" }>,
-      "adoptedElements" | "retainedElements"
-    > &
-      Readonly<{ adoptedElements: TrackedItemAiAnalysisMigrationAdoptedElements }>);
-
-type Version20TrackedItem = Omit<SnapshotTrackedItem, "aiAnalysis"> &
-  Readonly<{ aiAnalysis: Version20AiAnalysis }>;
-type Version20CollectionItem = Omit<SnapshotCollectionItem, "aiAnalysis"> &
-  Readonly<{ aiAnalysis: Version20AiAnalysis }>;
-
-/** tracker-stateへ保存するschema version 20のsnapshot。 */
-export type StateSnapshot = Omit<StateSnapshotVersion19, "schemaVersion" | "items" | "collection"> &
-  Readonly<{
-    schemaVersion: "20";
-    items: readonly Version20TrackedItem[];
-    collection: Readonly<{
-      repositories: readonly (Omit<
-        StateSnapshotVersion19["collection"]["repositories"][number],
-        "items"
-      > &
-        Readonly<{ items: readonly Version20CollectionItem[] }>)[];
-    }>;
-    finalGraphProjection: FinalGraphProjection;
-    finalGraphProjectionDigest: Sha256Hash;
-  }>;
 
 const snapshotVersionSchema = z.object({ schemaVersion: z.literal("20") });
 const ajv = new Ajv2020({

@@ -3,7 +3,6 @@ import { z } from "zod";
 import { notificationReasonSchema } from "../domain/notification-reason.js";
 import { confirmedPersonalReminderTimeBasisSchema } from "../domain/personal-reminder-causes.js";
 import { UnreachableError } from "../util/index.js";
-import type { PublicPersonalReminderResponseDto } from "./public-dto-contracts.js";
 import {
   dateTimeSchema,
   githubUrlSchema,
@@ -12,7 +11,12 @@ import {
   waitingOnSchema,
 } from "./public-dto-primitives.js";
 import { comparePublicNotificationHistoryEntries } from "./public-history-dto-validation.js";
-import { publicPersonalReminderActionSchema } from "./public-reminder-dto-schema.js";
+import {
+  publicPersonalReminderActionSchema,
+  publicPersonalReminderResponseSchema,
+} from "./public-reminder-dto-schema.js";
+
+type PublicPersonalReminderResponseDto = z.output<typeof publicPersonalReminderResponseSchema>;
 
 const publicNotificationHistoryItemSchema = z.strictObject({
   nodeId: identifierSchema,

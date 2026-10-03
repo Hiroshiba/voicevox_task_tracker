@@ -3,11 +3,8 @@ import type {
   PersonalReminderTimeBasis,
 } from "../../../domain/personal-reminder-causes.js";
 import type { SourceId } from "../../../domain/source-id.js";
-import {
-  createGitHubNodeId,
-  type Evidence,
-  type PendingNotification,
-} from "../../../domain/types.js";
+import { createGitHubNodeId, type Evidence } from "../../../domain/types.js";
+import { type PendingNotification } from "../../../domain/pending-notification.js";
 import type { ReconciledGraphEdge } from "../../../graph/reconcile-graph-types.js";
 import type { EvidenceClosureOutward, EvidenceUse } from "../contracts/evidence-closure.js";
 import {
