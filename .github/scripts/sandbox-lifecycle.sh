@@ -571,8 +571,7 @@ prepare_continue() {
 
 prepare_resume_preparing() {
   local source_ref="$1"
-  local code_revision="$2"
-  local analysis_mode_json="$3"
+  local analysis_mode_json="$2"
   local environment_id="$SANDBOX_ENVIRONMENT_ID"
   local branch="${STATE_BRANCH_PREFIX}/${environment_id}"
   local remote_revision
@@ -586,9 +585,17 @@ prepare_resume_preparing() {
   if [[ "$(manifest_environment_id "$manifest")" != "$environment_id" ]] ||
     [[ "$(jq -r '.lifecycle.status' <<< "$manifest")" != preparing ]] ||
     [[ "$(jq -r '.lifecycle.creation.kind' <<< "$manifest")" != reset ]] ||
-    [[ "$(jq -r '.lifecycle.owner.codeRevision' <<< "$manifest")" != "$code_revision" ]] ||
     [[ "$(manifest_source_ref_value "$manifest")" != "$source_ref" ]]; then
     die "復旧対象のpreparing manifestが一致しません"
+  fi
+  local code_revision
+  code_revision="$(jq -r '.lifecycle.owner.codeRevision' <<< "$manifest")"
+  if ! git cat-file -e "${code_revision}^{commit}" 2>/dev/null ||
+    ! git diff --quiet "$code_revision" "$GITHUB_SHA" -- \
+      .github/workflows/_tracking-run.yml \
+      .github/workflows/_tracking-pages.yml \
+      .github/workflows/_tracking-observe.yml; then
+    die "元reset runのworkflow adapterと現在の定義が一致しません"
   fi
   local source_environment_id source_head
   source_environment_id="$(jq -r '.lifecycle.creation.sourceEnvironmentId' <<< "$manifest")"
@@ -604,9 +611,11 @@ prepare_resume_preparing() {
   local attempt
   for ((attempt = 1; attempt <= 12; attempt += 1)); do
     if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$owner_run_id" |
-      jq -e --arg sha "$GITHUB_SHA" --argjson owner_attempt "$owner_run_attempt" '
+      jq -e --arg sha "$code_revision" --arg branch "$source_ref" \
+        --arg title "sandbox-reset-${source_environment_id}" \
+        --argjson owner_attempt "$owner_run_attempt" '
         .status == "completed" and .run_attempt == $owner_attempt and .head_sha == $sha and
-        .event == "workflow_dispatch"
+        .head_branch == $branch and .display_title == $title and .event == "workflow_dispatch"
       ' >/dev/null; then
       owner_terminal=true
       break
@@ -663,7 +672,7 @@ prepare() {
       if [[ "$SANDBOX_OPERATION" == continue ]]; then
         prepare_continue "$source_ref" "$code_revision" "$analysis_mode_json"
       else
-        prepare_resume_preparing "$source_ref" "$code_revision" "$analysis_mode_json"
+        prepare_resume_preparing "$source_ref" "$analysis_mode_json"
       fi
       ;;
     dispose) die "disposeはprepareではなくdispose commandで実行してください" ;;
@@ -711,7 +720,7 @@ recover_info() {
   if [[ "$(manifest_environment_id "$manifest")" != "$SANDBOX_RECOVERY_ENVIRONMENT_ID" ]] ||
     [[ "$(jq -r '.lifecycle.creation.kind' <<< "$manifest")" != reset ]] ||
     [[ "$(jq -r '.lifecycle.creation.sourceEnvironmentId' <<< "$manifest")" != "$SANDBOX_ENVIRONMENT_ID" ]] ||
-    [[ "$(jq -r '.lifecycle.owner.codeRevision' <<< "$manifest")" != "$GITHUB_SHA" ]]; then
+    [[ "$(manifest_source_ref_value "$manifest")" != "${SANDBOX_SOURCE_REF-}" ]]; then
     die "復旧対象のreset manifestが一致しません"
   fi
   local source_head
@@ -720,14 +729,17 @@ recover_info() {
     die "reset元environmentのheadが変更されています"
   fi
   write_output environment_id "$SANDBOX_RECOVERY_ENVIRONMENT_ID"
-  local owner_run_id owner_run_attempt completion_run_id completion_run_attempt
+  local owner_run_id owner_run_attempt owner_code_revision completion_run_id completion_run_attempt
   owner_run_id="$(jq -r '.lifecycle.owner.actionsRunId' <<< "$manifest")"
   owner_run_attempt="$(jq -r '.lifecycle.owner.actionsRunAttempt' <<< "$manifest")"
+  owner_code_revision="$(jq -r '.lifecycle.owner.codeRevision' <<< "$manifest")"
   require_environment GH_TOKEN
   if ! gh api "repos/$GITHUB_REPOSITORY/actions/runs/$owner_run_id" |
-    jq -e --arg sha "$GITHUB_SHA" --argjson attempt "$owner_run_attempt" '
-      .status == "completed" and .head_sha == $sha and .run_attempt == $attempt and
-      .event == "workflow_dispatch"
+    jq -e --arg sha "$owner_code_revision" --arg branch "${SANDBOX_SOURCE_REF}" \
+      --arg title "sandbox-reset-${SANDBOX_ENVIRONMENT_ID}" \
+      --argjson attempt "$owner_run_attempt" '
+      .status == "completed" and .head_sha == $sha and .head_branch == $branch and
+      .display_title == $title and .run_attempt == $attempt and .event == "workflow_dispatch"
     ' >/dev/null; then
     die "元reset runと子effectの終了を確認できません"
   fi
@@ -740,6 +752,9 @@ recover_info() {
   fi
   write_output completion_run_id "$completion_run_id"
   write_output completion_run_attempt "$completion_run_attempt"
+  write_output owner_run_id "$owner_run_id"
+  write_output owner_run_attempt "$owner_run_attempt"
+  write_output owner_code_revision "$owner_code_revision"
 }
 
 promote() {
@@ -787,17 +802,27 @@ promote() {
     write_output ready_revision "$remote_revision"
     return
   fi
-  if [[ "$(jq -r '.schemaVersion' <<< "$manifest")" == 2 ]] &&
-    [[ "$(jq -r '.lifecycle.owner.codeRevision' <<< "$manifest")" != "$GITHUB_SHA" ]]; then
-    die "昇格対象のcode revisionが一致しません"
-  fi
-  local owner_run_id owner_run_attempt
+  local owner_run_id owner_run_attempt owner_code_revision
   owner_run_id="$(jq -r --arg current "$GITHUB_RUN_ID" '.lifecycle.owner.actionsRunId // $current' <<< "$manifest")"
   owner_run_attempt="$(jq -r --arg current "$GITHUB_RUN_ATTEMPT" '.lifecycle.owner.actionsRunAttempt // $current' <<< "$manifest")"
-  if [[ "${SANDBOX_OPERATION-}" != resume-preparing && -z "${SANDBOX_RECOVERY_COMPLETION_RUN_ID-}" ]] &&
+  owner_code_revision="$(jq -r --arg current "$GITHUB_SHA" '.lifecycle.owner.codeRevision // $current' <<< "$manifest")"
+  if [[ "${SANDBOX_OPERATION-}" == recover-reset ]]; then
+    require_environment SANDBOX_RECOVERY_OWNER_RUN_ID
+    require_environment SANDBOX_RECOVERY_OWNER_RUN_ATTEMPT
+    require_environment SANDBOX_RECOVERY_OWNER_CODE_REVISION
+    if [[ "$owner_run_id" != "$SANDBOX_RECOVERY_OWNER_RUN_ID" ]] ||
+      [[ "$owner_run_attempt" != "$SANDBOX_RECOVERY_OWNER_RUN_ATTEMPT" ]] ||
+      [[ "$owner_code_revision" != "$SANDBOX_RECOVERY_OWNER_CODE_REVISION" ]]; then
+      die "復旧対象の元Actions runがmanifestと一致しません"
+    fi
+  elif [[ "${SANDBOX_OPERATION-}" != resume-preparing ]] &&
     { [[ "${SANDBOX_PROMOTION_OWNER_RUN_ID:-$GITHUB_RUN_ID}" != "$owner_run_id" ]] ||
       [[ "${SANDBOX_PROMOTION_OWNER_RUN_ATTEMPT:-$GITHUB_RUN_ATTEMPT}" != "$owner_run_attempt" ]]; }; then
     die "昇格操作の元Actions runがmanifestと一致しません"
+  fi
+  if [[ "${SANDBOX_OPERATION-}" != recover-reset && "${SANDBOX_OPERATION-}" != resume-preparing ]] &&
+    [[ "$owner_code_revision" != "$GITHUB_SHA" ]]; then
+    die "昇格対象のcode revisionが一致しません"
   fi
   local completion_run_id="${SANDBOX_PROMOTION_OWNER_RUN_ID:-$GITHUB_RUN_ID}"
   local completion_run_attempt="${SANDBOX_PROMOTION_OWNER_RUN_ATTEMPT:-$GITHUB_RUN_ATTEMPT}"
@@ -806,6 +831,7 @@ promote() {
     --arg final_revision "$SANDBOX_EXPECTED_REVISION" \
     --arg tracking_run_id "$SANDBOX_TRACKING_RUN_ID" \
     --arg owner_run_id "$completion_run_id" \
+    --arg owner_code_revision "$owner_code_revision" \
     --argjson owner_run_attempt "$completion_run_attempt" '
       .environmentId == $environment_id and
       .finalStateRevision == $final_revision and
@@ -814,7 +840,7 @@ promote() {
       .productionDiscordSent == false and
       (if .schemaVersion == 2 then
         .actionsRunId == $owner_run_id and .actionsRunAttempt == $owner_run_attempt and
-        (if .scenarioId == "continuity" then .codeRevision == env.GITHUB_SHA else
+        (if .scenarioId == "continuity" then .codeRevision == $owner_code_revision else
           .scenarioId == "send-clear-rejection" or .scenarioId == "hold" or
           .scenarioId == "acknowledge-current" or .scenarioId == "ambiguous-retry" or
           .scenarioId == "ambiguous-acknowledge" end)
@@ -835,10 +861,19 @@ promote() {
     fi
     local coverage_digest
     coverage_digest="sha256:$(sha256sum "$SANDBOX_COVERAGE_PATH" | cut -d' ' -f1)"
-    if ! jq -e --arg digest "$coverage_digest" '.schemaVersion == 2 and .coverageDigest == $digest' "$SANDBOX_RESULT_PATH" >/dev/null; then
+    if ! jq -e --arg digest "$coverage_digest" \
+      '.schemaVersion == 2 and .coverageDigest == $digest' "$SANDBOX_RESULT_PATH" >/dev/null ||
+      ! jq -e --arg code_revision "$owner_code_revision" --arg environment_id "$SANDBOX_ENVIRONMENT_ID" \
+        --arg tracking_run_id "$SANDBOX_TRACKING_RUN_ID" --arg final_revision "$SANDBOX_EXPECTED_REVISION" \
+        --arg owner_run_id "$completion_run_id" --argjson owner_run_attempt "$completion_run_attempt" '
+        .schemaVersion == 2 and .run.codeRevision == $code_revision and
+        .run.environmentId == $environment_id and .run.trackingRunId == $tracking_run_id and
+        .run.finalStateRevision == $final_revision and .run.actionsRunId == $owner_run_id and
+        .run.actionsRunAttempt == $owner_run_attempt
+      ' "$SANDBOX_COVERAGE_PATH" >/dev/null; then
       die "sandbox coverage digestが完了情報と一致しません"
     fi
-    coverage_json="$(jq -cn --arg digest "$coverage_digest" '{kind: "verified", digest: $digest}')"
+    coverage_json="$(jq -cnS --arg digest "$coverage_digest" '{kind: "verified", digest: $digest}')"
   else
     if ! jq -e '.schemaVersion == 1' "$SANDBOX_RESULT_PATH" >/dev/null; then
       die "sandbox coverageが必要です"

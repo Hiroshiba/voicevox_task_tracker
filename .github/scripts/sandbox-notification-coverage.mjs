@@ -145,9 +145,10 @@ function main() {
   const analysisSourceActionsRunId = required("SANDBOX_ANALYSIS_SOURCE_RUN_ID");
   if (
     record.runtimeRecoveryPlan.kind !== "workflow_bundle" ||
-    record.runtimeRecoveryPlan.workflowRunId !== analysisSourceActionsRunId
+    record.runtimeRecoveryPlan.workflowRunId !== analysisSourceActionsRunId ||
+    record.runtimeRecoveryPlan.codeRevision !== context.codeRevision
   ) {
-    throw new TypeError("解析段階記録の元Actions runが一致しません");
+    throw new TypeError("解析段階記録の元Actions runまたはcode revisionが一致しません");
   }
   if (pending != null) {
     assertPendingSandboxStageCoverage(pending);

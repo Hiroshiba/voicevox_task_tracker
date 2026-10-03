@@ -172,7 +172,7 @@ receipt消失時は同じ入力の解決操作を再実行し、実Gitの親子s
 create/resetは公開seedから新しいenvironmentと`sandbox-state/env-<run ID>-<attempt>`を作り、`preparing` manifestを保存します。
 新環境はstate、receipt、必要なcoverageの検証が終わると`ready`になります。`preparing`の環境では通常のcontinueとdisposeを実行できません。旧形式のmanifestはreadyとして読み、次のcontinueが完了したときに現行形式へ保存します。
 workflowの排他groupはenvironment ID単位です。resetは旧環境のgroupで読込から新環境のready確定まで実行し、旧branchを上書きしません。異なるenvironmentの操作は並行できます。continueは同じenvironmentの前回stateを読み、disposeは取得したheadから変更されていない場合だけ削除します。待機中のrunがActionsによって新しい待機runへ置換された場合は、取り消されたrunのjobが始まっていないこととstate revisionが変わっていないことを確認し、無効果として扱います。必要な操作は改めて起動します。
-新branch作成後にresetが失敗した場合、そのbranchは`preparing`のまま残ります。確定したresult、receipt、coverage artifactがそろっていれば`recover-reset`に旧environment IDと新environment IDを指定します。確定結果を持つrunが元resetと異なる場合は、そのActions run IDとattemptも指定します。復旧は元runの終了、旧環境head、stateとreceiptを再検証し、二重のtrackingや通知を行わずreadyへ進めます。証拠が欠ける場合やheadが変わった場合は停止します。
+新branch作成後にresetが失敗した場合、そのbranchは`preparing`のまま残ります。確定したresult、receipt、coverage artifactがそろっていれば`recover-reset`に旧environment IDと新environment IDを指定します。確定結果を持つrunが元resetと異なる場合は、そのActions run IDとattemptも指定します。復旧はmanifestに記録した元reset runのID、attempt、code revision、終了状態、旧環境headと、新環境のstate、receipt、coverageを照合します。検証CLIは元のcode revisionから組み立て、追跡や通知を再実行せずmanifestだけをreadyへ進めます。source branchのheadが進んでも復旧できます。証拠が欠ける場合や新旧環境のheadが変わった場合は停止します。
 Discordと本番Pagesへは書き込まず、実GitHub収集・実AI・sandbox state更新と、Pages/Discordのrecording portを組み合わせます。
 同じCodex認証を使うrunは前のrunが完了してから起動します。
 
@@ -193,8 +193,9 @@ preflightだけのAI実試行を、対象項目の推論成功として数えま
 | ambiguous-acknowledge | send / recorded_ambiguous、その後acknowledge / recorded_success | 確認済みへ進み、自動再送と送信履歴の追加をしない               |
 
 各scenarioのfirstはreset_sourceをseedにしたresetを使います。
-曖昧なfirstは`preparing`のまま停止します。resolutionは`resume-preparing`で元のpending revision、delivery operation、Actions run IDとattempt、tracking run IDを渡します。元reset runと子effectの終了、旧環境head、新旧環境の進行中runを確認してから、既存の手動解決と同じrunの再開を実行します。finalized receiptが確定した後に新環境をreadyへ進めます。
+曖昧なfirstは`preparing`のまま停止します。resolutionは`resume-preparing`で元のpending revision、delivery operation、Actions run IDとattempt、tracking run IDを渡します。元reset runと子effectの終了、旧環境head、新旧環境の進行中runを確認し、元runのcode revisionと現在のreusable workflow定義を照合してから、既存の手動解決と同じrunの再開を実行します。source branchが進んでいても元runのcode revisionとruntimeを使います。workflow定義が一致しなければ効果を加えず停止します。finalized receiptが確定した後に新環境をreadyへ進めます。
 notification controlのpriorへ先行scenarioの実行ID、environment、最終revision、coverage digestを順番どおり指定し、機械検証を通します。
+通知matrixは各scenarioの元reset run、manifest、永続record、runtime bundle、coverage、完了resultを個別に照合します。scenario間でsource branchのcommitが異なっていても、各runのcode revisionと証拠が一致すれば集約できます。
 曖昧なfirstではpendingを示す失敗結果も必要な証拠です。すべてのfirstを通常完了として扱いません。
 入力schemaは`.github/scripts/parse-sandbox-recording-control.mjs`を正本とします。
 

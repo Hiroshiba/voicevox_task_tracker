@@ -135,18 +135,9 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ${{ github.repository }}
-          ref: ${{ inputs.source_ref }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: true
-      - name: Node.jsと依存関係を準備
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: .node-version
-      - name: state検証commandを準備
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
-          pnpm build
       - name: 復旧対象の所有者と旧環境headを照合
         id: owner
         env:
@@ -158,17 +149,37 @@ jobs:
           SANDBOX_RECOVERY_COMPLETION_RUN_ATTEMPT: ${{ inputs.recovery_run_attempt }}
           GH_TOKEN: ${{ github.token }}
         run: .github/scripts/sandbox-lifecycle.sh recover-info
+      - name: 元runのコードを取得
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ steps.owner.outputs.owner_code_revision }}
+          path: recovery-source
+          persist-credentials: false
+      - name: 元runのNode.jsと依存関係を準備
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: recovery-source/.node-version
+      - name: 元runのstate検証commandを準備
+        run: |
+          corepack enable
+          pnpm --dir recovery-source install --frozen-lockfile
+          pnpm --dir recovery-source build
       - name: 元Actions runと確定artifactを取得
         env:
           GH_TOKEN: ${{ github.token }}
           SANDBOX_OWNER_RUN_ID: ${{ steps.owner.outputs.completion_run_id }}
           SANDBOX_OWNER_RUN_ATTEMPT: ${{ steps.owner.outputs.completion_run_attempt }}
+          SANDBOX_ORIGINAL_RUN_ID: ${{ steps.owner.outputs.owner_run_id }}
+          SANDBOX_OWNER_CODE_REVISION: ${{ steps.owner.outputs.owner_code_revision }}
           SANDBOX_RECOVERY_ENVIRONMENT_ID: ${{ steps.owner.outputs.environment_id }}
           SANDBOX_RECOVERY_SOURCE_ENVIRONMENT_ID: ${{ inputs.environment_id }}
         run: |
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SANDBOX_OWNER_RUN_ID" \
-            | jq -e --arg sha "$GITHUB_SHA" --arg branch "$GITHUB_REF_NAME" --argjson attempt "$SANDBOX_OWNER_RUN_ATTEMPT" --arg old "$SANDBOX_RECOVERY_SOURCE_ENVIRONMENT_ID" --arg next "$SANDBOX_RECOVERY_ENVIRONMENT_ID" \
-              '.status == "completed" and .head_sha == $sha and .head_branch == $branch and .run_attempt == $attempt and .event == "workflow_dispatch" and (.display_title == ("sandbox-reset-" + $old) or .display_title == ("sandbox-resume-preparing-" + $next))' >/dev/null
+            | jq -e --arg sha "$SANDBOX_OWNER_CODE_REVISION" --arg branch "$GITHUB_REF_NAME" --argjson attempt "$SANDBOX_OWNER_RUN_ATTEMPT" --arg old "$SANDBOX_RECOVERY_SOURCE_ENVIRONMENT_ID" --arg next "$SANDBOX_RECOVERY_ENVIRONMENT_ID" --arg original "$SANDBOX_ORIGINAL_RUN_ID" \
+              '.status == "completed" and .head_branch == $branch and .run_attempt == $attempt and .event == "workflow_dispatch" and
+                (if (.id | tostring) == $original then .head_sha == $sha and .display_title == ("sandbox-reset-" + $old)
+                 else (.head_sha | type == "string" and test("^[0-9a-f]{40}$")) and .display_title == ("sandbox-resume-preparing-" + $next) end)' >/dev/null
           gh run download "$SANDBOX_OWNER_RUN_ID" --repo "$GITHUB_REPOSITORY" \
             --name "sandbox-result-$SANDBOX_RECOVERY_ENVIRONMENT_ID-$SANDBOX_OWNER_RUN_ID-$SANDBOX_OWNER_RUN_ATTEMPT" \
             --dir "$RUNNER_TEMP/recovery"
@@ -190,18 +201,20 @@ jobs:
           git clone --quiet --no-checkout --no-hardlinks . "$RUNNER_TEMP/sandbox-state"
           git -C "$RUNNER_TEMP/sandbox-state" fetch --quiet origin "refs/heads/sandbox-state/$SANDBOX_RECOVERY_ENVIRONMENT_ID"
           git -C "$RUNNER_TEMP/sandbox-state" checkout --quiet --detach "$final_revision"
-          node dist/cli/tracker-run.js verify-state --state-directory "$RUNNER_TEMP/sandbox-state/state" \
-            --state-revision "$final_revision" > "$RUNNER_TEMP/state-verification.txt"
+          (cd recovery-source && node dist/cli/tracker-run.js verify-state --state-directory "$RUNNER_TEMP/sandbox-state/state" \
+            --state-revision "$final_revision") > "$RUNNER_TEMP/state-verification.txt"
           run_suffix="${tracking_run_id#tracker-run:}"
-          node dist/cli/tracker-run.js verify-receipt-chain \
-            --input "$RUNNER_TEMP/complete/$run_suffix/receipt-chain.json" \
-            > "$RUNNER_TEMP/receipt-verification.json"
+          (cd recovery-source && node dist/cli/tracker-run.js verify-receipt-chain \
+            --input "$RUNNER_TEMP/complete/$run_suffix/receipt-chain.json") > "$RUNNER_TEMP/receipt-verification.json"
       - name: 確定receiptから新環境をreadyへ復旧
         env:
+          SANDBOX_OPERATION: recover-reset
           SANDBOX_ENVIRONMENT_ID: ${{ steps.owner.outputs.environment_id }}
           SANDBOX_PROMOTION_OWNER_RUN_ID: ${{ steps.owner.outputs.completion_run_id }}
           SANDBOX_PROMOTION_OWNER_RUN_ATTEMPT: ${{ steps.owner.outputs.completion_run_attempt }}
-          SANDBOX_RECOVERY_COMPLETION_RUN_ID: ${{ inputs.recovery_run_id }}
+          SANDBOX_RECOVERY_OWNER_RUN_ID: ${{ steps.owner.outputs.owner_run_id }}
+          SANDBOX_RECOVERY_OWNER_RUN_ATTEMPT: ${{ steps.owner.outputs.owner_run_attempt }}
+          SANDBOX_RECOVERY_OWNER_CODE_REVISION: ${{ steps.owner.outputs.owner_code_revision }}
           SANDBOX_RESULT_PATH: ${{ runner.temp }}/recovery/sandbox-result.json
           SANDBOX_STATE_VERIFICATION_PATH: ${{ runner.temp }}/state-verification.txt
           SANDBOX_RECEIPT_VERIFICATION_PATH: ${{ runner.temp }}/receipt-verification.json
@@ -416,7 +429,8 @@ jobs:
           SANDBOX_RESOLUTION_DECISION: ${{ needs.prepare.outputs.notification_decision }}
           SANDBOX_PENDING_REPORT_PATH: ${{ runner.temp }}/pending/sandbox-pending.json
           SANDBOX_TARGET_OUTPUT_PATH: ${{ runner.temp }}/manual-target.json
-        run: node dist/cli/sandbox-notification-evidence.js target
+          SANDBOX_CODE_REVISION: ${{ needs.prepare.outputs.code_revision }}
+        run: GITHUB_SHA="$SANDBOX_CODE_REVISION" node dist/cli/sandbox-notification-evidence.js target
       - name: 手動判断を同じrunへCAS保存
         env:
           TRACKING_EFFECT_TARGET: sandbox
@@ -438,7 +452,8 @@ jobs:
           SANDBOX_RESOLUTION_DECISION: ${{ needs.prepare.outputs.notification_decision }}
           SANDBOX_PENDING_REPORT_PATH: ${{ runner.temp }}/pending/sandbox-pending.json
           SANDBOX_MANUAL_RECEIPT_PATH: artifacts/workflow/manual-resolution-receipt.json
-        run: node dist/cli/sandbox-notification-evidence.js resolved
+          SANDBOX_CODE_REVISION: ${{ needs.prepare.outputs.code_revision }}
+        run: GITHUB_SHA="$SANDBOX_CODE_REVISION" node dist/cli/sandbox-notification-evidence.js resolved
       - name: 同じrunの手動解決receiptを保存
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -582,9 +597,20 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ${{ github.repository }}
-          ref: ${{ needs.prepare.outputs.code_revision }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: true
+      - name: 元runのコードを取得
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ needs.prepare.outputs.code_revision }}
+          path: recovery-source
+          persist-credentials: false
+      - name: 元runのNode.jsを準備
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: recovery-source/.node-version
       - name: sandbox stateの完了revisionをremoteから確認
         id: final_state
         env:
@@ -643,17 +669,15 @@ jobs:
           TRACKING_STATE_REF: ${{ needs.prepare.outputs.state_branch }}
         run: |
           corepack enable
-          pnpm install --frozen-lockfile
-          pnpm build
+          pnpm --dir recovery-source install --frozen-lockfile
+          pnpm --dir recovery-source build
           git clone --quiet --no-checkout --no-hardlinks . "$RUNNER_TEMP/sandbox-state"
           git -C "$RUNNER_TEMP/sandbox-state" checkout --quiet --detach "$SANDBOX_FINAL_REVISION"
-          node dist/cli/tracker-run.js verify-state --state-directory "$RUNNER_TEMP/sandbox-state/state" \
-            --state-revision "$SANDBOX_FINAL_REVISION" \
-            > "$RUNNER_TEMP/state-verification.txt"
+          (cd recovery-source && node dist/cli/tracker-run.js verify-state --state-directory "$RUNNER_TEMP/sandbox-state/state" \
+            --state-revision "$SANDBOX_FINAL_REVISION") > "$RUNNER_TEMP/state-verification.txt"
           run_suffix="${SANDBOX_TRACKING_RUN_ID#tracker-run:}"
-          node dist/cli/tracker-run.js verify-receipt-chain \
-            --input "$RUNNER_TEMP/complete/$run_suffix/receipt-chain.json" \
-            > "$RUNNER_TEMP/receipt-verification.json"
+          (cd recovery-source && node dist/cli/tracker-run.js verify-receipt-chain \
+            --input "$RUNNER_TEMP/complete/$run_suffix/receipt-chain.json") > "$RUNNER_TEMP/receipt-verification.json"
       - name: ambiguous初回の停止証拠を再取得
         if: needs.prepare.outputs.notification_phase == 'resolution'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -673,6 +697,7 @@ jobs:
         env:
           SANDBOX_ENVIRONMENT_ID: ${{ needs.prepare.outputs.environment_id }}
           SANDBOX_CONTEXT_PATH: ${{ runner.temp }}/context/sandbox-context.json
+          SANDBOX_CODE_REVISION: ${{ needs.prepare.outputs.code_revision }}
           SANDBOX_CHECKPOINT_PATH: ${{ runner.temp }}/checkpoint/validated-run.json
           SANDBOX_SIDECAR_PATH: ${{ runner.temp }}/checkpoint/validated-run.json.sidecar.json
           SANDBOX_ANALYSIS_SOURCE_RUN_ID: ${{ github.run_id }}
@@ -698,7 +723,7 @@ jobs:
           SANDBOX_MARKER_PATH="$RUNNER_TEMP/sandbox-state/state/run-transaction-marker-v1.json" \
           SANDBOX_SNAPSHOT_PATH="$RUNNER_TEMP/sandbox-state/state/snapshot.json" \
           SANDBOX_LEDGER_PATH="$RUNNER_TEMP/sandbox-state/state/notification-ledger.json" \
-            node .github/scripts/sandbox-coverage.mjs report
+            GITHUB_SHA="$SANDBOX_CODE_REVISION" node recovery-source/.github/scripts/sandbox-coverage.mjs report
       - name: 通知scenarioのcoverageと完了情報を作成
         if: needs.prepare.outputs.notification_phase != 'none'
         env:
@@ -707,6 +732,7 @@ jobs:
           SANDBOX_NOTIFICATION_PHASE: ${{ needs.prepare.outputs.notification_phase }}
           SANDBOX_RECORDING_OUTCOME: ${{ needs.prepare.outputs.recording_outcome }}
           SANDBOX_CONTEXT_PATH: ${{ runner.temp }}/context/sandbox-context.json
+          SANDBOX_CODE_REVISION: ${{ needs.prepare.outputs.code_revision }}
           SANDBOX_CONTROL_PATH: ${{ runner.temp }}/context/sandbox-control.json
           SANDBOX_CHECKPOINT_PATH: ${{ runner.temp }}/checkpoint/validated-run.json
           SANDBOX_SIDECAR_PATH: ${{ runner.temp }}/checkpoint/validated-run.json.sidecar.json
@@ -730,14 +756,14 @@ jobs:
         run: |
           run_suffix="${SANDBOX_TRACKING_RUN_ID#tracker-run:}"
           if [[ "$SANDBOX_NOTIFICATION_PHASE" == 'resolution' ]]; then
-            node dist/cli/sandbox-notification-evidence.js completed
+            GITHUB_SHA="$SANDBOX_CODE_REVISION" node recovery-source/dist/cli/sandbox-notification-evidence.js completed
           fi
           SANDBOX_RECEIPT_CHAIN_PATH="$RUNNER_TEMP/complete/$run_suffix/receipt-chain.json" \
           SANDBOX_RECORD_PATH="$RUNNER_TEMP/sandbox-state/state/durable-publication-record-v1.json" \
           SANDBOX_MARKER_PATH="$RUNNER_TEMP/sandbox-state/state/run-transaction-marker-v1.json" \
           SANDBOX_SNAPSHOT_PATH="$RUNNER_TEMP/sandbox-state/state/snapshot.json" \
           SANDBOX_LEDGER_PATH="$RUNNER_TEMP/sandbox-state/state/notification-ledger.json" \
-            node .github/scripts/sandbox-notification-coverage.mjs
+            GITHUB_SHA="$SANDBOX_CODE_REVISION" node recovery-source/.github/scripts/sandbox-notification-coverage.mjs
       - name: continuity coverageをartifactへ保存
         if: always() && (needs.prepare.outputs.continuity_phase != 'none' || needs.prepare.outputs.notification_phase != 'none')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -850,22 +876,54 @@ jobs:
           SANDBOX_CONTROL_PATH: ${{ runner.temp }}/context/sandbox-control.json
         run: |
           while IFS=$'\t' read -r scenario run_id run_attempt environment_id; do
-            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" \
-              | jq -e --arg branch "$GITHUB_REF_NAME" --arg sha "$GITHUB_SHA" \
-                '.conclusion == "success" and .head_branch == $branch and .head_sha == $sha' > /dev/null
             destination="$RUNNER_TEMP/prior/$scenario"
             mkdir -p "$destination"
             gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
               --name "sandbox-coverage-$environment_id-$run_id-$run_attempt" --dir "$destination"
             gh run download "$run_id" --repo "$GITHUB_REPOSITORY" \
               --name "sandbox-result-$environment_id-$run_id-$run_attempt" --dir "$destination"
+            source_run_id="$(jq -er '.stageLineage.analysisSourceActionsRunId | select(test("^[1-9][0-9]*$"))' "$destination/sandbox-coverage.json")"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$source_run_id" > "$destination/source-run.json"
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$destination/completion-run.json"
+            gh run download "$source_run_id" --repo "$GITHUB_REPOSITORY" \
+              --name workflow-cli-runtime --dir "$destination/runtime"
+            final_revision="$(jq -er '.finalStateRevision | select(test("^[0-9a-f]{40}$"))' "$destination/sandbox-result.json")"
+            git fetch --no-tags origin "refs/heads/sandbox-state/$environment_id:refs/remotes/sandbox-matrix/$environment_id"
+            git merge-base --is-ancestor "$final_revision" "refs/remotes/sandbox-matrix/$environment_id"
+            git show "$final_revision:state/sandbox-environment.json" > "$destination/sandbox-environment.json"
+            git show "$final_revision:state/durable-publication-record-v1.json" > "$destination/durable-publication-record-v1.json"
           done < <(jq -r '.notificationPrior[] | [.scenarioId, .actionsRunId, .actionsRunAttempt, .environmentId] | @tsv' "$SANDBOX_CONTROL_PATH")
+      - name: 最終scenarioの解析元Actions runを取得
+        if: inputs.scenario_id == 'ambiguous-acknowledge' && needs.prepare.outputs.notification_phase == 'resolution'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SANDBOX_CURRENT_COVERAGE_PATH: ${{ runner.temp }}/sandbox-coverage.json
+        run: |
+          source_run_id="$(jq -er '.stageLineage.analysisSourceActionsRunId | select(test("^[1-9][0-9]*$"))' "$SANDBOX_CURRENT_COVERAGE_PATH")"
+          destination="$RUNNER_TEMP/matrix-current"
+          mkdir -p "$destination"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$source_run_id" > "$destination/source-run.json"
+          gh run download "$source_run_id" --repo "$GITHUB_REPOSITORY" \
+            --name workflow-cli-runtime --dir "$destination/runtime"
+          cp "$RUNNER_TEMP/sandbox-state/state/sandbox-environment.json" "$destination/sandbox-environment.json"
+          cp "$RUNNER_TEMP/sandbox-state/state/durable-publication-record-v1.json" "$destination/durable-publication-record-v1.json"
+      - name: 通知matrixの現行検証codeを準備
+        if: inputs.scenario_id == 'ambiguous-acknowledge' && needs.prepare.outputs.notification_phase == 'resolution'
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+      - name: 通知matrixの現行検証CLIを準備
+        if: inputs.scenario_id == 'ambiguous-acknowledge' && needs.prepare.outputs.notification_phase == 'resolution'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
       - name: 通知5scenarioのcoverageを集約
         if: inputs.scenario_id == 'ambiguous-acknowledge' && needs.prepare.outputs.notification_phase == 'resolution'
         env:
           SANDBOX_CONTROL_PATH: ${{ runner.temp }}/context/sandbox-control.json
           SANDBOX_PRIOR_ROOT: ${{ runner.temp }}/prior
           SANDBOX_CURRENT_COVERAGE_PATH: ${{ runner.temp }}/sandbox-coverage.json
+          SANDBOX_CURRENT_PROOF_ROOT: ${{ runner.temp }}/matrix-current
           SANDBOX_CURRENT_RESULT_PATH: ${{ runner.temp }}/sandbox-result.json
           SANDBOX_MATRIX_OUTPUT_PATH: ${{ runner.temp }}/sandbox-notification-matrix.json
         run: node .github/scripts/sandbox-notification-matrix.mjs
