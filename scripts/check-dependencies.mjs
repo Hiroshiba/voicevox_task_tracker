@@ -5,7 +5,7 @@ import process from "node:process";
 
 import ts from "typescript";
 
-const CHECKER_VERSION = 3;
+const CHECKER_VERSION = 4;
 const CACHE_PATH = "node_modules/.cache/voicevox-task-tracker/dependency-graph.json";
 
 function digest(value) {
@@ -62,6 +62,9 @@ function staticDependencies(file, bytes, options, resolutionCache) {
     }
     if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
       add(node.arguments[0]);
+    }
+    if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
+      add(node.argument.literal);
     }
     ts.forEachChild(node, visit);
   }

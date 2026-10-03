@@ -1,8 +1,9 @@
-export const SOURCE_LINE_CHECKER_VERSION = 2;
+export const SOURCE_LINE_CHECKER_VERSION = 3;
 
 export const SOURCE_LINE_ROOTS = [
   "src",
   "web/src",
+  ".github/actions",
   ".github/scripts",
   ".github/workflows",
   "scripts",
@@ -29,6 +30,7 @@ export const SOURCE_LINE_EXTENSIONS = [
 export const SOURCE_LINE_ESLINT_GLOBS = [
   "src/**/*.{ts,tsx,cts,mts,js,jsx,cjs,mjs}",
   "web/src/**/*.{ts,tsx,cts,mts,js,jsx,cjs,mjs}",
+  ".github/actions/**/*.{ts,tsx,cts,mts,js,jsx,cjs,mjs}",
   ".github/scripts/**/*.{ts,tsx,cts,mts,js,jsx,cjs,mjs}",
   "scripts/**/*.{ts,tsx,cts,mts,js,jsx,cjs,mjs}",
   "config/**/*.{ts,tsx,cts,mts,js,jsx,cjs,mjs}",

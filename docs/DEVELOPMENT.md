@@ -53,7 +53,8 @@ ESLintはlint対象の全source、型の参照先となるJSON、tsconfig、ESLi
 依存検査はsourceの一覧が変わると依存先を解決し直します。
 CIはESLint cacheを完全一致のkeyだけで復元し、ほかの静的検査cacheは設定とcheckerのdigestを含むkeyで復元します。
 cacheを無効化して繰り返す確認は通常の手順にしません。
-新しいsourceが400行を超えたら責務分割を検討し、1000行超はerrorとして扱います。
+新しいsourceが400行を超えたら責務分割を検討し、1000行超はerrorとして扱います。`.github/actions`の直接編集するJavaScriptはESLintとsource-lines検査の両方、composite actionのYAMLはsource-lines検査で確認します。
+依存検査は通常のimportとexportに加え、`import("...").Type`などのimport型も循環判定の辺に含めます。
 一時baselineや新しいignoreでsourceを例外化しません。
 
 ## codecと保存stateを検証する

@@ -134,12 +134,13 @@ Pagesでは同じrun、checkpoint、revision、content、adapterに結合した�
 state commit後のPages失敗でstateを巻き戻しません。
 
 production直列実行のPages childが起動した場合、`tracker-pages-effect-lease`の`state/production-pages-effect-lease-v1.json`を確認します。
-active leaseにはchildを起動した親のActions実行IDとattempt、公開phase、固定state revision、intent digestが記録されます。子が効果を確保すると子の実行IDとattemptも加わります。
+固定pathのlease本文はschema version 2です。active leaseはrun、checkpoint、親Actions実行IDとattempt、公開phase、固定state revision、intent digestを保持します。同じ公開operationの識別子は固定し、deployが始まらなかったと証明できた場合だけattemptの連番と識別子を更新します。
 親が停止しても子は公開を続けるため、leaseがactiveの間は別のtracking runを開始しません。
 同じrunを再開するには`recover_tracking_run`で`execution_shape`に`sequential`、`run_id`にleaseのrun IDを指定します。`run_sequential`の`run_id`指定でも再開できます。
-再開処理はexact runtime、state、receiptを照合し、leaseに記録された元childの実行IDとattemptから観測artifactを取得します。元childを再dispatchしません。
+再開処理はexact runtime、state、receiptを照合し、同じattemptのchildを探します。childがleaseに記録済みなら、その実行IDとattemptから観測artifactを取得します。dispatch開始後のattemptを再dispatchしません。
 初回Pagesの成功receiptが確定した場合だけ履歴Pagesのleaseへ進みます。新たなchildを起動するときは、実行中のworkflowと固定sourceのPages child workflowが同じ内容であることを確認します。childは固定sourceでPagesを生成し、公開前に出力manifestをintentと照合します。
-childの未発見、実行中、観測artifactの欠落や不一致、upload、deploy、deployment ID、公開URLの未確定は停止してactive leaseを保持します。
+childの検索はdispatch期間のActions runを全ページ確認し、1000件を超える期間は分割します。childの重複、未発見、実行中、観測artifactの欠落や不一致、upload、deploy、deployment ID、公開URLの未確定は停止してactive leaseを保持します。
+`no_effect`は失敗したchildのdeploy stepが未開始だったことをActionsの実記録で確認した場合だけ確定します。効果が不明なattemptは`unknown`として停止し、同じoperationの次attemptを自動開始しません。
 最終reportとreceiptを検証して保存した継続attemptがleaseをCASで解放します。効果が曖昧なleaseを自動解放する操作はありません。
 
 運用障害通知は`tracker-operations-alerts`の`state/operations-alert-ledger-v1.json`へ送信予約を保存してから送ります。
