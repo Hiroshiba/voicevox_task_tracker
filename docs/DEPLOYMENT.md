@@ -142,6 +142,14 @@ read and writeへ変更する必要はありません。
 `_tracking-run.yml`はquality、bootstrap、固定runtimeの準備、analyze、初回commit、初回Pages、通知settlement、finalization、通知履歴Pages、complete、observeを接続します。
 Pagesは`_tracking-pages.yml`、全jobの報告と運用通知は`_tracking-observe.yml`を使います。
 
+手動のproduction直列実行には`run_sequential.yml`を使います。
+親の`run-sequential` CLIは初回state commitから通知履歴Pagesまで一つのprocessで進み、Pages公開時だけ`sequential_pages_effect.yml`を起動して実結果を待ちます。
+子workflowは固定sourceとstate revision、公開intentを再検証し、Pagesの構成、artifact upload、deployと結果の観測だけを行います。
+親が実deployment IDとURLを検証してreceiptへ保存するまで、Discord通知へ進みません。
+子workflowは親のproduction排他groupを取らず、専用groupと`tracker-pages-effect-lease` branchで同じ公開効果の重複を防ぎます。
+親はreportとreceipt artifactの保存後にleaseを解放します。
+leaseがactiveの間は日次実行、手動復旧、Discord送達解決、別のproduction直列実行を停止します。
+
 analyzeが作るcheckpointには公開可能なsnapshot、公開allowlist、通知候補、AI生成元、保存・公開計画を結合します。
 secret、API client、installation token、Codex認証、Webhookを含めません。
 後段はcheckpointとsidecarを再検証し、初回commit後はexact state revisionから読み直します。
@@ -216,6 +224,7 @@ branchをPages sourceへ指定しません。
 
 `config.yml`の`web.basePath`を`/voicevox_task_tracker/`にし、公開URLを`https://voicevox.github.io/voicevox_task_tracker/`とします。
 `_tracking-pages.yml`はinitialとnotification_historyのphaseを受け取り、同じbuild・preflight・action・record境界を使います。
+`sequential_pages_effect.yml`も同じ固定SHAのPages actionとdeployment ID観測actionを使います。
 
 buildは保存済みstateの固定revisionからDTOを投影し、Web出力全fileのmanifest、build receipt、deploy intentを保存します。
 deploy直前にremote stateと出力全fileを照合します。

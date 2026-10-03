@@ -270,7 +270,7 @@ export async function preflightNotificationHistoryPagesDeployment(
             reference.adapterIdentityDigest !== input.adapterIdentityDigest)) ||
         (input.adapterIdentityDigest == null &&
           input.effectTarget === "production" &&
-          reference?.kind !== "sequential_production") ||
+          reference?.kind !== "github_pages_actions") ||
         (input.effectTarget !== "production" && reference?.kind !== "recording")
       ) {
         throw new TypeError("通知履歴Pages保存証拠とadapterが一致しません");

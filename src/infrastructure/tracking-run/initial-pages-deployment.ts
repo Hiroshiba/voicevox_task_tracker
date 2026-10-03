@@ -21,6 +21,7 @@ import type {
   PagesDeploymentReceipt,
 } from "../../application/tracking-run/receipt-schema.js";
 import {
+  pagesDeploymentExternalReferenceSchema,
   pagesPublicUrlSchema,
   receiptSchema,
 } from "../../application/tracking-run/receipt-schema.js";
@@ -85,6 +86,7 @@ const sequentialPagesResultSchema = z.strictObject({
   deploymentReference: z.string().min(1),
   pageUrl: pagesPublicUrlSchema,
   adapterIdentityDigest: sha256Schema,
+  actionsArtifact: pagesDeploymentExternalReferenceSchema.options[0].shape.actionsArtifact,
   effectOccurredAt: z.iso.datetime({ offset: true }).optional(),
 });
 
@@ -374,7 +376,7 @@ export async function preflightInitialPagesDeployment(
           reference.adapterIdentityDigest !== input.adapterIdentityDigest)) ||
       (input.adapterIdentityDigest == null &&
         input.effectTarget === "production" &&
-        reference.kind !== "sequential_production") ||
+        reference.kind !== "github_pages_actions") ||
       (input.effectTarget !== "production" && reference.kind !== "recording")
     ) {
       throw new TypeError("保存済み初回Pages結果のadapterまたはcheckpoint結合が一致しません");
@@ -631,7 +633,7 @@ export function recordInitialPagesSequentialDeployment(
   if (preflight.kind === "observed") {
     if (
       (input.target === "production" &&
-        preflight.evidence.externalReference.kind !== "sequential_production") ||
+        preflight.evidence.externalReference.kind !== "github_pages_actions") ||
       (input.target === "recording" && preflight.evidence.externalReference.kind !== "recording")
     ) {
       throw new TypeError("sequential Pagesの保存証拠がeffect targetと一致しません");
@@ -654,8 +656,9 @@ export function recordInitialPagesSequentialDeployment(
     pageUrl = result.pageUrl;
     effectOccurredAt = result.effectOccurredAt;
     externalReference = {
-      kind: "sequential_production",
-      deploymentReference: result.deploymentReference,
+      kind: "github_pages_actions",
+      deploymentId: result.deploymentReference,
+      actionsArtifact: result.actionsArtifact,
       adapterIdentityDigest: result.adapterIdentityDigest,
     };
   } else {

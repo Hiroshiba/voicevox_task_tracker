@@ -7,6 +7,7 @@ import type {
   PagesDeploymentExternalReference,
   PagesDeploymentReceipt,
 } from "../../application/tracking-run/receipt-schema.js";
+import { pagesDeploymentExternalReferenceSchema } from "../../application/tracking-run/receipt-schema.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import type { NotificationHistoryPagesBuildArtifact } from "./notification-history-pages-build-artifact.js";
 import { parseNotificationHistoryPagesBuildArtifact } from "./notification-history-pages-build-artifact.js";
@@ -38,6 +39,7 @@ const sequentialResultSchema = z.strictObject({
   deploymentReference: z.string().min(1),
   pageUrl: z.url(),
   adapterIdentityDigest: sha256Schema,
+  actionsArtifact: pagesDeploymentExternalReferenceSchema.options[0].shape.actionsArtifact,
   effectOccurredAt: z.iso.datetime({ offset: true }).optional(),
 });
 
@@ -299,7 +301,7 @@ export function recordNotificationHistorySequentialDeployment(
     if (
       outcome.kind !== "deployed" ||
       (input.target === "production" &&
-        outcome.receipt.result?.externalReference.kind !== "sequential_production") ||
+        outcome.receipt.result?.externalReference.kind !== "github_pages_actions") ||
       (input.target === "recording" &&
         outcome.receipt.result?.externalReference.kind !== "recording")
     ) {
@@ -333,8 +335,9 @@ export function recordNotificationHistorySequentialDeployment(
     pageUrl = result.pageUrl;
     effectOccurredAt = result.effectOccurredAt;
     externalReference = {
-      kind: "sequential_production",
-      deploymentReference: result.deploymentReference,
+      kind: "github_pages_actions",
+      deploymentId: result.deploymentReference,
+      actionsArtifact: result.actionsArtifact,
       adapterIdentityDigest: result.adapterIdentityDigest,
     };
   } else {

@@ -14,6 +14,7 @@ import {
   type StateBranchAdapter,
   type StatePersistenceConfiguration,
 } from "../../persistence/index.js";
+import { assertNoProductionPagesEffectLease } from "../../persistence/production-pages-effect-lease.js";
 import { UnreachableError, assertNonNullable } from "../../util/index.js";
 import { CliCodexAuthenticationError, CliCredentialsError, CliExecutableError } from "./errors.js";
 import {
@@ -222,6 +223,10 @@ export async function resolveRuntimeTarget(
     return Object.freeze({ kind: "recording", state: config.state });
   }
   if (request.executionPolicy.effectTarget !== "sandbox") {
+    await assertNoProductionPagesEffectLease(
+      dependencies.createStateBranchAdapter(),
+      config.state.branch,
+    );
     return Object.freeze({
       kind: "production",
       state: config.state,

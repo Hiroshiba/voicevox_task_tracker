@@ -133,6 +133,14 @@ Pagesでは同じrun、checkpoint、revision、content、adapterに結合した�
 前runの初回Pages証拠を今回の通知開始条件へ転用しません。
 state commit後のPages失敗でstateを巻き戻しません。
 
+production直列実行のPages childが起動した場合、`tracker-pages-effect-lease`の`state/production-pages-effect-lease-v1.json`を確認します。
+active leaseには親のActions実行ID、公開phase、固定state revision、intent digestが記録され、子が効果を確保すると子の実行IDも加わります。
+親が停止しても子は公開を続けるため、leaseがactiveの間は別のproduction実行を開始しません。
+dispatchの応答が不明でも親は同じidempotency keyの既存childを探し、再dispatchは行いません。
+子のupload、deploy、deployment IDまたは公開URLを確定できないときは、親が停止しleaseを保持します。
+この場合はActions実行とPages deploymentの実状態、保存済みreceiptを照合してから復旧方針を決めます。
+完了した親だけがleaseを自動解放できます。効果が曖昧なleaseを自動解放する操作はありません。
+
 運用障害通知は`tracker-operations-alerts`の`state/operations-alert-ledger-v1.json`へ送信予約を保存してから送ります。
 同じincidentの送信済みまたは曖昧な予約を再送せず、receiptを失っても専用branchの実状態を先に確認します。
 通常runのmarkerを運用障害通知のcommitで書き換えません。

@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { z } from "zod";
 
-import { PagesEffectNotStartedError } from "../application/tracking-run/pages-effect.js";
 import {
   executeCodexAnalysis,
   executeCodexAuthenticationPreflight,
@@ -25,6 +24,7 @@ import {
 } from "../infrastructure/tracking-run/file-output.js";
 import type { ProductionRuntimeAdapters } from "../infrastructure/tracking-run/runtime/adapters.js";
 import { parseSandboxContext } from "../infrastructure/tracking-run/sandbox-context.js";
+import { deploySequentialPagesThroughActions } from "../infrastructure/tracking-run/sequential-pages-actions-port.js";
 import { verifyPersistentStateDirectory } from "../infrastructure/tracking-run/state-verification.js";
 import { buildWebOutput, writePublicDataFiles } from "../pages/index.js";
 import { GitStateBranchAdapter, StatePersistenceSession } from "../persistence/index.js";
@@ -146,8 +146,18 @@ export function createDefaultCliCompositionAdapters(
     writeTextFile: writeCliTextFile,
     writePublicData: writePublicDataFiles,
     buildWebOutput,
-    deployProductionPages: () =>
-      Promise.reject(new PagesEffectNotStartedError("GitHub Actions Pages公開環境がありません")),
+    deployProductionPages: (intent) =>
+      deploySequentialPagesThroughActions(intent, {
+        environment: process.env,
+        repositoryPath: resolve(process.cwd()),
+        adapter: new GitStateBranchAdapter({
+          repositoryPath: process.cwd(),
+          gitExecutable: "git",
+          authorName: "VOICEVOX Task Tracker",
+          authorEmail: "voicevox-task-tracker@users.noreply.github.com",
+        }),
+        now: () => new Date(),
+      }),
     sendDiscord: sendDiscordDigest,
   });
 }

@@ -24,6 +24,8 @@ export async function workflowAdapterIdentity(
     ".github/workflows/_tracking-run.yml",
     ".github/workflows/daily.yml",
     ".github/workflows/resolve_discord_delivery.yml",
+    ".github/workflows/run_sequential.yml",
+    ".github/workflows/sequential_pages_effect.yml",
   ];
   const workflows = await Promise.all(
     workflowPaths.map((path) => readFile(resolve(repositoryPath, path), "utf8")),

@@ -24,6 +24,7 @@ import {
   recoverSequentialRuntimeV1,
 } from "../../runtime-recovery-acquisition.js";
 import { sequentialReceiptPath } from "../../sequential-receipt-path.js";
+import { requireSequentialPagesActionsContext } from "../../sequential-pages-actions-port.js";
 import type { ConfigurationRuntimeAdapters, ProductionRuntimeAdapters } from "../adapters.js";
 
 type SequentialStageDependencies = SequentialRunDependencies;
@@ -60,6 +61,12 @@ export function createInspectLaunchStage(
   now: () => Date,
 ): SequentialStageDependencies["inspectLaunch"] {
   return async (request, invocationId, intent) => {
+    if (
+      request.executionPolicy.effectTarget === "production" &&
+      request.executionPolicy.executionShape === "sequential"
+    ) {
+      requireSequentialPagesActionsContext(adapters.environment);
+    }
     const config = await adapters.loadConfig(resolve(adapters.repositoryPath, request.configPath));
     const target = await resolveRuntimeTarget(
       Object.freeze({

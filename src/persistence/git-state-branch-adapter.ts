@@ -7,6 +7,7 @@ import {
   assertValidStateDirectory,
   assertValidStatePath,
   assertValidStateStorageBranch,
+  PRODUCTION_PAGES_EFFECT_LEASE_BRANCH,
   type StateBranchAdapter,
   type StateBranchCommitInspection,
   type StateBranchCommitRequest,
@@ -240,6 +241,12 @@ function validateBranch(branch: string): void {
 
 function validateCommitRequest(request: StateBranchCommitRequest): void {
   validateBranch(request.branch);
+  if (
+    (request.branch === PRODUCTION_PAGES_EFFECT_LEASE_BRANCH) !==
+    (request.commitIdentity.commitScope === "production_pages_effect")
+  ) {
+    throw new StateConfigurationError("production Pages lease commitのbranchとscopeが一致しません");
+  }
   if (request.updates.length === 0) {
     throw new StateConfigurationError("commitするstateファイルがありません");
   }
@@ -853,6 +860,13 @@ export class GitStateBranchAdapter implements StateBranchAdapter {
           changedPathManifest.entries[0].kind !== "modified")
       ) {
         throw new TypeError("sandbox manifest commitが追跡対象pathを変更しています");
+      }
+      if (
+        metadata.commitScope === "production_pages_effect" &&
+        (changedPathManifest.entries.length !== 1 ||
+          changedPathManifest.entries[0]?.path !== "state/production-pages-effect-lease-v1.json")
+      ) {
+        throw new TypeError("production Pages lease commitが追跡対象pathを変更しています");
       }
       return Object.freeze({ revision, parent, metadata, changedPathManifest });
     } catch (error: unknown) {

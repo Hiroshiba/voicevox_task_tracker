@@ -16,6 +16,7 @@ const STATE_PATH_PREFIX = "state/";
 const STATE_BRANCH_PATTERN = /^(?:tracker-state|sandbox-state\/env-[1-9][0-9]*-[1-9][0-9]*)$/u;
 const OPERATIONS_ALERT_BRANCH_PATTERN =
   /^(?:tracker-operations-alerts|sandbox-operations-alerts\/env-[1-9][0-9]*-[1-9][0-9]*)$/u;
+export const PRODUCTION_PAGES_EFFECT_LEASE_BRANCH = "tracker-pages-effect-lease";
 
 /** 永続化が利用する設定のstate節。 */
 export type StatePersistenceConfiguration = Readonly<{
@@ -117,10 +118,14 @@ export function assertValidStateBranch(branch: string): void {
   }
 }
 
-/** stateまたは運用通知専用branch名か検証する。 */
+/** stateまたは副作用専用branch名か検証する。 */
 export function assertValidStateStorageBranch(branch: string): void {
-  if (!STATE_BRANCH_PATTERN.test(branch) && !OPERATIONS_ALERT_BRANCH_PATTERN.test(branch)) {
-    throw new StateConfigurationError("stateまたは運用通知専用branchが必要です");
+  if (
+    !STATE_BRANCH_PATTERN.test(branch) &&
+    !OPERATIONS_ALERT_BRANCH_PATTERN.test(branch) &&
+    branch !== PRODUCTION_PAGES_EFFECT_LEASE_BRANCH
+  ) {
+    throw new StateConfigurationError("stateまたは副作用専用branchが必要です");
   }
 }
 

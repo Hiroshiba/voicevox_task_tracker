@@ -47,6 +47,7 @@ const metadataSchema = z.strictObject({
     "operations_alert",
     "manual_resolution",
     "sandbox_manifest",
+    "production_pages_effect",
   ]),
   operationId: operationIdSchema,
   runId: runIdSchema.optional(),
@@ -183,6 +184,14 @@ export function createStateCommitMetadata(
       manifest.entries[0].kind !== "modified")
   ) {
     throw new TypeError("sandbox manifest commitの変更範囲が不正です");
+  }
+  if (
+    metadata.commitScope === "production_pages_effect" &&
+    (metadata.runId != null ||
+      manifest.entries.length !== 1 ||
+      manifest.entries[0]?.path !== "state/production-pages-effect-lease-v1.json")
+  ) {
+    throw new TypeError("production Pages lease commitの変更範囲が不正です");
   }
   return metadata;
 }
