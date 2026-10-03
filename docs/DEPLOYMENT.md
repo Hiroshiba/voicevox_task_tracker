@@ -298,6 +298,7 @@ terminal項目とブロック解消待ちの項目は要対応度scoreが0にな
 
 マージ前は[開発手順](DEVELOPMENT.md)の静的確認を実行します。
 CIはPRとmainへのpushでformat、incremental typecheck、cached lint、source-lines、CLI・workflow CLI・Webの3 buildを検査します。
+ESLint cacheはlint対象sourceと型設定、依存lockfileの内容から計算したkeyが完全一致するときだけ復元します。
 verify-state jobはtracker-stateの全履歴と固定SHAを取得し、現行ingress、marker・record・初回Pages証拠と実commit chainを検証します。
 未完了runがある場合はcurrent runtimeの検証を停止し、exact runtimeでの復旧を先に行います。
 

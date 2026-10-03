@@ -48,9 +48,10 @@ GitHub App、実Codex、Pages deploy、Discordの認証は不要です。
 
 cacheは`node_modules/.cache/voicevox-task-tracker/`へ保存します。
 型検査はincremental、Prettierとsource-lines・依存検査はcacheを使います。
-ESLintは参照先の型変更も検査するため、結果をcacheせず毎回全体を検査します。
+ESLintはlint対象の全source、型の参照先となるJSON、tsconfig、ESLint設定、package manifest、lockfile、Node版の内容からkeyを計算し、そのkey専用のcacheを使います。
+参照先sourceが変わるとkeyも変わるため、型依存規則の古い結果は使われません。
 依存検査はsourceの一覧が変わると依存先を解決し直します。
-CIはこれらのcacheを復元し、keyにpackage manifest、lockfile、Node version、各設定とcheckerのdigest・versionを含めます。
+CIはESLint cacheを完全一致のkeyだけで復元し、ほかの静的検査cacheは設定とcheckerのdigestを含むkeyで復元します。
 cacheを無効化して繰り返す確認は通常の手順にしません。
 新しいsourceが400行を超えたら責務分割を検討し、1000行超はerrorとして扱います。
 一時baselineや新しいignoreでsourceを例外化しません。
