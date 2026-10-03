@@ -1,4 +1,5 @@
 import type { Repository } from "../domain/index.js";
+import { urlLikeTextCandidates } from "../domain/url-like-text.js";
 import {
   verifiedExternalUrls,
   type VerifiedExternalReference,
@@ -10,6 +11,10 @@ const URL_PATTERN =
   /(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|\/\/|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?=[/?#]))[^\s<>"'`]+/gu;
 const URL_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//u;
 const TRAILING_URL_PUNCTUATION = /[.,;:!?、。！？)\]}）］｝」』]+$/u;
+
+function isGitHubHost(hostname: string): boolean {
+  return hostname === "github.com" || hostname === "github.com.";
+}
 
 function escapePattern(value: string): string {
   return value.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -66,7 +71,7 @@ function isRepositoryUrl(candidate: string, repository: RepositoryReference): bo
   const url = new URL(value);
   if (
     (url.protocol !== "https:" && url.protocol !== "http:") ||
-    url.hostname !== "github.com" ||
+    !isGitHubHost(url.hostname) ||
     url.port !== "" ||
     url.username !== "" ||
     url.password !== ""
@@ -109,7 +114,7 @@ function githubRepositoryFromUrl(
     return undefined;
   }
   const url = new URL(value);
-  if (url.hostname !== "github.com") {
+  if (!isGitHubHost(url.hostname)) {
     return undefined;
   }
   if (
@@ -138,8 +143,94 @@ function isVerifiedExternalUrl(candidate: string, allowed: ReadonlySet<string>):
   if (url.search !== "" || url.hash !== "") {
     return false;
   }
+  if (isGitHubHost(url.hostname)) {
+    url.hostname = "github.com";
+  }
   const normalized = url.toString().replace(/\/$/u, "").toLowerCase();
   return allowed.has(normalized);
+}
+
+/** AI由来の自然文に許可されないURL形式があるか判定する。 */
+export function containsDisallowedAiTextUrl(
+  value: string,
+  allowlist: readonly Pick<RepositoryReference, "owner" | "name">[],
+  externalReferences: readonly VerifiedExternalReference[],
+): boolean {
+  const candidates = urlLikeTextCandidates(value);
+  if (candidates.length === 0) {
+    return false;
+  }
+  const externalUrls = verifiedExternalUrls(externalReferences);
+  if (externalUrls == null) {
+    return true;
+  }
+  const allowed = new Set(
+    allowlist.map(
+      (repository) => `${repository.owner.toLowerCase()}/${repository.name.toLowerCase()}`,
+    ),
+  );
+  return candidates.some((candidate) => {
+    if (!candidate.startsWith("https://") || !URL.canParse(candidate)) {
+      return true;
+    }
+    const url = new URL(candidate);
+    if (
+      url.protocol !== "https:" ||
+      !isGitHubHost(url.hostname) ||
+      url.port !== "" ||
+      url.username !== "" ||
+      url.password !== ""
+    ) {
+      return true;
+    }
+    const repository = githubRepositoryFromUrl(candidate);
+    if (repository == null || repository === "invalid") {
+      return true;
+    }
+    if (
+      [...url.searchParams.values(), url.hash.slice(1)].some((part) =>
+        containsDisallowedAiTextUrl(part, allowlist, externalReferences),
+      )
+    ) {
+      return true;
+    }
+    if (repository.owner === "voicevox") {
+      return !allowed.has(`${repository.owner}/${repository.name}`);
+    }
+    url.hostname = "github.com";
+    return !externalUrls.has(url.toString().replace(/\/$/u, "").toLowerCase());
+  });
+}
+
+/** AI由来の値に許可されないURL形式があるか判定する。 */
+export function containsDisallowedAiTextUrlInValues(
+  values: readonly unknown[],
+  allowlist: readonly Pick<RepositoryReference, "owner" | "name">[],
+  externalReferences: readonly VerifiedExternalReference[],
+): boolean {
+  const pending: unknown[] = [...values];
+  const visited = new WeakSet<object>();
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (typeof value === "string") {
+      if (containsDisallowedAiTextUrl(value, allowlist, externalReferences)) {
+        return true;
+      }
+      continue;
+    }
+    if (typeof value !== "object" || value == null || visited.has(value)) {
+      continue;
+    }
+    visited.add(value);
+    if (isUnknownArray(value)) {
+      pending.push(...value);
+    } else {
+      for (const propertyValue of Object.values(value)) {
+        pending.push(propertyValue);
+      }
+    }
+  }
+  return false;
 }
 
 /** 公開値に含まれるGitHubリポジトリURLが公開集合に属するか判定する。 */

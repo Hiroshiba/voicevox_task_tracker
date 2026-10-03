@@ -75,7 +75,7 @@ const semanticValidationIssueCodes: readonly [
 
 /** 通常項目AIのbase prompt、補正prompt、semantic glossaryを識別するbundle version。 */
 export const CODEX_PROMPT_BUNDLE_VERSION =
-  "codex-analysis-prompt-bundle-v3-relation-v3-semantic-correction-v1";
+  "codex-analysis-prompt-bundle-v4-relation-v3-semantic-correction-v1";
 
 /** 通常項目AIのsemantic検証issue code schema。 */
 export const codexSemanticValidationIssueCodeSchema = z.enum(semanticValidationIssueCodes);

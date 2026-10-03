@@ -1,6 +1,8 @@
 import { type Repository } from "../domain/index.js";
+import { containsUrlLikeText } from "../domain/url-like-text.js";
 import type { VerifiedExternalReference } from "../domain/verified-external-reference.js";
 import {
+  containsDisallowedAiTextUrlInValues,
   containsPrivateRepositoryReference,
   containsUnallowlistedGitHubRepositoryUrl,
 } from "../github/private-repository-reference.js";
@@ -99,6 +101,7 @@ function scanValues(
   }
   const pending: unknown[] = [...values];
   const visited = new WeakSet<object>();
+  const aiValues: unknown[] = [];
 
   while (pending.length > 0) {
     const value = pending.pop();
@@ -120,8 +123,30 @@ function scanValues(
       continue;
     }
 
-    for (const [key, propertyValue] of Object.entries(value)) {
+    const entries: [string, unknown][] = Object.entries(value);
+    for (const [key, propertyValue] of entries) {
       const fieldName = normalizedFieldName(key);
+      if (fieldName === "aianalysis") {
+        aiValues.push(propertyValue);
+      }
+      if (
+        fieldName === "generation" &&
+        typeof propertyValue === "object" &&
+        propertyValue != null &&
+        "result" in propertyValue
+      ) {
+        aiValues.push(propertyValue.result);
+      }
+      if (
+        fieldName === "references" &&
+        typeof propertyValue === "object" &&
+        propertyValue != null &&
+        "reasonSummary" in propertyValue &&
+        typeof propertyValue.reasonSummary === "string" &&
+        containsUrlLikeText(propertyValue.reasonSummary)
+      ) {
+        violationCodes.add("personal_reminder_url_not_allowed");
+      }
       if (CREDENTIAL_FIELD_NAMES.has(fieldName)) {
         violationCodes.add("credential_field");
       }
@@ -133,6 +158,10 @@ function scanValues(
       }
       pending.push(propertyValue);
     }
+  }
+
+  if (containsDisallowedAiTextUrlInValues(aiValues, repositoryAllowlist, externalReferences)) {
+    violationCodes.add("ai_text_url_not_allowed");
   }
 
   return Object.freeze([...violationCodes]);

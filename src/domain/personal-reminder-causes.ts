@@ -12,6 +12,7 @@ import {
   aiAnalysisElementMetadataSchema,
 } from "./ai-analysis-elements.js";
 import { type NotificationTimeReasonCode } from "./notification-reason.js";
+import { NO_URL_LIKE_TEXT_PATTERN } from "./url-like-text.js";
 import {
   createUtcIsoDateTime,
   type AiCacheEntryId,
@@ -40,7 +41,7 @@ export const PERSONAL_REMINDER_ASSESSMENT_MIGRATION_RULES_VERSION =
   "personal-reminder-assessment-migration";
 
 /** 個人催促AI promptのversion。 */
-export const PERSONAL_REMINDER_AI_PROMPT_VERSION = "1";
+export const PERSONAL_REMINDER_AI_PROMPT_VERSION = "2";
 
 /** 個人催促原因の列挙計画version。 */
 export const PERSONAL_REMINDER_CAUSE_PLANNING_VERSION = "personal-reminder-planning-v2";
@@ -481,7 +482,11 @@ export const personalReminderAssessmentReferencesSchema = z.strictObject({
   nodeIds: z.array(graphNodeIdSchema).max(100),
   relationIds: z.array(opaqueIdSchema).max(100),
   sourceIds: z.array(sourceIdSchema).max(100),
-  reasonSummary: z.string().min(1).max(300),
+  reasonSummary: z
+    .string()
+    .min(1)
+    .max(300)
+    .regex(NO_URL_LIKE_TEXT_PATTERN, "理由要約にURLは指定できません"),
 });
 
 /** 個人催促原因の意味判定が参照した情報。 */

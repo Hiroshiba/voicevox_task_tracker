@@ -2,16 +2,16 @@ import { z } from "zod";
 
 import type { AiAnalysisElement } from "../domain/ai-analysis-elements.js";
 import { verifiedExternalUrls } from "../domain/verified-external-reference.js";
-import { containsUnallowlistedGitHubRepositoryUrl } from "../github/private-repository-reference.js";
+import {
+  containsDisallowedAiTextUrl,
+  containsUnallowlistedGitHubRepositoryUrl,
+} from "../github/private-repository-reference.js";
 import type { SchemaValidCodexElementOutput } from "./element-output.js";
 import type { CodexOutputValidationIssue } from "./errors.js";
 import type { CodexAnalysisInput } from "./input.js";
 import type { CodexSemanticValidationIssueCode } from "./semantic-validation-issues.js";
 
 const TARGET_ORGANIZATION = "VOICEVOX";
-const URL_IN_TEXT_PATTERN =
-  /(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|(?:mailto|javascript|data|urn|tel|blob|about):)[^\s<>"'`]+/giu;
-const URL_TRAILING_PUNCTUATION_PATTERN = /[),.;:!?、。！？）】]+$/u;
 
 type TextField = Readonly<{ path: string; value: string }>;
 const publicRepositoryAllowlistSchema = z.array(
@@ -197,8 +197,7 @@ export function validateCodexOutputUrls(
   const verifiedExternalReferences = verifiedExternalReferencesSchema.parse(
     input.deterministicSignals["verifiedExternalReferences"],
   );
-  const allowedExternalUrls = verifiedExternalUrls(verifiedExternalReferences);
-  if (allowedExternalUrls == null) {
+  if (verifiedExternalUrls(verifiedExternalReferences) == null) {
     throw new TypeError("Codex入力の検証済み外部参照URLが不正です");
   }
   if (organizationFromUrl(input.item.url)?.toLowerCase() !== TARGET_ORGANIZATION.toLowerCase()) {
@@ -231,23 +230,20 @@ export function validateCodexOutputUrls(
       );
       continue;
     }
-    for (const match of field.value.matchAll(URL_IN_TEXT_PATTERN)) {
-      const rawUrl = match[0].replace(URL_TRAILING_PUNCTUATION_PATTERN, "");
-      const normalized = normalizedUrl(rawUrl);
-      if (
-        normalized == null ||
-        new URL(normalized).protocol !== "https:" ||
-        (organizationFromUrl(rawUrl)?.toLowerCase() !== TARGET_ORGANIZATION.toLowerCase() &&
-          !allowedExternalUrls.has(normalized.toLowerCase()))
-      ) {
-        issues.push(
-          createIssue(
-            field.path,
-            "url_not_allowed",
-            "URLは対象Organizationまたは入力で許可された外部候補を指してください",
-          ),
-        );
-      }
+    if (
+      containsDisallowedAiTextUrl(
+        field.value,
+        publicRepositoryAllowlist,
+        verifiedExternalReferences,
+      )
+    ) {
+      issues.push(
+        createIssue(
+          field.path,
+          "url_not_allowed",
+          "URLはHTTPSの許可済みGitHubリポジトリか外部候補を指してください",
+        ),
+      );
     }
   }
 }
