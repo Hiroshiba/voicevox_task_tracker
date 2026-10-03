@@ -90,6 +90,9 @@ export function assertSettledOutboxLedger(
   if (outbox.delivery !== "send" || !outbox.settings.enabled) {
     throw new TypeError("送信予定の固定outbox設定が一致しません");
   }
+  if (initial.transaction.snapshotSchemaVersion !== "23") {
+    throw new TypeError("旧通知settlementの版別message計画を証明できません");
+  }
   const evidence = settled.transaction.initialPagesEvidence;
   if (evidence?.pageUrl !== record.initialPagesProjection.settings.url) {
     throw new TypeError("予定messageの初回Pages証拠が固定runと一致しません");
@@ -108,43 +111,19 @@ export function assertSettledOutboxLedger(
   ) {
     throw new TypeError("固定outboxの候補と予約key集合が一致しません");
   }
-  const plan =
-    initial.transaction.snapshotSchemaVersion === "23"
-      ? (() => {
-          const snapshot = snapshotForPlan(initial, configuration);
-          if (snapshot.generatedAt !== record.initialPagesProjection.generatedAt) {
-            throw new TypeError("固定outboxの生成時刻が初回snapshotと一致しません");
-          }
-          return buildDiscordDigestPlan({
-            candidates: notificationSelectionFromRecord(record).candidates,
-            ledgerReservations: outbox.selectedContext.ledgerReservations,
-            items: snapshot.items,
-            pagesUrl: evidence.pageUrl,
-            generatedAt: snapshot.generatedAt,
-            mentions: outbox.settings.mentions,
-          });
-        })()
-      : undefined;
-  const legacyGroups: readonly (readonly string[])[] =
-    plan == null
-      ? (() => {
-          const groups: string[][] = [];
-          const seen = new Set<string>();
-          for (const key of reservations.keys()) {
-            if (seen.has(key)) {
-              continue;
-            }
-            const keys = after.get(key)?.lastDeliveryAttempt?.notificationKeys;
-            if (keys == null) {
-              throw new TypeError("旧固定outboxの予定keyに送達結果がありません");
-            }
-            groups.push([...keys]);
-            keys.forEach((value) => seen.add(value));
-          }
-          return groups;
-        })()
-      : [];
-  const groups = plan?.messages.map((message) => message.notificationKeys) ?? legacyGroups;
+  const snapshot = snapshotForPlan(initial, configuration);
+  if (snapshot.generatedAt !== record.initialPagesProjection.generatedAt) {
+    throw new TypeError("固定outboxの生成時刻が初回snapshotと一致しません");
+  }
+  const plan = buildDiscordDigestPlan({
+    candidates: notificationSelectionFromRecord(record).candidates,
+    ledgerReservations: outbox.selectedContext.ledgerReservations,
+    items: snapshot.items,
+    pagesUrl: evidence.pageUrl,
+    generatedAt: snapshot.generatedAt,
+    mentions: outbox.settings.mentions,
+  });
+  const groups = plan.messages.map((message) => message.notificationKeys);
   const plannedKeys = groups.flatMap((keys) => keys);
   if (
     groups.length === 0 ||
@@ -162,10 +141,7 @@ export function assertSettledOutboxLedger(
     if (firstKey == null) {
       throw new TypeError("固定outboxにkeyのないmessageがあります");
     }
-    const deliveryId =
-      plan == null
-        ? after.get(firstKey)?.manualResolution?.deliveryId
-        : `${plan.digestId}:message:${(index + 1).toString()}`;
+    const deliveryId = `${plan.digestId}:message:${(index + 1).toString()}`;
     let groupAttempt: (typeof settledLedger.entries)[number]["lastDeliveryAttempt"];
     let groupStatus: (typeof settledLedger.entries)[number]["status"] | undefined;
     let groupResolution: (typeof settledLedger.entries)[number]["manualResolution"];

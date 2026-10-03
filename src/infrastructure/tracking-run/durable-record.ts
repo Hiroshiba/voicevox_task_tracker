@@ -4,6 +4,7 @@ import {
   durablePublicationRecordTemplateSchema,
   parseDurablePublicationRecord,
   type DurablePublicationRecord,
+  type InitialStateWriteManifest,
 } from "../../publication/durable-record-schema.js";
 import { createAnalysisStageRecord } from "../../publication/analysis-stage-record.js";
 import { assertNonNullable } from "../../util/assert-non-nullable.js";
@@ -15,6 +16,7 @@ import {
 export function materializeDurablePublicationRecord(
   bound: BoundPublicationCheckpoint,
   digest: ContentDigestPort,
+  initialStateWriteManifest: InitialStateWriteManifest,
 ): DurablePublicationRecord {
   assertBoundPublicationCheckpoint(bound);
   const template = durablePublicationRecordTemplateSchema.parse(
@@ -71,6 +73,7 @@ export function materializeDurablePublicationRecord(
     configDigest: template.configDigest,
     baseStateRevision: template.baseStateRevision,
     initialStateContentDigests: template.initialStateValueDigests,
+    initialStateWriteManifest,
     initialPagesProjection: template.initialPagesProjection,
     notificationOutbox: template.notificationOutbox,
     runFinalizationPolicy: template.runFinalizationPolicy,

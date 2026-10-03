@@ -7,7 +7,15 @@ import { stateCommitReceiptOperationId } from "../application/tracking-run/obser
 import { assertRunTransactionMarkerTransition } from "../application/tracking-run/run-transaction-marker.js";
 import { serializeCanonicalJson } from "../canonical-json/value.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
-import type { StateBranchAdapter, StatePersistenceConfiguration } from "./branch-adapter.js";
+import {
+  joinStatePath,
+  type StateBranchAdapter,
+  type StateBranchHead,
+  type StateFileReadResult,
+  type StatePersistenceConfiguration,
+} from "./branch-adapter.js";
+import { assertInitialStateWriteManifest } from "./initial-state-write-manifest.js";
+import { createStateChangedPathManifest } from "./state-commit-metadata.js";
 import { OPERATIONS_ALERT_LEDGER_STATE_PATH_V1 } from "./state-documents.js";
 import { parseRunTransactionNotificationLedger } from "./state-documents.js";
 import { initialNotificationLedger } from "./state-initial-notification-transition.js";
@@ -32,6 +40,61 @@ import {
   verifyRunTransactionFiles,
   type VerifiedRunTransactionFiles,
 } from "./state-transaction-files.js";
+
+async function readFullTree(
+  adapter: StateBranchAdapter,
+  head: StateBranchHead,
+): Promise<ReadonlyMap<string, StateFileReadResult>> {
+  if (head.status === "missing") {
+    return new Map();
+  }
+  const paths = await adapter.listFiles(head.revision, "state");
+  const files = await adapter.readFiles(head.revision, paths);
+  if (files.size !== paths.length || paths.some((path) => files.get(path)?.status !== "present")) {
+    throw new TypeError("初回commitのexact treeを全件読み取れません");
+  }
+  return files;
+}
+
+async function assertInitialWriteSet(
+  adapter: StateBranchAdapter,
+  configuration: StatePersistenceConfiguration,
+  commit: Awaited<ReturnType<StateBranchAdapter["readCommit"]>>,
+  current: VerifiedTree,
+): Promise<void> {
+  const manifest = current.transaction.record.initialStateWriteManifest;
+  if (manifest == null) {
+    throw new TypeError("旧初回commitの履歴とAI cacheを元recordから証明できません");
+  }
+  const [parentFiles, currentFiles] = await Promise.all([
+    readFullTree(adapter, commit.parent),
+    readFullTree(adapter, { status: "present", revision: commit.revision }),
+  ]);
+  const paths = new Set([...parentFiles.keys(), ...currentFiles.keys()]);
+  const before = new Map<string, StateFileReadResult>();
+  const after = new Map<string, StateFileReadResult>();
+  for (const path of paths) {
+    before.set(path, parentFiles.get(path) ?? { status: "missing" });
+    after.set(path, currentFiles.get(path) ?? { status: "missing" });
+  }
+  const changed = createStateChangedPathManifest(before, after);
+  if (serializeCanonicalJson(changed) !== serializeCanonicalJson(commit.changedPathManifest)) {
+    throw new TypeError("初回commitの親tree差分とGit変更manifestが一致しません");
+  }
+  const record = current.transaction.record;
+  assertInitialStateWriteManifest(
+    manifest,
+    configuration,
+    joinStatePath(
+      configuration.historyDirectory,
+      `${record.initialPagesProjection.generatedAt.slice(0, 10)}.jsonl`,
+    ),
+    record.runIdentity.runId,
+    before,
+    after,
+    changed,
+  );
+}
 
 async function readVerifiedAt(
   adapter: StateBranchAdapter,
@@ -209,6 +272,7 @@ export async function assertStateCommitChain(
         );
       }
       await assertTrackingCommitPaths(adapter, configuration, commit, current, undefined);
+      await assertInitialWriteSet(adapter, configuration, commit, current);
       if (settled != null) {
         assertSettledOutboxLedger(current, settled, configuration);
       }

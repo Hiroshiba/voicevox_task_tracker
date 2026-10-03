@@ -73,13 +73,7 @@ function expectedMessageKeys(
   const index = messageIndex(deliveryId);
   const selection = notificationSelectionFromRecord(record);
   if (tree.transaction.snapshotSchemaVersion !== "23") {
-    const reservations = new Set(
-      selection.ledgerReservations.map((entry) => entry.notificationKey),
-    );
-    if (actualKeys.length === 0 || actualKeys.some((key) => !reservations.has(key))) {
-      throw new TypeError("旧固定outboxのmessage keyが予約範囲外です");
-    }
-    return actualKeys;
+    throw new TypeError("旧通知commitの版別message計画を証明できません");
   }
   const evidence = tree.transaction.initialPagesEvidence;
   const outbox = record.notificationOutbox;
@@ -208,6 +202,7 @@ export function assertNotificationCommitTransition(
     if (
       resolution == null ||
       firstChange == null ||
+      resolution.operationId !== operationId ||
       changes.some((entry) => !same(entry.manualResolution, resolution)) ||
       previous.transaction.marker.lastMessageDeliveryId !== resolution.deliveryId ||
       prior.entries.some(

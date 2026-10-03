@@ -13,7 +13,6 @@ import {
   type StatePersistenceConfiguration,
 } from "../../persistence/index.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
-import { materializeDurablePublicationRecord } from "./durable-record.js";
 import { verifyInitialStateCandidate } from "./initial-state-commit-candidate.js";
 import { prepareInitialStateFiles } from "./initial-state-commit-files.js";
 import {
@@ -50,43 +49,42 @@ export async function commitInitialState(
   statePort: InitialStateCommitPort,
 ): Promise<InitialStateCommitResult> {
   assertBoundPublicationCheckpoint(bound);
-  const record = materializeDurablePublicationRecord(bound, digest);
   if (
-    record.runtimeRecoveryPlan.kind === "not_reproducible" &&
-    record.executionPolicy.effectTarget !== "recording"
+    bound.binding.runtimeRecoveryPlan.kind === "not_reproducible" &&
+    bound.checkpoint.executionPolicy.effectTarget !== "recording"
   ) {
     throw new TypeError("回復不能なruntimeで永続stateへ初回commitできません");
   }
   const template = bound.publicationPlan.initialStateWriteSet.markerTemplate;
   if (
-    serializeCanonicalJson(template.runIdentity) !== serializeCanonicalJson(record.runIdentity) ||
+    serializeCanonicalJson(template.runIdentity) !==
+      serializeCanonicalJson(bound.checkpoint.runIdentity) ||
     serializeCanonicalJson(template.baseStateRevision) !==
-      serializeCanonicalJson(record.baseStateRevision) ||
+      serializeCanonicalJson(bound.checkpoint.baseStateRevision) ||
     serializeCanonicalJson(template.initialStateValueDigests) !==
-      serializeCanonicalJson(record.initialStateContentDigests)
+      serializeCanonicalJson(bound.publicationPlan.initialStateWriteSet.valueDigests)
   ) {
     throw new TypeError("初回marker templateがcheckpointと一致しません");
   }
   const expectedHead = checkpointBaseHead(bound);
   const operationId = stateCommitReceiptOperationId(
     "initial_state_commit",
-    record.runIdentity.runId,
-    record.checkpointDigest,
+    bound.checkpoint.runIdentity.runId,
+    bound.checkpointDigest,
     digest,
   );
   const invocationId = randomUUID();
-  const message = `tracker initial state ${bound.publicationPlan.initialStateWriteSet.snapshot.generatedAt.slice(0, 10)} ${record.runIdentity.runId}`;
+  const message = `tracker initial state ${bound.publicationPlan.initialStateWriteSet.snapshot.generatedAt.slice(0, 10)} ${bound.checkpoint.runIdentity.runId}`;
   const commitIdentity = Object.freeze({
     commitScope: "tracking_run" as const,
     operationId,
-    runId: record.runIdentity.runId,
+    runId: bound.checkpoint.runIdentity.runId,
   });
   const written = await writeStateCas(statePort.adapter, statePort.configuration, expectedHead, {
     commitIdentity,
     build: async (parent) => {
       const files = await prepareInitialStateFiles(
         bound,
-        record,
         statePort.adapter,
         statePort.configuration,
         statePort.migrationTimezone,
@@ -104,7 +102,6 @@ export async function commitInitialState(
     verifyCandidate: (files, _revision, request) => {
       verifyInitialStateCandidate(
         bound,
-        record,
         statePort.configuration,
         files,
         request.updates,
@@ -145,7 +142,7 @@ export async function commitInitialState(
       stage: "initial_state_committed",
       phase: "initial",
       binding: observed.receipt.binding,
-      logicalTarget: record.checkpointDigest,
+      logicalTarget: bound.checkpointDigest,
       invocationId,
       localAttemptIndex: 0,
       phaseSequence: 1,

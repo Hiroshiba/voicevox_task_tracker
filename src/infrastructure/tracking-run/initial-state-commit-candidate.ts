@@ -7,9 +7,9 @@ import type {
 import { assertStatePublicSafety } from "../../persistence/public-safety.js";
 import { parseStateSnapshot } from "../../persistence/snapshot-v23.js";
 import { verifyRunTransactionFiles } from "../../persistence/state-transaction-files.js";
-import type { DurablePublicationRecord } from "../../publication/durable-record-schema.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import type { BoundPublicationCheckpoint } from "./publication-checkpoint-binding.js";
+import { materializeDurablePublicationRecord } from "./durable-record.js";
 import { validatedRunPayloadRepositoryInventory } from "./validated-run-payload.js";
 
 function parseStateValues(path: string, bytes: Uint8Array): readonly unknown[] {
@@ -33,7 +33,6 @@ function parseStateValues(path: string, bytes: Uint8Array): readonly unknown[] {
 /** 初回commit候補の実byte、全公開値、transaction結合を公開前に検証する。 */
 export function verifyInitialStateCandidate(
   bound: BoundPublicationCheckpoint,
-  record: DurablePublicationRecord,
   configuration: StatePersistenceConfiguration,
   files: ReadonlyMap<string, StateFileReadResult>,
   updates: readonly StateFileUpdate[],
@@ -43,6 +42,11 @@ export function verifyInitialStateCandidate(
   if (verified == null) {
     throw new TypeError("初回commit候補にrun transactionがありません");
   }
+  const manifest = verified.record.initialStateWriteManifest;
+  if (manifest == null) {
+    throw new TypeError("初回commit候補にwrite manifestがありません");
+  }
+  const record = materializeDurablePublicationRecord(bound, digest, manifest);
   if (
     verified.marker.phase !== "initial_state_committed" ||
     verified.initialPagesEvidence != null ||

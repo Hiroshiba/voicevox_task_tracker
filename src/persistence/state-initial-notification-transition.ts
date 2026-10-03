@@ -11,7 +11,7 @@ function same(left: unknown, right: unknown): boolean {
 /** 親ledgerと固定outboxから初回commitの通常ledgerを導出する。 */
 export function initialNotificationLedger(
   previous: StateNotificationLedger,
-  record: DurablePublicationRecord,
+  record: Pick<DurablePublicationRecord, "notificationOutbox">,
 ): StateNotificationLedger {
   const outbox = record.notificationOutbox;
   if (hashCanonicalJson(normalNotificationLedgerValue(previous)) !== outbox.previousLedgerDigest) {

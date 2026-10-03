@@ -45,10 +45,14 @@ import {
   createStateLedgerUpdates,
   loadStateNotificationLedgers,
 } from "../../persistence/state-ledger-files.js";
-import type { DurablePublicationRecord } from "../../publication/durable-record-schema.js";
-import { encodeDurablePublicationRecord } from "../../publication/durable-record-schema.js";
+import {
+  durablePublicationRecordTemplateSchema,
+  encodeDurablePublicationRecord,
+} from "../../publication/durable-record-schema.js";
 import { normalNotificationLedgerValue } from "../../publication/publication-order.js";
+import { createInitialStateWriteManifest } from "../../persistence/initial-state-write-manifest.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
+import { materializeDurablePublicationRecord } from "./durable-record.js";
 import type { BoundPublicationCheckpoint } from "./publication-checkpoint-binding.js";
 import { validatedRunPayloadRepositoryInventory } from "./validated-run-payload.js";
 
@@ -113,7 +117,6 @@ function assertStatePaths(
 /** checkpointのwrite setを実際のCAS親treeから初回commit fileへ変換する。 */
 export async function prepareInitialStateFiles(
   bound: BoundPublicationCheckpoint,
-  record: DurablePublicationRecord,
   adapter: StateBranchAdapter,
   configuration: StatePersistenceConfiguration,
   migrationTimezone: string,
@@ -126,17 +129,30 @@ export async function prepareInitialStateFiles(
   const snapshot = createStateSnapshot(writeSet.snapshot);
   const ledger = createStateNotificationLedger(writeSet.notificationLedger);
   const inventory = validatedRunPayloadRepositoryInventory(bound.validatedPayload);
+  const aiCachePaths = writeSet.aiCacheAdditions.map((entry) =>
+    cachePath(configuration, entry.cacheKey),
+  );
+  const personalCachePaths = writeSet.personalReminderAiCacheAdditions.map((entry) =>
+    personalReminderAiCachePath(configuration, entry.cacheKey),
+  );
+  const basePaths = [
+    writeSet.paths.historyPath,
+    INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1,
+    ...writeSet.paths.oldCacheDeletionPaths,
+    ...aiCachePaths,
+    ...personalCachePaths,
+  ];
   const [previous, migration, previousLedger, baseFiles] = await Promise.all([
     readExactStateSnapshot(adapter, configuration, migrationTimezone, parent),
     readAiCacheMigrationPlan(adapter, configuration, parent),
     loadStateNotificationLedgers(adapter, configuration, parent),
     parent.status === "missing"
-      ? Promise.resolve(new Map<string, StateFileReadResult>())
-      : adapter.readFiles(parent.revision, [
-          writeSet.paths.historyPath,
-          INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1,
-          ...writeSet.paths.oldCacheDeletionPaths,
-        ]),
+      ? Promise.resolve(
+          new Map<string, StateFileReadResult>(
+            basePaths.map((path) => [path, { status: "missing" }]),
+          ),
+        )
+      : adapter.readFiles(parent.revision, [...new Set(basePaths)]),
   ]);
   if (
     digest.sha256Utf8(serializeCanonicalJson(normalNotificationLedgerValue(previousLedger))) !==
@@ -219,14 +235,38 @@ export async function prepareInitialStateFiles(
     ...ledger,
     operationsAlerts: previousLedger.operationsAlerts,
   });
+  const recordTemplate = durablePublicationRecordTemplateSchema.parse(
+    bound.publicationPlan.durableRecordTemplate,
+  );
   if (
     serializeCanonicalJson(normalNotificationLedgerValue(mergedLedger)) !==
     serializeCanonicalJson(
-      normalNotificationLedgerValue(initialNotificationLedger(previousLedger, record)),
+      normalNotificationLedgerValue(initialNotificationLedger(previousLedger, recordTemplate)),
     )
   ) {
     throw new TypeError("初回commitのledgerが固定outboxと親stateから導出した値と一致しません");
   }
+  const historyUpdate = {
+    path: writeSet.paths.historyPath,
+    bytes: new TextEncoder().encode(historySource),
+  };
+  const aiCacheUpdates = aiCache.map((entry) => ({
+    path: cachePath(configuration, entry.cacheKey),
+    bytes: new TextEncoder().encode(serializeCanonicalJsonLine(entry)),
+  }));
+  const personalCacheUpdates = personalCache.map((entry) => ({
+    path: personalReminderAiCachePath(configuration, entry.cacheKey),
+    bytes: new TextEncoder().encode(serializeCanonicalJsonLine(entry)),
+  }));
+  const manifest = createInitialStateWriteManifest(
+    historyUpdate,
+    historyRecord,
+    aiCacheUpdates,
+    personalCacheUpdates,
+    writeSet.deletions,
+    baseFiles,
+  );
+  const record = materializeDurablePublicationRecord(bound, digest, manifest);
   const marker = parseRunTransactionMarker({
     recoveryBootstrapVersion: 1,
     schemaVersion: 1,
@@ -262,7 +302,7 @@ export async function prepareInitialStateFiles(
       path: configuration.snapshotPath,
       bytes: new TextEncoder().encode(serializeStateSnapshot(snapshot)),
     },
-    { path: writeSet.paths.historyPath, bytes: new TextEncoder().encode(historySource) },
+    historyUpdate,
     ...(await createStateLedgerUpdates(
       adapter,
       configuration,
@@ -270,14 +310,8 @@ export async function prepareInitialStateFiles(
       mergedLedger,
       "tracking_run",
     )),
-    ...aiCache.map((entry) => ({
-      path: cachePath(configuration, entry.cacheKey),
-      bytes: new TextEncoder().encode(serializeCanonicalJsonLine(entry)),
-    })),
-    ...personalCache.map((entry) => ({
-      path: personalReminderAiCachePath(configuration, entry.cacheKey),
-      bytes: new TextEncoder().encode(serializeCanonicalJsonLine(entry)),
-    })),
+    ...aiCacheUpdates,
+    ...personalCacheUpdates,
     {
       path: DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
       bytes: encodeDurablePublicationRecord(record, digest),
