@@ -21,6 +21,8 @@ export type CodexSemanticValidationIssueCode =
   | "invalid_implements_direction"
   | "missing_relation_verdict"
   | "duplicate_relation_verdict"
+  | "native_relation_verdict_mismatch"
+  | "invalid_progress_source"
   | "url_not_allowed"
   | "item_node_id_mismatch"
   | "item_url_mismatch"
@@ -56,6 +58,8 @@ const semanticValidationIssueCodes: readonly [
   "invalid_implements_direction",
   "missing_relation_verdict",
   "duplicate_relation_verdict",
+  "native_relation_verdict_mismatch",
+  "invalid_progress_source",
   "url_not_allowed",
   "item_node_id_mismatch",
   "item_url_mismatch",
@@ -159,6 +163,14 @@ export const CODEX_SEMANTIC_VALIDATION_ISSUE_CATALOG = Object.freeze({
   duplicate_relation_verdict: {
     correction: "eligible",
     glossary: "relation候補のverdictが重複しています",
+  },
+  native_relation_verdict_mismatch: {
+    correction: "eligible",
+    glossary: "native relationのverdictがauthoritativeな関係の向きと一致しません",
+  },
+  invalid_progress_source: {
+    correction: "eligible",
+    glossary: "進捗sourceが今回の対象項目のhuman comment候補にありません",
   },
   url_not_allowed: {
     correction: "eligible",

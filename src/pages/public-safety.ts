@@ -1,5 +1,8 @@
 import { type Repository } from "../domain/index.js";
-import { containsPrivateRepositoryReference } from "../github/private-repository-reference.js";
+import {
+  containsPrivateRepositoryReference,
+  containsUnallowlistedGitHubRepositoryUrl,
+} from "../github/private-repository-reference.js";
 import { isEligiblePublicRepository } from "../github/public-repository-allowlist.js";
 import { type StateHistoryRecord, type StateSnapshot } from "../persistence/index.js";
 import { PagesPublicSafetyError } from "./errors.js";
@@ -111,11 +114,15 @@ function createRepositoryAllowlist(
 function scanValues(
   values: readonly unknown[],
   repositoryInventory: readonly Repository[],
+  repositoryAllowlist: readonly PagesRepositoryAllowlistEntry[],
   knownSecrets: readonly string[],
 ): readonly string[] {
   const violationCodes = new Set<string>();
   if (containsPrivateRepositoryReference(values, repositoryInventory)) {
     violationCodes.add("private_repository_data");
+  }
+  if (containsUnallowlistedGitHubRepositoryUrl(values, repositoryAllowlist)) {
+    violationCodes.add("repository_url_not_allowlisted");
   }
   const pending: unknown[] = [...values];
   const visited = new WeakSet<object>();
@@ -206,6 +213,7 @@ export function assertPagesPublicSafety(input: PagesPublicSafetyInput): void {
     ...scanValues(
       [input.snapshot, ...input.historyRecords],
       input.repositoryInventory,
+      input.repositoryAllowlist,
       input.knownSecrets,
     ),
   );

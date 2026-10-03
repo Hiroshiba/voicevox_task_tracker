@@ -1,3 +1,4 @@
+import { RunCompletenessError } from "../../application/tracking-run/stages/run-completeness-error.js";
 import { GitHubPublicBoundaryViolationError } from "../../github/errors.js";
 import { PagesPublicSafetyError } from "../../pages/errors.js";
 import { StatePublicSafetyError } from "../../persistence/errors.js";
@@ -14,7 +15,9 @@ export function isPublicBoundaryViolation(error: unknown): boolean {
     if (
       current instanceof GitHubPublicBoundaryViolationError ||
       current instanceof StatePublicSafetyError ||
-      current instanceof PagesPublicSafetyError
+      current instanceof PagesPublicSafetyError ||
+      (current instanceof RunCompletenessError &&
+        (current.code === "private_source" || current.code === "unsafe_public_value"))
     ) {
       return true;
     }

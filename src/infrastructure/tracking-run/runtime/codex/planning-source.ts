@@ -146,6 +146,7 @@ export function createGenericAiPlanningPort(
       const previousObservedAt = previousTrackedItem(state, analysis.item.nodeId)?.observedAt;
       const baseInput = createCodexInput(
         configuration,
+        run.data.approvedRepositories,
         run.data.collection.evaluatedAt,
         analysis,
         [],
@@ -178,6 +179,7 @@ export function createGenericAiPlanningPort(
       const necessities = determineAnalysisElementNecessities(source.necessityInput);
       return createCodexInput(
         configuration,
+        run.data.approvedRepositories,
         run.data.collection.evaluatedAt,
         analysis,
         AI_ANALYSIS_ELEMENTS.filter((element) => necessities[element] === "required"),
@@ -223,6 +225,7 @@ export function createGenericAiPlanningPort(
     ): CodexAnalysisInput =>
       createCodexInput(
         configuration,
+        run.data.approvedRepositories,
         run.data.collection.evaluatedAt,
         analysis,
         planning.selection.selected.map((candidate) => candidate.element),

@@ -160,7 +160,11 @@ export async function readInitialPagesSource(
   ) {
     throw new TypeError("初回Pages buildのsnapshotと当日history recordが一致しません");
   }
-  assertStateValuesPublicSafety([transaction.marker, record, ...historyRecords], knownSecrets);
+  assertStateValuesPublicSafety(
+    [transaction.marker, record, ...historyRecords],
+    allowlist,
+    knownSecrets,
+  );
   const resume = resumeInitialPagesBuild(
     {
       record,

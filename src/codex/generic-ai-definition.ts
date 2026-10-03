@@ -32,7 +32,7 @@ export type AnalysisElementNecessityInput = Readonly<{
 
 type GenericAiElementDefinition = Readonly<{
   revision: number;
-  inputProjectionVersion: 2;
+  inputProjectionVersion: 2 | 3;
   useSites: readonly string[];
   promptDescription: string;
   resultSchema: z.ZodType;
@@ -96,7 +96,7 @@ function exactInputContext(input: CodexAnalysisInput, element: AiAnalysisElement
     ).map((locked) => [locked, input.lockedElements[locked]]),
   );
   return Object.freeze({
-    inputProjectionVersion: 2,
+    inputProjectionVersion: GENERIC_AI_ELEMENT_DEFINITIONS[element].inputProjectionVersion,
     selectedElements: Object.freeze(selectedElements),
     lockedElements: Object.freeze(lockedElements),
   });
@@ -137,6 +137,7 @@ function relationExactInput(input: CodexAnalysisInput): object {
       "nativeBlocking",
       "nativeParent",
       "nativeSubIssues",
+      "nativeImplements",
     ]),
   });
 }
@@ -146,6 +147,13 @@ function textExactInput(input: CodexAnalysisInput, element: AiAnalysisElement): 
     ...exactInputContext(input, element),
     item: textItem(input),
     sources: naturalLanguageSources(input),
+  });
+}
+
+function progressExactInput(input: CodexAnalysisInput): object {
+  return Object.freeze({
+    ...textExactInput(input, "progress"),
+    humanProgressSourceIds: input.deterministicSignals["humanProgressSourceIds"],
   });
 }
 
@@ -199,8 +207,8 @@ export const GENERIC_AI_ELEMENT_DEFINITIONS = Object.freeze({
     exactInput: (input: CodexAnalysisInput) => stateExactInput(input, "nextAction"),
   }),
   relations: Object.freeze({
-    revision: 2,
-    inputProjectionVersion: 2,
+    revision: 3,
+    inputProjectionVersion: 3,
     useSites: Object.freeze(["関係採否", "graph"]),
     promptDescription: "入力された関係候補の意味",
     resultSchema: createAiAnalysisElementResultSchema("relations"),
@@ -208,13 +216,13 @@ export const GENERIC_AI_ELEMENT_DEFINITIONS = Object.freeze({
     exactInput: relationExactInput,
   }),
   progress: Object.freeze({
-    revision: 1,
-    inputProjectionVersion: 2,
+    revision: 2,
+    inputProjectionVersion: 3,
     useSites: Object.freeze(["進捗", "停滞起点"]),
     promptDescription: "最新の意味のある進捗イベント",
     resultSchema: createAiAnalysisElementResultSchema("progress"),
     required: (input: AnalysisElementNecessityInput) => input.hasHumanProgressCandidate,
-    exactInput: (input: CodexAnalysisInput) => textExactInput(input, "progress"),
+    exactInput: progressExactInput,
   }),
   importance: Object.freeze({
     revision: 1,

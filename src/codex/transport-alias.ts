@@ -35,6 +35,7 @@ const RELATION_REFERENCE_FIELDS = new Set([
   "nativeBlocking",
   "nativeParent",
   "nativeSubIssues",
+  "nativeImplements",
 ]);
 
 /** Codex実行時のIDとcanonical IDを対応付けるcodec。 */

@@ -348,6 +348,7 @@ export async function readNotificationHistoryPagesSource(
       finalized.transaction.initialPagesEvidence,
       ...historyRecords,
     ],
+    record.initialPagesProjection.repositoryAllowlist,
     knownSecrets,
   );
   assertPagesPublicSafety({

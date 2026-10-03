@@ -16,6 +16,7 @@ import {
   parseSourceId,
   resolvePullRequestCommitOccurredAt,
   type GitHubNodeId,
+  type Repository,
   type SourceId,
   type UtcIsoDateTime,
 } from "../../domain/index.js";
@@ -250,11 +251,13 @@ function createNativeRelationSignals(
   nativeBlocking: readonly RelationCandidateId[];
   nativeParent: readonly RelationCandidateId[];
   nativeSubIssues: readonly RelationCandidateId[];
+  nativeImplements: readonly RelationCandidateId[];
 }> {
   const nativeBlockedBy: RelationCandidateId[] = [];
   const nativeBlocking: RelationCandidateId[] = [];
   const nativeParent: RelationCandidateId[] = [];
   const nativeSubIssues: RelationCandidateId[] = [];
+  const nativeImplements: RelationCandidateId[] = [];
   for (const candidate of candidates) {
     if (candidate.provenance !== "native") {
       continue;
@@ -279,6 +282,10 @@ function createNativeRelationSignals(
         }
         break;
       case "implements":
+        if (candidate.relation.implementation.nodeId !== currentNodeId) {
+          throw new TypeError(`native関係候補 ${candidate.id}の実装元が現在項目ではありません`);
+        }
+        nativeImplements.push(candidate.id);
         break;
     }
   }
@@ -287,6 +294,7 @@ function createNativeRelationSignals(
     nativeBlocking: Object.freeze(nativeBlocking.sort()),
     nativeParent: Object.freeze(nativeParent.sort()),
     nativeSubIssues: Object.freeze(nativeSubIssues.sort()),
+    nativeImplements: Object.freeze(nativeImplements.sort()),
   });
 }
 
@@ -568,6 +576,7 @@ function requireCodexSourceOccurredAt(
 /** 決定論的判定と収集結果から汎用Codex入力を組み立てる。 */
 export function createCodexInput(
   configuration: Readonly<{ config: Config }>,
+  repositoryAllowlist: readonly Pick<Repository, "owner" | "name">[],
   evaluatedAt: UtcIsoDateTime,
   analysis: DeterministicItemAnalysis,
   selectedElements: readonly AiAnalysisElement[],
@@ -839,10 +848,17 @@ export function createCodexInput(
     selfCommitmentCandidates: selfCandidates,
     sources: [...sourceRecords.values()],
     deterministicSignals: {
+      publicRepositoryAllowlist: repositoryAllowlist.map((repository) => ({
+        owner: repository.owner,
+        name: repository.name,
+      })),
       status: analysis.decision.status,
       waitingOn: analysis.decision.waitingOn,
       relationCandidateIds: relationCandidates.map((candidate) => candidate.id),
       ...nativeRelationSignals,
+      humanProgressSourceIds: analysis.item.events
+        .filter((event) => event.kind === "comment" && event.actor.type === "human")
+        .map((event) => event.sourceId),
       mentionedWaitingOnCandidates: mentionedCandidates,
       requiredCheckFailure:
         analysis.detail.type === "pull_request" &&
