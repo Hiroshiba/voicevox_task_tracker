@@ -8,14 +8,19 @@ import { receiptIdentifiers } from "../application/tracking-run/receipt-codec.js
 import { assertRunTransactionMarkerTransition } from "../application/tracking-run/run-transaction-marker.js";
 import { serializeCanonicalJson } from "../canonical-json/value.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
-import type {
-  StateBranchAdapter,
-  StateFileReadResult,
-  StatePersistenceConfiguration,
-} from "./branch-adapter.js";
-import { parseStateNotificationLedger } from "./state-documents.js";
+import { assertNonNullable } from "../util/index.js";
+import type { StateBranchAdapter, StatePersistenceConfiguration } from "./branch-adapter.js";
+import { parseRunTransactionNotificationLedger } from "./state-documents.js";
 import { OPERATIONS_ALERT_LEDGER_STATE_PATH_V1 } from "./state-documents.js";
 import { createStateCommitOperationId } from "./state-commit-metadata.js";
+import {
+  assertTrackingCommitPaths,
+  type VerifiedCommitTree as VerifiedTree,
+} from "./state-commit-chain-paths.js";
+import {
+  assertSettledOutboxLedger,
+  assertSettlementParentPhase,
+} from "./state-commit-chain-settlement.js";
 import {
   authorizeAdvanceAfterOrthogonalCommits,
   MAX_INTERVENING_COMMITS,
@@ -24,11 +29,6 @@ import {
   verifyRunTransactionFiles,
   type VerifiedRunTransactionFiles,
 } from "./state-transaction-files.js";
-
-type VerifiedTree = Readonly<{
-  files: ReadonlyMap<string, StateFileReadResult>;
-  transaction: VerifiedRunTransactionFiles;
-}>;
 
 async function readVerifiedAt(
   adapter: StateBranchAdapter,
@@ -92,12 +92,14 @@ async function previousTrackingRevision(
 function notificationLedger(
   tree: VerifiedTree,
   configuration: StatePersistenceConfiguration,
-): ReturnType<typeof parseStateNotificationLedger> {
+): ReturnType<typeof parseRunTransactionNotificationLedger>["ledger"] {
   const file = tree.files.get(configuration.notificationLedgerPath);
   if (file?.status !== "present") {
     throw new TypeError("Git祖先の通常ledgerがありません");
   }
-  return parseStateNotificationLedger(new TextDecoder("utf-8", { fatal: true }).decode(file.bytes));
+  return parseRunTransactionNotificationLedger(
+    new TextDecoder("utf-8", { fatal: true }).decode(file.bytes),
+  ).ledger;
 }
 
 function assertCommitOperation(
@@ -150,23 +152,35 @@ function assertCommitOperation(
       if (previous.transaction.marker.phase !== "notifications_in_progress") {
         throw new TypeError("手動解決の前に通知開始済みmarkerが必要です");
       }
+      if (
+        priorByKey.size !== prior.entries.length ||
+        priorByKey.size !== next.entries.length ||
+        next.entries.some((entry) => !priorByKey.has(entry.notificationKey))
+      ) {
+        throw new TypeError("手動解決commitで通常ledger entry集合が変化しています");
+      }
       const resolutions = next.entries.flatMap((entry) => {
         const resolution = entry.manualResolution;
         const priorEntry = priorByKey.get(entry.notificationKey);
-        const before = priorEntry?.manualResolution;
-        if (
+        assertNonNullable(priorEntry, "手動解決commitの元ledger entryがありません");
+        const before = priorEntry.manualResolution;
+        const changed =
           resolution != null &&
-          (priorEntry?.status !== "delivery_started" ||
+          (before == null || serializeCanonicalJson(resolution) !== serializeCanonicalJson(before));
+        if (
+          changed &&
+          (before != null ||
+            priorEntry.status !== "delivery_started" ||
             priorEntry.deliveryId !== resolution.deliveryId ||
             priorEntry.lastDeliveryAttempt?.attemptId !== resolution.attemptId ||
             priorEntry.lastDeliveryAttempt.result !== "started")
         ) {
           throw new TypeError("手動解決の元となる開始済み送達試行がありません");
         }
-        return resolution != null &&
-          (before == null || serializeCanonicalJson(resolution) !== serializeCanonicalJson(before))
-          ? [resolution]
-          : [];
+        if (!changed && serializeCanonicalJson(entry) !== serializeCanonicalJson(priorEntry)) {
+          throw new TypeError("手動解決commitで対象外の通常ledger entryが変化しています");
+        }
+        return changed ? [resolution] : [];
       });
       const resolution = resolutions[0];
       if (
@@ -174,6 +188,27 @@ function assertCommitOperation(
         new Set(resolutions.map((value) => serializeCanonicalJson(value))).size !== 1
       ) {
         throw new TypeError("手動解決commitのoperation IDをledgerから特定できません");
+      }
+      const changedKeys = next.entries
+        .filter((entry) => entry.manualResolution?.operationId === resolution.operationId)
+        .map((entry) => entry.notificationKey)
+        .sort();
+      const firstChangedKey = changedKeys[0];
+      assertNonNullable(firstChangedKey, "手動解決commitの対象keyがありません");
+      const startedKeys = priorByKey.get(firstChangedKey)?.lastDeliveryAttempt?.notificationKeys;
+      const expectedPending =
+        resolution.decision === "retry"
+          ? prior.pendingNotifications
+          : prior.pendingNotifications.filter(
+              (pending) => !changedKeys.includes(pending.notificationKey),
+            );
+      if (
+        startedKeys == null ||
+        serializeCanonicalJson(changedKeys) !== serializeCanonicalJson([...startedKeys].sort()) ||
+        serializeCanonicalJson(next.pendingNotifications) !==
+          serializeCanonicalJson(expectedPending)
+      ) {
+        throw new TypeError("手動解決commitの対象keyまたは未送信候補が開始済み試行と一致しません");
       }
       expected = receiptIdentifiers(
         {
@@ -274,6 +309,7 @@ export async function assertStateCommitChain(
     throw new TypeError("headの検証済みtransactionとGit祖先の先頭が一致しません");
   }
   let revision = latestRevision;
+  let settled: VerifiedTree | undefined;
   for (let count = 0; count < MAX_INTERVENING_COMMITS; count += 1) {
     const [commit, current] = await Promise.all([
       adapter.readCommit(revision),
@@ -311,6 +347,10 @@ export async function assertStateCommitChain(
         undefined,
         configuration,
       );
+      await assertTrackingCommitPaths(adapter, configuration, commit, current, undefined);
+      if (settled != null) {
+        assertSettledOutboxLedger(current, settled, configuration);
+      }
       await authorizeAdvanceAfterOrthogonalCommits(
         adapter,
         configuration,
@@ -348,6 +388,10 @@ export async function assertStateCommitChain(
       parentRevision,
       current.transaction.initialPagesEvidence,
     );
+    if (current.transaction.marker.phase === "notifications_settled") {
+      assertSettlementParentPhase(current.transaction.record, previous.transaction.marker.phase);
+      settled = current;
+    }
     assertCommitOperation(
       commit.metadata.commitScope,
       commit.metadata.operationId,
@@ -355,6 +399,7 @@ export async function assertStateCommitChain(
       previous,
       configuration,
     );
+    await assertTrackingCommitPaths(adapter, configuration, commit, current, previous);
     revision = previousRevision;
   }
   throw new TypeError("state commitのGit祖先探索が上限を超えています");
