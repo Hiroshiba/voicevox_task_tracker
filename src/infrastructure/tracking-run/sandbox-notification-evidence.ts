@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { z } from "zod";
@@ -12,7 +12,12 @@ import { loadConfig } from "../../config/index.js";
 import { GitStateBranchAdapter } from "../../persistence/index.js";
 import { sandboxPendingNotificationSchema } from "../../publication/sandbox-pending-evidence-schema.js";
 import { nodeContentDigestPort } from "./content-digest.js";
-import { decodePublicationArtifact } from "./publication-checkpoint-codec.js";
+import {
+  decodePublicationArtifact,
+  MAX_CHECKPOINT_FILE_BYTES,
+  MAX_CHECKPOINT_MANIFEST_BYTES,
+} from "./publication-checkpoint-codec.js";
+import { nodeCheckpointCompressionPort } from "./publication-checkpoint-gzip.js";
 import { verifyManualResolutionReceipt } from "./manual-resolution.js";
 import { readNotificationMessageState } from "./notification-message-state.js";
 import { countSandboxReservationCommits } from "./sandbox-reservation-commits.js";
@@ -43,8 +48,10 @@ function sha256(bytes: Uint8Array): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
-async function readOptionalFile(path: string): Promise<Uint8Array | undefined> {
+async function readOptionalFile(path: string, maxBytes: number): Promise<Uint8Array | undefined> {
   try {
+    const file = await stat(path);
+    if (file.size > maxBytes) throw new TypeError("checkpoint fileのbyte数が上限を超えています");
     return await readFile(path);
   } catch (error: unknown) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") {
@@ -135,8 +142,14 @@ async function inspectPending(): Promise<void> {
     throw new TypeError("旧V2永続recordに解析段階の実行証拠がありません");
   }
   const analysis = record.analysisStageRecord;
-  const checkpointBytes = await readOptionalFile(required("SANDBOX_CHECKPOINT_PATH"));
-  const sidecarBytes = await readOptionalFile(required("SANDBOX_SIDECAR_PATH"));
+  const checkpointBytes = await readOptionalFile(
+    required("SANDBOX_CHECKPOINT_PATH"),
+    MAX_CHECKPOINT_FILE_BYTES,
+  );
+  const sidecarBytes = await readOptionalFile(
+    required("SANDBOX_SIDECAR_PATH"),
+    MAX_CHECKPOINT_MANIFEST_BYTES,
+  );
   if ((checkpointBytes == null) !== (sidecarBytes == null)) {
     throw new TypeError("checkpoint artifactとsidecarの片方だけがあります");
   }
@@ -149,9 +162,10 @@ async function inspectPending(): Promise<void> {
         expectedRunId: record.runIdentity.runId,
         baseStateRevision: record.baseStateRevision,
         configDigest: parseSha256Hash(record.configDigest),
-        artifactFileName: "validated-run.json",
+        artifactFileName: "validated-run.cpk",
       },
       nodeContentDigestPort,
+      nodeCheckpointCompressionPort,
     );
     if (
       checkpoint.checkpointDigest !== record.checkpointDigest ||

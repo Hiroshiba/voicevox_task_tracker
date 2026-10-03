@@ -62,7 +62,7 @@ CLIの次の入口は外部effectを起こさず、指定した入力を検証�
 
 | command                                                    | 必要な入力                                   |
 | ---------------------------------------------------------- | -------------------------------------------- |
-| `verify-checkpoint --artifact PATH`                        | canonical checkpointとsidecar、設定          |
+| `verify-checkpoint --artifact PATH`                        | `.cpk` checkpointとsidecar、設定             |
 | `verify-receipt-chain --input PATH`                        | checkpointとreceipt chainの検証入力          |
 | `verify-runtime-recovery --input PATH --bundle-root PATH`  | 固定回復inputとexact bundle                  |
 | `verify-state --state-directory PATH --state-revision SHA` | ローカルのGit checkoutと固定commit SHA、設定 |

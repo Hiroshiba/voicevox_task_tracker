@@ -7,7 +7,11 @@ import {
   parseRunTransactionMarker,
   serializeRunTransactionMarker,
 } from "../../application/tracking-run/run-transaction-marker.js";
-import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../../canonical-json/value.js";
+import {
+  canonicalJsonPieces,
+  serializeCanonicalJson,
+  serializeCanonicalJsonLine,
+} from "../../canonical-json/value.js";
 import { createAiCacheEntry } from "../../codex/cache.js";
 import { createPersonalReminderAiCacheEntry } from "../../codex/personal-reminder-cache.js";
 import {
@@ -75,7 +79,7 @@ function assertFileState(file: StateFileReadResult, expected: InitialPublication
 function assertValueDigests(bound: BoundPublicationCheckpoint): void {
   const writeSet = bound.publicationPlan.initialStateWriteSet;
   const actual = {
-    snapshot: digest.sha256Utf8(serializeCanonicalJson(writeSet.snapshot)),
+    snapshot: digest.sha256Utf8Chunks(canonicalJsonPieces(writeSet.snapshot)),
     historyInputEvents: digest.sha256Utf8(serializeCanonicalJson(writeSet.historyInputEvents)),
     aiCacheAdditions: digest.sha256Utf8(serializeCanonicalJson(writeSet.aiCacheAdditions)),
     personalReminderAiCacheAdditions: digest.sha256Utf8(

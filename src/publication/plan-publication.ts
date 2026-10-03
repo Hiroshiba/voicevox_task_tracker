@@ -1,7 +1,7 @@
 import { INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1 } from "../application/tracking-run/contracts/recovery-paths.js";
 import type { ContentDigestPort } from "../application/tracking-run/contracts/content-digest-port.js";
 import { assertValidatedRun } from "../application/tracking-run/stages/validate-run.js";
-import { serializeCanonicalJson } from "../canonical-json/value.js";
+import { canonicalJsonPieces, serializeCanonicalJson } from "../canonical-json/value.js";
 import { PUBLIC_DTO_SCHEMA_VERSION } from "../pages/public-dto-primitives.js";
 import { planNotificationOutbox } from "./notification-outbox.js";
 import {
@@ -67,7 +67,7 @@ export function planPublication(
     }),
     deletions,
     valueDigests: Object.freeze({
-      snapshot: digest.sha256Utf8(serializeCanonicalJson(validated.snapshot)),
+      snapshot: digest.sha256Utf8Chunks(canonicalJsonPieces(validated.snapshot)),
       historyInputEvents: digest.sha256Utf8(
         serializeCanonicalJson(
           sortByKey(validated.historyInputEvents, (event) => serializeCanonicalJson(event)),

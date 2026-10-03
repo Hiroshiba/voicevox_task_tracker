@@ -35,7 +35,7 @@ import { parseRecoverRuntimeV2, parseRouteStage, parseRunStage } from "./split-s
 const DEFAULT_CONFIG_PATH = "config.yml";
 const DEFAULT_REPORT_DIRECTORY = "artifacts/run-reports";
 const DEFAULT_ARTIFACT_DIRECTORY = "artifacts";
-const DEFAULT_WORKFLOW_ARTIFACT_PATH = "artifacts/workflow/validated-run.json";
+const DEFAULT_WORKFLOW_ARTIFACT_PATH = "artifacts/workflow/validated-run.cpk";
 const DEFAULT_MANUAL_RESOLUTION_RECEIPT_PATH = "artifacts/workflow/manual-resolution-receipt.json";
 const DEFAULT_COLLECT_ANALYZE_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/collect-analyze.json`;
 const DEFAULT_WORKFLOW_REPORT_PATH = `${DEFAULT_REPORT_DIRECTORY}/workflow.json`;

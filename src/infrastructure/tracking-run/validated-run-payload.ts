@@ -13,6 +13,7 @@ import type { PublicationValidatedRun } from "../../publication/publication-plan
 import type { ContentDigestPort } from "../../application/tracking-run/contracts/content-digest-port.js";
 import type { Sha256Hash } from "../../canonical-json/index.js";
 import { parseSha256Hash, serializeCanonicalJson } from "../../canonical-json/index.js";
+import { canonicalJsonEquals } from "../../canonical-json/value.js";
 import {
   createAiCacheEntry,
   createPersonalReminderAiCacheEntry,
@@ -626,7 +627,7 @@ export function parseValidatedRunPayload(
     identityWitness,
     presentationDigests: result.data.presentationDigests,
   });
-  if (serializeCanonicalJson(value) !== serializeCanonicalJson(artifact)) {
+  if (!canonicalJsonEquals(value, artifact)) {
     throw new TypeError("workflow artifactの保存値が検証済みの正規形と一致しません");
   }
   if (

@@ -22,9 +22,14 @@ const initialStateValueDigestsSchema = z.strictObject({
   notificationLedger: sha256Schema,
 });
 
+export const checkpointSnapshotReferenceSchema = z.strictObject({
+  kind: z.literal("validated_snapshot"),
+  digest: sha256Schema,
+});
+
 export const publicationPlanPayloadSchema = z.strictObject({
   initialStateWriteSet: z.strictObject({
-    snapshot: z.unknown(),
+    snapshot: checkpointSnapshotReferenceSchema,
     historyInputEvents: z.array(z.unknown()),
     aiCacheAdditions: z.array(z.unknown()),
     personalReminderAiCacheAdditions: z.array(z.unknown()),
@@ -56,6 +61,16 @@ export const publicationCheckpointSchema = z
   })
   .superRefine((checkpoint, context) => {
     if (
+      checkpoint.publicationPlan.initialStateWriteSet.snapshot.digest !==
+      checkpoint.publicationPlan.initialStateWriteSet.valueDigests.snapshot
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["publicationPlan", "initialStateWriteSet", "snapshot"],
+        message: "初回write setのsnapshot参照digestが一致しません",
+      });
+    }
+    if (
       checkpoint.executionPolicy.executionShape === "split_workflow" &&
       (checkpoint.analysisCompletedStages?.length !== analysisRunStageNames.length ||
         checkpoint.analysisCompletedStages.some(
@@ -80,12 +95,30 @@ export const publicationCheckpointSchema = z
     }
   });
 
-export const publicationArtifactSchema = z.strictObject({
-  schemaVersion: z.literal(22),
+export const publicationArtifactLogicalSchema = z.strictObject({
+  schemaVersion: z.literal(23),
   kind: z.literal("publication_planned_tracking_run"),
   runtimeIdentity: runtimeIdentitySchema,
+  runIdentity: runIdentitySchema,
+  executionPolicy: runExecutionPolicySchema,
+  baseStateRevision: baseStateRevisionSchema,
+  configDigest: sha256Schema,
+  analysisCompletedStages: z.array(analysisRunStageSchema).optional(),
+  validatedPayload: z.unknown(),
+  publicationPlan: z.unknown(),
+  frames: z.array(
+    z.strictObject({
+      index: z.number().int().nonnegative(),
+      uncompressedByteLength: z.number().int().positive(),
+      contentDigest: sha256Schema,
+    }),
+  ),
+});
+
+export const publicationArtifactSchema = z.strictObject({
+  logical: publicationArtifactLogicalSchema,
   checkpointDigest: sha256Schema,
-  payload: publicationCheckpointSchema,
+  compressedByteLengths: z.array(z.number().int().positive()),
 });
 
 export const publicationArtifactSidecarSchema = z.strictObject({
@@ -93,15 +126,15 @@ export const publicationArtifactSidecarSchema = z.strictObject({
     .string()
     .min(1)
     .max(255)
-    .regex(/^[A-Za-z0-9._-]+$/u),
+    .regex(/^[A-Za-z0-9._-]+\.cpk$/u),
   byteLength: z.number().int().nonnegative(),
   checkpointFileDigest: sha256Schema,
 });
 
-/** v22 checkpointの公開保存値。 */
+/** v23 checkpointの公開保存値。 */
 export type PublicationCheckpoint = z.output<typeof publicationCheckpointSchema>;
 
-/** v22 artifactの公開保存値。 */
+/** v23 artifactのmanifest。 */
 export type PublicationArtifact = z.output<typeof publicationArtifactSchema>;
 
 /** artifact bytesを別に照合するsidecar。 */

@@ -95,7 +95,7 @@ export type VerifyStateCliCommand = Readonly<{
   configPath: string;
 }>;
 
-/** v19 checkpointとexact baseの結合を検証するCLI入力。 */
+/** v23 checkpointとexact baseの結合を検証するCLI入力。 */
 export type VerifyCheckpointCliCommand = Readonly<{
   kind: "verify-checkpoint";
   configPath: string;

@@ -70,7 +70,12 @@ productionのPages deployはActionsのaction境界で行います。
 
 ## checkpoint、receipt、markerで公開順序を検証する
 
-公開計画からschema version 22のcanonical JSON checkpointとsidecarを作り、payload digest、file digest、runtime identity、base revisionを照合して結合します。
+公開計画からschema version 23の`validated-run.cpk`とsidecarを作り、論理checkpoint digest、file digest、runtime identity、base revisionを照合して結合します。
+snapshot本文は`validatedPayload.snapshot`だけへ保存し、公開計画の初回state write setはそのdigestを参照します。
+復元時は同じsnapshot objectをwrite setへ渡し、保存するstateのcanonical digestまで照合します。
+`.cpk`は1MiB以下のcanonical manifestと順序付きgzip frameで構成します。manifestはframeの順序、件数、非圧縮byte数とSHA-256を固定します。
+非圧縮frameは32MiB以下、合計は512MiB以下、圧縮file全体は128MiB以下に制限します。論理checkpoint digestはmanifestの論理値、file digestは`.cpk`の全byteから求めます。
+旧versionのcheckpointは現行codecへ移行せず、記録されたexact runtimeで検証します。
 checkpointには前回の送信待ち通知の原因と所有範囲を示すwitnessを必ず含めます。
 最終追跡項目の汎用AI状態が今回の解析値か前回からの保持値かを、全項目分の由来記録としてcheckpointへ保存します。
 由来記録は項目ID順で重複を認めず、追跡項目との一対一対応、repositoryの所有、同じ項目が収集値にもある場合のAI状態の一致を再読込時に検証します。

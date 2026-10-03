@@ -1,28 +1,15 @@
-import { Buffer } from "node:buffer";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 
 import { parseDurablePublicationRecord } from "../../dist/publication/durable-record-schema.js";
 import {
-  publicationArtifactSchema,
-  publicationArtifactSidecarSchema,
-} from "../../dist/infrastructure/tracking-run/publication-checkpoint-schema.js";
+  decodePublicationArtifact,
+  MAX_CHECKPOINT_FILE_BYTES,
+  MAX_CHECKPOINT_MANIFEST_BYTES,
+} from "../../dist/infrastructure/tracking-run/publication-checkpoint-codec.js";
 import { nodeContentDigestPort } from "../../dist/infrastructure/tracking-run/content-digest.js";
+import { nodeCheckpointCompressionPort } from "../../dist/infrastructure/tracking-run/publication-checkpoint-gzip.js";
 import { trackingRunStageNames } from "../../dist/application/tracking-run/contracts/closed-values.js";
-
-import { sha256 } from "./sandbox-continuity-result.mjs";
-
-function canonicalJson(value) {
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(",")}]`;
-  }
-  if (value != null && typeof value === "object") {
-    return `{${Object.keys(value)
-      .sort()
-      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
+import { serializeCanonicalJson } from "../../dist/canonical-json/value.js";
 
 function same(actual, expected, label) {
   if (actual !== expected) {
@@ -48,45 +35,51 @@ export function readSandboxCheckpointEvidence(recordValue, checkpointPath, sidec
   if (!checkpointExists) {
     return { kind: "remote_exact_state", record, analysis };
   }
+  if (
+    statSync(checkpointPath).size > MAX_CHECKPOINT_FILE_BYTES ||
+    statSync(sidecarPath).size > MAX_CHECKPOINT_MANIFEST_BYTES
+  ) {
+    throw new TypeError("checkpoint artifactまたはsidecarがbyte上限を超えています");
+  }
   const bytes = readFileSync(checkpointPath);
-  const source = bytes.toString("utf8");
-  const raw = JSON.parse(source);
-  same(source, `${canonicalJson(raw)}\n`, "checkpoint canonical bytes");
-  const checkpoint = publicationArtifactSchema.parse(raw);
-  const sidecarSource = readFileSync(sidecarPath, "utf8");
-  const sidecarRaw = JSON.parse(sidecarSource);
-  same(sidecarSource, `${canonicalJson(sidecarRaw)}\n`, "checkpoint sidecar canonical bytes");
-  const sidecar = publicationArtifactSidecarSchema.parse(sidecarRaw);
-  const { checkpointDigest, ...envelope } = checkpoint;
-  same(checkpointDigest, sha256(Buffer.from(canonicalJson(envelope))), "checkpoint content digest");
-  same(sha256(bytes), sidecar.checkpointFileDigest, "checkpoint file digest");
-  same(bytes.length, sidecar.byteLength, "checkpoint byteLength");
-  same(sidecar.artifactFileName, "validated-run.json", "checkpoint file name");
-  same(checkpointDigest, record.checkpointDigest, "永続record checkpoint digest");
+  const checkpoint = decodePublicationArtifact(
+    bytes,
+    readFileSync(sidecarPath),
+    {
+      runtimeIdentity: record.runtimeIdentity,
+      expectedRunId: record.runIdentity.runId,
+      baseStateRevision: record.baseStateRevision,
+      configDigest: record.configDigest,
+      artifactFileName: "validated-run.cpk",
+    },
+    nodeContentDigestPort,
+    nodeCheckpointCompressionPort,
+  );
+  same(checkpoint.checkpointDigest, record.checkpointDigest, "永続record checkpoint digest");
   same(
-    sidecar.checkpointFileDigest,
+    checkpoint.checkpointFileDigest,
     record.checkpointFileDigest,
     "永続record checkpoint file digest",
   );
-  same(checkpoint.payload.runIdentity.runId, analysis.runId, "解析記録 run ID");
+  same(checkpoint.checkpoint.runIdentity.runId, analysis.runId, "解析記録 run ID");
   same(
-    checkpoint.payload.runIdentity.invocationId,
+    checkpoint.checkpoint.runIdentity.invocationId,
     analysis.invocationId,
     "解析記録 invocation ID",
   );
   same(
-    canonicalJson(checkpoint.payload.baseStateRevision),
-    canonicalJson(analysis.baseStateRevision),
+    serializeCanonicalJson(checkpoint.checkpoint.baseStateRevision),
+    serializeCanonicalJson(analysis.baseStateRevision),
     "解析記録 parent revision",
   );
   same(
-    canonicalJson(checkpoint.payload.analysisCompletedStages),
-    canonicalJson(analysis.completedStages),
+    serializeCanonicalJson(checkpoint.checkpoint.analysisCompletedStages),
+    serializeCanonicalJson(analysis.completedStages),
     "解析段階の実行順序",
   );
-  const metrics = checkpoint.payload.validatedPayload.runMetadata.metrics;
+  const metrics = checkpoint.validatedPayload.runMetadata.metrics;
   same(
-    checkpoint.payload.validatedPayload.validation.core.aiBudgetSummary.logicalCandidateCount,
+    checkpoint.validatedPayload.validation.core.aiBudgetSummary.logicalCandidateCount,
     analysis.plannedLogicalCandidateCount,
     "解析候補数",
   );
@@ -103,7 +96,7 @@ export function readSandboxCheckpointEvidence(recordValue, checkpointPath, sidec
   ]) {
     same(metrics[key], record.runFinalizationPolicy.report.metrics[key], `解析件数 ${key}`);
   }
-  return { kind: "artifact_cross_checked", record, analysis, byteLength: sidecar.byteLength };
+  return { kind: "artifact_cross_checked", record, analysis, byteLength: bytes.length };
 }
 
 /** 旧V2 runの解析段階が検証不能であることを公開reportへ示す。 */

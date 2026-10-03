@@ -543,8 +543,8 @@ jobs:
           SANDBOX_STATE_BRANCH: ${{ needs.prepare.outputs.state_branch }}
           SANDBOX_SCENARIO_ID: ${{ inputs.scenario_id }}
           SANDBOX_RECORDING_OUTCOME: ${{ needs.prepare.outputs.recording_outcome }}
-          SANDBOX_CHECKPOINT_PATH: ${{ runner.temp }}/checkpoint/validated-run.json
-          SANDBOX_SIDECAR_PATH: ${{ runner.temp }}/checkpoint/validated-run.json.sidecar.json
+          SANDBOX_CHECKPOINT_PATH: ${{ runner.temp }}/checkpoint/validated-run.cpk
+          SANDBOX_SIDECAR_PATH: ${{ runner.temp }}/checkpoint/validated-run.cpk.sidecar.json
           SANDBOX_INITIAL_RECEIPT_CHAIN_ROOT: ${{ runner.temp }}/initial-pages
           SANDBOX_PENDING_OUTPUT_PATH: ${{ runner.temp }}/sandbox-pending.json
         run: node dist/cli/sandbox-notification-evidence.js pending
@@ -698,8 +698,8 @@ jobs:
           SANDBOX_ENVIRONMENT_ID: ${{ needs.prepare.outputs.environment_id }}
           SANDBOX_CONTEXT_PATH: ${{ runner.temp }}/context/sandbox-context.json
           SANDBOX_CODE_REVISION: ${{ needs.prepare.outputs.code_revision }}
-          SANDBOX_CHECKPOINT_PATH: ${{ runner.temp }}/checkpoint/validated-run.json
-          SANDBOX_SIDECAR_PATH: ${{ runner.temp }}/checkpoint/validated-run.json.sidecar.json
+          SANDBOX_CHECKPOINT_PATH: ${{ runner.temp }}/checkpoint/validated-run.cpk
+          SANDBOX_SIDECAR_PATH: ${{ runner.temp }}/checkpoint/validated-run.cpk.sidecar.json
           SANDBOX_ANALYSIS_SOURCE_RUN_ID: ${{ github.run_id }}
           SANDBOX_FINAL_REVISION: ${{ steps.final_state.outputs.state_revision }}
           SANDBOX_STATE_BRANCH: ${{ needs.prepare.outputs.state_branch }}
@@ -734,8 +734,8 @@ jobs:
           SANDBOX_CONTEXT_PATH: ${{ runner.temp }}/context/sandbox-context.json
           SANDBOX_CODE_REVISION: ${{ needs.prepare.outputs.code_revision }}
           SANDBOX_CONTROL_PATH: ${{ runner.temp }}/context/sandbox-control.json
-          SANDBOX_CHECKPOINT_PATH: ${{ runner.temp }}/checkpoint/validated-run.json
-          SANDBOX_SIDECAR_PATH: ${{ runner.temp }}/checkpoint/validated-run.json.sidecar.json
+          SANDBOX_CHECKPOINT_PATH: ${{ runner.temp }}/checkpoint/validated-run.cpk
+          SANDBOX_SIDECAR_PATH: ${{ runner.temp }}/checkpoint/validated-run.cpk.sidecar.json
           SANDBOX_ANALYSIS_SOURCE_RUN_ID: ${{ needs.prepare.outputs.notification_phase == 'resolution' && needs.prepare.outputs.notification_source_run_id || github.run_id }}
           SANDBOX_BASE_REVISION: ${{ needs.prepare.outputs.base_state_revision }}
           SANDBOX_FINAL_REVISION: ${{ steps.final_state.outputs.state_revision }}

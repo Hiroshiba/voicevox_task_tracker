@@ -150,7 +150,8 @@ Pagesは`_tracking-pages.yml`、全jobの報告と運用通知は`_tracking-obse
 親はreportとreceipt artifactの保存後にleaseを解放します。
 leaseがactiveの間は日次実行、手動復旧、Discord送達解決、別のproduction直列実行を停止します。
 
-analyzeが作るcheckpointには公開可能なsnapshot、公開allowlist、通知候補、AI生成元、保存・公開計画を結合します。
+analyzeが作る`validated-run.cpk`には公開可能なsnapshot、公開allowlist、通知候補、AI生成元、保存・公開計画を結合します。
+snapshot本文は一度だけ保存し、公開計画はsnapshot digestを参照します。sidecarは`.cpk`全byteのdigestを保持します。
 secret、API client、installation token、Codex認証、Webhookを含めません。
 後段はcheckpointとsidecarを再検証し、初回commit後はexact state revisionから読み直します。
 

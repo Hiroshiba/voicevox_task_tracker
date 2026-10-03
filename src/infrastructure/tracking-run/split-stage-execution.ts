@@ -66,7 +66,7 @@ export async function runSplitStage(
       kind: "collect-analyze",
       configPath: command.configPath,
       reportPath: "artifacts/run-reports/run-stage-analyze.json",
-      artifactPath: "artifacts/workflow/validated-run.json",
+      artifactPath: "artifacts/workflow/validated-run.cpk",
       schedule: command.schedule,
       notificationAction: command.notificationAction,
       mode: command.mode,

@@ -24,6 +24,7 @@ import type { BoundPublicationCheckpoint } from "../publication-checkpoint-bindi
 import { bindPublicationCheckpoint } from "../publication-checkpoint-binding.js";
 import { encodePublicationCheckpoint } from "../publication-checkpoint-codec.js";
 import { writePublicationCheckpointFile } from "../publication-checkpoint-file.js";
+import { nodeCheckpointCompressionPort } from "../publication-checkpoint-gzip.js";
 import {
   readPublicationRuntimeContext,
   writeWorkflowRuntimeManifest,
@@ -68,9 +69,10 @@ export async function prepareDailyCheckpoint(
       planned,
       validatedPayload,
       runtimeIdentity: runtime.runtimeIdentity,
-      artifactFileName: "validated-run.json",
+      artifactFileName: "validated-run.cpk",
     },
     nodeContentDigestPort,
+    nodeCheckpointCompressionPort,
   );
   const adapter = dependencies.adapters.createStateBranchAdapter();
   const snapshot = await readExactStateSnapshot(
@@ -328,6 +330,7 @@ export async function writeDailyCollectAnalyzeArtifact(
       analysisCompletedStages: stageInput.completedStages,
     },
     nodeContentDigestPort,
+    nodeCheckpointCompressionPort,
   );
   await writePublicationCheckpointFile(outputPath, encoded);
 }

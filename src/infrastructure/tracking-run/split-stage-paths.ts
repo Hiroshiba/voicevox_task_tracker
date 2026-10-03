@@ -35,7 +35,7 @@ export function splitStagePaths(repositoryPath: string, runId: string): SplitSta
   const root = resolve(repositoryPath, "artifacts/workflow/runs", suffix);
   return Object.freeze({
     root,
-    checkpoint: resolve(repositoryPath, "artifacts/workflow/validated-run.json"),
+    checkpoint: resolve(repositoryPath, "artifacts/workflow/validated-run.cpk"),
     report: resolve(root, "run-report.json"),
     receiptChain: resolve(root, "receipt-chain.json"),
     initialReceipt: resolve(root, "initial-state-commit-receipt.json"),

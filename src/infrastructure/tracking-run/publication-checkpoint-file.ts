@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 
 import type { BaseStateRevision } from "../../application/tracking-run/contracts/run-core.js";
@@ -13,9 +13,12 @@ import {
 } from "./publication-checkpoint-binding.js";
 import {
   decodePublicationArtifact,
+  MAX_CHECKPOINT_FILE_BYTES,
+  MAX_CHECKPOINT_MANIFEST_BYTES,
+  readPublicationArtifactManifest,
   type EncodedPublicationCheckpoint,
 } from "./publication-checkpoint-codec.js";
-import { publicationArtifactSchema } from "./publication-checkpoint-schema.js";
+import { nodeCheckpointCompressionPort } from "./publication-checkpoint-gzip.js";
 import type { PublicationRuntimeContext } from "./publication-runtime.js";
 
 /** 読込前の効果境界で照合する外部識別。 */
@@ -36,6 +39,12 @@ function artifactFileError(path: string, error: unknown): CliWorkflowArtifactErr
   const missing =
     typeof error === "object" && error != null && "code" in error && error.code === "ENOENT";
   return new CliWorkflowArtifactError(path, missing ? "missing" : "invalid", { cause: error });
+}
+
+async function readBoundedFile(path: string, maxBytes: number): Promise<Uint8Array> {
+  const file = await stat(path);
+  if (file.size > maxBytes) throw new TypeError("checkpoint fileのbyte数が上限を超えています");
+  return readFile(path);
 }
 
 /** checkpoint artifactとsidecarを同じ保存先へ書く。 */
@@ -61,29 +70,27 @@ export async function readPublicationCheckpointHeader(path: string): Promise<
   }>
 > {
   try {
-    const bytes = await readFile(path);
-    const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    const value: unknown = JSON.parse(source);
-    const artifact = publicationArtifactSchema.parse(value);
+    const bytes = await readBoundedFile(path, MAX_CHECKPOINT_FILE_BYTES);
+    const { artifact } = readPublicationArtifactManifest(bytes);
     return Object.freeze({
-      runIdentity: artifact.payload.runIdentity,
-      executionPolicy: artifact.payload.executionPolicy,
-      baseStateRevision: artifact.payload.baseStateRevision,
+      runIdentity: artifact.logical.runIdentity,
+      executionPolicy: artifact.logical.executionPolicy,
+      baseStateRevision: artifact.logical.baseStateRevision,
     });
   } catch (error: unknown) {
     throw artifactFileError(path, error);
   }
 }
 
-/** v22 artifactとsidecarを検証し、exact baseへ結合して返す。 */
+/** v23 artifactとsidecarを検証し、exact baseへ結合して返す。 */
 export async function readPublicationCheckpointFile(
   path: string,
   expected: PublicationCheckpointFileExpectation,
 ): Promise<BoundPublicationCheckpoint> {
   try {
     const [artifactBytes, sidecarBytes] = await Promise.all([
-      readFile(path),
-      readFile(publicationCheckpointSidecarPath(path)),
+      readBoundedFile(path, MAX_CHECKPOINT_FILE_BYTES),
+      readBoundedFile(publicationCheckpointSidecarPath(path), MAX_CHECKPOINT_MANIFEST_BYTES),
     ]);
     const decoded = decodePublicationArtifact(
       artifactBytes,
@@ -96,6 +103,7 @@ export async function readPublicationCheckpointFile(
         artifactFileName: basename(path),
       },
       nodeContentDigestPort,
+      nodeCheckpointCompressionPort,
     );
     return bindPublicationCheckpoint(
       decoded,
