@@ -3,6 +3,7 @@ import { z } from "zod";
 import { serializeCanonicalJsonLine } from "../canonical-json/value.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
 import type { PagesDeploymentIntent } from "../application/tracking-run/pages-build-contracts.js";
+import type { PagesDeploymentReceipt } from "../application/tracking-run/receipt-schema.js";
 import {
   PRODUCTION_PAGES_EFFECT_LEASE_BRANCH,
   type StateBranchAdapter,
@@ -40,6 +41,10 @@ const leaseSchema = z.strictObject({
 
 /** production Pages childが排他的に所有する効果の記録。 */
 export type ProductionPagesEffectLease = z.output<typeof leaseSchema>;
+export type ProductionPagesEffectReservation = Readonly<{
+  lease: ProductionPagesEffectLease;
+  created: boolean;
+}>;
 
 /** canonical lease fileを検証して読む。 */
 export function parseProductionPagesEffectLease(bytes: Uint8Array): ProductionPagesEffectLease {
@@ -79,6 +84,14 @@ async function leaseAt(
   }
   const file = await adapter.readFile(head.revision, PRODUCTION_PAGES_EFFECT_LEASE_PATH);
   return file.status === "present" ? parseProductionPagesEffectLease(file.bytes) : undefined;
+}
+
+/** 専用branchのleaseを読み取る。 */
+export async function readProductionPagesEffectLease(
+  adapter: StateBranchAdapter,
+): Promise<ProductionPagesEffectLease | undefined> {
+  const head = await adapter.resolveHead(PRODUCTION_PAGES_EFFECT_LEASE_BRANCH);
+  return leaseAt(adapter, head);
 }
 
 /** 専用branchからactive leaseを読み取る。 */
@@ -151,21 +164,16 @@ export async function reserveProductionPagesEffectLease(
   adapter: StateBranchAdapter,
   intent: PagesDeploymentIntent,
   owner: Readonly<{ parentRunId: string; parentRunAttempt: number; codeRevision: string }>,
+  initialDeploymentReceipt: PagesDeploymentReceipt | undefined,
   now: Date,
-): Promise<ProductionPagesEffectLease> {
+): Promise<ProductionPagesEffectReservation> {
   const head = await adapter.resolveHead(PRODUCTION_PAGES_EFFECT_LEASE_BRANCH);
   const previous = await leaseAt(adapter, head);
   if (
     previous?.status === "active" &&
     (previous.runId !== intent.runId ||
       previous.checkpointDigest !== intent.checkpointDigest ||
-      previous.parentRunId !== owner.parentRunId ||
-      previous.parentRunAttempt !== owner.parentRunAttempt ||
-      previous.codeRevision !== owner.codeRevision ||
-      (previous.effect.phase === "notification_history" && intent.phase === "initial") ||
-      (previous.effect.phase === "initial" &&
-        intent.phase === "notification_history" &&
-        previous.effect.childRunId == null))
+      (previous.effect.phase === "notification_history" && intent.phase === "initial"))
   ) {
     throw new StateBranchConflictError({
       cause: new TypeError("production Pages leaseを別の実行が保持しています"),
@@ -186,11 +194,31 @@ export async function reserveProductionPagesEffectLease(
     previous.effect.deploymentIntentDigest === intent.deploymentIntentDigest &&
     previous.effect.sourceStateRevision === intent.sourceStateRevision
   ) {
-    return previous;
+    return Object.freeze({ lease: previous, created: false });
   }
   if (previous?.status === "active" && previous.effect.phase === intent.phase) {
     throw new StateBranchConflictError({
       cause: new TypeError("同じPages phaseへ異なるintentを予約できません"),
+    });
+  }
+  if (
+    previous?.status === "active" &&
+    (previous.effect.childRunId == null ||
+      initialDeploymentReceipt?.receiptType !== "pages_deployment" ||
+      initialDeploymentReceipt.phase !== "initial" ||
+      (initialDeploymentReceipt.status !== "deployed" &&
+        initialDeploymentReceipt.status !== "replayed_same_content") ||
+      initialDeploymentReceipt.effectCertainty !== "committed" ||
+      initialDeploymentReceipt.binding.bindingKind !== "checkpoint" ||
+      initialDeploymentReceipt.binding.runId !== previous.runId ||
+      initialDeploymentReceipt.binding.checkpointDigest !== previous.checkpointDigest ||
+      initialDeploymentReceipt.logicalTarget !== previous.effect.deploymentIntentDigest ||
+      initialDeploymentReceipt.result?.deploymentIntentDigest !==
+        previous.effect.deploymentIntentDigest ||
+      initialDeploymentReceipt.result.sourceStateRevision !== previous.effect.sourceStateRevision)
+  ) {
+    throw new StateBranchConflictError({
+      cause: new TypeError("成功した初回Pages receiptがないため履歴Pagesを予約できません"),
     });
   }
   const lease = leaseSchema.parse({
@@ -209,7 +237,7 @@ export async function reserveProductionPagesEffectLease(
     },
   });
   await changeLease(adapter, head, lease, now);
-  return lease;
+  return Object.freeze({ lease, created: true });
 }
 
 /** childが実行IDをCASで確保し重複deployを拒否する。 */
@@ -245,19 +273,17 @@ export async function claimProductionPagesEffectLease(
   );
 }
 
-/** 完了した親runが保持するleaseだけを解放する。 */
+/** 検証済みの継続attemptが同一leaseだけをCASで解放する。 */
 export async function releaseProductionPagesEffectLease(
   adapter: StateBranchAdapter,
-  owner: Readonly<{ parentRunId: string; parentRunAttempt: number; runId: string }>,
+  expected: ProductionPagesEffectLease,
   now: Date,
 ): Promise<void> {
   const head = await adapter.resolveHead(PRODUCTION_PAGES_EFFECT_LEASE_BRANCH);
   const current = await leaseAt(adapter, head);
   if (
     current?.status !== "active" ||
-    current.runId !== owner.runId ||
-    current.parentRunId !== owner.parentRunId ||
-    current.parentRunAttempt !== owner.parentRunAttempt ||
+    serializeCanonicalJsonLine(current) !== serializeCanonicalJsonLine(expected) ||
     current.effect.childRunId == null
   ) {
     throw new StateBranchConflictError({

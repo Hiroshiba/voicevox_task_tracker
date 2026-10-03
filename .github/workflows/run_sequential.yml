@@ -1,8 +1,30 @@
 name: 追跡runの直列実行
 
 on:
+  workflow_call:
+    inputs:
+      run_id:
+        required: false
+        type: string
+        default: ""
+      backfill:
+        required: false
+        type: string
+        default: none
+      repository_filter:
+        required: false
+        type: string
+        default: ""
+      notification_action:
+        required: false
+        type: string
+        default: send
   workflow_dispatch:
     inputs:
+      run_id:
+        description: 再開するtracking run ID。新規runでは空にする
+        required: false
+        type: string
       backfill:
         description: 追跡対象へ追加する範囲
         required: true
@@ -49,7 +71,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
       - name: production Pages leaseを確認
-        run: bash .github/scripts/assert-production-pages-lease.sh
+        env:
+          RECOVERY_RUN_ID: ${{ inputs.run_id }}
+        run: |
+          if [[ -n "$RECOVERY_RUN_ID" ]]; then
+            bash .github/scripts/assert-production-pages-lease.sh --recovery-run-id "$RECOVERY_RUN_ID"
+          else
+            bash .github/scripts/assert-production-pages-lease.sh
+          fi
       - name: Node.jsを準備
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -97,7 +126,11 @@ jobs:
           BACKFILL_MODE: ${{ inputs.backfill }}
           REPOSITORY_FILTER: ${{ inputs.repository_filter }}
           NOTIFICATION_ACTION: ${{ inputs.notification_action }}
+          RECOVERY_RUN_ID: ${{ inputs.run_id }}
         run: |
+          if [[ -n "$RECOVERY_RUN_ID" ]]; then
+            export VOICEVOX_EXPECTED_RUN_ID="$RECOVERY_RUN_ID"
+          fi
           arguments=(run-sequential --config config.yml --mode "$BACKFILL_MODE" --notification-action "$NOTIFICATION_ACTION" --scheduled-for "$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')")
           if [[ -n "$REPOSITORY_FILTER" ]]; then
             IFS=',' read -r -a repositories <<< "$REPOSITORY_FILTER"

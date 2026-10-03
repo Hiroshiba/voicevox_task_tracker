@@ -5,6 +5,7 @@ import type { CompletedRun } from "../../../../application/tracking-run/complete
 import type { RunRequest } from "../../../../application/tracking-run/request.js";
 import { hashCanonicalJson } from "../../../../canonical-json/index.js";
 import { joinStatePath } from "../../../../persistence/branch-adapter.js";
+import { readProductionPagesEffectLease } from "../../../../persistence/production-pages-effect-lease.js";
 import {
   createStateRunReport,
   serializeStateRunReport,
@@ -32,8 +33,9 @@ export function createReadCompletedReportStage(
       config,
       request,
     );
+    const adapter = adapters.createStateBranchAdapter();
     const state = await readNotificationMessageState(
-      adapters.createStateBranchAdapter(),
+      adapter,
       target.state,
       completed.finalStateRevision,
     );
@@ -70,6 +72,31 @@ export function createReadCompletedReportStage(
       finalization.result.runReportDigest !== hashCanonicalJson(report)
     ) {
       throw new TypeError("完了runの保存済みreportが最終stateと一致しません");
+    }
+    if (target.kind === "production" && request.executionPolicy.executionShape === "sequential") {
+      const lease = await readProductionPagesEffectLease(adapter);
+      if (lease?.status === "active") {
+        const plan = record.runtimeRecoveryPlan;
+        const deployment = completed.chain.receipts.findLast(
+          (receipt) =>
+            receipt.receiptType === "pages_deployment" && receipt.phase === lease.effect.phase,
+        );
+        if (
+          plan.kind === "not_reproducible" ||
+          lease.runId !== report.runId ||
+          lease.checkpointDigest !== record.checkpointDigest ||
+          lease.codeRevision !== plan.codeRevision ||
+          lease.effect.childRunId == null ||
+          deployment?.receiptType !== "pages_deployment" ||
+          (deployment.status !== "deployed" && deployment.status !== "replayed_same_content") ||
+          deployment.effectCertainty !== "committed" ||
+          deployment.logicalTarget !== lease.effect.deploymentIntentDigest ||
+          deployment.result?.sourceStateRevision !== lease.effect.sourceStateRevision ||
+          deployment.result.deploymentIntentDigest !== lease.effect.deploymentIntentDigest
+        ) {
+          throw new TypeError("完了reportとproduction Pages leaseの効果が一致しません");
+        }
+      }
     }
     return report;
   };

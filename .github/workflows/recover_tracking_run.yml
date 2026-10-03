@@ -7,16 +7,24 @@ on:
         description: 再開するtracking run ID。Pages失敗の再試行にも使用する
         required: true
         type: string
+      execution_shape:
+        description: 記録済みrunの実行形態
+        required: true
+        default: split
+        type: choice
+        options:
+          - split
+          - sequential
 
 permissions: {}
 
 concurrency:
-  group: voicevox-task-tracker-daily
+  group: ${{ inputs.execution_shape == 'sequential' && format('voicevox-task-tracker-sequential-entry-{0}', github.run_id) || 'voicevox-task-tracker-daily' }}
   cancel-in-progress: false
 
 jobs:
   production-pages-lease:
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.execution_shape == 'split'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -30,6 +38,7 @@ jobs:
         run: bash .github/scripts/assert-production-pages-lease.sh
   tracking:
     needs: production-pages-lease
+    if: inputs.execution_shape == 'split'
     permissions:
       contents: write
       actions: read
@@ -45,4 +54,15 @@ jobs:
       backfill: none
       notification_action: send
       expected_run_id: ${{ inputs.run_id }}
+    secrets: inherit
+  sequential-recovery:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.execution_shape == 'sequential'
+    permissions:
+      contents: write
+      actions: write
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/run_sequential.yml
+    with:
+      run_id: ${{ inputs.run_id }}
     secrets: inherit

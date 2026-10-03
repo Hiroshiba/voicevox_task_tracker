@@ -9,6 +9,11 @@ import {
 import { verifyReceiptChain } from "../../../../application/tracking-run/receipt-chain.js";
 import { serializeCanonicalJsonLine } from "../../../../canonical-json/value.js";
 import {
+  assertNoProductionPagesEffectLease,
+  readProductionPagesEffectLease,
+} from "../../../../persistence/production-pages-effect-lease.js";
+import { assertNonNullable } from "../../../../util/assert-non-nullable.js";
+import {
   createRuntimeRecoveryInputV1,
   inspectRunBootstrapState,
   type RunRecoveryIntent,
@@ -25,6 +30,7 @@ import {
 } from "../../runtime-recovery-acquisition.js";
 import { sequentialReceiptPath } from "../../sequential-receipt-path.js";
 import { requireSequentialPagesActionsContext } from "../../sequential-pages-actions-port.js";
+import { assertSequentialPagesLeaseContinuation } from "../../sequential-pages-lease-continuation.js";
 import type { ConfigurationRuntimeAdapters, ProductionRuntimeAdapters } from "../adapters.js";
 
 type SequentialStageDependencies = SequentialRunDependencies;
@@ -81,6 +87,12 @@ export function createInspectLaunchStage(
     );
     const adapter = adapters.createStateBranchAdapter();
     let recoveryIntent: RunRecoveryIntent;
+    const configuredRunId = adapters.environment["VOICEVOX_EXPECTED_RUN_ID"];
+    const expectedRunId =
+      configuredRunId == null || configuredRunId.length === 0 ? undefined : configuredRunId;
+    if (expectedRunId != null && !/^tracker-run:[0-9a-f]{64}$/u.test(expectedRunId)) {
+      throw new TypeError("再開対象のrun IDが不正です");
+    }
     if (adapters.environment["VOICEVOX_RUNTIME_RECOVERY_PROTOCOL_V1"] === "1") {
       const runId = adapters.environment["VOICEVOX_RUNTIME_RECOVERY_RUN_ID"];
       if (runId == null) {
@@ -91,23 +103,28 @@ export function createInspectLaunchStage(
         throw new TypeError("固定V1復旧のstate headがありません");
       }
       recoveryIntent = { kind: "retry_run", runId, exactStateRevision: head.revision };
-    } else if (intent.kind === "start_new") {
+    } else if (intent.kind === "start_new" && expectedRunId == null) {
       recoveryIntent = intent;
     } else {
       const head = await adapter.resolveHead(target.state.branch);
       if (head.status !== "present") {
         throw new TypeError("再開するrunのstate headがありません");
       }
+      const runId = intent.kind === "start_new" ? expectedRunId : intent.runId;
+      assertNonNullable(runId, "再開対象のrun IDがありません");
       recoveryIntent = {
         kind: "retry_run",
-        runId: intent.runId,
+        runId,
         exactStateRevision: head.revision,
       };
     }
     const bootstrap = await inspectRunBootstrapState(adapter, target.state.branch, recoveryIntent);
     if (bootstrap.kind === "start_with_current_runtime") {
-      if (intent.kind !== "start_new") {
+      if (intent.kind !== "start_new" || expectedRunId != null) {
         throw new TypeError("再開するrunのstate bootstrapがありません");
+      }
+      if (target.kind === "production" && request.executionPolicy.executionShape === "sequential") {
+        await assertNoProductionPagesEffectLease(adapter, target.state.branch);
       }
       return Object.freeze({
         runtime: "current",
@@ -121,6 +138,26 @@ export function createInspectLaunchStage(
     }
     if (bootstrap.kind === "operator_conflict_resolution") {
       throw new TypeError("state bootstrapのrunが起動要求と一致しません");
+    }
+    if (expectedRunId != null && bootstrap.record.runId !== expectedRunId) {
+      throw new TypeError("再開対象のrun IDがstate bootstrapと一致しません");
+    }
+    if (target.kind === "production" && request.executionPolicy.executionShape === "sequential") {
+      const lease = await readProductionPagesEffectLease(adapter);
+      if (lease?.status === "active") {
+        const plan = bootstrap.record.runtimeRecoveryPlan;
+        if (
+          plan.kind === "not_reproducible" ||
+          lease.runId !== bootstrap.record.runId ||
+          lease.checkpointDigest !== bootstrap.record.checkpointDigest ||
+          lease.codeRevision !== plan.codeRevision ||
+          bootstrap.marker.runId !== lease.runId ||
+          (lease.effect.phase === "notification_history" &&
+            bootstrap.marker.phase !== "run_finalized")
+        ) {
+          throw new TypeError("production Pages leaseと再開するexact runが一致しません");
+        }
+      }
     }
     const binding = {
       bindingKind: "checkpoint" as const,
@@ -171,6 +208,17 @@ export function createInspectLaunchStage(
             ? decision.cause
             : new TypeError("pending runのstateが変わりました"),
         );
+      }
+      if (target.kind === "production" && request.executionPolicy.executionShape === "sequential") {
+        const lease = await readProductionPagesEffectLease(adapter);
+        if (lease?.status === "active") {
+          await assertSequentialPagesLeaseContinuation(
+            adapter,
+            target.state,
+            lease,
+            decision.stageInput,
+          );
+        }
       }
       return Object.freeze({
         runtime: "exact",

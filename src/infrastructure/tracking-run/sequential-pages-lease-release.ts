@@ -15,6 +15,7 @@ import { nodeContentDigestPort } from "./content-digest.js";
 import { readNotificationMessageState } from "./notification-message-state.js";
 import { requireSequentialPagesActionsContext } from "./sequential-pages-actions-port.js";
 import { sequentialReceiptPath } from "./sequential-receipt-path.js";
+import { authorizeAdvanceAfterOrthogonalCommits } from "../../persistence/state-orthogonal-advance.js";
 
 /** 親processの完了とartifact保存後にproduction Pages leaseを解放する。 */
 export async function releaseCompletedSequentialPagesLease(
@@ -22,7 +23,7 @@ export async function releaseCompletedSequentialPagesLease(
   reportPath: string,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<void> {
-  const context = requireSequentialPagesActionsContext(environment);
+  requireSequentialPagesActionsContext(environment);
   const reportSource = await readFile(resolve(repositoryPath, reportPath), "utf8");
   const reportRaw: unknown = JSON.parse(reportSource);
   if (reportSource !== serializeCanonicalJsonLine(reportRaw)) {
@@ -62,13 +63,7 @@ export async function releaseCompletedSequentialPagesLease(
     authorEmail: "voicevox-task-tracker@users.noreply.github.com",
   });
   const lease = await readActiveProductionPagesEffectLease(adapter);
-  if (
-    lease.runId !== report.runId ||
-    lease.parentRunId !== context.parentRunId ||
-    lease.parentRunAttempt !== context.parentRunAttempt ||
-    lease.codeRevision !== context.codeRevision ||
-    lease.effect.childRunId == null
-  ) {
+  if (lease.runId !== report.runId || lease.effect.childRunId == null) {
     throw new TypeError("production Pages leaseと完了した親runが一致しません");
   }
   const config = await loadConfig(resolve(repositoryPath, "config.yml"));
@@ -76,22 +71,31 @@ export async function releaseCompletedSequentialPagesLease(
   if (head.status !== "present") {
     throw new TypeError("production stateのheadがありません");
   }
+  await authorizeAdvanceAfterOrthogonalCommits(
+    adapter,
+    config.state,
+    finalization.result.resultingStateRevision,
+    head.revision,
+  );
   const state = await readNotificationMessageState(adapter, config.state, head.revision);
+  const plan = state.transaction.record.runtimeRecoveryPlan;
+  const deployment = verified.receipts.findLast(
+    (receipt) => receipt.receiptType === "pages_deployment" && receipt.phase === lease.effect.phase,
+  );
   if (
     state.transaction.marker.phase !== "run_finalized" ||
     state.transaction.marker.runId !== report.runId ||
     state.transaction.record.checkpointDigest !== lease.checkpointDigest ||
-    finalization.result.resultingStateRevision !== head.revision
+    plan.kind === "not_reproducible" ||
+    lease.codeRevision !== plan.codeRevision ||
+    deployment?.receiptType !== "pages_deployment" ||
+    (deployment.status !== "deployed" && deployment.status !== "replayed_same_content") ||
+    deployment.effectCertainty !== "committed" ||
+    deployment.logicalTarget !== lease.effect.deploymentIntentDigest ||
+    deployment.result?.sourceStateRevision !== lease.effect.sourceStateRevision ||
+    deployment.result.deploymentIntentDigest !== lease.effect.deploymentIntentDigest
   ) {
     throw new TypeError("production final stateと完了receiptが一致しません");
   }
-  await releaseProductionPagesEffectLease(
-    adapter,
-    {
-      parentRunId: context.parentRunId,
-      parentRunAttempt: context.parentRunAttempt,
-      runId: report.runId,
-    },
-    new Date(),
-  );
+  await releaseProductionPagesEffectLease(adapter, lease, new Date());
 }

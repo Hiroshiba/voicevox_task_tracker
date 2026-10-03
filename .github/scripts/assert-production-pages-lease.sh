@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+recovery_run_id=''
+if [[ $# -ne 0 ]]; then
+  if [[ $# -ne 2 || "$1" != '--recovery-run-id' || ! "$2" =~ ^tracker-run:[0-9a-f]{64}$ ]]; then
+    echo 'production Pages leaseの復旧run IDが不正です' >&2
+    exit 1
+  fi
+  recovery_run_id="$2"
+fi
+
 lease_ref='refs/heads/tracker-pages-effect-lease'
 lease_path='state/production-pages-effect-lease-v1.json'
 remote_ref="$(git ls-remote origin "$lease_ref")"
@@ -19,7 +28,9 @@ if [[ -z "$(git ls-tree "$revision" -- "$lease_path")" ]]; then
 fi
 lease_file="$RUNNER_TEMP/production-pages-lease.json"
 git show "$revision:$lease_path" > "$lease_file"
-if ! jq -e '.schemaVersion == 1 and .status == "released"' "$lease_file" >/dev/null; then
+if ! jq -e --arg run_id "$recovery_run_id" \
+  '.schemaVersion == 1 and (.status == "released" or (.status == "active" and $run_id != "" and .runId == $run_id))' \
+  "$lease_file" >/dev/null; then
   echo 'production Pages childの効果が未確定です' >&2
   exit 1
 fi

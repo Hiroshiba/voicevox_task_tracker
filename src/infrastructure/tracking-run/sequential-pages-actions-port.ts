@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -11,10 +11,16 @@ import {
   type PagesDeploymentIntent,
 } from "../../application/tracking-run/pages-build-contracts.js";
 import { PagesEffectNotStartedError } from "../../application/tracking-run/pages-effect.js";
+import { receiptChainEnvelopeSchema } from "../../application/tracking-run/receipt-chain-schema.js";
+import { verifyReceiptChain } from "../../application/tracking-run/receipt-chain.js";
+import type { PagesDeploymentReceipt } from "../../application/tracking-run/receipt-schema.js";
 import { pagesDeploymentExternalReferenceSchema } from "../../application/tracking-run/receipt-schema.js";
 import { serializeCanonicalJsonLine } from "../../canonical-json/value.js";
 import type { StateBranchAdapter } from "../../persistence/branch-adapter.js";
-import { reserveProductionPagesEffectLease } from "../../persistence/production-pages-effect-lease.js";
+import {
+  readActiveProductionPagesEffectLease,
+  reserveProductionPagesEffectLease,
+} from "../../persistence/production-pages-effect-lease.js";
 import { assertNonNullable } from "../../util/assert-non-nullable.js";
 import { nodeContentDigestPort } from "./content-digest.js";
 import type { SequentialPagesResult } from "./initial-pages-deployment.js";
@@ -23,31 +29,26 @@ import {
   parseSequentialPagesActionsObservation,
   parseSequentialPagesActionsPayload,
   sequentialPagesChildArtifactName,
-  sequentialPagesChildName,
   type SequentialPagesActionsObservation,
   type SequentialPagesActionsPayload,
 } from "./sequential-pages-actions-contract.js";
+import {
+  findSequentialPagesChildRun,
+  waitForClaimedSequentialPagesChildRun,
+  waitForSequentialPagesChildRun,
+  type SequentialPagesActionsRun,
+} from "./sequential-pages-actions-runs.js";
+import { sequentialReceiptPath } from "./sequential-receipt-path.js";
 
 const execFileAsync = promisify(execFile);
 const workflowFile = "sequential_pages_effect.yml";
-const runSchema = z.looseObject({
-  id: z.number().int().positive(),
-  run_attempt: z.number().int().positive(),
-  event: z.literal("workflow_dispatch"),
-  display_title: z.string(),
-  status: z.string(),
-  conclusion: z.string().nullable(),
-});
-const runsSchema = z.looseObject({
-  total_count: z.number().int().nonnegative(),
-  workflow_runs: z.array(runSchema),
-});
 const artifactSchema = z.looseObject({
   id: z.number().int().positive(),
   name: z.string(),
   expired: z.boolean(),
 });
 const artifactsSchema = z.looseObject({ artifacts: z.array(artifactSchema) });
+const workflowSourceSchema = z.looseObject({ sha: z.string().regex(/^[0-9a-f]{40}$/u) });
 
 type ActionsContext = Readonly<{
   apiUrl: string;
@@ -56,7 +57,6 @@ type ActionsContext = Readonly<{
   token: string;
   parentRunId: string;
   parentRunAttempt: number;
-  codeRevision: string;
 }>;
 
 function required(environment: Readonly<NodeJS.ProcessEnv>, name: string): string {
@@ -99,7 +99,6 @@ export function requireSequentialPagesActionsContext(
     token: required(environment, "GITHUB_TOKEN"),
     parentRunId,
     parentRunAttempt: attempt,
-    codeRevision,
   });
 }
 
@@ -151,49 +150,50 @@ async function apiRequest(
   throw new TypeError("Pages childのGitHub API読み取りを確定できませんでした");
 }
 
-async function findChildRun(
-  context: ActionsContext,
-  payload: SequentialPagesActionsPayload,
-): Promise<z.output<typeof runSchema> | undefined> {
-  const name = sequentialPagesChildName(payload.idempotencyKey);
-  const matches: z.output<typeof runSchema>[] = [];
-  for (let page = 1; page <= 10; page += 1) {
-    const response = await apiRequest(
-      context,
-      `repos/${context.repository}/actions/workflows/${workflowFile}/runs?event=workflow_dispatch&per_page=100&page=${page.toString()}`,
-      "GET",
-    );
-    const parsed = runsSchema.parse(await response.json());
-    matches.push(...parsed.workflow_runs.filter((run) => run.display_title === name));
-    if (matches.length > 1) {
-      throw new TypeError("同じPages idempotency keyのchild runが複数あります");
-    }
-    if (page * 100 >= parsed.total_count) {
-      return matches[0];
-    }
+async function initialDeploymentReceipt(
+  repositoryPath: string,
+  runId: string,
+): Promise<PagesDeploymentReceipt> {
+  const source = await readFile(sequentialReceiptPath(repositoryPath, runId), "utf8");
+  const raw: unknown = JSON.parse(source);
+  if (source !== serializeCanonicalJsonLine(raw)) {
+    throw new TypeError("直列receipt chainがcanonical JSONではありません");
   }
-  throw new TypeError("Pages child runのActions一覧を最後まで確認できません");
+  const entries = receiptChainEnvelopeSchema.parse(raw).entries;
+  const verified = verifyReceiptChain(entries, nodeContentDigestPort);
+  const receipt = verified.receipts.findLast(
+    (entry) => entry.receiptType === "pages_deployment" && entry.phase === "initial",
+  );
+  if (receipt?.receiptType !== "pages_deployment") {
+    throw new TypeError("初回Pagesの成功receiptがありません");
+  }
+  return receipt;
 }
 
-async function waitForChildRun(
+async function assertChildWorkflowCompatible(
   context: ActionsContext,
-  payload: SequentialPagesActionsPayload,
-): Promise<z.output<typeof runSchema>> {
-  const deadline = Date.now() + 50 * 60_000;
-  while (Date.now() < deadline) {
-    const run = await findChildRun(context, payload);
-    if (run?.status === "completed") {
-      return run;
-    }
-    await new Promise<void>((resolveSleep) => setTimeout(resolveSleep, 10_000));
+  repositoryPath: string,
+): Promise<void> {
+  const response = await apiRequest(
+    context,
+    `repos/${context.repository}/contents/.github/workflows/${workflowFile}?ref=${encodeURIComponent(context.ref)}`,
+    "GET",
+  );
+  const current = workflowSourceSchema.parse(await response.json());
+  const { stdout } = await execFileAsync(
+    "git",
+    ["rev-parse", `HEAD:.github/workflows/${workflowFile}`],
+    { cwd: repositoryPath },
+  );
+  if (current.sha !== stdout.trim()) {
+    throw new TypeError("現行Pages child workflowが固定runtimeと一致しません");
   }
-  throw new TypeError("Pages childの実結果が制限時間内に確定しませんでした");
 }
 
 async function readChildObservation(
   context: ActionsContext,
   payload: SequentialPagesActionsPayload,
-  child: z.output<typeof runSchema>,
+  child: SequentialPagesActionsRun,
 ): Promise<SequentialPagesActionsObservation> {
   const response = await apiRequest(
     context,
@@ -267,36 +267,69 @@ export async function deploySequentialPagesThroughActions(
 ): Promise<SequentialPagesResult> {
   const context = requireSequentialPagesActionsContext(dependencies.environment);
   const intent = parsePagesDeploymentIntent(intentInput, nodeContentDigestPort);
-  const lease = await reserveProductionPagesEffectLease(
+  assertNonNullable(
+    dependencies.adapter.resolveRepositoryRevision,
+    "Pages childのsource revision取得adapterがありません",
+  );
+  const codeRevision = await dependencies.adapter.resolveRepositoryRevision();
+  const reservation = await reserveProductionPagesEffectLease(
     dependencies.adapter,
     intent,
     {
       parentRunId: context.parentRunId,
       parentRunAttempt: context.parentRunAttempt,
-      codeRevision: context.codeRevision,
+      codeRevision,
     },
+    intent.phase === "notification_history"
+      ? await initialDeploymentReceipt(dependencies.repositoryPath, intent.runId)
+      : undefined,
     dependencies.now(),
   );
+  const lease = reservation.lease;
+  if (lease.codeRevision !== codeRevision) {
+    throw new TypeError("Pages childのleaseと固定runtimeのsource revisionが一致しません");
+  }
   const payload = parseSequentialPagesActionsPayload({
     schemaVersion: 1,
     idempotencyKey: lease.effect.idempotencyKey,
     owner: {
-      parentRunId: context.parentRunId,
-      parentRunAttempt: context.parentRunAttempt,
-      codeRevision: context.codeRevision,
+      parentRunId: lease.parentRunId,
+      parentRunAttempt: lease.parentRunAttempt,
+      codeRevision: lease.codeRevision,
     },
     intent,
   });
-  let child = await findChildRun(context, payload);
-  if (child == null) {
+  const get = (path: string): Promise<Response> => apiRequest(context, path, "GET");
+  let child: SequentialPagesActionsRun;
+  if (lease.effect.childRunId != null) {
+    child = await waitForClaimedSequentialPagesChildRun(context.repository, payload, lease, get);
+  } else if (!reservation.created) {
+    const existing = await findSequentialPagesChildRun(context.repository, payload, get);
+    if (existing == null) {
+      throw new TypeError("予約済みPages childを確認できないため再dispatchできません");
+    }
+    child = await waitForSequentialPagesChildRun(context.repository, payload, get);
+  } else {
+    if ((await findSequentialPagesChildRun(context.repository, payload, get)) != null) {
+      throw new TypeError("Pages childが既に存在するため再dispatchできません");
+    }
+    await assertChildWorkflowCompatible(context, dependencies.repositoryPath);
     await apiRequest(
       context,
       `repos/${context.repository}/actions/workflows/${workflowFile}/dispatches`,
       "POST",
       { ref: context.ref, inputs: { payload: serializeCanonicalJsonLine(payload) } },
     );
+    child = await waitForSequentialPagesChildRun(context.repository, payload, get);
   }
-  child = await waitForChildRun(context, payload);
+  const claimed = await readActiveProductionPagesEffectLease(dependencies.adapter);
+  if (
+    claimed.effect.idempotencyKey !== lease.effect.idempotencyKey ||
+    claimed.effect.childRunId !== child.id.toString() ||
+    claimed.effect.childRunAttempt !== child.run_attempt
+  ) {
+    throw new TypeError("Pages childのActions実行とleaseのclaimが一致しません");
+  }
   const observation = await readChildObservation(context, payload, child);
   if (
     child.conclusion !== "success" ||

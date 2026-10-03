@@ -1,4 +1,6 @@
+import { execFile } from "node:child_process";
 import { resolve } from "node:path";
+import { promisify } from "node:util";
 
 import { parsePagesDeploymentIntent } from "../../application/tracking-run/pages-build-contracts.js";
 import { hashCanonicalJson } from "../../canonical-json/index.js";
@@ -23,6 +25,8 @@ import {
 import { assertStateCommitChain } from "../../persistence/state-commit-chain-verification.js";
 import { authorizeAdvanceAfterOrthogonalCommits } from "../../persistence/state-orthogonal-advance.js";
 
+const execFileAsync = promisify(execFile);
+
 /** childのcheckout、state、lease、Pages出力を同じintentへ照合する。 */
 export async function prepareSequentialPagesEffectChild(
   repositoryPath: string,
@@ -33,7 +37,8 @@ export async function prepareSequentialPagesEffectChild(
   const intent = parsePagesDeploymentIntent(payload.intent, nodeContentDigestPort);
   if (
     environment["GITHUB_ACTIONS"] !== "true" ||
-    environment["PAGES_WORKFLOW_SHA"] !== payload.owner.codeRevision ||
+    environment["PAGES_WORKFLOW_SHA"] == null ||
+    !/^[0-9a-f]{40}$/u.test(environment["PAGES_WORKFLOW_SHA"]) ||
     environment["GITHUB_RUN_ID"] == null ||
     !/^[1-9][0-9]*$/u.test(environment["GITHUB_RUN_ID"]) ||
     environment["GITHUB_RUN_ATTEMPT"] == null ||
@@ -49,6 +54,17 @@ export async function prepareSequentialPagesEffectChild(
   });
   if ((await adapter.resolveRepositoryRevision()) !== payload.owner.codeRevision) {
     throw new TypeError("Pages childのcheckoutが親の固定sourceと一致しません");
+  }
+  const workflowPath = ".github/workflows/sequential_pages_effect.yml";
+  const workflowRevision = environment["PAGES_WORKFLOW_SHA"];
+  const [currentWorkflow, exactWorkflow] = await Promise.all([
+    execFileAsync("git", ["rev-parse", `${workflowRevision}:${workflowPath}`], {
+      cwd: repositoryPath,
+    }),
+    execFileAsync("git", ["rev-parse", `HEAD:${workflowPath}`], { cwd: repositoryPath }),
+  ]);
+  if (currentWorkflow.stdout.trim() !== exactWorkflow.stdout.trim()) {
+    throw new TypeError("Pages childのworkflowが固定sourceと一致しません");
   }
   const lease = await readActiveProductionPagesEffectLease(adapter);
   if (

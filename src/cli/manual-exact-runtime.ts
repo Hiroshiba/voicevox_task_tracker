@@ -11,6 +11,7 @@ import { parseCliArguments } from "./command.js";
 
 import { z } from "zod";
 
+import { runtimeRecoveryInputV1Schema } from "../application/tracking-run/contracts/runtime-recovery-v1.js";
 import { runtimeRecoveryInputV2Schema } from "../application/tracking-run/contracts/runtime-recovery-v2.js";
 import { decodePublicFailureArtifact } from "../application/tracking-run/failure-artifact.js";
 import { runtimeRecoveryPlanV2Schema } from "../application/tracking-run/recovery-bootstrap.js";
@@ -26,6 +27,10 @@ import {
   reportManualExactFailure,
   revision,
 } from "../infrastructure/tracking-run/manual-exact-failure.js";
+import {
+  resolveSelectedManualRuntimeV1,
+  selectManualRuntimeV1,
+} from "../infrastructure/tracking-run/manual-exact-v1.js";
 import { resolveSelectedManualRuntimeV2 } from "../infrastructure/tracking-run/manual-exact-v2.js";
 import { assertWorkflowV2AdapterCompatibility } from "../infrastructure/tracking-run/publication-runtime.js";
 import { verifyRuntimeRecoveryV2 } from "../infrastructure/tracking-run/runtime-recovery-launcher-v2.js";
@@ -34,6 +39,7 @@ const environmentSchema = z.strictObject({
   runId: z.string().regex(/^tracker-run:[0-9a-f]{64}$/u),
   checkpointDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
   codeRevision: z.string().regex(/^[0-9a-f]{40}$/u),
+  sourceRunId: z.string().regex(/^[1-9][0-9]*$/u),
   diagnosticsPath: z.string().min(1),
   failureDirectory: z.string().min(1),
 });
@@ -120,6 +126,7 @@ async function selectRuntime(
   checkpointFileDigest: string,
   runtimeIdentityDigest: string,
   codeRevision: string,
+  sourceRunId: string,
   stateRevision: string,
 ): Promise<void> {
   const source = await runExactCli(
@@ -131,15 +138,31 @@ async function selectRuntime(
   const decision = z
     .looseObject({
       kind: z.literal("resume_with_exact_runtime"),
-      recoveryInput: v2SelectionSchema,
+      recoveryInput: z.union([runtimeRecoveryInputV1Schema, v2SelectionSchema]),
     })
     .parse(value);
   const input = decision.recoveryInput;
   if (input.runId !== runId || input.exactStateRevision !== stateRevision) {
     throw new TypeError("旧runのruntime選択が指定したrunとcode revisionに一致しません");
   }
+  if (input.protocolVersion === 1) {
+    await selectManualRuntimeV1(checkout, input, {
+      sourceRunId,
+      runId,
+      checkpointDigest,
+      checkpointFileDigest,
+      runtimeIdentityDigest,
+      codeRevision,
+      stateRevision,
+    });
+    return;
+  }
   const plan = input.runtimeRecoveryPlan;
-  if (plan.kind !== "workflow_bundle" || plan.codeRevision !== codeRevision) {
+  if (
+    plan.kind !== "workflow_bundle" ||
+    plan.codeRevision !== codeRevision ||
+    plan.workflowRunId !== sourceRunId
+  ) {
     throw new TypeError("手動復旧のworkflow bundleを選べません");
   }
   const bundleRoot = resolve("artifacts/workflow/runtime");
@@ -191,6 +214,7 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
     runId: process.env["VOICEVOX_EXPECTED_RUN_ID"],
     checkpointDigest: process.env["VOICEVOX_MANUAL_CHECKPOINT_DIGEST"],
     codeRevision: process.env["VOICEVOX_MANUAL_CODE_REVISION"],
+    sourceRunId: process.env["VOICEVOX_MANUAL_SOURCE_RUN_ID"],
     diagnosticsPath: process.env["VOICEVOX_TASK_TRACKER_DIAGNOSTICS_PATH"],
     failureDirectory: process.env["VOICEVOX_TASK_TRACKER_FAILURE_DIRECTORY"],
   };
@@ -236,6 +260,7 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
         before.evidence.checkpointFileDigest,
         before.evidence.runtimeIdentityDigest,
         input.codeRevision,
+        input.sourceRunId,
         stateRevision,
       );
     } else {
@@ -244,7 +269,36 @@ export async function runManualExactRuntime(args: readonly string[]): Promise<nu
         throw new TypeError("手動送達のcommandが不正です");
       }
       childStarted = true;
-      await resolveSelectedManualRuntimeV2(checkout, resolution);
+      const selectedSource = await readFile(
+        "artifacts/workflow/manual-recovery-input.json",
+        "utf8",
+      );
+      const selectedRaw: unknown = JSON.parse(selectedSource);
+      if (selectedSource !== serializeCanonicalJsonLine(selectedRaw)) {
+        throw new TypeError("手動回復の固定入力がcanonical JSONではありません");
+      }
+      const selected = z
+        .union([runtimeRecoveryInputV1Schema, runtimeRecoveryInputV2Schema])
+        .parse(selectedRaw);
+      if (selected.protocolVersion === 1) {
+        await resolveSelectedManualRuntimeV1(
+          checkout,
+          selected,
+          input.sourceRunId,
+          resolution,
+          async (entrypoint, arguments_) => {
+            await runExactCli(entrypoint, arguments_, false);
+          },
+        );
+      } else {
+        if (
+          selected.runtimeRecoveryPlan.kind !== "workflow_bundle" ||
+          selected.runtimeRecoveryPlan.workflowRunId !== input.sourceRunId
+        ) {
+          throw new TypeError("V2手動解決の元runが固定bundleと一致しません");
+        }
+        await resolveSelectedManualRuntimeV2(checkout, resolution);
+      }
     }
     return 0;
   } catch (error: unknown) {

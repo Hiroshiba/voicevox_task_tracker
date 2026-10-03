@@ -134,12 +134,13 @@ Pagesでは同じrun、checkpoint、revision、content、adapterに結合した�
 state commit後のPages失敗でstateを巻き戻しません。
 
 production直列実行のPages childが起動した場合、`tracker-pages-effect-lease`の`state/production-pages-effect-lease-v1.json`を確認します。
-active leaseには親のActions実行ID、公開phase、固定state revision、intent digestが記録され、子が効果を確保すると子の実行IDも加わります。
-親が停止しても子は公開を続けるため、leaseがactiveの間は別のproduction実行を開始しません。
-dispatchの応答が不明でも親は同じidempotency keyの既存childを探し、再dispatchは行いません。
-子のupload、deploy、deployment IDまたは公開URLを確定できないときは、親が停止しleaseを保持します。
-この場合はActions実行とPages deploymentの実状態、保存済みreceiptを照合してから復旧方針を決めます。
-完了した親だけがleaseを自動解放できます。効果が曖昧なleaseを自動解放する操作はありません。
+active leaseにはchildを起動した親のActions実行IDとattempt、公開phase、固定state revision、intent digestが記録されます。子が効果を確保すると子の実行IDとattemptも加わります。
+親が停止しても子は公開を続けるため、leaseがactiveの間は別のtracking runを開始しません。
+同じrunを再開するには`recover_tracking_run`で`execution_shape`に`sequential`、`run_id`にleaseのrun IDを指定します。`run_sequential`の`run_id`指定でも再開できます。
+再開処理はexact runtime、state、receiptを照合し、leaseに記録された元childの実行IDとattemptから観測artifactを取得します。元childを再dispatchしません。
+初回Pagesの成功receiptが確定した場合だけ履歴Pagesのleaseへ進みます。新たなchildを起動するときは、実行中のworkflowと固定sourceのPages child workflowが同じ内容であることを確認します。childは固定sourceでPagesを生成し、公開前に出力manifestをintentと照合します。
+childの未発見、実行中、観測artifactの欠落や不一致、upload、deploy、deployment ID、公開URLの未確定は停止してactive leaseを保持します。
+最終reportとreceiptを検証して保存した継続attemptがleaseをCASで解放します。効果が曖昧なleaseを自動解放する操作はありません。
 
 運用障害通知は`tracker-operations-alerts`の`state/operations-alert-ledger-v1.json`へ送信予約を保存してから送ります。
 同じincidentの送信済みまたは曖昧な予約を再送せず、receiptを失っても専用branchの実状態を先に確認します。
@@ -153,16 +154,16 @@ delivery_startedは期限で解除しません。
 受信を確認せずretryすると重複送信になり得ます。
 
 1. 同じexact revisionのmarkerとledgerからrun ID、checkpoint digest、delivery ID、attempt ID、固定outbox順のnotification keyを取得します。
-2. 元Actions実行IDとcode revisionを確認し、default branchの「Discord送達の手動解決」へ指定します。
-3. select-runtimeがV2固定bundleとadapterを検証し、resolve_manual_deliveryの結果をmanual resolution receiptへ記録したことを確認します。
-4. 後続の共通workflowが同じrunの残りmessage、settlement、finalization、通知履歴Pages、completeへ進んだことを確認します。
+2. 元Actions実行IDとcode revision、記録済みrunの実行形態を確認し、default branchの「Discord送達の手動解決」へ指定します。production直列runではactive Pages leaseの親Actions実行IDを指定します。
+3. select-runtimeが分割runのV2固定bundle、または直列runのV1固定sourceを検証したことを確認します。手動判断の結果は同じrunのmanual resolution receiptへ記録されます。
+4. 分割runは共通workflow、直列runは固定V1 runtimeの再開から、残りmessage、settlement、finalization、通知履歴Pages、completeへ進んだことを確認します。
 
 retryの手動解決操作自体はDiscordへ送信しません。
 元の固定予約と開始試行を保持し、検証済みreceiptを受け取る同じrunの再開だけが再送できます。
 acknowledgeは確認済みにし、送信履歴を追加しません。
 receipt消失時は同じ入力の解決操作を再実行し、実Gitの親子stateから独立に検証したreceiptを取得します。
 相反する判断、別runや別attemptへの適用は拒否されます。
-手動workflowはV2固定operationだけを受け付け、V1を内部CLI commandへfallbackしません。
+直列runでは、固定sourceとactive Pages lease、開始済み送達をGit stateと照合してからV1の手動解決commandを実行します。証拠が欠ける場合は送達状態もleaseも変更しません。
 
 ## sandboxで連続runと通知actionを確認する
 

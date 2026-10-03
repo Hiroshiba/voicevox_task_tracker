@@ -223,10 +223,16 @@ export async function resolveRuntimeTarget(
     return Object.freeze({ kind: "recording", state: config.state });
   }
   if (request.executionPolicy.effectTarget !== "sandbox") {
-    await assertNoProductionPagesEffectLease(
-      dependencies.createStateBranchAdapter(),
-      config.state.branch,
-    );
+    if (request.executionPolicy.executionShape === "sequential") {
+      if (config.state.branch !== "tracker-state") {
+        throw new TypeError("production Pages leaseのstate branchが不正です");
+      }
+    } else {
+      await assertNoProductionPagesEffectLease(
+        dependencies.createStateBranchAdapter(),
+        config.state.branch,
+      );
+    }
     return Object.freeze({
       kind: "production",
       state: config.state,
