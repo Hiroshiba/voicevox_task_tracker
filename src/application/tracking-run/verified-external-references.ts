@@ -1,3 +1,7 @@
+import type { UtcIsoDateTime } from "../../domain/types.js";
+import { GitHubPublicBoundaryViolationError } from "../../github/errors.js";
+import { isEligiblePublicRepository } from "../../github/public-repository-allowlist.js";
+import type { CollectionGitHubReadPort } from "./ports.js";
 import {
   normalizeVerifiedExternalReferences,
   type VerifiedExternalReference,
@@ -39,22 +43,22 @@ function referencedItems(detail: GitHubItemDetail): readonly GitHubReferencedIte
   ]);
 }
 
-/** 前回の証拠と今回の詳細確認済み候補から公開外部参照を固定する。 */
-export function collectVerifiedExternalReferences(
+/** 保持する外部参照を今回取得した公開repository metadataで検証して固定する。 */
+export async function collectVerifiedExternalReferences(
+  read: CollectionGitHubReadPort,
+  observedAt: UtcIsoDateTime,
   previous: readonly VerifiedExternalReference[],
   candidates: readonly RelationCandidate[],
   details: readonly GitHubItemDetail[],
-): readonly VerifiedExternalReference[] {
+): Promise<readonly VerifiedExternalReference[]> {
   const excludedRepositories = new Set(
     details
       .flatMap(referencedItems)
       .filter((item) => item.repositoryArchived || item.repositoryDisabled)
       .map((item) => `${item.repositoryOwner}/${item.repositoryName}`.toLowerCase()),
   );
-  return normalizeVerifiedExternalReferences([
-    ...previous.filter(
-      (reference) => !excludedRepositories.has(reference.repositoryFullName.toLowerCase()),
-    ),
+  const references = normalizeVerifiedExternalReferences([
+    ...previous,
     ...candidates.flatMap((candidate) =>
       relationNodes(candidate.relation).flatMap((node) =>
         node.scope === "external_public" &&
@@ -70,4 +74,28 @@ export function collectVerifiedExternalReferences(
       ),
     ),
   ]);
+  const fullNames = Object.freeze(
+    [...new Set(references.map((reference) => reference.repositoryFullName.toLowerCase()))].sort(),
+  );
+  const repositories = await read.collectRepositoryMetadata(fullNames, observedAt);
+  const byFullName = new Map(
+    repositories.map((repository) => [
+      `${repository.owner}/${repository.name}`.toLowerCase(),
+      repository,
+    ]),
+  );
+  if (repositories.length !== fullNames.length || byFullName.size !== fullNames.length) {
+    throw new GitHubPublicBoundaryViolationError(1);
+  }
+  for (const fullName of fullNames) {
+    const repository = byFullName.get(fullName);
+    if (
+      repository?.observedAt !== observedAt ||
+      !isEligiblePublicRepository(repository) ||
+      excludedRepositories.has(fullName)
+    ) {
+      throw new GitHubPublicBoundaryViolationError(1);
+    }
+  }
+  return references;
 }

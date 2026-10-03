@@ -1,4 +1,4 @@
-/** GitHub詳細で公開状態を検証して保存した外部IssueまたはPull Request。 */
+/** GitHubで公開状態を検証して保存した外部IssueまたはPull Request。 */
 export type VerifiedExternalReference = Readonly<{
   repositoryFullName: string;
   number: number;

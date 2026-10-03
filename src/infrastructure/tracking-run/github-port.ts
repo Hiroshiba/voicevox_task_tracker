@@ -16,7 +16,10 @@ import {
 import { normalizeObservedGitHubItems } from "../../github/item-normalization.js";
 import { containsPrivateRepositoryReference } from "../../github/private-repository-reference.js";
 import { createPublicRepositoryAllowlist } from "../../github/public-repository-allowlist.js";
-import type { discoverRepositoryInventory } from "../../github/repository-inventory.js";
+import {
+  collectRepositoryMetadata,
+  type discoverRepositoryInventory,
+} from "../../github/repository-inventory.js";
 
 type GitHubInventoryDependencies = Readonly<{
   credentials: GitHubAppCredentials;
@@ -205,6 +208,9 @@ export function createGitHubReadPort(
           isBot,
         }),
       });
+    },
+    async collectRepositoryMetadata(repositoryFullNames, observedAt) {
+      return collectRepositoryMetadata(repositoryFullNames, observedAt, client.request);
     },
     async inspectLegacyReviewRequests(sourceIds) {
       return inspectLegacyReviewRequests(sourceIds, allowlist, client.graphql);

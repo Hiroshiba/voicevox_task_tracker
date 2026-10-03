@@ -1,3 +1,4 @@
+import type { Repository } from "../../domain/index.js";
 import type { BotPredicate } from "../../domain/actor-resolution.js";
 import type { GitHubNodeId, GitHubRepositoryId, UtcIsoDateTime } from "../../domain/types.js";
 import type { PublicRepository } from "../../github/public-repository-allowlist.js";
@@ -58,6 +59,10 @@ export type CollectionGitHubReadPort = GitHubReadPort<
   GitHubRateLimitSnapshot
 > &
   Readonly<{
+    collectRepositoryMetadata: (
+      repositoryFullNames: readonly string[],
+      observedAt: UtcIsoDateTime,
+    ) => Promise<readonly Repository[]>;
     inspectLegacyReviewRequests: (
       sourceIds: readonly SourceId[],
     ) => Promise<readonly LegacyReviewRequestInspection[]>;

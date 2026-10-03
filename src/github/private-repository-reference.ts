@@ -1,5 +1,5 @@
 import type { Repository } from "../domain/index.js";
-import { urlLikeTextCandidates } from "../domain/url-like-text.js";
+import { scanUrlLikeText } from "../domain/url-like-text.js";
 import {
   verifiedExternalUrls,
   type VerifiedExternalReference,
@@ -27,13 +27,8 @@ function containsRepositoryName(value: string, repository: RepositoryReference):
 
 function containsRepositoryNameInUrl(value: string, repository: RepositoryReference): boolean {
   const fullName = `${escapePattern(repository.owner)}/${escapePattern(repository.name)}`;
-  const decoded = value.replaceAll(/(?:%[0-9A-Fa-f]{2})+/gu, (encoded) =>
-    new TextDecoder("utf-8").decode(
-      Uint8Array.from(encoded.slice(1).split("%"), (hex) => Number.parseInt(hex, 16)),
-    ),
-  );
   return new RegExp(`(?<![A-Za-z0-9_.%-])${fullName}(?:\\.git)?(?![A-Za-z0-9_.%-])`, "iu").test(
-    decoded,
+    value,
   );
 }
 
@@ -60,7 +55,9 @@ function decodedPathComponent(value: string): string | undefined {
 }
 
 function containsRepositoryReference(value: string, repository: RepositoryReference): boolean {
-  const urls = urlLikeTextCandidates(value);
+  const scan = scanUrlLikeText(value);
+  if (scan.status === "invalid") return true;
+  const urls = scan.candidates;
   if (
     urls.some((url) => {
       const referenced = githubRepositoryFromUrl(url);
@@ -79,7 +76,10 @@ function containsRepositoryReference(value: string, repository: RepositoryRefere
   for (const url of urls) {
     remaining = remaining.replaceAll(url, " ");
   }
-  return containsRepositoryName(remaining, repository);
+  return (
+    containsRepositoryName(remaining, repository) ||
+    scan.decodedTexts.some((text) => containsRepositoryName(text, repository))
+  );
 }
 
 function hasGitHubAuthority(candidate: string): boolean {
@@ -154,7 +154,9 @@ export function containsDisallowedAiTextUrl(
   allowlist: readonly Pick<RepositoryReference, "owner" | "name">[],
   externalReferences: readonly VerifiedExternalReference[],
 ): boolean {
-  const candidates = urlLikeTextCandidates(value);
+  const scan = scanUrlLikeText(value);
+  if (scan.status === "invalid") return true;
+  const candidates = scan.candidates;
   if (candidates.length === 0) {
     return false;
   }
@@ -183,13 +185,6 @@ export function containsDisallowedAiTextUrl(
     }
     const repository = githubRepositoryFromUrl(candidate);
     if (repository == null || repository === "invalid") {
-      return true;
-    }
-    if (
-      [...url.searchParams.values(), url.hash.slice(1)].some((part) =>
-        containsDisallowedAiTextUrl(part, allowlist, externalReferences),
-      )
-    ) {
       return true;
     }
     if (repository.owner === "voicevox") {
@@ -256,7 +251,9 @@ export function containsUnallowlistedGitHubRepositoryUrl(
         continue;
       }
       visitedStrings.add(value);
-      for (const candidate of urlLikeTextCandidates(value)) {
+      const scan = scanUrlLikeText(value);
+      if (scan.status === "invalid") return true;
+      for (const candidate of scan.candidates) {
         const repository = githubRepositoryFromUrl(candidate);
         if (
           repository === "invalid" ||
@@ -265,14 +262,6 @@ export function containsUnallowlistedGitHubRepositoryUrl(
             !isVerifiedExternalUrl(candidate, externalUrls))
         ) {
           return true;
-        }
-        const urlValue = absoluteUrl(candidate);
-        if (URL.canParse(urlValue)) {
-          const url = new URL(urlValue);
-          pending.push(...url.searchParams.values());
-          if (url.hash.length > 1) {
-            pending.push(url.hash.slice(1));
-          }
         }
       }
       continue;

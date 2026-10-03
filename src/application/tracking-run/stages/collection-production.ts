@@ -1,3 +1,5 @@
+import type { VerifiedExternalReference } from "../../../domain/verified-external-reference.js";
+import { collectVerifiedExternalReferences } from "../verified-external-references.js";
 import type {
   GitHubNodeId,
   GitHubRepositoryId,
@@ -64,6 +66,7 @@ export type CollectedItemObservations = Readonly<{
   unavailableConsumerNodeIds: ReadonlySet<GitHubNodeId>;
   changedNodeIds: ReadonlySet<GitHubNodeId>;
   externalReferences: readonly ExternalGhostNode[];
+  verifiedExternalReferences: readonly VerifiedExternalReference[];
   relationCandidates: readonly RelationCandidate[];
   repositoryResults: readonly RepositoryCollectionResult<PreviousCollectionRepository>[];
   collectionRepositories: readonly PreviousCollectionRepository[];
@@ -291,6 +294,14 @@ export async function collectProductionItems(
   for (const nodeId of blockerTargets.freshNodeIds) {
     analysisNodeIds.add(nodeId);
   }
+  const previousSnapshot = context.previousState.snapshot;
+  const verifiedExternalReferences = await collectVerifiedExternalReferences(
+    read,
+    expanded.evaluatedAt,
+    previousSnapshot.status === "available" ? previousSnapshot.verifiedExternalReferences : [],
+    relationCandidates,
+    uniqueDetails,
+  );
   return Object.freeze({
     value: Object.freeze({
       evaluatedAt: expanded.evaluatedAt,
@@ -307,6 +318,7 @@ export async function collectProductionItems(
         personalReminderRelationCandidateSelection.unavailableConsumerNodeIds,
       changedNodeIds,
       externalReferences: tracking.result.ghostNodes,
+      verifiedExternalReferences,
       relationCandidates,
       repositoryResults,
       collectionRepositories: Object.freeze(collectionRepositories),
