@@ -9,7 +9,13 @@ import type { DailyPublicationStageHandlers, RunPublicationAdapters } from "./co
 
 type NotificationAdapters = Pick<
   RunPublicationAdapters,
-  "environment" | "createStateBranchAdapter" | "discordHttpClient" | "diagnosticsRecorder" | "now"
+  | "environment"
+  | "createStateBranchAdapter"
+  | "discordHttpClient"
+  | "diagnosticsRecorder"
+  | "now"
+  | "sleep"
+  | "random"
 >;
 
 /** 初回Pages成功後の通知を保存済みrecordと同じsettlement stageで確定する。 */

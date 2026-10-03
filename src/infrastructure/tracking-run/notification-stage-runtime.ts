@@ -11,7 +11,13 @@ import type { ProductionRuntimeAdapters } from "./runtime/adapters.js";
 
 type NotificationStageAdapters = Pick<
   ProductionRuntimeAdapters,
-  "environment" | "createStateBranchAdapter" | "discordHttpClient" | "now" | "diagnosticsRecorder"
+  | "environment"
+  | "createStateBranchAdapter"
+  | "discordHttpClient"
+  | "now"
+  | "sleep"
+  | "random"
+  | "diagnosticsRecorder"
 >;
 
 /** productionまたはsandboxの通知effectを同じsettlement stageへ接続する。 */
@@ -30,6 +36,8 @@ export function createNotificationSettlementPort(
           },
           httpClient: adapters.discordHttpClient,
           now: adapters.now,
+          sleep: adapters.sleep,
+          random: adapters.random,
         })
       : {
           send: (() => {

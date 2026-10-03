@@ -35,7 +35,7 @@ function sameHead(left: StateBranchHead, right: StateBranchHead): boolean {
   );
 }
 
-/** 追跡refの旧v1 ledgerだけを読み、現行通知が変更できる状態か確認する。 */
+/** 追跡refのcanonicalな旧ledgerを読み、専用refで通知できる状態か確認する。 */
 export async function assertOperationsAlertLedgerWritable(
   adapter: StateBranchAdapter,
   configuration: StatePersistenceConfiguration,
@@ -57,14 +57,17 @@ export async function assertOperationsAlertLedgerWritable(
   }
   const value: unknown = JSON.parse(source);
   const version = z.object({ schemaVersion: z.string() }).parse(value).schemaVersion;
-  if (version !== OPERATIONS_ALERT_LEDGER_SCHEMA_VERSION_1) {
+  if (
+    version !== OPERATIONS_ALERT_LEDGER_SCHEMA_VERSION_1 &&
+    version !== OPERATIONS_ALERT_LEDGER_SCHEMA_VERSION_2
+  ) {
     throw new StateBranchConflictError({
       cause: new TypeError("追跡stateに旧runtimeが読めない運用通知ledgerがあります"),
     });
   }
   if (!isCanonicalStateOperationsAlertLedgerSource(source)) {
     throw new StateFormatError("operations alert ledger", {
-      cause: new TypeError("旧運用通知ledgerの保存byte列がcanonicalではありません"),
+      cause: new TypeError("追跡refの運用通知ledgerの保存byte列がcanonicalではありません"),
     });
   }
   parseStateOperationsAlertLedger(source);

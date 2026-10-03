@@ -301,7 +301,11 @@ export async function deliverNotificationMessage(
       throw new TypeError("通知messageの送信設定がありません");
     }
     outcome = notificationMessageSendOutcomeSchema.parse(
-      await port.sender.send(context.message.payload, outbox.settings.webhookSecretName),
+      await port.sender.send(
+        context.message.payload,
+        outbox.settings.webhookSecretName,
+        outbox.settings.retry,
+      ),
     );
   } catch (cause: unknown) {
     outcome = {

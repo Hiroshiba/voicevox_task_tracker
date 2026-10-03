@@ -6,7 +6,13 @@ import type { ProductionRuntimeAdapters } from "../adapters.js";
 type SequentialStageDependencies = SequentialRunDependencies;
 type CompletionRuntimeAdapters = Pick<
   ProductionRuntimeAdapters,
-  "environment" | "createStateBranchAdapter" | "discordHttpClient" | "diagnosticsRecorder" | "now"
+  | "environment"
+  | "createStateBranchAdapter"
+  | "discordHttpClient"
+  | "diagnosticsRecorder"
+  | "now"
+  | "sleep"
+  | "random"
 >;
 
 /** 日次runの最終CASを共通stageへ接続する。 */

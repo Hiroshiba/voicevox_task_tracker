@@ -96,13 +96,40 @@ jobs:
           corepack enable
           pnpm install --frozen-lockfile
           pnpm build
+      - name: 公開失敗artifactの一覧を取得
+        id: failure_artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_KIND: ${{ inputs.workflow_kind }}
+        run: |
+          response="$RUNNER_TEMP/operations-failure-artifacts.json"
+          prefix="$WORKFLOW_KIND-failure-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > "$response"
+          count="$(jq -s --arg prefix "$prefix" '
+            if length > 0 and
+              all(.[]; (.artifacts | type) == "array") and
+              all([.[] | .artifacts[]]; (.name | type) == "string")
+            then [.[] | .artifacts[] | select(.name | startswith($prefix))] | length
+            else error("Actions artifact一覧の形式が不正です")
+            end
+          ' "$response")"
+          echo "count=$count" >> "$GITHUB_OUTPUT"
       - name: 公開失敗artifactを取得
-        continue-on-error: true
+        if: steps.failure_artifacts.outputs.count != '0'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: ${{ inputs.workflow_kind }}-failure-${{ github.run_id }}-${{ github.run_attempt }}-*
           path: artifacts/workflow/failures
           merge-multiple: true
+      - name: 公開失敗artifactの取得結果を照合
+        if: steps.failure_artifacts.outputs.count != '0'
+        run: |
+          shopt -s nullglob
+          files=(artifacts/workflow/failures/*.json)
+          if (( ${#files[@]} == 0 )); then
+            echo '一覧にある公開失敗artifactを取得できませんでした' >&2
+            exit 1
+          fi
       - name: 以前の運用障害通知の証拠を取得
         uses: ./.github/actions/download-prior-operations-artifacts
         with:

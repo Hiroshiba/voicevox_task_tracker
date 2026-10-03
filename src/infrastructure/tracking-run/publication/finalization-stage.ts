@@ -5,7 +5,13 @@ import type { DailyPublicationStageHandlers, RunPublicationAdapters } from "./co
 
 type FinalizationAdapters = Pick<
   RunPublicationAdapters,
-  "environment" | "createStateBranchAdapter" | "discordHttpClient" | "diagnosticsRecorder" | "now"
+  | "environment"
+  | "createStateBranchAdapter"
+  | "discordHttpClient"
+  | "diagnosticsRecorder"
+  | "now"
+  | "sleep"
+  | "random"
 >;
 
 /** settlementのexact stateから完了reportを一つのCASへ確定する。 */

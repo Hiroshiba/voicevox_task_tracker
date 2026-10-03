@@ -49,6 +49,8 @@ type WorkflowNotificationAdapters = Pick<
   | "diagnosticsRecorder"
   | "writeJsonArtifact"
   | "now"
+  | "sleep"
+  | "random"
 >;
 
 function pagesArtifactFailure(cause: unknown): never {

@@ -10,6 +10,7 @@ import {
   executeDiscordWebhook,
   type DiscordSecretProvider,
   type DiscordWebhookHttpClient,
+  type DiscordWebhookRetrySettings,
 } from "../../discord/webhook.js";
 
 export const notificationMessageSendOutcomeSchema = z.discriminatedUnion("status", [
@@ -35,32 +36,32 @@ export type NotificationMessageSendPort = Readonly<{
   send: (
     payload: DiscordWebhookPayload,
     webhookSecretName: string,
+    retry: DiscordWebhookRetrySettings,
   ) => Promise<NotificationMessageSendOutcome>;
 }>;
 
-/** 既存webhook clientでretryを無効にしたproduction送信境界を作る。 */
+/** 保存済みretry設定でDiscordへ送るproduction送信境界を作る。 */
 export function createProductionNotificationMessageSendPort(
   input: Readonly<{
     secretProvider: DiscordSecretProvider;
     httpClient: DiscordWebhookHttpClient;
     now: () => Date;
+    sleep: (delayMilliseconds: number) => Promise<void>;
+    random: () => number;
   }>,
 ): NotificationMessageSendPort {
   return Object.freeze({
-    send: async (payload, webhookSecretName) => {
+    send: async (payload, webhookSecretName, retry) => {
       try {
         const result = await executeDiscordWebhook({
           secretName: webhookSecretName,
           payload,
-          retry: { maxAttempts: 1, initialDelaySeconds: 0, maxDelaySeconds: 0 },
+          retry,
           secretProvider: input.secretProvider,
           httpClient: input.httpClient,
-          runtime: { now: input.now, sleep: () => Promise.resolve(), random: () => 0 },
+          runtime: { now: input.now, sleep: input.sleep, random: input.random },
           beforeFirstAttempt: () => Promise.resolve(),
         });
-        if (result.attempts !== 1) {
-          throw new TypeError("一つの予約で複数のDiscord HTTP試行を実行しました");
-        }
         return Object.freeze({
           status: "sent",
           source: "production",
