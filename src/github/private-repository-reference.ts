@@ -7,10 +7,7 @@ import {
 
 type RepositoryReference = Pick<Repository, "id" | "owner" | "name" | "visibility">;
 
-const URL_PATTERN =
-  /(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|\/\/|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?=[/?#]))[^\s<>"'`]+/gu;
 const URL_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//u;
-const TRAILING_URL_PUNCTUATION = /[.,;:!?、。！？)\]}）］｝」』]+$/u;
 
 function isGitHubHost(hostname: string): boolean {
   return hostname === "github.com" || hostname === "github.com.";
@@ -62,56 +59,43 @@ function decodedPathComponent(value: string): string | undefined {
   }
 }
 
-function isRepositoryUrl(candidate: string, repository: RepositoryReference): boolean {
-  const source = candidate.replace(TRAILING_URL_PUNCTUATION, "");
-  const value = absoluteUrl(source);
-  if (!URL.canParse(value)) {
-    return false;
-  }
-  const url = new URL(value);
-  if (
-    (url.protocol !== "https:" && url.protocol !== "http:") ||
-    !isGitHubHost(url.hostname) ||
-    url.port !== "" ||
-    url.username !== "" ||
-    url.password !== ""
-  ) {
-    return false;
-  }
-  const [, rawOwner, rawName] = url.pathname.split("/");
-  if (rawOwner == null || rawName == null) {
-    return false;
-  }
-  const owner = decodedPathComponent(rawOwner);
-  const name = decodedPathComponent(rawName);
-  if (owner == null || name == null) {
-    return false;
-  }
-  return (
-    owner.toLowerCase() === repository.owner.toLowerCase() &&
-    (name.toLowerCase() === repository.name.toLowerCase() ||
-      name.toLowerCase() === `${repository.name.toLowerCase()}.git`)
-  );
-}
-
 function containsRepositoryReference(value: string, repository: RepositoryReference): boolean {
-  const urls = [...value.matchAll(URL_PATTERN)];
+  const urls = urlLikeTextCandidates(value);
   if (
-    urls.some(
-      ([url]) => isRepositoryUrl(url, repository) || containsRepositoryNameInUrl(url, repository),
-    )
+    urls.some((url) => {
+      const referenced = githubRepositoryFromUrl(url);
+      return (
+        (referenced != null &&
+          referenced !== "invalid" &&
+          referenced.owner === repository.owner.toLowerCase() &&
+          referenced.name === repository.name.toLowerCase()) ||
+        containsRepositoryNameInUrl(url, repository)
+      );
+    })
   ) {
     return true;
   }
-  return containsRepositoryName(value.replaceAll(URL_PATTERN, " "), repository);
+  let remaining = value;
+  for (const url of urls) {
+    remaining = remaining.replaceAll(url, " ");
+  }
+  return containsRepositoryName(remaining, repository);
+}
+
+function hasGitHubAuthority(candidate: string): boolean {
+  const source = candidate.replace(URL_SCHEME_PATTERN, "").replace(/^\/\//u, "");
+  const [authority] = source.split(/[/?#]/u);
+  const rawHostname = authority?.split("@").at(-1)?.split(":")[0];
+  const hostname = rawHostname == null ? undefined : decodedPathComponent(rawHostname);
+  return hostname != null && isGitHubHost(hostname.toLowerCase());
 }
 
 function githubRepositoryFromUrl(
   candidate: string,
 ): Readonly<{ owner: string; name: string }> | "invalid" | undefined {
-  const value = absoluteUrl(candidate.replace(TRAILING_URL_PUNCTUATION, ""));
+  const value = absoluteUrl(candidate);
   if (!URL.canParse(value)) {
-    return undefined;
+    return hasGitHubAuthority(candidate) ? "invalid" : undefined;
   }
   const url = new URL(value);
   if (!isGitHubHost(url.hostname)) {
@@ -125,21 +109,35 @@ function githubRepositoryFromUrl(
   ) {
     return "invalid";
   }
-  const [, rawOwner, rawName] = url.pathname.split("/");
-  if (rawOwner == null || rawName == null || rawOwner.length === 0 || rawName.length === 0) {
+  const [, rawOwner, rawName, ...remaining] = url.pathname.split("/");
+  if (rawOwner == null) {
     return undefined;
   }
   const owner = decodedPathComponent(rawOwner);
-  const decodedName = decodedPathComponent(rawName);
-  if (owner == null || decodedName == null) {
+  if (owner == null) {
     return "invalid";
   }
-  const name = decodedName.endsWith(".git") ? decodedName.slice(0, -4) : decodedName;
-  return Object.freeze({ owner: owner.toLowerCase(), name: name.toLowerCase() });
+  if (rawName == null) {
+    return undefined;
+  }
+  if (rawOwner.length === 0 || rawName.length === 0) {
+    return rawName.length > 0 || remaining.some((segment) => segment.length > 0)
+      ? "invalid"
+      : undefined;
+  }
+  const decodedName = decodedPathComponent(rawName);
+  if (decodedName == null) {
+    return "invalid";
+  }
+  const name = decodedName.toLowerCase();
+  return Object.freeze({
+    owner: owner.toLowerCase(),
+    name: name.endsWith(".git") ? name.slice(0, -4) : name,
+  });
 }
 
 function isVerifiedExternalUrl(candidate: string, allowed: ReadonlySet<string>): boolean {
-  const url = new URL(absoluteUrl(candidate.replace(TRAILING_URL_PUNCTUATION, "")));
+  const url = new URL(absoluteUrl(candidate));
   if (url.search !== "" || url.hash !== "") {
     return false;
   }
@@ -258,7 +256,7 @@ export function containsUnallowlistedGitHubRepositoryUrl(
         continue;
       }
       visitedStrings.add(value);
-      for (const [candidate] of value.matchAll(URL_PATTERN)) {
+      for (const candidate of urlLikeTextCandidates(value)) {
         const repository = githubRepositoryFromUrl(candidate);
         if (
           repository === "invalid" ||
@@ -268,7 +266,7 @@ export function containsUnallowlistedGitHubRepositoryUrl(
         ) {
           return true;
         }
-        const urlValue = absoluteUrl(candidate.replace(TRAILING_URL_PUNCTUATION, ""));
+        const urlValue = absoluteUrl(candidate);
         if (URL.canParse(urlValue)) {
           const url = new URL(urlValue);
           pending.push(...url.searchParams.values());

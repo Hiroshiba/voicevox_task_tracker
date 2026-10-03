@@ -455,6 +455,8 @@ Web UIは停滞レベルを表示、絞り込み、並び替え、依存グラ�
 2. 永続化guardはcommit直前に収集段階のallowlistとinventory、snapshot、付随データを照合し、allowlist外ID、既知の非公開repository参照、既知secret、credential field、不要な全文を拒否します。allowlistを再生成しません。
 3. Pages guardはDTO生成直前に別実装で収集段階のallowlist、inventory、snapshotを照合し、repository identity、既知の非公開repository参照、secret、安全でないURL、不要な全文を再検査します。
 
+自然文のURLは共通の規則で候補を抽出し、GitHubのhostとowner/nameを正規化してから公開allowlistと既知の非公開repositoryに照合します。リポジトリを指すGitHub URLを解析できない場合も、公開前に停止します。
+
 `config.yml`の`maintainers`に書いたGitHubユーザー名と、GitHubのreview requestや本文とコメントから得たteam識別子は公開情報としてguardを通過できます。
 GitHubのteam member一覧は収集しないため、snapshot、公開DTO、Discord通知の入力にも含まれません。
 
