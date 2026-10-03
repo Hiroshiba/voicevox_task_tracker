@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { AiAnalysisElement } from "../domain/ai-analysis-elements.js";
+import { verifiedExternalUrls } from "../domain/verified-external-reference.js";
 import { containsUnallowlistedGitHubRepositoryUrl } from "../github/private-repository-reference.js";
 import type { SchemaValidCodexElementOutput } from "./element-output.js";
 import type { CodexOutputValidationIssue } from "./errors.js";
@@ -14,6 +15,13 @@ const URL_TRAILING_PUNCTUATION_PATTERN = /[),.;:!?、。！？）】]+$/u;
 type TextField = Readonly<{ path: string; value: string }>;
 const publicRepositoryAllowlistSchema = z.array(
   z.strictObject({ owner: z.string().min(1), name: z.string().min(1) }),
+);
+const verifiedExternalReferencesSchema = z.array(
+  z.strictObject({
+    repositoryFullName: z.string().min(3),
+    number: z.number().int().positive(),
+    url: z.url(),
+  }),
 );
 
 function createIssue(
@@ -160,6 +168,19 @@ function collectTextFields(
   if (status != null) {
     appendCommonTextFields(status, resultPath(output, "status"), fields);
   }
+  const selfCommitment = output.selfCommitment ?? input.lockedElements.selfCommitment;
+  if (selfCommitment != null) {
+    const path = resultPath(output, "selfCommitment");
+    for (const [index, commitment] of selfCommitment.value.entries()) {
+      fields.push(
+        Object.freeze({
+          path: `${path}/value/${index.toString()}/summary`,
+          value: commitment.summary,
+        }),
+      );
+    }
+    appendCommonTextFields(selfCommitment, path, fields);
+  }
   return Object.freeze(fields);
 }
 
@@ -172,6 +193,13 @@ export function validateCodexOutputUrls(
   const publicRepositoryAllowlist = publicRepositoryAllowlistSchema.parse(
     input.deterministicSignals["publicRepositoryAllowlist"],
   );
+  const verifiedExternalReferences = verifiedExternalReferencesSchema.parse(
+    input.deterministicSignals["verifiedExternalReferences"],
+  );
+  const allowedExternalUrls = verifiedExternalUrls(verifiedExternalReferences);
+  if (allowedExternalUrls == null) {
+    throw new TypeError("Codex入力の検証済み外部参照URLが不正です");
+  }
   if (organizationFromUrl(input.item.url)?.toLowerCase() !== TARGET_ORGANIZATION.toLowerCase()) {
     throw new TypeError("Codex入力の対象項目がVOICEVOX Organization内ではありません");
   }
@@ -185,15 +213,14 @@ export function validateCodexOutputUrls(
     );
   }
 
-  const allowedExternalUrls = new Set(
-    input.candidates.relations
-      .map((candidate) => normalizedUrl(candidate.targetUrl))
-      .filter((url): url is string => url != null),
-  );
-  allowedExternalUrls.add(input.item.url);
-
   for (const field of collectTextFields(output, input)) {
-    if (containsUnallowlistedGitHubRepositoryUrl([field.value], publicRepositoryAllowlist)) {
+    if (
+      containsUnallowlistedGitHubRepositoryUrl(
+        [field.value],
+        publicRepositoryAllowlist,
+        verifiedExternalReferences,
+      )
+    ) {
       issues.push(
         createIssue(
           field.path,
@@ -209,7 +236,7 @@ export function validateCodexOutputUrls(
       if (
         normalized == null ||
         (organizationFromUrl(rawUrl)?.toLowerCase() !== TARGET_ORGANIZATION.toLowerCase() &&
-          !allowedExternalUrls.has(normalized))
+          !allowedExternalUrls.has(normalized.toLowerCase()))
       ) {
         issues.push(
           createIssue(

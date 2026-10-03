@@ -65,7 +65,7 @@ const issuedValidatedRuns = new WeakSet<object>();
 export type RunCompletenessProof = Readonly<{ [runCompletenessProofBrand]: true }>;
 
 export type RunSnapshot = Readonly<{
-  schemaVersion: "22";
+  schemaVersion: "23";
   generatedAt: FinalSnapshotCandidate["generatedAt"];
   trackingStartAt: FinalSnapshotCandidate["trackingStartAt"];
   ai: FinalSnapshotCandidate["ai"];
@@ -88,6 +88,7 @@ export type RunSnapshot = Readonly<{
   }>[];
   collection: FinalSnapshotCandidate["collection"];
   externalReferences: readonly Readonly<{ nodeId: string }>[];
+  verifiedExternalReferences: FinalSnapshotCandidate["verifiedExternalReferences"];
   graphNodeStateObservations: readonly Readonly<{ nodeId: string }>[];
   run: Readonly<{ id: string; status: "success" | "fallback"; complete: true }>;
 }>;

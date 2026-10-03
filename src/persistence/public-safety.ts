@@ -1,11 +1,12 @@
 import { type Repository } from "../domain/index.js";
+import type { VerifiedExternalReference } from "../domain/verified-external-reference.js";
 import {
   containsPrivateRepositoryReference,
   containsUnallowlistedGitHubRepositoryUrl,
 } from "../github/private-repository-reference.js";
 import { isEligiblePublicRepository } from "../github/public-repository-allowlist.js";
 import { StateConfigurationError, StatePublicSafetyError } from "./errors.js";
-import { type StateSnapshot } from "./snapshot-v22.js";
+import { type StateSnapshot } from "./snapshot-v23.js";
 
 const MAX_PERSISTED_STRING_LENGTH = 4096;
 const SECRET_PATTERNS: readonly RegExp[] = [
@@ -86,13 +87,14 @@ function scanValues(
   values: readonly unknown[],
   repositoryInventory: readonly Repository[],
   repositoryAllowlist: readonly Pick<Repository, "owner" | "name">[],
+  externalReferences: readonly VerifiedExternalReference[],
   knownSecrets: readonly string[],
 ): readonly string[] {
   const violationCodes = new Set<string>();
   if (containsPrivateRepositoryReference(values, repositoryInventory)) {
     violationCodes.add("private_repository_data");
   }
-  if (containsUnallowlistedGitHubRepositoryUrl(values, repositoryAllowlist)) {
+  if (containsUnallowlistedGitHubRepositoryUrl(values, repositoryAllowlist, externalReferences)) {
     violationCodes.add("repository_url_not_allowlisted");
   }
   const pending: unknown[] = [...values];
@@ -174,6 +176,7 @@ export function assertStatePublicSafety(input: StatePublicSafetyInput): void {
       [input.snapshot, ...input.additionalValues],
       input.repositoryInventory,
       input.repositoryAllowlist,
+      input.snapshot.verifiedExternalReferences,
       input.knownSecrets,
     ),
   );
@@ -187,10 +190,17 @@ export function assertStatePublicSafety(input: StatePublicSafetyInput): void {
 export function assertStateValuesPublicSafety(
   values: readonly unknown[],
   repositoryAllowlist: readonly Pick<Repository, "owner" | "name">[],
+  externalReferences: readonly VerifiedExternalReference[],
   knownSecrets: readonly string[],
 ): void {
   assertKnownSecrets(knownSecrets);
-  const violationCodes = scanValues(values, [], repositoryAllowlist, knownSecrets);
+  const violationCodes = scanValues(
+    values,
+    [],
+    repositoryAllowlist,
+    externalReferences,
+    knownSecrets,
+  );
   if (violationCodes.length > 0) {
     throw new StatePublicSafetyError(violationCodes);
   }
@@ -220,6 +230,7 @@ export function assertExistingStatePublicSafety(
       [snapshot, ...historyRecords, notificationLedger, ...plannedValues],
       snapshot?.repositories ?? [],
       snapshot?.repositories ?? [],
+      snapshot?.verifiedExternalReferences ?? [],
       knownSecrets,
     ),
   );

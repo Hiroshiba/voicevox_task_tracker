@@ -25,7 +25,11 @@ import {
   parseStateSnapshot as parseStateSnapshotV21,
   serializeStateSnapshot as serializeStateSnapshotV21,
 } from "./snapshot-v21.js";
-import { parseStateSnapshot, serializeStateSnapshot } from "./snapshot-v22.js";
+import {
+  parseStateSnapshot as parseStateSnapshotV22,
+  serializeStateSnapshot as serializeStateSnapshotV22,
+} from "./snapshot-v22.js";
+import { parseStateSnapshot, serializeStateSnapshot } from "./snapshot-v23.js";
 import {
   finalizedHistoryDigest,
   finalizedRunReportDigest,
@@ -43,7 +47,7 @@ export type VerifiedRunTransactionFiles = Readonly<{
   record: DurablePublicationRecord;
   initialPagesEvidence?: InitialPagesPublicationEvidence;
   snapshotDigest: string;
-  snapshotSchemaVersion: "21" | "22";
+  snapshotSchemaVersion: "21" | "22" | "23";
   notificationLedgerDigest: string;
   operationsAlertLedgerDigest?: string;
 }>;
@@ -111,6 +115,15 @@ export function verifyRunTransactionFiles(
     snapshotDigest = hashCanonicalJson(snapshot);
     snapshotRunId = snapshot.run.id;
   } else if (snapshotVersion === "22") {
+    const snapshot = parseStateSnapshotV22(snapshotSource);
+    if (snapshotSource !== serializeStateSnapshotV22(snapshot)) {
+      throw new StateFormatError("snapshot", {
+        cause: new TypeError("snapshotがcanonical JSONではありません"),
+      });
+    }
+    snapshotDigest = hashCanonicalJson(snapshot);
+    snapshotRunId = snapshot.run.id;
+  } else if (snapshotVersion === "23") {
     const snapshot = parseStateSnapshot(snapshotSource);
     if (snapshotSource !== serializeStateSnapshot(snapshot)) {
       throw new StateFormatError("snapshot", {
@@ -215,9 +228,9 @@ export function verifyCurrentRunTransactionFiles(
   configuration: StatePersistenceConfiguration,
 ): VerifiedRunTransactionFiles {
   const verified = verifyRunTransactionFiles(files, configuration);
-  if (verified?.snapshotSchemaVersion !== "22") {
+  if (verified?.snapshotSchemaVersion !== "23") {
     throw new StateFormatError("snapshot", {
-      cause: new TypeError("新しいtracking state候補にはv22のrun transactionが必要です"),
+      cause: new TypeError("新しいtracking state候補にはv23のrun transactionが必要です"),
     });
   }
   return verified;

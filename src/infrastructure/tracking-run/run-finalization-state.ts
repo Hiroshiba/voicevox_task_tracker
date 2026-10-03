@@ -1,7 +1,7 @@
 import { hashCanonicalJson } from "../../canonical-json/index.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import { createUtcIsoDateTime, resolveTrackingStartAt } from "../../domain/index.js";
-import { createStateSnapshot, type StateSnapshot } from "../../persistence/snapshot-v22.js";
+import { createStateSnapshot, type StateSnapshot } from "../../persistence/snapshot-v23.js";
 import { createStateRunReport, type StateRunReport } from "../../persistence/state-run-report.js";
 import type { DurablePublicationRecord } from "../../publication/durable-record-schema.js";
 import type { NotificationMessageState } from "./notification-message-state.js";

@@ -254,7 +254,14 @@ export async function deliverNotificationMessage(
       ...repository,
       id: createGitHubRepositoryId(repository.id),
     })),
-    additionalValues: [record, state.ledger, evidence],
+    additionalValues: [
+      record,
+      state.ledger,
+      evidence,
+      context.message.payload.content,
+      context.message.payload.embeds,
+      context.message.payload.allowed_mentions,
+    ],
     knownSecrets: port.knownSecrets,
   });
   const reserved = await commitMessageTransition(

@@ -32,7 +32,7 @@ export type AnalysisElementNecessityInput = Readonly<{
 
 type GenericAiElementDefinition = Readonly<{
   revision: number;
-  inputProjectionVersion: 2 | 3;
+  inputProjectionVersion: 4;
   useSites: readonly string[];
   promptDescription: string;
   resultSchema: z.ZodType;
@@ -97,6 +97,8 @@ function exactInputContext(input: CodexAnalysisInput, element: AiAnalysisElement
   );
   return Object.freeze({
     inputProjectionVersion: GENERIC_AI_ELEMENT_DEFINITIONS[element].inputProjectionVersion,
+    publicRepositoryAllowlist: input.deterministicSignals["publicRepositoryAllowlist"],
+    verifiedExternalReferences: input.deterministicSignals["verifiedExternalReferences"],
     selectedElements: Object.freeze(selectedElements),
     lockedElements: Object.freeze(lockedElements),
   });
@@ -180,7 +182,7 @@ function selfCommitmentExactInput(input: CodexAnalysisInput): object {
 export const GENERIC_AI_ELEMENT_DEFINITIONS = Object.freeze({
   status: Object.freeze({
     revision: 1,
-    inputProjectionVersion: 2,
+    inputProjectionVersion: 4,
     useSites: Object.freeze(["状態", "停滞"]),
     promptDescription: "現在のワークフローの状態",
     resultSchema: createAiAnalysisElementResultSchema("status"),
@@ -189,7 +191,7 @@ export const GENERIC_AI_ELEMENT_DEFINITIONS = Object.freeze({
   }),
   waitingOn: Object.freeze({
     revision: 3,
-    inputProjectionVersion: 2,
+    inputProjectionVersion: 4,
     useSites: Object.freeze(["待ち相手", "実質担当", "停滞"]),
     promptDescription: "次に行動することが期待される人または対象",
     resultSchema: createAiAnalysisElementResultSchema("waitingOn"),
@@ -198,7 +200,7 @@ export const GENERIC_AI_ELEMENT_DEFINITIONS = Object.freeze({
   }),
   nextAction: Object.freeze({
     revision: 1,
-    inputProjectionVersion: 2,
+    inputProjectionVersion: 4,
     useSites: Object.freeze(["次の行動"]),
     promptDescription: "次に行う具体的な行動",
     resultSchema: createAiAnalysisElementResultSchema("nextAction"),
@@ -208,7 +210,7 @@ export const GENERIC_AI_ELEMENT_DEFINITIONS = Object.freeze({
   }),
   relations: Object.freeze({
     revision: 3,
-    inputProjectionVersion: 3,
+    inputProjectionVersion: 4,
     useSites: Object.freeze(["関係採否", "graph"]),
     promptDescription: "入力された関係候補の意味",
     resultSchema: createAiAnalysisElementResultSchema("relations"),
@@ -217,7 +219,7 @@ export const GENERIC_AI_ELEMENT_DEFINITIONS = Object.freeze({
   }),
   progress: Object.freeze({
     revision: 2,
-    inputProjectionVersion: 3,
+    inputProjectionVersion: 4,
     useSites: Object.freeze(["進捗", "停滞起点"]),
     promptDescription: "最新の意味のある進捗イベント",
     resultSchema: createAiAnalysisElementResultSchema("progress"),
@@ -226,7 +228,7 @@ export const GENERIC_AI_ELEMENT_DEFINITIONS = Object.freeze({
   }),
   importance: Object.freeze({
     revision: 1,
-    inputProjectionVersion: 2,
+    inputProjectionVersion: 4,
     useSites: Object.freeze(["重要度", "要対応度"]),
     promptDescription: "対象項目の重要度",
     resultSchema: createAiAnalysisElementResultSchema("importance"),
@@ -236,7 +238,7 @@ export const GENERIC_AI_ELEMENT_DEFINITIONS = Object.freeze({
   }),
   deadline: Object.freeze({
     revision: 1,
-    inputProjectionVersion: 2,
+    inputProjectionVersion: 4,
     useSites: Object.freeze(["期限", "要対応度"]),
     promptDescription: "対象項目自体の期限日",
     resultSchema: createAiAnalysisElementResultSchema("deadline"),
@@ -246,7 +248,7 @@ export const GENERIC_AI_ELEMENT_DEFINITIONS = Object.freeze({
   }),
   notification: Object.freeze({
     revision: 1,
-    inputProjectionVersion: 2,
+    inputProjectionVersion: 4,
     useSites: Object.freeze(["通知推奨"]),
     promptDescription: "通知推奨の要否",
     resultSchema: createAiAnalysisElementResultSchema("notification"),
@@ -255,7 +257,7 @@ export const GENERIC_AI_ELEMENT_DEFINITIONS = Object.freeze({
   }),
   selfCommitment: Object.freeze({
     revision: 1,
-    inputProjectionVersion: 2,
+    inputProjectionVersion: 4,
     useSites: Object.freeze(["本人起因通知抑制"]),
     promptDescription: "本人が対象項目の次の対応を引き受けた根拠",
     resultSchema: createAiAnalysisElementResultSchema("selfCommitment"),

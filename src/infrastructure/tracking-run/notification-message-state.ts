@@ -29,7 +29,7 @@ import {
   serializeStateHistoryRecords,
 } from "../../persistence/history.js";
 import { assertStatePublicSafety } from "../../persistence/public-safety.js";
-import { parseStateSnapshot, type StateSnapshot } from "../../persistence/snapshot-v22.js";
+import { parseStateSnapshot, type StateSnapshot } from "../../persistence/snapshot-v23.js";
 import {
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
   createStateNotificationLedger,

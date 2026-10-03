@@ -1,4 +1,5 @@
 import { type Repository } from "../domain/index.js";
+import type { VerifiedExternalReference } from "../domain/verified-external-reference.js";
 import {
   containsPrivateRepositoryReference,
   containsUnallowlistedGitHubRepositoryUrl,
@@ -115,13 +116,14 @@ function scanValues(
   values: readonly unknown[],
   repositoryInventory: readonly Repository[],
   repositoryAllowlist: readonly PagesRepositoryAllowlistEntry[],
+  externalReferences: readonly VerifiedExternalReference[],
   knownSecrets: readonly string[],
 ): readonly string[] {
   const violationCodes = new Set<string>();
   if (containsPrivateRepositoryReference(values, repositoryInventory)) {
     violationCodes.add("private_repository_data");
   }
-  if (containsUnallowlistedGitHubRepositoryUrl(values, repositoryAllowlist)) {
+  if (containsUnallowlistedGitHubRepositoryUrl(values, repositoryAllowlist, externalReferences)) {
     violationCodes.add("repository_url_not_allowlisted");
   }
   const pending: unknown[] = [...values];
@@ -214,10 +216,28 @@ export function assertPagesPublicSafety(input: PagesPublicSafetyInput): void {
       [input.snapshot, ...input.historyRecords],
       input.repositoryInventory,
       input.repositoryAllowlist,
+      input.snapshot.verifiedExternalReferences,
       input.knownSecrets,
     ),
   );
 
+  if (violationCodes.length > 0) {
+    throw new PagesPublicSafetyError(violationCodes);
+  }
+}
+
+/** 生成済み公開DTOもsnapshotと同じURL許可集合で検査する。 */
+export function assertPagesOutputPublicSafety(
+  input: PagesPublicSafetyInput,
+  values: readonly unknown[],
+): void {
+  const violationCodes = scanValues(
+    values,
+    input.repositoryInventory,
+    input.repositoryAllowlist,
+    input.snapshot.verifiedExternalReferences,
+    input.knownSecrets,
+  );
   if (violationCodes.length > 0) {
     throw new PagesPublicSafetyError(violationCodes);
   }

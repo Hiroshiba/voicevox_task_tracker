@@ -86,7 +86,9 @@ export function naturalLanguageProgressAssessments(
   }
   return Object.freeze(
     analysis.item.events
-      .filter((event) => event.kind === "comment" && event.actor.type === "human")
+      .filter(
+        (event) => event.kind === "comment" && event.actor.type === "human" && !event.bodyEmpty,
+      )
       .map((event) =>
         Object.freeze({
           candidateSourceId: event.sourceId,

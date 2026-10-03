@@ -211,7 +211,7 @@ terminal項目も同じ扱いにし、次回runで必ずAI分析を再試行し�
 正常に完了した低信頼または棄権の評価も完了結果として保持します。失敗や延期から新しい完了proofは作らず、現在の条件で未完了の要素を再試行します。
 
 汎用AIの判定は状態、待ち相手、次の行動、関係、進捗、重要度、期限、通知推奨、selfCommitmentの9要素で選別します。
-入力schemaは5、出力schemaは7、snapshotは21とします。
+入力schemaは5、出力schemaは7、snapshotは23とします。
 旧snapshotは保存時のschemaと意味revisionで検証してから移行します。現行の入力投影versionで検証できない採用値は理由を付けて履歴に保持し、現在値へ採用しません。その値に基づくAI依存を未検証として再分類した後、最終graph投影を確定します。
 各要素のrevision、必要条件、入力投影、利用先、出力schemaは`src/codex/generic-ai-definition.ts`で対応付けます。`GenericAiPlannedRun`が選択要素と理由を項目ごとに固定し、`GenericAiAdoptedRun`が新規結果、cache、前回snapshotを同じ規則で採用します。表の意味入力は要素別fingerprintの対象であり、汎用AIへ渡す入力全体ではありません。
 
@@ -456,6 +456,8 @@ Web UIは停滞レベルを表示、絞り込み、並び替え、依存グラ�
 `config.yml`の`maintainers`に書いたGitHubユーザー名と、GitHubのreview requestや本文とコメントから得たteam識別子は公開情報としてguardを通過できます。
 GitHubのteam member一覧は収集しないため、snapshot、公開DTO、Discord通知の入力にも含まれません。
 
+Organization外のIssueとPull Requestは、詳細で公開・非アーカイブ・非disabledを確認した候補だけを検証済み外部参照としてsnapshotへ保存します。外部候補が最終graphに残らなくても証拠を保持し、Codexの自然言語、state、公開DTO、Discord送信前の検査では、その項目URLとrepository URLだけを許可します。旧snapshotからは検証済みの外部ghostだけを移し、未確認のURLを推測で追加しません。
+
 収集時の公開allowlist、公開inventory、digestはcheckpointへ保存します。後続jobはsnapshotからinventoryを作らず、checkpointに保存された値の形、digest、所属とsnapshotのrepository参照を照合します。既知の非公開repositoryへの参照は履歴も含めて検査します。
 
 guard違反は例外として日次トランザクションへ伝播します。
@@ -507,7 +509,7 @@ Codex subprocessは空の一時directoryから起動するため、CLIの場所�
 アプリケーション側のCodex認証providerは`auth.json`の存在だけを確認し、内容を読みません。
 GitHub App private key、installation token、Discord Webhook URL、`CODEX_AUTH_SYNC_TOKEN`は渡しません。
 Issue本文、コメント、ラベル、ユーザー名はID付きの信頼できない入力データとして渡し、命令として扱いません。
-`deterministicSignals`にはnative relation候補のIDを`nativeBlockedBy`、`nativeBlocking`、`nativeParent`、`nativeSubIssues`へ分けて渡します。
+`deterministicSignals`にはnative relation候補のIDを`nativeBlockedBy`、`nativeBlocking`、`nativeParent`、`nativeSubIssues`、`nativeImplements`へ分けて渡します。
 未アサインIssueの実質担当候補も、候補IDとsource IDを`deterministicSignals`へ渡します。Codexは入力された候補からIssue全体の担当可否だけを返し、候補を追加しません。
 
 Codexのtimeout、rate limit、不正JSON、一時的なprocess起動失敗、signal終了は`ai.execution.maxAttempts`まで再試行します。

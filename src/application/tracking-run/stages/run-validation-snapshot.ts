@@ -92,6 +92,13 @@ export function assertFinalSnapshotCandidateMatches(
     ["externalReferences"],
   );
   assertRunValuesMatch(
+    expected.verifiedExternalReferences,
+    candidate.verifiedExternalReferences,
+    (reference) => reference.url,
+    (reference) => reference.url,
+    ["verifiedExternalReferences"],
+  );
+  assertRunValuesMatch(
     expected.graphNodeStateObservations,
     candidate.graphNodeStateObservations,
     (observation) => observation.nodeId,

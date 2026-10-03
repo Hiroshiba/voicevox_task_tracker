@@ -1,4 +1,8 @@
 import type { Repository } from "../domain/index.js";
+import {
+  verifiedExternalUrls,
+  type VerifiedExternalReference,
+} from "../domain/verified-external-reference.js";
 
 type RepositoryReference = Pick<Repository, "id" | "owner" | "name" | "visibility">;
 
@@ -129,16 +133,30 @@ function githubRepositoryFromUrl(
   return Object.freeze({ owner: owner.toLowerCase(), name: name.toLowerCase() });
 }
 
+function isVerifiedExternalUrl(candidate: string, allowed: ReadonlySet<string>): boolean {
+  const url = new URL(absoluteUrl(candidate.replace(TRAILING_URL_PUNCTUATION, "")));
+  if (url.search !== "" || url.hash !== "") {
+    return false;
+  }
+  const normalized = url.toString().replace(/\/$/u, "").toLowerCase();
+  return allowed.has(normalized);
+}
+
 /** 公開値に含まれるGitHubリポジトリURLが公開集合に属するか判定する。 */
 export function containsUnallowlistedGitHubRepositoryUrl(
   values: readonly unknown[],
   allowlist: readonly Pick<RepositoryReference, "owner" | "name">[],
+  externalReferences: readonly VerifiedExternalReference[],
 ): boolean {
   const allowed = new Set(
     allowlist.map(
       (repository) => `${repository.owner.toLowerCase()}/${repository.name.toLowerCase()}`,
     ),
   );
+  const externalUrls = verifiedExternalUrls(externalReferences);
+  if (externalUrls == null) {
+    return true;
+  }
   const pending: unknown[] = [...values];
   const visited = new WeakSet<object>();
   const visitedStrings = new Set<string>();
@@ -153,7 +171,9 @@ export function containsUnallowlistedGitHubRepositoryUrl(
         const repository = githubRepositoryFromUrl(candidate);
         if (
           repository === "invalid" ||
-          (repository != null && !allowed.has(`${repository.owner}/${repository.name}`))
+          (repository != null &&
+            !allowed.has(`${repository.owner}/${repository.name}`) &&
+            !isVerifiedExternalUrl(candidate, externalUrls))
         ) {
           return true;
         }

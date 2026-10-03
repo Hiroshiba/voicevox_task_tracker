@@ -7,6 +7,7 @@ import type {
   UtcIsoDateTime,
 } from "../../../domain/index.js";
 import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
+import type { VerifiedExternalReference } from "../../../domain/verified-external-reference.js";
 import type { FinalGraphProjection } from "../../../graph/final-graph-projection.js";
 import type { AnalysisPreviousState, PreviousCollectionRepository } from "./previous-state.js";
 import type { GraphFinalItem } from "../stages/graph-reconciliation-contracts.js";
@@ -18,6 +19,7 @@ export type FinalSnapshotPlanProjection = Readonly<{
   trackingStartAt: TrackingStartAtState;
   previousHistory: AnalysisPreviousState["history"];
   previousNotificationLedger: AnalysisPreviousState["notificationLedger"];
+  verifiedExternalReferences: readonly VerifiedExternalReference[];
   aiEnabled: boolean;
   plannedNodeIds: readonly GitHubNodeId[];
   analysisPlanFingerprints: readonly (readonly [GitHubNodeId, Sha256Hash])[];
@@ -39,6 +41,7 @@ export type FinalSnapshotProjection = Readonly<{
   trackingStartAt: TrackingStartAtState;
   previousHistory: AnalysisPreviousState["history"];
   previousNotificationLedger: AnalysisPreviousState["notificationLedger"];
+  verifiedExternalReferences: readonly VerifiedExternalReference[];
   repositories: readonly FinalSnapshotRepository[];
   collectionRepositories: readonly PreviousCollectionRepository[];
   ai: FinalSnapshotAiState;
@@ -46,9 +49,9 @@ export type FinalSnapshotProjection = Readonly<{
   unavailablePersonalReminderConsumer: boolean;
 }>;
 
-/** schema version 22のcodecへ渡す唯一のsnapshot候補。 */
+/** schema version 23のcodecへ渡す唯一のsnapshot候補。 */
 export type FinalSnapshotCandidate = Readonly<{
-  schemaVersion: "22";
+  schemaVersion: "23";
   generatedAt: UtcIsoDateTime;
   trackingStartAt: TrackingStartAtState;
   ai: FinalSnapshotAiState;
@@ -57,6 +60,7 @@ export type FinalSnapshotCandidate = Readonly<{
   items: readonly Omit<GraphFinalItem, "deadlineLevel">[];
   graphNodeStateObservations: GraphReconciliationResult["graphNodeStateObservations"];
   externalReferences: readonly ExternalGhostNode[];
+  verifiedExternalReferences: readonly VerifiedExternalReference[];
   relations: readonly Relation[];
   finalGraphProjection: FinalGraphProjection;
   finalGraphProjectionDigest: Sha256Hash;

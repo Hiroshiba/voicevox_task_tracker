@@ -12,6 +12,7 @@ import {
 } from "../../codex/index.js";
 import { type Config } from "../../config/index.js";
 import type { AiAnalysisElement } from "../../domain/ai-analysis-elements.js";
+import type { VerifiedExternalReference } from "../../domain/verified-external-reference.js";
 import {
   parseSourceId,
   resolvePullRequestCommitOccurredAt,
@@ -584,6 +585,7 @@ export function createCodexInput(
   previousObservedAt: UtcIsoDateTime | undefined,
   relationSourceOccurredAt: RelationSourceOccurredAt,
   observedItems: readonly FreshObservedGitHubItem[],
+  verifiedExternalReferences: readonly VerifiedExternalReference[],
 ): CodexAnalysisInput {
   const relationCandidates = deduplicateByStableId(
     selectRelationAssessmentCandidates(analysis.item.nodeId, analysis.relationCandidates),
@@ -852,12 +854,15 @@ export function createCodexInput(
         owner: repository.owner,
         name: repository.name,
       })),
+      verifiedExternalReferences,
       status: analysis.decision.status,
       waitingOn: analysis.decision.waitingOn,
       relationCandidateIds: relationCandidates.map((candidate) => candidate.id),
       ...nativeRelationSignals,
       humanProgressSourceIds: analysis.item.events
-        .filter((event) => event.kind === "comment" && event.actor.type === "human")
+        .filter(
+          (event) => event.kind === "comment" && event.actor.type === "human" && !event.bodyEmpty,
+        )
         .map((event) => event.sourceId),
       mentionedWaitingOnCandidates: mentionedCandidates,
       requiredCheckFailure:

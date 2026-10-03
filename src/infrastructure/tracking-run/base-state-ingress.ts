@@ -19,7 +19,7 @@ import type {
 } from "../../persistence/branch-adapter.js";
 import { StateBranchConflictError, StateFormatError } from "../../persistence/errors.js";
 import type { StateHistoryRecord } from "../../persistence/history-contracts.js";
-import { snapshotEffectiveGraphStateByNodeId } from "../../persistence/snapshot-v22.js";
+import { snapshotEffectiveGraphStateByNodeId } from "../../persistence/snapshot-v23.js";
 import type { StateNotificationLedger } from "../../persistence/state-documents.js";
 import type { StateSnapshotReadResult } from "../../persistence/state-persistence-session.js";
 import { StatePersistenceSession } from "../../persistence/state-persistence-session.js";
@@ -47,6 +47,7 @@ function projectPreviousSnapshot(snapshot: StateSnapshotReadResult): PreviousSna
     trackedItems: Object.freeze([...value.items]),
     collectionRepositories: Object.freeze([...value.collection.repositories]),
     externalReferences: Object.freeze([...value.externalReferences]),
+    verifiedExternalReferences: Object.freeze([...value.verifiedExternalReferences]),
     relations: Object.freeze([...value.relations]),
     graphNodeStateObservations: Object.freeze([...value.graphNodeStateObservations]),
     effectiveGraphStates: Object.freeze(

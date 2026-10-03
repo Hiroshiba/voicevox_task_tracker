@@ -1,5 +1,6 @@
 import type { DeterministicItemAnalysis } from "../../../../application/tracking-run/stages/deterministic-item.js";
 import type { DeterministicallyAnalyzedRun } from "../../../../application/tracking-run/stages/deterministic.js";
+import { collectVerifiedExternalReferences } from "../../../../application/tracking-run/verified-external-references.js";
 import type {
   GenericAiPlanningItemSource,
   GenericAiPlanningPort,
@@ -23,6 +24,7 @@ import { listNativeRelationConstraints } from "../../../../codex/semantic-valida
 import { serializeCodexTransportAnalysisInput } from "../../../../codex/transport-alias.js";
 import { reusableAiAdoptedElements } from "../../../../domain/ai-analysis-current.js";
 import { AI_ANALYSIS_ELEMENTS } from "../../../../domain/ai-analysis-elements.js";
+import type { VerifiedExternalReference } from "../../../../domain/verified-external-reference.js";
 import type { GraphNodeId, Relation } from "../../../../domain/index.js";
 import type { AnalyzeGraphResult } from "../../../../graph/index.js";
 import { relationNodes } from "../../../../graph/relation-candidate-endpoints.js";
@@ -110,6 +112,23 @@ export function createGenericAiPlanningPort(
       ? previousGraph.downstreamImpactByNodeId
       : new Map<GraphNodeId, AnalyzeGraphResult["downstreamImpacts"][number]>();
   const previousRelations = previousSnapshot(state)?.relations ?? [];
+  const verifiedExternalReferencesByRun = new WeakMap<
+    DeterministicallyAnalyzedRun,
+    readonly VerifiedExternalReference[]
+  >();
+  const verifiedExternalReferencesForRun = (
+    run: DeterministicallyAnalyzedRun,
+  ): readonly VerifiedExternalReference[] => {
+    const cached = verifiedExternalReferencesByRun.get(run);
+    if (cached != null) return cached;
+    const previous = run.core.previousState.snapshot;
+    const references = collectVerifiedExternalReferences(
+      previous.status === "available" ? previous.verifiedExternalReferences : [],
+      run.data.facts.relations.map((relation) => relation.candidate),
+    );
+    verifiedExternalReferencesByRun.set(run, references);
+    return references;
+  };
   const preflightCost =
     configuration.config.ai.enabled &&
     configuration.credentials.codex.enabled &&
@@ -154,6 +173,7 @@ export function createGenericAiPlanningPort(
         previousObservedAt,
         createEarliestRelationSourceOccurredAtById,
         run.data.collection.observedItems,
+        verifiedExternalReferencesForRun(run),
       );
       return Object.freeze({
         baseInput,
@@ -190,6 +210,7 @@ export function createGenericAiPlanningPort(
         previousTrackedItem(state, analysis.item.nodeId)?.observedAt,
         createEarliestRelationSourceOccurredAtById,
         run.data.collection.observedItems,
+        verifiedExternalReferencesForRun(run),
       );
     },
     resolvePrevious: (
@@ -233,6 +254,7 @@ export function createGenericAiPlanningPort(
         previousTrackedItem(state, analysis.item.nodeId)?.observedAt,
         createEarliestRelationSourceOccurredAtById,
         run.data.collection.observedItems,
+        verifiedExternalReferencesForRun(run),
       ),
     serializeTransportInput: serializeCodexTransportAnalysisInput,
     recordInputValidationFailure: async (candidateId: string, error: unknown): Promise<void> => {

@@ -8,6 +8,7 @@ import type {
 } from "../contracts/final-snapshot.js";
 import type { PreviousCollectionRepository } from "../contracts/previous-state.js";
 import type { ContentDigestPort } from "../ports.js";
+import { collectVerifiedExternalReferences } from "../verified-external-references.js";
 import {
   analysisPlanFingerprintForItem,
   createAiAnalysisRunIdentity,
@@ -53,6 +54,10 @@ export function projectFinalSnapshotPlan(
     ),
     previousHistory: analyzed.core.previousState.history,
     previousNotificationLedger: analyzed.core.previousState.notificationLedger,
+    verifiedExternalReferences: collectVerifiedExternalReferences(
+      previousSnapshot.status === "available" ? previousSnapshot.verifiedExternalReferences : [],
+      analyzed.data.facts.relations.map((relation) => relation.candidate),
+    ),
     aiEnabled: plan.aiEnabled,
     plannedNodeIds: Object.freeze(plan.items.map((item) => item.nodeId).sort()),
     analysisPlanFingerprints: Object.freeze(
@@ -203,6 +208,7 @@ export function projectFinalSnapshotGraph(
     trackingStartAt: plan.trackingStartAt,
     previousHistory: plan.previousHistory,
     previousNotificationLedger: plan.previousNotificationLedger,
+    verifiedExternalReferences: plan.verifiedExternalReferences,
     repositories: snapshotRepositories(collection),
     collectionRepositories: collectionRepositories(adopted, collection, finalItems),
     ai: snapshotAiState(adopted),

@@ -30,7 +30,11 @@ import type {
 } from "./public-dto-contracts.js";
 import { PUBLIC_DTO_SCHEMA_VERSION } from "./public-dto-primitives.js";
 import { createPublicDetailsDto, createPublicSummaryDto } from "./public-dto.js";
-import { assertPagesPublicSafety, type PagesPublicSafetyInput } from "./public-safety.js";
+import {
+  assertPagesOutputPublicSafety,
+  assertPagesPublicSafety,
+  type PagesPublicSafetyInput,
+} from "./public-safety.js";
 import { assertPublicSummarySize, type PublicSummarySizeMeasurement } from "./summary-size.js";
 
 /** 初期表示へ含めるgraph node数の既定値。 */
@@ -210,6 +214,7 @@ export function generatePublicData(input: GeneratePublicDataInput): GeneratedPub
     },
   });
   assertPublicSummaryDetailsCurrentResponses(summary, details);
+  assertPagesOutputPublicSafety(input, [summary, details, notificationHistory]);
   const summarySize = assertPublicSummarySize(summary, input.options.maxSummaryGzipBytes);
 
   return Object.freeze({

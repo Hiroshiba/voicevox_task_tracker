@@ -45,7 +45,7 @@ function canonicalEvidence(values: readonly Evidence[]): readonly Evidence[] {
   );
 }
 
-/** 閉包済み最終値と確定projectionからv22 snapshot候補を一度だけ生成する。 */
+/** 閉包済み最終値と確定projectionからv23 snapshot候補を一度だけ生成する。 */
 export function buildFinalSnapshot(
   run: PersonalReminderFinalizedRun,
   closure: EvidenceClosureResult,
@@ -73,7 +73,7 @@ export function buildFinalSnapshot(
   );
   const finalGraphProjection = run.data.finalGraphProjection;
   return Object.freeze({
-    schemaVersion: "22",
+    schemaVersion: "23",
     generatedAt: run.data.sourceRecords.evaluatedAt,
     trackingStartAt: projection.trackingStartAt,
     ai: projection.ai,
@@ -82,6 +82,7 @@ export function buildFinalSnapshot(
     items,
     graphNodeStateObservations: run.data.graph.graphNodeStateObservations,
     externalReferences: run.data.graph.externalReferences,
+    verifiedExternalReferences: projection.verifiedExternalReferences,
     relations,
     finalGraphProjection,
     finalGraphProjectionDigest: digest.sha256Utf8(serializeCanonicalJson(finalGraphProjection)),

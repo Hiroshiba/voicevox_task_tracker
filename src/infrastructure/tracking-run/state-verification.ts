@@ -18,7 +18,7 @@ import { verifyRunTransactionFiles } from "../../persistence/state-transaction-f
 import { serializeCanonicalJsonLine } from "../../canonical-json/index.js";
 import { createAiCacheEntry, type AiCacheKey } from "../../codex/cache.js";
 import { assertPersonalReminderEvidenceClosure as assertLegacyPersonalReminderEvidenceClosure } from "../../persistence/snapshot-evidence-closure.js";
-import { version19SnapshotFields, type StateSnapshot } from "../../persistence/snapshot-v22.js";
+import { version19SnapshotFields, type StateSnapshot } from "../../persistence/snapshot-v23.js";
 import {
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
   StateFormatError,

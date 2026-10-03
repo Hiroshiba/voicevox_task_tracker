@@ -13,7 +13,7 @@ import {
 import { assertConfirmedPersonalReminderTimeBasis } from "../../domain/personal-reminder-causes.js";
 import { resolveStateHistoryNotificationItemDisplayReference } from "../../persistence/history-contracts.js";
 import type { StateHistoryNotificationEvent, StateSnapshot } from "../../persistence/index.js";
-import { version19SnapshotFields } from "../../persistence/snapshot-v22.js";
+import { version19SnapshotFields } from "../../persistence/snapshot-v23.js";
 import { UnreachableError, assertNonNullable } from "../../util/index.js";
 
 function createNotificationWaitingOn(

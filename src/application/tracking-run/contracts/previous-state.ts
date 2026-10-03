@@ -31,6 +31,7 @@ import type {
   UtcIsoDateTime,
 } from "../../../domain/types.js";
 import type { PublicRepositoryId } from "../../../github/public-repository-allowlist.js";
+import type { VerifiedExternalReference } from "../../../domain/verified-external-reference.js";
 
 /** 前回の追跡と保持判定に使う項目。 */
 export type PreviousTrackedItem = TrackedItem &
@@ -74,6 +75,7 @@ export type PreviousSnapshotProjection =
       trackedItems: readonly PreviousTrackedItem[];
       collectionRepositories: readonly PreviousCollectionRepository[];
       externalReferences: readonly ExternalGhostNode[];
+      verifiedExternalReferences: readonly VerifiedExternalReference[];
       relations: readonly Relation[];
       graphNodeStateObservations: readonly Readonly<{
         nodeId: GitHubNodeId;

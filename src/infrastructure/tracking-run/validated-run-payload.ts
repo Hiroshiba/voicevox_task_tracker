@@ -579,7 +579,7 @@ export function parseValidatedRunPayload(
       cause: result.error,
     });
   }
-  z.object({ schemaVersion: z.literal("22") }).parse(result.data.snapshot);
+  z.object({ schemaVersion: z.literal("23") }).parse(result.data.snapshot);
   z.object({ schemaVersion: z.literal("10") }).parse(result.data.notificationLedger);
   const snapshot = createStateSnapshot(result.data.snapshot);
   assertPersonalReminderEvidenceClosure(snapshot);
