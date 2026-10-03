@@ -273,6 +273,7 @@ export type PersonalReminderRuntimeActiveRelation = ReconciledGraphEdge &
   Readonly<{ active: true }>;
 
 export type PersonalReminderRuntimePlanningIndexes = Readonly<{
+  candidateRelationById: ReadonlyMap<RelationCandidateId, PersonalReminderRuntimeCandidateRelation>;
   activeRelationsByNodeId: ReadonlyMap<
     GraphNodeId,
     readonly PersonalReminderRuntimeActiveRelation[]

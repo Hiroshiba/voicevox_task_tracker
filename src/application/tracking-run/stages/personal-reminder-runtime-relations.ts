@@ -119,6 +119,15 @@ export function createPersonalReminderPlanningIndexes(
   context: PersonalReminderRuntimeContext,
   currentSeeds: readonly PersonalReminderRuntimeCurrentSeed[],
 ): PersonalReminderRuntimePlanningIndexes {
+  const candidateRelationById = new Map<
+    PersonalReminderRuntimeCandidateRelation["candidateId"],
+    PersonalReminderRuntimeCandidateRelation
+  >();
+  for (const candidate of context.graph.candidateRelations) {
+    if (!candidateRelationById.has(candidate.candidateId)) {
+      candidateRelationById.set(candidate.candidateId, candidate);
+    }
+  }
   const activeRelationsByNodeId = new Map<GraphNodeId, PersonalReminderRuntimeActiveRelation[]>();
   for (const relation of context.graph.activeRelations) {
     const fromRelations = activeRelationsByNodeId.get(relation.fromNodeId);
@@ -172,6 +181,7 @@ export function createPersonalReminderPlanningIndexes(
   }
 
   return Object.freeze({
+    candidateRelationById,
     activeRelationsByNodeId: new Map(
       [...activeRelationsByNodeId].map(([nodeId, relations]) => [nodeId, Object.freeze(relations)]),
     ),

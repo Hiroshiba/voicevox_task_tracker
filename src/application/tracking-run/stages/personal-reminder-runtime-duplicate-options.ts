@@ -186,9 +186,7 @@ export function pendingResponseMembershipDependencyInputs(
     if (resolution.status !== "pending") {
       continue;
     }
-    const candidate = context.graph.candidateRelations.find(
-      (value) => value.candidateId === resolution.candidateId,
-    );
+    const candidate = indexes.candidateRelationById.get(resolution.candidateId);
     assertNonNullable(
       candidate,
       `pending relation candidateがありません。対象: ${resolution.candidateId}`,
