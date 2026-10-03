@@ -55,11 +55,11 @@ ajv.addSchema(snapshotVersion19Schema);
 const validateVersion19 = ajv.getSchema<LegacySnapshot>(snapshotVersion19Schema.$id);
 const validateVersion20 = ajv.compile<LegacySnapshot>(snapshotVersion20Schema);
 
-/** 旧版の採用証明を当時の版で検証し、既存semantic validatorへ渡す。 */
-export function normalizeLegacyProofForValidation(
+/** 旧版の採用証明を当時の版で検証し、移行が必要な要素を集める。 */
+export function collectLegacyProofsForMigration(
   value: unknown,
   version: "19" | "20",
-): Readonly<{ source: string; keys: LegacyProofKeys }> {
+): LegacyProofKeys {
   const validate = version === "19" ? validateVersion19 : validateVersion20;
   if (validate == null) {
     throw new StateSnapshotSchemaError(1);
@@ -69,8 +69,7 @@ export function normalizeLegacyProofForValidation(
   }
   const tracked = new Set<string>();
   const collection = new Set<string>();
-  function normalizeItem(item: LegacyItem, keys: Set<string>): unknown {
-    const adoptedElements: Record<string, unknown> = { ...item.aiAnalysis.adoptedElements };
+  function collectItem(item: LegacyItem, keys: Set<string>): void {
     for (const element of AI_ANALYSIS_ELEMENTS) {
       const application = item.aiAnalysis.applications[element];
       if (application == null) {
@@ -85,33 +84,26 @@ export function normalizeLegacyProofForValidation(
           `旧snapshotの${element}に検証済み採用結果がありません`,
         );
       }
-      if (adopted.reuseProof.revision !== AI_ANALYSIS_ELEMENT_REVISIONS[element]) {
-        throw new StateSnapshotSemanticError(`旧snapshotの${element}の意味revisionが不正です`);
-      }
-      const currentVersion = AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS[element];
-      if (adopted.reuseProof.inputProjectionVersion === currentVersion) {
+      if (
+        adopted.reuseProof.revision === AI_ANALYSIS_ELEMENT_REVISIONS[element] &&
+        adopted.reuseProof.inputProjectionVersion ===
+          AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS[element]
+      ) {
         continue;
       }
       if (adopted.reuseProof.inputProjectionVersion !== 1) {
         throw new StateSnapshotSemanticError(`旧snapshotの${element}の入力投影versionが不正です`);
       }
       keys.add(JSON.stringify([item.nodeId, element]));
-      adoptedElements[element] = {
-        ...adopted,
-        reuseProof: { ...adopted.reuseProof, inputProjectionVersion: currentVersion },
-      };
     }
-    return { ...item, aiAnalysis: { ...item.aiAnalysis, adoptedElements } };
   }
-  const normalized = {
-    ...value,
-    items: value.items.map((item) => normalizeItem(item, tracked)),
-    collection: {
-      repositories: value.collection.repositories.map((repository) => ({
-        ...repository,
-        items: repository.items.map((item) => normalizeItem(item, collection)),
-      })),
-    },
-  };
-  return { source: JSON.stringify(normalized), keys: { tracked, collection } };
+  for (const item of value.items) {
+    collectItem(item, tracked);
+  }
+  for (const repository of value.collection.repositories) {
+    for (const item of repository.items) {
+      collectItem(item, collection);
+    }
+  }
+  return { tracked, collection };
 }

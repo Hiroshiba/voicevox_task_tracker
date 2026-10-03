@@ -11,13 +11,13 @@ import {
   aiAnalysisElementApplicationsSchema,
 } from "../domain/ai-analysis-elements.js";
 import type { LegacyAiCacheEntry } from "./ai-cache-migration.js";
-import { StateFormatError, StateSnapshotSemanticError } from "./errors.js";
+import { StateFormatError } from "./errors.js";
 import { migrateVersion19FinalGraphProjection } from "./snapshot-final-graph-migration.js";
 import { migrateStateSnapshot as migrateVersion20Snapshot } from "./snapshot-v20-migration.js";
 import type { StateSnapshot as StateSnapshotVersion20 } from "./snapshot-v20-contracts.js";
 import { version19SnapshotFields } from "./snapshot-v20.js";
 import {
-  normalizeLegacyProofForValidation,
+  collectLegacyProofsForMigration,
   type LegacyProofKeys,
 } from "./snapshot-v21-legacy-proof.js";
 import { migratePersonalReminderSubjectChanges } from "./snapshot-v21-personal-reminder-migration.js";
@@ -192,50 +192,7 @@ function retainedLegacyCurrentAi(
       ]),
     ),
   );
-  if (analysis.origin === "migration") {
-    let adoptedElements = analysis.adoptedElements;
-    for (const element of AI_ANALYSIS_ELEMENTS) {
-      if (!keys.has(JSON.stringify([nodeId, element]))) {
-        continue;
-      }
-      const adopted = adoptedElements[element];
-      if (adopted?.origin !== "current" || adopted.reuseProof.status !== "verified") {
-        throw new StateSnapshotSemanticError(
-          `旧snapshotの${element}に検証済み採用結果がありません`,
-        );
-      }
-      adoptedElements = {
-        ...adoptedElements,
-        [element]: {
-          ...adopted,
-          reuseProof: { ...adopted.reuseProof, inputProjectionVersion: 1 },
-        },
-      };
-    }
-    return { ...analysis, adoptedElements, applications };
-  }
-  let adoptedElements = analysis.adoptedElements;
-  for (const element of AI_ANALYSIS_ELEMENTS) {
-    if (!keys.has(JSON.stringify([nodeId, element]))) {
-      continue;
-    }
-    const adopted = adoptedElements[element];
-    if (adopted?.origin !== "current" || adopted.reuseProof.status !== "verified") {
-      throw new StateSnapshotSemanticError(`旧snapshotの${element}に検証済み採用結果がありません`);
-    }
-    adoptedElements = {
-      ...adoptedElements,
-      [element]: {
-        ...adopted,
-        reuseProof: { ...adopted.reuseProof, inputProjectionVersion: 1 },
-      },
-    };
-  }
-  return {
-    ...analysis,
-    adoptedElements,
-    applications,
-  };
+  return { ...analysis, applications };
 }
 
 function currentAiAnalysis(
@@ -283,14 +240,10 @@ export function migrateStateSnapshot(
   }
   const legacy =
     version.data.schemaVersion === "19" || version.data.schemaVersion === "20"
-      ? normalizeLegacyProofForValidation(value, version.data.schemaVersion)
+      ? collectLegacyProofsForMigration(value, version.data.schemaVersion)
       : null;
-  const previous = migrateVersion20Snapshot(
-    legacy?.source ?? source,
-    legacyEntriesByCacheKey,
-    timezone,
-  );
-  const migrated = legacy == null ? previous : migrateLegacyCurrentAi(previous, legacy.keys);
+  const previous = migrateVersion20Snapshot(source, legacyEntriesByCacheKey, timezone);
+  const migrated = legacy == null ? previous : migrateLegacyCurrentAi(previous, legacy);
   const current =
     migrated === previous
       ? previous

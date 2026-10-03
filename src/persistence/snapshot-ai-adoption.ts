@@ -39,6 +39,18 @@ import {
 } from "./snapshot-schema.js";
 import { assertUtcDateTime } from "./snapshot-values.js";
 
+const LEGACY_AI_ANALYSIS_ELEMENT_REVISIONS = Object.freeze({
+  status: 1,
+  waitingOn: 3,
+  nextAction: 1,
+  relations: 2,
+  progress: 1,
+  importance: 1,
+  deadline: 1,
+  notification: 1,
+  selfCommitment: 1,
+} satisfies Readonly<Record<(typeof AI_ANALYSIS_ELEMENTS)[number], number>>);
+
 function assertGenerationBackedReuseProofSemantics(
   proof: z.output<typeof aiAnalysisElementReuseProofSchema>,
   generation: Readonly<{
@@ -349,11 +361,16 @@ export function assertAiAnalysisApplicationsMatchStoredElements(
             `current_aiの${element}に検証済みの再利用証明がありません`,
           );
         }
-        if (
-          adopted.reuseProof.revision !== AI_ANALYSIS_ELEMENT_REVISIONS[element] ||
-          adopted.reuseProof.inputProjectionVersion !==
-            AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS[element]
-        ) {
+        const currentRevision = AI_ANALYSIS_ELEMENT_REVISIONS[element];
+        const currentProof =
+          adopted.reuseProof.revision === currentRevision &&
+          adopted.reuseProof.inputProjectionVersion ===
+            AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS[element];
+        const legacyProof =
+          adopted.reuseProof.inputProjectionVersion === 1 &&
+          (adopted.reuseProof.revision === currentRevision ||
+            adopted.reuseProof.revision === LEGACY_AI_ANALYSIS_ELEMENT_REVISIONS[element]);
+        if (!currentProof && !legacyProof) {
           throw new StateSnapshotSemanticError(
             `current_aiの${element}の再利用証明が現在の要素規則と一致しません`,
           );
