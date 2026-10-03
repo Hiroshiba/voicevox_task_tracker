@@ -19,6 +19,7 @@ import {
   MAX_INTERVENING_COMMITS,
   authorizeAdvanceAfterOrthogonalCommits,
 } from "../../persistence/state-orthogonal-advance.js";
+import { isOrthogonalStateCommitScope } from "../../persistence/state-commit-metadata.js";
 import type { DurablePublicationRecord } from "../../publication/durable-record-schema.js";
 import { advanceMessageMarker } from "../../persistence/state-notification-transition.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
@@ -48,7 +49,7 @@ async function previousTrackingRevision(
   let revision = parentRevision;
   for (let count = 0; count < MAX_INTERVENING_COMMITS; count += 1) {
     const commit = await adapter.readCommit(revision);
-    if (commit.metadata.commitScope !== "operations_alert") {
+    if (!isOrthogonalStateCommitScope(commit.metadata.commitScope)) {
       return revision;
     }
     if (commit.parent.status !== "present") {

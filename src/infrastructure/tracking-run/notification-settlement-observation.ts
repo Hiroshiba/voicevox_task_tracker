@@ -9,6 +9,7 @@ import type {
   Receipt,
 } from "../../application/tracking-run/receipt-schema.js";
 import type { PreparedDiscordDigestMessage } from "../../discord/payload-contracts.js";
+import { isOrthogonalStateCommitScope } from "../../persistence/state-commit-metadata.js";
 import {
   MAX_INTERVENING_COMMITS,
   authorizeAdvanceAfterOrthogonalCommits,
@@ -62,7 +63,7 @@ export async function settledRevision(
   let passedFinalization = false;
   for (let count = 0; count < MAX_INTERVENING_COMMITS; count += 1) {
     const commit = await port.adapter.readCommit(revision);
-    if (commit.metadata.commitScope === "operations_alert") {
+    if (isOrthogonalStateCommitScope(commit.metadata.commitScope)) {
       if (commit.parent.status !== "present") {
         throw new TypeError("通知settlementの運用通知commitに親がありません");
       }

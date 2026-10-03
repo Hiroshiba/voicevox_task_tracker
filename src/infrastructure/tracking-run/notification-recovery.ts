@@ -19,7 +19,10 @@ import {
   StateFormatError,
   StateHistoryError,
 } from "../../persistence/errors.js";
-import { createStateCommitOperationId } from "../../persistence/state-commit-metadata.js";
+import {
+  createStateCommitOperationId,
+  isOrthogonalStateCommitScope,
+} from "../../persistence/state-commit-metadata.js";
 import {
   MAX_INTERVENING_COMMITS,
   authorizeAdvanceAfterOrthogonalCommits,
@@ -110,7 +113,7 @@ async function sameRunAncestors(
     if (commit.parent.status !== "present") {
       return false;
     }
-    if (commit.metadata.commitScope === "operations_alert") {
+    if (isOrthogonalStateCommitScope(commit.metadata.commitScope)) {
       if (!(await onlyOrthogonalAfter(adapter, configuration, commit.parent.revision, revision))) {
         return false;
       }

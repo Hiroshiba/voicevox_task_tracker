@@ -12,7 +12,11 @@ import { StateBranchConflictError } from "./errors.js";
 import { verifyStateCasCandidate } from "./state-cas-candidate.js";
 import { assertStateCommitChain } from "./state-commit-chain-verification.js";
 import type { StateCommitIdentity } from "./state-commit-metadata.js";
-import { createStateChangedPathManifest, digestStateManifest } from "./state-commit-metadata.js";
+import {
+  createStateChangedPathManifest,
+  digestStateManifest,
+  isOrthogonalStateCommitScope,
+} from "./state-commit-metadata.js";
 import {
   authorizeAdvanceAfterOrthogonalCommits,
   findInitialStateRevision,
@@ -95,7 +99,7 @@ async function authorizeObservedSuccessors(
     if (successor.parent.status !== "present" || successor.parent.revision !== previousRevision) {
       throw new StateBranchConflictError();
     }
-    if (successor.metadata.commitScope === "operations_alert") {
+    if (isOrthogonalStateCommitScope(successor.metadata.commitScope)) {
       await authorizeAdvanceAfterOrthogonalCommits(
         adapter,
         configuration,
@@ -224,7 +228,7 @@ export async function observeCommittedStateWrite(
       }
       try {
         const candidateFiles = await verifyStateCasCandidate(adapter, inspected, request);
-        if (inspected.metadata.commitScope !== "operations_alert") {
+        if (!isOrthogonalStateCommitScope(inspected.metadata.commitScope)) {
           verifyCurrentRunTransactionFiles(candidateFiles, configuration);
         }
         if ("build" in requestInput) {

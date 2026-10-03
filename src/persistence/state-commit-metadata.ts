@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 import { serializeCanonicalJson } from "../canonical-json/value.js";
+import { SANDBOX_ENVIRONMENT_MANIFEST_PATH } from "./sandbox-environment-manifest.js";
 import {
   assertValidStatePath,
   type StateBranchHead,
@@ -41,7 +42,12 @@ const manifestSchema = z.strictObject({
 });
 const metadataSchema = z.strictObject({
   schemaVersion: z.literal(1),
-  commitScope: z.enum(["tracking_run", "operations_alert", "manual_resolution"]),
+  commitScope: z.enum([
+    "tracking_run",
+    "operations_alert",
+    "manual_resolution",
+    "sandbox_manifest",
+  ]),
   operationId: operationIdSchema,
   runId: runIdSchema.optional(),
   changedPathManifestVersion: z.literal(1),
@@ -66,6 +72,11 @@ export type StateChangedPathManifest = z.output<typeof manifestSchema>;
 export type StateCommitMetadataV1 = z.output<typeof metadataSchema>;
 /** state commitの効果範囲。 */
 export type StateCommitScope = StateCommitMetadataV1["commitScope"];
+
+/** 追跡stateを変更しないcommit scopeか判定する。 */
+export function isOrthogonalStateCommitScope(scope: StateCommitScope): boolean {
+  return scope === "operations_alert" || scope === "sandbox_manifest";
+}
 /** commitのscopeと公開識別子。 */
 export type StateCommitIdentity = Readonly<{
   commitScope: StateCommitScope;
@@ -163,6 +174,15 @@ export function createStateCommitMetadata(
     if (manifest.entries.some((entry) => entry.path !== "state/operations-alert-ledger-v1.json")) {
       throw new TypeError("運用障害通知commitに直交しないpathがあります");
     }
+  }
+  if (
+    metadata.commitScope === "sandbox_manifest" &&
+    (metadata.runId != null ||
+      manifest.entries.length !== 1 ||
+      manifest.entries[0]?.path !== SANDBOX_ENVIRONMENT_MANIFEST_PATH ||
+      manifest.entries[0].kind !== "modified")
+  ) {
+    throw new TypeError("sandbox manifest commitの変更範囲が不正です");
   }
   return metadata;
 }

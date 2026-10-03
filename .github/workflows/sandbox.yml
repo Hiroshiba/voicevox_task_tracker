@@ -1,4 +1,5 @@
 name: sandbox task tracking
+run-name: sandbox-${{ inputs.operation }}-${{ inputs.operation == 'create' && format('env-{0}-{1}', github.run_id, github.run_attempt) || inputs.operation == 'recover-reset' && inputs.recovery_environment_id || inputs.environment_id }}
 
 on:
   workflow_dispatch:
@@ -13,12 +14,14 @@ on:
           - continue
           - reset
           - dispose
+          - recover-reset
+          - resume-preparing
       source_ref:
         description: 推論対象にするHiroshiba forkの作業branch
         required: false
         type: string
       environment_id:
-        description: continue、reset、disposeの対象environment ID
+        description: continue、reset、dispose、recover-resetの対象environment ID
         required: false
         type: string
       reset_source:
@@ -29,6 +32,18 @@ on:
         options:
           - seed
           - latest
+      recovery_environment_id:
+        description: recover-resetでreadyへ復旧する新environment ID
+        required: false
+        type: string
+      recovery_run_id:
+        description: recover-resetで確定結果を持つActions run ID
+        required: false
+        type: string
+      recovery_run_attempt:
+        description: recover-resetで確定結果を持つActions run attempt
+        required: false
+        type: string
       analysis_mode:
         description: AI分析モード
         required: true
@@ -68,7 +83,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: sandbox-${{ github.repository }}
+  group: sandbox-${{ github.repository }}-${{ inputs.operation == 'create' && format('env-{0}-{1}', github.run_id, github.run_attempt) || inputs.operation == 'recover-reset' && inputs.recovery_environment_id || inputs.environment_id }}
   cancel-in-progress: false
 
 jobs:
@@ -108,8 +123,102 @@ jobs:
             exit 1
           fi
 
+  recover-reset:
+    needs: guard
+    if: inputs.operation == 'recover-reset'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: forkのコードを取得
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Node.jsと依存関係を準備
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .node-version
+      - name: state検証commandを準備
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+          pnpm build
+      - name: 復旧対象の所有者と旧環境headを照合
+        id: owner
+        env:
+          SANDBOX_OPERATION: recover-reset
+          SANDBOX_SOURCE_REF: ${{ inputs.source_ref }}
+          SANDBOX_ENVIRONMENT_ID: ${{ inputs.environment_id }}
+          SANDBOX_RECOVERY_ENVIRONMENT_ID: ${{ inputs.recovery_environment_id }}
+          SANDBOX_RECOVERY_COMPLETION_RUN_ID: ${{ inputs.recovery_run_id }}
+          SANDBOX_RECOVERY_COMPLETION_RUN_ATTEMPT: ${{ inputs.recovery_run_attempt }}
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/sandbox-lifecycle.sh recover-info
+      - name: 元Actions runと確定artifactを取得
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SANDBOX_OWNER_RUN_ID: ${{ steps.owner.outputs.completion_run_id }}
+          SANDBOX_OWNER_RUN_ATTEMPT: ${{ steps.owner.outputs.completion_run_attempt }}
+          SANDBOX_RECOVERY_ENVIRONMENT_ID: ${{ steps.owner.outputs.environment_id }}
+          SANDBOX_RECOVERY_SOURCE_ENVIRONMENT_ID: ${{ inputs.environment_id }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SANDBOX_OWNER_RUN_ID" \
+            | jq -e --arg sha "$GITHUB_SHA" --arg branch "$GITHUB_REF_NAME" --argjson attempt "$SANDBOX_OWNER_RUN_ATTEMPT" --arg old "$SANDBOX_RECOVERY_SOURCE_ENVIRONMENT_ID" --arg next "$SANDBOX_RECOVERY_ENVIRONMENT_ID" \
+              '.status == "completed" and .head_sha == $sha and .head_branch == $branch and .run_attempt == $attempt and .event == "workflow_dispatch" and (.display_title == ("sandbox-reset-" + $old) or .display_title == ("sandbox-resume-preparing-" + $next))' >/dev/null
+          gh run download "$SANDBOX_OWNER_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "sandbox-result-$SANDBOX_RECOVERY_ENVIRONMENT_ID-$SANDBOX_OWNER_RUN_ID-$SANDBOX_OWNER_RUN_ATTEMPT" \
+            --dir "$RUNNER_TEMP/recovery"
+          gh run download "$SANDBOX_OWNER_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name tracking-stage-complete --dir "$RUNNER_TEMP/complete"
+          if [[ "$(jq -r '.schemaVersion' "$RUNNER_TEMP/recovery/sandbox-result.json")" == 2 ]]; then
+            gh run download "$SANDBOX_OWNER_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+              --name "sandbox-coverage-$SANDBOX_RECOVERY_ENVIRONMENT_ID-$SANDBOX_OWNER_RUN_ID-$SANDBOX_OWNER_RUN_ATTEMPT" \
+              --dir "$RUNNER_TEMP/recovery-coverage"
+          fi
+      - name: remote stateとreceiptを再検証
+        env:
+          SANDBOX_RECOVERY_ENVIRONMENT_ID: ${{ steps.owner.outputs.environment_id }}
+          TRACKING_EFFECT_TARGET: sandbox
+          TRACKING_STATE_REF: sandbox-state/${{ steps.owner.outputs.environment_id }}
+        run: |
+          final_revision="$(jq -er '.finalStateRevision' "$RUNNER_TEMP/recovery/sandbox-result.json")"
+          tracking_run_id="$(jq -er '.trackingRunId' "$RUNNER_TEMP/recovery/sandbox-result.json")"
+          git clone --quiet --no-checkout --no-hardlinks . "$RUNNER_TEMP/sandbox-state"
+          git -C "$RUNNER_TEMP/sandbox-state" fetch --quiet origin "refs/heads/sandbox-state/$SANDBOX_RECOVERY_ENVIRONMENT_ID"
+          git -C "$RUNNER_TEMP/sandbox-state" checkout --quiet --detach "$final_revision"
+          node dist/cli/tracker-run.js verify-state --state-directory "$RUNNER_TEMP/sandbox-state/state" \
+            --state-revision "$final_revision" > "$RUNNER_TEMP/state-verification.txt"
+          run_suffix="${tracking_run_id#tracker-run:}"
+          node dist/cli/tracker-run.js verify-receipt-chain \
+            --input "$RUNNER_TEMP/complete/$run_suffix/receipt-chain.json" \
+            > "$RUNNER_TEMP/receipt-verification.json"
+      - name: 確定receiptから新環境をreadyへ復旧
+        env:
+          SANDBOX_ENVIRONMENT_ID: ${{ steps.owner.outputs.environment_id }}
+          SANDBOX_PROMOTION_OWNER_RUN_ID: ${{ steps.owner.outputs.completion_run_id }}
+          SANDBOX_PROMOTION_OWNER_RUN_ATTEMPT: ${{ steps.owner.outputs.completion_run_attempt }}
+          SANDBOX_RECOVERY_COMPLETION_RUN_ID: ${{ inputs.recovery_run_id }}
+          SANDBOX_RESULT_PATH: ${{ runner.temp }}/recovery/sandbox-result.json
+          SANDBOX_STATE_VERIFICATION_PATH: ${{ runner.temp }}/state-verification.txt
+          SANDBOX_RECEIPT_VERIFICATION_PATH: ${{ runner.temp }}/receipt-verification.json
+        run: |
+          SANDBOX_EXPECTED_REVISION="$(jq -er '.finalStateRevision' "$SANDBOX_RESULT_PATH")"
+          SANDBOX_TRACKING_RUN_ID="$(jq -er '.trackingRunId' "$SANDBOX_RESULT_PATH")"
+          export SANDBOX_EXPECTED_REVISION SANDBOX_TRACKING_RUN_ID
+          run_suffix="${SANDBOX_TRACKING_RUN_ID#tracker-run:}"
+          export SANDBOX_RECEIPT_CHAIN_PATH="$RUNNER_TEMP/complete/$run_suffix/receipt-chain.json"
+          if [[ "$(jq -r '.schemaVersion' "$SANDBOX_RESULT_PATH")" == 2 ]]; then
+            export SANDBOX_COVERAGE_PATH="$RUNNER_TEMP/recovery-coverage/sandbox-coverage.json"
+          fi
+          .github/scripts/sandbox-lifecycle.sh promote
+
   prepare:
     needs: guard
+    if: inputs.operation != 'recover-reset'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -217,6 +326,7 @@ jobs:
           SANDBOX_FORCED_ELEMENTS: ${{ inputs.forced_elements }}
           SANDBOX_CONTEXT_PATH: ${{ runner.temp }}/sandbox-context.json
           SANDBOX_EXPECTED_BASE_REVISION: ${{ steps.recording_control.outputs.first_final_state_revision || steps.recording_control.outputs.notification_first_pending_revision }}
+          GH_TOKEN: ${{ github.token }}
         run: .github/scripts/sandbox-lifecycle.sh prepare
       - name: sandbox制御入力を保存
         if: inputs.operation != 'dispose'
@@ -452,7 +562,7 @@ jobs:
             --argjson prior "$SANDBOX_NOTIFICATION_PRIOR_JSON" \
             '{outcome: "recorded_success", messageIndex: 0, notification: {phase: "resolution", prior: $prior, firstRunId: $firstRunId, firstRunAttempt: $firstRunAttempt, firstTrackingRunId: $firstTrackingRunId, firstPendingRevision: $firstPendingRevision, firstDeliveryOperationId: $firstDeliveryOperationId, decision: $decision}}')"
           gh workflow run sandbox.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
-            -f operation=continue \
+            -f operation=resume-preparing \
             -f source_ref="$SANDBOX_SOURCE_REF" \
             -f environment_id="$SANDBOX_ENVIRONMENT_ID" \
             -f analysis_mode=normal \
@@ -465,7 +575,7 @@ jobs:
     if: inputs.operation != 'dispose' && needs.tracking.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      contents: write
       actions: write
     steps:
       - name: forkのコードを取得
@@ -499,7 +609,6 @@ jobs:
           run-id: ${{ needs.prepare.outputs.notification_source_run_id }}
           github-token: ${{ github.token }}
       - name: continuityの完了receiptを取得
-        if: needs.prepare.outputs.continuity_phase != 'none' || needs.prepare.outputs.notification_phase != 'none'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: tracking-stage-complete
@@ -527,10 +636,11 @@ jobs:
           run-id: ${{ needs.prepare.outputs.first_run_id }}
           github-token: ${{ github.token }}
       - name: continuityの永続stateとreceiptを検証
-        if: needs.prepare.outputs.continuity_phase != 'none' || needs.prepare.outputs.notification_phase != 'none'
         env:
           SANDBOX_FINAL_REVISION: ${{ steps.final_state.outputs.state_revision }}
           SANDBOX_TRACKING_RUN_ID: ${{ needs.tracking.outputs.tracking_run_id }}
+          TRACKING_EFFECT_TARGET: sandbox
+          TRACKING_STATE_REF: ${{ needs.prepare.outputs.state_branch }}
         run: |
           corepack enable
           pnpm install --frozen-lockfile
@@ -664,6 +774,21 @@ jobs:
           path: ${{ runner.temp }}/sandbox-result.json
           if-no-files-found: error
           retention-days: 30
+      - name: 新環境のmanifestをreadyへ昇格
+        if: inputs.operation == 'create' || inputs.operation == 'reset' || inputs.operation == 'continue' || inputs.operation == 'resume-preparing'
+        env:
+          SANDBOX_OPERATION: ${{ inputs.operation }}
+          SANDBOX_ENVIRONMENT_ID: ${{ needs.prepare.outputs.environment_id }}
+          SANDBOX_EXPECTED_REVISION: ${{ steps.final_state.outputs.state_revision }}
+          SANDBOX_TRACKING_RUN_ID: ${{ needs.tracking.outputs.tracking_run_id }}
+          SANDBOX_RESULT_PATH: ${{ runner.temp }}/sandbox-result.json
+          SANDBOX_STATE_VERIFICATION_PATH: ${{ runner.temp }}/state-verification.txt
+          SANDBOX_RECEIPT_VERIFICATION_PATH: ${{ runner.temp }}/receipt-verification.json
+          SANDBOX_COVERAGE_PATH: ${{ (needs.prepare.outputs.continuity_phase != 'none' || needs.prepare.outputs.notification_phase != 'none') && format('{0}/sandbox-coverage.json', runner.temp) || '' }}
+        run: |
+          run_suffix="${SANDBOX_TRACKING_RUN_ID#tracker-run:}"
+          export SANDBOX_RECEIPT_CHAIN_PATH="$RUNNER_TEMP/complete/$run_suffix/receipt-chain.json"
+          .github/scripts/sandbox-lifecycle.sh promote
       - name: 次の通知scenarioをseed resetから起動
         if: needs.prepare.outputs.continuity_phase == 'second' || needs.prepare.outputs.notification_phase != 'none'
         env:

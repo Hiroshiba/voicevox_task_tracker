@@ -10,6 +10,8 @@ import {
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
 import { StateBranchConflictError } from "./errors.js";
+import { assertSandboxManifestCommit } from "./sandbox-environment-manifest.js";
+import { isOrthogonalStateCommitScope } from "./state-commit-metadata.js";
 import {
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
   isCanonicalStateOperationsAlertLedgerSource,
@@ -60,25 +62,34 @@ export async function authorizeAdvanceAfterOrthogonalCommits(
         throw new TypeError("介在state commitが上限を超えています");
       }
       const commit = await adapter.readCommit(revision);
-      if (
-        commit.metadata.commitScope !== "operations_alert" ||
-        commit.changedPathManifest.entries.length !== 1 ||
-        commit.changedPathManifest.entries[0]?.path !== OPERATIONS_ALERT_LEDGER_STATE_PATH_V1
-      ) {
+      if (!isOrthogonalStateCommitScope(commit.metadata.commitScope)) {
         throw new TypeError("介在commitが独立した運用通知更新ではありません");
       }
-      const operationsFile = await adapter.readFile(
-        revision,
-        OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
-      );
-      if (operationsFile.status !== "present") {
-        throw new TypeError("介在commitに運用通知ledgerがありません");
+      if (commit.metadata.commitScope === "sandbox_manifest") {
+        if (!configuration.branch.startsWith("sandbox-state/")) {
+          throw new TypeError("本番stateにsandbox manifest commitがあります");
+        }
+        await assertSandboxManifestCommit(adapter, commit);
+      } else {
+        if (
+          commit.changedPathManifest.entries.length !== 1 ||
+          commit.changedPathManifest.entries[0]?.path !== OPERATIONS_ALERT_LEDGER_STATE_PATH_V1
+        ) {
+          throw new TypeError("運用通知commitの変更範囲が不正です");
+        }
+        const operationsFile = await adapter.readFile(
+          revision,
+          OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
+        );
+        if (operationsFile.status !== "present") {
+          throw new TypeError("介在commitに運用通知ledgerがありません");
+        }
+        const source = new TextDecoder("utf-8", { fatal: true }).decode(operationsFile.bytes);
+        if (!isCanonicalStateOperationsAlertLedgerSource(source)) {
+          throw new TypeError("介在commitの運用通知ledgerが現行形式ではありません");
+        }
+        intervening.push(revision);
       }
-      const source = new TextDecoder("utf-8", { fatal: true }).decode(operationsFile.bytes);
-      if (!isCanonicalStateOperationsAlertLedgerSource(source)) {
-        throw new TypeError("介在commitの運用通知ledgerが現行形式ではありません");
-      }
-      intervening.push(revision);
       if (commit.parent.status === "missing") {
         if (expectedTrackingRevision !== "unborn") {
           throw new TypeError("期待revisionが観測headの祖先ではありません");
@@ -133,7 +144,7 @@ export async function findInitialStateRevision(
   let revision = observedRevision;
   for (let count = 0; count < MAX_INTERVENING_COMMITS; count += 1) {
     const commit = await adapter.readCommit(revision);
-    if (commit.metadata.commitScope !== "operations_alert") {
+    if (!isOrthogonalStateCommitScope(commit.metadata.commitScope)) {
       if (
         commit.metadata.runId !== runId ||
         !commit.changedPathManifest.entries.some(

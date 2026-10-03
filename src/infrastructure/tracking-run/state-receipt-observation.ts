@@ -22,6 +22,7 @@ import {
   MAX_INTERVENING_COMMITS,
 } from "../../persistence/state-orthogonal-advance.js";
 import { assertStateCommitChain } from "../../persistence/state-commit-chain-verification.js";
+import { isOrthogonalStateCommitScope } from "../../persistence/state-commit-metadata.js";
 import {
   finalizedHistoryDigest,
   finalizedRunReportDigest,
@@ -66,7 +67,7 @@ async function previousTrackingRevision(
   let revision = parentRevision;
   for (let count = 0; count < MAX_INTERVENING_COMMITS; count += 1) {
     const commit = await adapter.readCommit(revision);
-    if (commit.metadata.commitScope !== "operations_alert") {
+    if (!isOrthogonalStateCommitScope(commit.metadata.commitScope)) {
       return revision;
     }
     if (commit.parent.status !== "present") {

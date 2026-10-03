@@ -845,6 +845,15 @@ export class GitStateBranchAdapter implements StateBranchAdapter {
       ) {
         throw new TypeError("運用障害通知commitが追跡対象pathを変更しています");
       }
+      if (
+        metadata.commitScope === "sandbox_manifest" &&
+        (metadata.runId != null ||
+          changedPathManifest.entries.length !== 1 ||
+          changedPathManifest.entries[0]?.path !== "state/sandbox-environment.json" ||
+          changedPathManifest.entries[0].kind !== "modified")
+      ) {
+        throw new TypeError("sandbox manifest commitが追跡対象pathを変更しています");
+      }
       return Object.freeze({ revision, parent, metadata, changedPathManifest });
     } catch (error: unknown) {
       throw new StateBranchReadError({ cause: error });

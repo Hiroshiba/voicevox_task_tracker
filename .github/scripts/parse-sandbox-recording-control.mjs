@@ -116,13 +116,16 @@ if (scenario != null && control.notification != null) {
     }
   } else if (
     scenario.decision == null ||
-    operation !== "continue" ||
+    (operation !== "continue" && operation !== "resume-preparing") ||
     notification.decision !== scenario.decision ||
     control.outcome !== "recorded_success" ||
     environmentId !== `env-${notification.firstRunId}-${notification.firstRunAttempt}`
   ) {
     throw new TypeError("notification scenarioの手動解決入力が一致しません");
   }
+}
+if (operation === "resume-preparing" && control.notification?.phase !== "resolution") {
+  throw new TypeError("準備中環境の再開には通知の手動解決入力が必要です");
 }
 if (control.continuity != null) {
   if (

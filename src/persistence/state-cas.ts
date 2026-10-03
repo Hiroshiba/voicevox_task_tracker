@@ -16,7 +16,7 @@ import {
   type StateCasCommitRequestInput,
   type StateCasWriteResult,
 } from "./state-cas-observation.js";
-import { digestStateManifest } from "./state-commit-metadata.js";
+import { digestStateManifest, isOrthogonalStateCommitScope } from "./state-commit-metadata.js";
 import {
   authorizeAdvanceAfterOrthogonalCommits,
   findInitialStateRevision,
@@ -183,16 +183,15 @@ export async function writeStateCas(
   if ("build" in requestInput) {
     await requestInput.verifyCandidate?.(candidateFiles, commit.revision, request);
   }
-  const verifiedCandidate =
-    commit.metadata.commitScope === "operations_alert"
-      ? verifyRunTransactionFiles(candidateFiles, configuration)
-      : verifyCurrentRunTransactionFiles(candidateFiles, configuration);
+  const verifiedCandidate = isOrthogonalStateCommitScope(commit.metadata.commitScope)
+    ? verifyRunTransactionFiles(candidateFiles, configuration)
+    : verifyCurrentRunTransactionFiles(candidateFiles, configuration);
   if (previousVerified != null && verifiedCandidate == null) {
     throw new TypeError("既存run transactionをcommit候補から削除できません");
   }
   if (verifiedCandidate != null) {
     const previousMarker = previousVerified?.marker;
-    if (commit.metadata.commitScope !== "operations_alert") {
+    if (!isOrthogonalStateCommitScope(commit.metadata.commitScope)) {
       assertRunTransactionMarkerTransition(
         previousMarker,
         verifiedCandidate.marker,
@@ -216,7 +215,7 @@ export async function writeStateCas(
     } else if (previousMarker == null) {
       throw new TypeError("運用通知commitがmarkerを新設しています");
     }
-    if (commit.metadata.commitScope !== "operations_alert") {
+    if (!isOrthogonalStateCommitScope(commit.metadata.commitScope)) {
       await assertStateCommitChain(
         adapter,
         configuration,

@@ -14,7 +14,10 @@ import type {
   StateBranchAdapter,
   StatePersistenceConfiguration,
 } from "../../persistence/branch-adapter.js";
-import { createStateCommitOperationId } from "../../persistence/state-commit-metadata.js";
+import {
+  createStateCommitOperationId,
+  isOrthogonalStateCommitScope,
+} from "../../persistence/state-commit-metadata.js";
 import {
   MAX_INTERVENING_COMMITS,
   authorizeAdvanceAfterOrthogonalCommits,
@@ -166,7 +169,7 @@ export async function observeNotificationMessageDelivery(
     if (commit.parent.status !== "present") {
       throw new TypeError("通知message再観測で期待revisionへ到達できません");
     }
-    if (commit.metadata.commitScope === "operations_alert") {
+    if (isOrthogonalStateCommitScope(commit.metadata.commitScope)) {
       await authorizeAdvanceAfterOrthogonalCommits(
         adapter,
         configuration,

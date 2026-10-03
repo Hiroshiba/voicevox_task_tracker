@@ -23,6 +23,7 @@ import {
   MAX_INTERVENING_COMMITS,
   authorizeAdvanceAfterOrthogonalCommits,
 } from "../../persistence/state-orthogonal-advance.js";
+import { isOrthogonalStateCommitScope } from "../../persistence/state-commit-metadata.js";
 import {
   createStateRunReport,
   serializeStateRunReport,
@@ -161,7 +162,7 @@ async function finalizationRevision(
   let revision = headRevision;
   for (let count = 0; count < MAX_INTERVENING_COMMITS; count += 1) {
     const commit = await port.adapter.readCommit(revision);
-    if (commit.metadata.commitScope === "operations_alert") {
+    if (isOrthogonalStateCommitScope(commit.metadata.commitScope)) {
       if (commit.parent.status !== "present") {
         throw new TypeError("run finalization後の運用通知commitに親がありません");
       }

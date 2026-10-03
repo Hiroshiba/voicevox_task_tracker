@@ -15,7 +15,10 @@ import {
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
 import { assertInitialStateWriteManifest } from "./initial-state-write-manifest.js";
-import { createStateChangedPathManifest } from "./state-commit-metadata.js";
+import {
+  createStateChangedPathManifest,
+  isOrthogonalStateCommitScope,
+} from "./state-commit-metadata.js";
 import { OPERATIONS_ALERT_LEDGER_STATE_PATH_V1 } from "./state-documents.js";
 import { parseRunTransactionNotificationLedger } from "./state-documents.js";
 import { initialNotificationLedger } from "./state-initial-notification-transition.js";
@@ -138,7 +141,7 @@ async function previousTrackingRevision(
   let revision = headRevision;
   for (let count = 0; count < MAX_INTERVENING_COMMITS; count += 1) {
     const commit = await adapter.readCommit(revision);
-    if (commit.metadata.commitScope !== "operations_alert") {
+    if (!isOrthogonalStateCommitScope(commit.metadata.commitScope)) {
       return revision;
     }
     if (commit.parent.status !== "present") {
