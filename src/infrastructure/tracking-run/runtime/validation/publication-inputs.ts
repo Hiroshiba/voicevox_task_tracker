@@ -22,6 +22,7 @@ export function projectPublicationInputs(
       runReportsDirectory: config.state.runReportsDirectory,
       oldCacheDeletionPaths: base.oldCacheDeletionPaths,
       historyBase: base.historyBase,
+      initialStateWriteManifest: base.initialStateWriteManifest,
       previousInitialPagesEvidence: base.previousInitialPagesEvidence,
     },
     ...projectPublicationSettings(config),

@@ -57,9 +57,17 @@ export async function validateRunCompleteness(
   );
   const closure = closeFinalizedRunEvidence(finalized, initialAdditions);
   const candidate = buildFinalSnapshot(finalized, closure, nodeContentDigestPort);
+  const completeSnapshot = createStateSnapshot({
+    ...candidate,
+    run: Object.freeze({ ...candidate.run, complete: true }),
+  });
   const publicationInputs = projectPublicationInputs(
     configuration,
-    await state.session.initialPublicationBaseState(candidate.generatedAt.slice(0, 10)),
+    await state.session.initialPublicationBaseState(
+      completeSnapshot,
+      graphReconciled.data.approvedRepositories,
+      historyInputEvents,
+    ),
   );
   const notificationLedger = mergeSelectedNotificationLedger(state, notification);
   const aiCacheAdditions = state.session.pendingAiCacheEntries();
@@ -107,11 +115,7 @@ export async function validateRunCompleteness(
     metrics,
     diagnostics,
     digest: nodeContentDigestPort,
-    createCompleteSnapshot: (value) =>
-      createStateSnapshot({
-        ...value,
-        run: Object.freeze({ ...value.run, complete: true }),
-      }),
+    createCompleteSnapshot: () => completeSnapshot,
     assertPublicSafety: (snapshot, values) => {
       assertStatePublicSafety({
         snapshot,

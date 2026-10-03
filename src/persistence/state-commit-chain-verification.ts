@@ -96,6 +96,7 @@ async function assertInitialWriteSet(
     before,
     after,
     changed,
+    record.initialStateContentDigests,
   );
 }
 

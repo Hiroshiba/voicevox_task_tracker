@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1 } from "../application/tracking-run/contracts/recovery-paths.js";
+import type { Repository } from "../domain/index.js";
 import {
   createAiCacheEntry,
   type AiCacheEntry,
@@ -17,7 +17,6 @@ import {
 } from "../codex/personal-reminder-cache.js";
 import type { AiCacheMigrationPlan } from "./ai-cache-migration.js";
 import {
-  joinStatePath,
   validateStatePersistenceConfiguration,
   type StateBranchAdapter,
   type StateBranchCommitResult,
@@ -26,10 +25,14 @@ import {
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
 import { StateBranchConflictError, StateFormatError, StateHistoryError } from "./errors.js";
-import type { StateHistoryDiff, StateHistoryRecord } from "./history-contracts.js";
+import type {
+  StateHistoryDiff,
+  StateHistoryRecord,
+  StateHistoryInputEvent,
+} from "./history-contracts.js";
 import { diffStateHistory, parseStateHistoryRecords } from "./history.js";
 import {
-  createInitialPublicationBaseState,
+  readInitialPublicationBaseState,
   type InitialPublicationBaseState,
 } from "./initial-publication-base-state.js";
 import { OPERATIONS_ALERT_LEDGER_STATE_PATH_V1 } from "./operations-alert-ledger.js";
@@ -388,17 +391,23 @@ export class StatePersistenceSession {
     return this.#loadAllHistoryRecords();
   }
 
-  /** 固定revisionの履歴fileと移行で削除する旧cache pathを読む。 */
-  public async initialPublicationBaseState(runDate: string): Promise<InitialPublicationBaseState> {
-    const historyPath = joinStatePath(this.#configuration.historyDirectory, `${runDate}.jsonl`);
-    const [historyFile, previousInitialPagesEvidenceFile] = await Promise.all([
-      this.#readFile(historyPath),
-      this.#readFile(INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1),
-    ]);
-    return createInitialPublicationBaseState(
-      historyPath,
-      historyFile,
-      previousInitialPagesEvidenceFile,
+  /** 固定revisionと確定snapshotから初回公開の保存前提を作る。 */
+  public async initialPublicationBaseState(
+    snapshot: StateSnapshot,
+    inventory: readonly Repository[],
+    historyInputEvents: readonly StateHistoryInputEvent[],
+  ): Promise<InitialPublicationBaseState> {
+    const previous = await this.loadSnapshot();
+    return readInitialPublicationBaseState(
+      this.#adapter,
+      this.#configuration,
+      this.#head,
+      previous.status === "available" ? previous.snapshot : undefined,
+      snapshot,
+      inventory,
+      historyInputEvents,
+      this.pendingAiCacheEntries(),
+      this.pendingPersonalReminderAiCacheEntries(),
       this.#pendingAiCacheDeletionPaths,
     );
   }

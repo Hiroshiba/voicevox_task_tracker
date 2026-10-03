@@ -17,6 +17,7 @@ const sha256Schema = z.string().transform(parseSha256Hash);
 const initialStateValueDigestsSchema = z.strictObject({
   snapshot: sha256Schema,
   historyInputEvents: sha256Schema,
+  initialStateWriteManifest: sha256Schema,
   aiCacheAdditions: sha256Schema,
   personalReminderAiCacheAdditions: sha256Schema,
   notificationLedger: sha256Schema,

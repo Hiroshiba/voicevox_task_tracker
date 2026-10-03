@@ -1,10 +1,10 @@
+import type { InitialStateWriteManifest } from "../../application/tracking-run/contracts/initial-state-write-manifest.js";
 import type { ContentDigestPort } from "../../application/tracking-run/contracts/content-digest-port.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import {
   durablePublicationRecordTemplateSchema,
   parseDurablePublicationRecord,
   type DurablePublicationRecord,
-  type InitialStateWriteManifest,
 } from "../../publication/durable-record-schema.js";
 import { createAnalysisStageRecord } from "../../publication/analysis-stage-record.js";
 import { assertNonNullable } from "../../util/assert-non-nullable.js";
@@ -32,6 +32,8 @@ export function materializeDurablePublicationRecord(
     serializeCanonicalJson(template.baseStateRevision) !==
       serializeCanonicalJson(bound.checkpoint.baseStateRevision) ||
     template.configDigest !== bound.checkpoint.configDigest ||
+    digest.sha256Utf8(serializeCanonicalJson(initialStateWriteManifest)) !==
+      template.initialStateValueDigests.initialStateWriteManifest ||
     bound.bindingProof.checkpointDigest !== bound.checkpointDigest ||
     bound.bindingProof.checkpointFileDigest !== bound.binding.checkpointFileDigest ||
     bound.bindingProof.runtimeIdentityDigest !==

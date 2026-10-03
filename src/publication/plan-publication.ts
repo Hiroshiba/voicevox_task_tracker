@@ -67,6 +67,9 @@ export function planPublication(
     }),
     deletions,
     valueDigests: Object.freeze({
+      initialStateWriteManifest: digest.sha256Utf8(
+        serializeCanonicalJson(state.initialStateWriteManifest),
+      ),
       snapshot: digest.sha256Utf8Chunks(canonicalJsonPieces(validated.snapshot)),
       historyInputEvents: digest.sha256Utf8(
         serializeCanonicalJson(

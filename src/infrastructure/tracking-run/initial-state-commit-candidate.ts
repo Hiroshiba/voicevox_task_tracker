@@ -4,6 +4,7 @@ import type {
   StateFileUpdate,
   StatePersistenceConfiguration,
 } from "../../persistence/branch-adapter.js";
+import { assertInitialStateBusinessContent } from "../../persistence/initial-state-write-manifest.js";
 import { assertStatePublicSafety } from "../../persistence/public-safety.js";
 import { parseStateSnapshot } from "../../persistence/snapshot-v23.js";
 import { verifyRunTransactionFiles } from "../../persistence/state-transaction-files.js";
@@ -47,6 +48,12 @@ export function verifyInitialStateCandidate(
     throw new TypeError("初回commit候補にwrite manifestがありません");
   }
   const record = materializeDurablePublicationRecord(bound, digest, manifest);
+  assertInitialStateBusinessContent(
+    manifest,
+    record.initialStateContentDigests,
+    configuration,
+    files,
+  );
   if (
     verified.marker.phase !== "initial_state_committed" ||
     verified.initialPagesEvidence != null ||

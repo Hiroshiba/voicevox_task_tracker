@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { initialStateWriteManifestSchema } from "./initial-state-write-manifest.js";
 
 import { parseSha256Hash } from "../../../canonical-json/sha256.js";
 import { createUtcIsoDateTime } from "../../../domain/index.js";
@@ -76,6 +77,7 @@ export const publicationInputsSchema = z.strictObject({
     runReportsDirectory: statePathSchema,
     oldCacheDeletionPaths: z.array(statePathSchema),
     historyBase: publicationFileStateSchema,
+    initialStateWriteManifest: initialStateWriteManifestSchema,
     previousInitialPagesEvidence: publicationFileStateSchema,
   }),
   pages: z.strictObject({

@@ -28,10 +28,7 @@ import {
   createStateHistoryRecord,
   parseStateHistoryRecords,
 } from "../../persistence/history.js";
-import {
-  createInitialPublicationBaseState,
-  type InitialPublicationFileState,
-} from "../../persistence/initial-publication-base-state.js";
+import type { InitialPublicationFileState } from "../../persistence/initial-publication-base-state.js";
 import { assertStatePublicSafety } from "../../persistence/public-safety.js";
 import {
   assertPersonalReminderEvidenceClosure,
@@ -79,6 +76,9 @@ function assertFileState(file: StateFileReadResult, expected: InitialPublication
 function assertValueDigests(bound: BoundPublicationCheckpoint): void {
   const writeSet = bound.publicationPlan.initialStateWriteSet;
   const actual = {
+    initialStateWriteManifest: digest.sha256Utf8(
+      serializeCanonicalJson(writeSet.paths.initialStateWriteManifest),
+    ),
     snapshot: digest.sha256Utf8Chunks(canonicalJsonPieces(writeSet.snapshot)),
     historyInputEvents: digest.sha256Utf8(serializeCanonicalJson(writeSet.historyInputEvents)),
     aiCacheAdditions: digest.sha256Utf8(serializeCanonicalJson(writeSet.aiCacheAdditions)),
@@ -177,19 +177,13 @@ export async function prepareInitialStateFiles(
   };
   assertFileState(historyFile, writeSet.paths.historyBase);
   assertFileState(evidenceFile, writeSet.previousInitialPagesEvidence.expectedBase);
-  const base = createInitialPublicationBaseState(
-    writeSet.paths.historyPath,
-    historyFile,
-    evidenceFile,
-    migration.legacyCachePaths,
-  );
   if (
-    serializeCanonicalJson(base.oldCacheDeletionPaths) !==
+    serializeCanonicalJson(migration.legacyCachePaths) !==
       serializeCanonicalJson(writeSet.paths.oldCacheDeletionPaths) ||
     serializeCanonicalJson(writeSet.deletions) !==
       serializeCanonicalJson(
         [
-          ...base.oldCacheDeletionPaths,
+          ...migration.legacyCachePaths,
           ...(evidenceFile.status === "present"
             ? [INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1]
             : []),

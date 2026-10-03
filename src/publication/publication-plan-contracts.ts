@@ -42,6 +42,7 @@ export type InitialStateWriteSet = Readonly<{
   valueDigests: Readonly<{
     snapshot: Sha256Hash;
     historyInputEvents: Sha256Hash;
+    initialStateWriteManifest: Sha256Hash;
     aiCacheAdditions: Sha256Hash;
     personalReminderAiCacheAdditions: Sha256Hash;
     notificationLedger: Sha256Hash;

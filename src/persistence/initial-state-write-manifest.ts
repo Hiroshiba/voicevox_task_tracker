@@ -1,15 +1,19 @@
-import { serializeCanonicalJson } from "../canonical-json/value.js";
+import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../canonical-json/value.js";
 import { nodeContentDigestPort as digest } from "../infrastructure/tracking-run/content-digest.js";
 import {
   initialStateWriteManifestSchema,
   type InitialStateWriteManifest,
-} from "../publication/durable-record-schema.js";
+} from "../application/tracking-run/contracts/initial-state-write-manifest.js";
+import { createAiCacheEntry } from "../codex/cache.js";
+import { createPersonalReminderAiCacheEntry } from "../codex/personal-reminder-cache.js";
+import { cachePath, personalReminderAiCachePath } from "./state-cache-paths.js";
 import type { StateChangedPathManifest } from "./state-commit-metadata.js";
 import type {
   StateFileReadResult,
   StateFileUpdate,
   StatePersistenceConfiguration,
 } from "./branch-adapter.js";
+import { assertNonNullable } from "../util/assert-non-nullable.js";
 import { parseStateHistoryRecords } from "./history.js";
 import type { StateHistoryRecord } from "./history-contracts.js";
 
@@ -78,6 +82,73 @@ export function createInitialStateWriteManifest(
   return initialStateWriteManifestSchema.parse(value);
 }
 
+/** 初回manifestの実byteと業務値集合をcheckpointで固定したdigestへ照合する。 */
+export function assertInitialStateBusinessContent(
+  manifest: InitialStateWriteManifest,
+  expectedDigests: Readonly<{
+    initialStateWriteManifest: string;
+    aiCacheAdditions: string;
+    personalReminderAiCacheAdditions: string;
+  }>,
+  configuration: StatePersistenceConfiguration,
+  after: ReadonlyMap<string, StateFileReadResult>,
+): void {
+  if (
+    digest.sha256Utf8(serializeCanonicalJson(manifest)) !==
+    expectedDigests.initialStateWriteManifest
+  ) {
+    throw new TypeError("初回write manifestがcheckpointの業務digestと一致しません");
+  }
+  function readWrittenFile(file: WrittenFile): string {
+    const actual = fileAt(after, file.path);
+    if (actual.status !== "present" || digest.sha256Bytes(actual.bytes) !== file.afterDigest) {
+      throw new TypeError("初回write manifestの完成byteがcheckpointと一致しません");
+    }
+    return new TextDecoder("utf-8", { fatal: true }).decode(actual.bytes);
+  }
+  const history = parseStateHistoryRecords(readWrittenFile(manifest.history.file));
+  const historyRecord = history.at(-1);
+  assertNonNullable(historyRecord, "初回write manifestの履歴recordがありません");
+  if (digest.sha256Utf8(serializeCanonicalJson(historyRecord)) !== manifest.history.recordDigest) {
+    throw new TypeError("初回履歴recordがcheckpointの期待値と一致しません");
+  }
+  const aiCache = manifest.aiCache
+    .map((file) => {
+      const source = readWrittenFile(file);
+      const value: unknown = JSON.parse(source);
+      const entry = createAiCacheEntry(value);
+      if (
+        file.path !== cachePath(configuration, entry.cacheKey) ||
+        source !== serializeCanonicalJsonLine(entry)
+      ) {
+        throw new TypeError("初回AI cacheのkey、保存先、canonical業務値が一致しません");
+      }
+      return entry;
+    })
+    .sort((left, right) => left.cacheKey.localeCompare(right.cacheKey, "en"));
+  const personalCache = manifest.personalReminderAiCache
+    .map((file) => {
+      const source = readWrittenFile(file);
+      const value: unknown = JSON.parse(source);
+      const entry = createPersonalReminderAiCacheEntry(value);
+      if (
+        file.path !== personalReminderAiCachePath(configuration, entry.cacheKey) ||
+        source !== serializeCanonicalJsonLine(entry)
+      ) {
+        throw new TypeError("初回個人催促AI cacheのkey、保存先、canonical業務値が一致しません");
+      }
+      return entry;
+    })
+    .sort((left, right) => left.cacheKey.localeCompare(right.cacheKey, "en"));
+  if (
+    digest.sha256Utf8(serializeCanonicalJson(aiCache)) !== expectedDigests.aiCacheAdditions ||
+    digest.sha256Utf8(serializeCanonicalJson(personalCache)) !==
+      expectedDigests.personalReminderAiCacheAdditions
+  ) {
+    throw new TypeError("初回cacheの業務値全件がcheckpointの追加集合と一致しません");
+  }
+}
+
 function changedEntry(file: WrittenFile): StateChangedPathManifest["entries"][number] | undefined {
   if (file.operation === "unchanged") {
     return undefined;
@@ -102,7 +173,9 @@ export function assertInitialStateWriteManifest(
   before: ReadonlyMap<string, StateFileReadResult>,
   after: ReadonlyMap<string, StateFileReadResult>,
   changed: StateChangedPathManifest,
+  expectedDigests: Parameters<typeof assertInitialStateBusinessContent>[1],
 ): void {
+  assertInitialStateBusinessContent(manifest, expectedDigests, configuration, after);
   const historyPath = manifest.history.file.path;
   const cacheFiles = [...manifest.aiCache, ...manifest.personalReminderAiCache];
   if (
