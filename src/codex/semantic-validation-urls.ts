@@ -9,7 +9,8 @@ import type { CodexAnalysisInput } from "./input.js";
 import type { CodexSemanticValidationIssueCode } from "./semantic-validation-issues.js";
 
 const TARGET_ORGANIZATION = "VOICEVOX";
-const URL_IN_TEXT_PATTERN = /https?:\/\/[^\s<>"']+/gu;
+const URL_IN_TEXT_PATTERN =
+  /(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|(?:mailto|javascript|data|urn|tel|blob|about):)[^\s<>"'`]+/giu;
 const URL_TRAILING_PUNCTUATION_PATTERN = /[),.;:!?、。！？）】]+$/u;
 
 type TextField = Readonly<{ path: string; value: string }>;
@@ -235,6 +236,7 @@ export function validateCodexOutputUrls(
       const normalized = normalizedUrl(rawUrl);
       if (
         normalized == null ||
+        new URL(normalized).protocol !== "https:" ||
         (organizationFromUrl(rawUrl)?.toLowerCase() !== TARGET_ORGANIZATION.toLowerCase() &&
           !allowedExternalUrls.has(normalized.toLowerCase()))
       ) {

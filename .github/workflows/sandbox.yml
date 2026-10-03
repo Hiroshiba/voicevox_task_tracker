@@ -68,8 +68,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: >-
-    sandbox-${{ github.repository }}-${{ inputs.operation == 'create' && format('env-{0}-{1}', github.run_id, github.run_attempt) || inputs.environment_id }}
+  group: sandbox-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:

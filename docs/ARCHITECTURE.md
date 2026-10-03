@@ -63,6 +63,7 @@ GitHub clientとtokenはinfra内に保持し、stage出力へ含めません。
 違いは入力範囲、effect target、通知actionを表すpolicyだけです。
 dry-runはrecording portで保存・公開・送達・完了まで進み、external state、Pages、Discordを変更しません。
 sandboxはsandbox stateを更新し、PagesとDiscordをrecording portへ接続します。
+sandboxのcreate、continue、reset、disposeはrepository単位で同じworkflow排他groupを使い、run全体を直列化します。resetが旧環境のstateを読み、新環境のbranchへ保存してtrackingとfinalizationを終えるまで両環境を保護します。異なるsandbox環境も順番に実行されます。外部からのstate更新にはCASとleaseの検証を維持します。待機中のrunにはActionsの既定の置換規則が適用されます。
 productionのPages deployはActionsのaction境界で行います。
 直列production CLIにはPagesの直接deploy adapterがないため、本番の通し実行は日次workflowを使います。
 
@@ -456,7 +457,7 @@ Web UIは停滞レベルを表示、絞り込み、並び替え、依存グラ�
 `config.yml`の`maintainers`に書いたGitHubユーザー名と、GitHubのreview requestや本文とコメントから得たteam識別子は公開情報としてguardを通過できます。
 GitHubのteam member一覧は収集しないため、snapshot、公開DTO、Discord通知の入力にも含まれません。
 
-Organization外のIssueとPull Requestは、詳細で公開・非アーカイブ・非disabledを確認した候補だけを検証済み外部参照としてsnapshotへ保存します。外部候補が最終graphに残らなくても証拠を保持し、Codexの自然言語、state、公開DTO、Discord送信前の検査では、その項目URLとrepository URLだけを許可します。旧snapshotからは検証済みの外部ghostだけを移し、未確認のURLを推測で追加しません。
+Organization外のIssueとPull Requestは、詳細で公開・非アーカイブ・非disabledを確認した候補だけを検証済み外部参照としてsnapshotへ保存します。外部候補が最終graphに残らなくても証拠を保持し、Codexの自然言語、state、公開DTO、Discord送信前の検査では、その項目URLとrepository URLだけを許可します。今回の詳細でarchive済みまたはdisabledと確定した外部repositoryは、前回の検証済み参照からも失効させます。残存URLがあれば公開前に停止します。詳細を取得できなかった外部repositoryの前回の証拠は保持します。旧snapshotからは検証済みの外部ghostだけを移し、未確認のURLを推測で追加しません。
 
 収集時の公開allowlist、公開inventory、digestはcheckpointへ保存します。後続jobはsnapshotからinventoryを作らず、checkpointに保存された値の形、digest、所属とsnapshotのrepository参照を照合します。既知の非公開repositoryへの参照は履歴も含めて検査します。
 
@@ -556,16 +557,16 @@ semantic補正は候補1件の論理call内で行うため、追加世代を`aiC
 根拠閉包は、保存時と同じ正規化を通したoutward値から参照pathを作ります。
 追跡項目の`inputEvents`はsource ID順にそろえ、snapshotの保存と再読み込みでも同じ順序を保ちます。
 
-| 既定パス                                         | 内容                                                                                                                         |
-| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| `state/snapshot.json`                            | 要対応度、期限日、AI状態、AI要素の適用元、値別のAI依存、trackingStartAt、個人催促の原因を含むschema version 22の最新snapshot |
-| `state/history/YYYY-MM-DD.jsonl`                 | schema version 7。前回snapshotとの差分と送信済み通知を持つ日次履歴。確認済み状態は記録しない                                 |
-| `state/ai-cache/<sha256>.json`                   | 汎用AIのcontent-addressed cache                                                                                              |
-| `state/personal-reminder-ai-cache/<sha256>.json` | 個人原因ごとの意味評価cache。`state.personalReminderAiCacheDirectory`で配置先を指定する                                      |
-| `state/notification-ledger.json`                 | schema version 10。予約期限、送信開始済み、送信済み、確認済みの記録を持つ通知管理記録                                        |
-| `state/run-reports/YYYY-MM-DD.json`              | 初回Pagesと通知の確定後、finalizationで保存する実績指標と診断                                                                |
+| 既定パス                                         | 内容                                                                                                                                           |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `state/snapshot.json`                            | 要対応度、期限日、AI状態、AI要素の適用元、値別のAI依存、trackingStartAt、個人催促の原因と検証済み外部参照を含むschema version 23の最新snapshot |
+| `state/history/YYYY-MM-DD.jsonl`                 | schema version 7。前回snapshotとの差分と送信済み通知を持つ日次履歴。確認済み状態は記録しない                                                   |
+| `state/ai-cache/<sha256>.json`                   | 汎用AIのcontent-addressed cache                                                                                                                |
+| `state/personal-reminder-ai-cache/<sha256>.json` | 個人原因ごとの意味評価cache。`state.personalReminderAiCacheDirectory`で配置先を指定する                                                        |
+| `state/notification-ledger.json`                 | schema version 10。予約期限、送信開始済み、送信済み、確認済みの記録を持つ通知管理記録                                                          |
+| `state/run-reports/YYYY-MM-DD.json`              | 初回Pagesと通知の確定後、finalizationで保存する実績指標と診断                                                                                  |
 
-snapshot 22の各項目は、原因の列挙計画を表す`personalReminderCausePlanning`を必須で持ちます。`status`は`pending`、`completed`、`excluded`のいずれかとし、すべて`planningVersion`を保持します。`completed`には列挙に使った観測時刻`observedAt`、`excluded`には`reason: terminal_without_cause`を持たせます。
+snapshot 23の各項目は、原因の列挙計画を表す`personalReminderCausePlanning`を必須で持ちます。`status`は`pending`、`completed`、`excluded`のいずれかとし、すべて`planningVersion`を保持します。`completed`には列挙に使った観測時刻`observedAt`、`excluded`には`reason: terminal_without_cause`を持たせます。
 freshなopen項目の列挙が完了すれば原因0件でも`completed`にし、原因がないterminal項目だけを`excluded`にします。staleを含む分析対象外の項目は、前述の保持規則に従います。入口では旧`planningVersion`も受け入れ、現在版との不一致を再計画の選定へ渡します。
 
 追跡項目の`aiAnalysis.status`は次の利用状況を表します。
@@ -587,7 +588,7 @@ AI依存の`unknown`は、空でない`reasons`配列に理由を保存します
 Pagesのsummaryとdetailsは`aiAnalysis.status`を`runStatus`として公開し、生成元のcache keyと内部producerは公開しません。
 
 永続化sessionはbranch headを開始時に固定し、snapshot、履歴、汎用AIと個人原因の追加cache、通知候補選別後の通知管理記録を通常stateの最初のGit commitへまとめます。個人原因の採用結果と実行状態を永続化できる前に外部通知へ進みません。
-旧形式は入口で現行形式へ移行し、必要な旧cacheの削除もsnapshot更新と同じcommitへ含めます。snapshot 11から21を22へ移行します。snapshot 18のAI依存は単一の`reason`を1要素の`reasons`配列へ変換し、値・producer・適用元・採用済み評価・根拠・時計を保持します。snapshot 14以前の移行では個人原因を空配列として追加し、open項目の列挙計画を`pending`、原因がないterminal項目を`excluded`にします。PRの`inputEvents`は旧commit IDだけをそのPRに紐づく現行IDへ移行し、発生時刻を保持します。このID移行では既存の履歴、通知管理記録、現行cache、AIの採用値と根拠を書き換えません。旧AIの自由文から責務・時刻・意味結果を補填しません。
+旧形式は入口で現行形式へ移行し、必要な旧cacheの削除もsnapshot更新と同じcommitへ含めます。snapshot 11から21を22へ移行した後、22を23へ移行します。snapshot 18のAI依存は単一の`reason`を1要素の`reasons`配列へ変換し、値・producer・適用元・採用済み評価・根拠・時計を保持します。snapshot 14以前の移行では個人原因を空配列として追加し、open項目の列挙計画を`pending`、原因がないterminal項目を`excluded`にします。PRの`inputEvents`は旧commit IDだけをそのPRに紐づく現行IDへ移行し、発生時刻を保持します。このID移行では既存の履歴、通知管理記録、現行cache、AIの採用値と根拠を書き換えません。旧AIの自由文から責務・時刻・意味結果を補填しません。
 読み込みやCI検証だけでは本番へ保存せず、workflowによるpushまで完了してから移行済みとします。
 移行したAIの採用値は新しい生成結果と区別し、旧generationのresult、metadata、outputHashを改変せず、再推論の失敗・延期だけで消しません。
 本人起因の通知抑制は新しいsignalからnotification keyまたは未送信候補を作る前だけに適用し、既存pendingとnotification ledgerへ今回の原因を転用しません。既存のpending、reserved、delivery_started、sent、acknowledgedは通常の有効性・送信・失効規則でだけ更新します。

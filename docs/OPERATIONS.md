@@ -162,6 +162,7 @@ receipt消失時は同じ入力の解決操作を再実行し、実Gitの親子s
 実行code revisionを固定し、reusable workflowの定義が一致することを確認します。
 create/resetは公開seedから新しいenvironmentと`sandbox-state/env-<run ID>-<attempt>`を作り、manifestを保存します。
 continueは同じenvironmentの前回stateを読み、disposeは取得したheadから変更されていない場合だけ削除します。
+sandboxの全操作は同じrepository内で直列に実行されます。resetは旧環境の読込から新環境のtrackingとfinalizationまで排他を保持します。待機中のrunがActionsによって新しい待機runへ置換された場合は、取り消されたrunのjobが始まっていないこととstate revisionが変わっていないことを確認し、無効果として扱います。必要な操作は改めて起動します。
 Discordと本番Pagesへは書き込まず、実GitHub収集・実AI・sandbox state更新と、Pages/Discordのrecording portを組み合わせます。
 同じCodex認証を使うrunは前のrunが完了してから起動します。
 

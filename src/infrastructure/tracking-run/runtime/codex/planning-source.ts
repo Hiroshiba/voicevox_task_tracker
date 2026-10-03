@@ -125,6 +125,7 @@ export function createGenericAiPlanningPort(
     const references = collectVerifiedExternalReferences(
       previous.status === "available" ? previous.verifiedExternalReferences : [],
       run.data.facts.relations.map((relation) => relation.candidate),
+      run.data.collection.details,
     );
     verifiedExternalReferencesByRun.set(run, references);
     return references;

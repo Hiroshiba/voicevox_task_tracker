@@ -29,7 +29,7 @@
 - `selfCommitment` の `evidence` には、対象項目の次の対応をsourceのidentified author本人が明示的かつ無条件に引き受けたことを直接示す場合だけ `supports` として `self_commitment` を指定してください。引用、別タスク、条件付きの発言、単なる予定や可能性、他人への依頼、信頼度が十分でない判定は自己引受けの根拠にしてはいけません。`value` の各 `sourceId` は `selfCommitmentCandidates` のsource IDから選び、同じsource IDを持つ `self_commitment` の根拠を指定してください。該当する申し出がなければ `value` と `evidence` を空配列にしてください。
 - `rel:` で始まるIDはrelation candidate IDです。source IDとして使ってはいけません。
 - `progress.value.latestMeaningfulSourceId` に該当するsourceがなければ `null` を使用してください。根拠が不十分な判定の扱いは各要素の規則に従い、未アサインIssueの実質担当候補だけは下記の規則に従って `deterministicSignals` の未アサイン状態と maintainer の待ち相手を維持してください。
-- `nextAction.value`、各要素の `reasonSummary` と `rationale`、要素ごとの `evidence[].summary`、`uncertainties[]` にURLを書く場合、GitHubリポジトリは入力の `deterministicSignals.publicRepositoryAllowlist` にある収集済み公開リポジトリだけを指してください。そのうえで、VOICEVOX Organization内のURL、入力の `item.url`、`candidates.relations` にある `targetUrl` のいずれかを使用してください。
+- `nextAction.value`、各要素の `reasonSummary` と `rationale`、要素ごとの `evidence[].summary`、`uncertainties[]` にURLを書く場合はHTTPSのGitHub URLだけを使用してください。VOICEVOX Organization内では `deterministicSignals.publicRepositoryAllowlist` にある収集済み公開リポジトリのURLを使用してください。Organization外では `deterministicSignals.verifiedExternalReferences` にある検証済み項目のURLと、その項目が属するrepositoryのURLだけを使用してください。
 - 自然言語として出力する値では、内部フィールド名 `waitingOn` を「待ち相手」と表現してください。schemaキーを説明する場合だけ `waitingOn` をそのまま使用してください。
 
 ## stdin envelope

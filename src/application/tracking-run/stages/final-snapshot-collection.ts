@@ -57,6 +57,7 @@ export function projectFinalSnapshotPlan(
     verifiedExternalReferences: collectVerifiedExternalReferences(
       previousSnapshot.status === "available" ? previousSnapshot.verifiedExternalReferences : [],
       analyzed.data.facts.relations.map((relation) => relation.candidate),
+      analyzed.data.collection.details,
     ),
     aiEnabled: plan.aiEnabled,
     plannedNodeIds: Object.freeze(plan.items.map((item) => item.nodeId).sort()),
