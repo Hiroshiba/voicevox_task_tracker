@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 import { serializeCanonicalJsonLine } from "../canonical-json/value.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
 import type { PagesDeploymentIntent } from "../application/tracking-run/pages-build-contracts.js";
@@ -11,69 +9,15 @@ import {
   type StateFileReadResult,
 } from "./branch-adapter.js";
 import { StateBranchConflictError } from "./errors.js";
+import {
+  productionPagesEffectLeaseSchema,
+  productionPagesAttemptKey,
+  parseProductionPagesEffectLease,
+  type ProductionPagesEffectLease,
+} from "./production-pages-effect-lease-schema.js";
 import { createStateCommitIdentity } from "./state-commit-metadata.js";
 
 export const PRODUCTION_PAGES_EFFECT_LEASE_PATH = "state/production-pages-effect-lease-v1.json";
-
-const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
-const keySchema = z.string().regex(/^[0-9a-f]{64}$/u);
-const revisionSchema = z.string().regex(/^[0-9a-f]{40}$/u);
-const runIdSchema = z.string().regex(/^tracker-run:[0-9a-f]{64}$/u);
-const actionsRunIdSchema = z.string().regex(/^[1-9][0-9]*$/u);
-const effectSchema = z.strictObject({
-  phase: z.enum(["initial", "notification_history"]),
-  sourceStateRevision: revisionSchema,
-  deploymentIntentDigest: sha256Schema,
-  idempotencyKey: keySchema,
-  childRunId: actionsRunIdSchema.optional(),
-  childRunAttempt: z.number().int().positive().optional(),
-});
-const leaseSchema = z.strictObject({
-  schemaVersion: z.literal(1),
-  status: z.enum(["active", "released"]),
-  runId: runIdSchema,
-  checkpointDigest: sha256Schema,
-  parentRunId: actionsRunIdSchema,
-  parentRunAttempt: z.number().int().positive(),
-  codeRevision: revisionSchema,
-  effect: effectSchema,
-});
-
-/** production Pages childが排他的に所有する効果の記録。 */
-export type ProductionPagesEffectLease = z.output<typeof leaseSchema>;
-export type ProductionPagesEffectReservation = Readonly<{
-  lease: ProductionPagesEffectLease;
-  created: boolean;
-}>;
-
-/** canonical lease fileを検証して読む。 */
-export function parseProductionPagesEffectLease(bytes: Uint8Array): ProductionPagesEffectLease {
-  const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  if (bytes.byteLength > 4096) {
-    throw new TypeError("production Pages leaseが上限を超えています");
-  }
-  const raw: unknown = JSON.parse(source);
-  if (source !== serializeCanonicalJsonLine(raw)) {
-    throw new TypeError("production Pages leaseがcanonical JSONではありません");
-  }
-  const lease = leaseSchema.parse(raw);
-  if (
-    lease.effect.idempotencyKey !==
-      nodeContentDigestPort
-        .sha256Utf8(
-          serializeCanonicalJsonLine({
-            runId: lease.runId,
-            phase: lease.effect.phase,
-            deploymentIntentDigest: lease.effect.deploymentIntentDigest,
-          }),
-        )
-        .slice("sha256:".length) ||
-    (lease.effect.childRunId == null) !== (lease.effect.childRunAttempt == null)
-  ) {
-    throw new TypeError("production Pages leaseの効果識別子が不正です");
-  }
-  return lease;
-}
 
 async function leaseAt(
   adapter: StateBranchAdapter,
@@ -166,7 +110,7 @@ export async function reserveProductionPagesEffectLease(
   owner: Readonly<{ parentRunId: string; parentRunAttempt: number; codeRevision: string }>,
   initialDeploymentReceipt: PagesDeploymentReceipt | undefined,
   now: Date,
-): Promise<ProductionPagesEffectReservation> {
+): Promise<ProductionPagesEffectLease> {
   const head = await adapter.resolveHead(PRODUCTION_PAGES_EFFECT_LEASE_BRANCH);
   const previous = await leaseAt(adapter, head);
   if (
@@ -194,7 +138,26 @@ export async function reserveProductionPagesEffectLease(
     previous.effect.deploymentIntentDigest === intent.deploymentIntentDigest &&
     previous.effect.sourceStateRevision === intent.sourceStateRevision
   ) {
-    return Object.freeze({ lease: previous, created: false });
+    if (previous.attempt.status !== "no_effect") {
+      return previous;
+    }
+    if (previous.codeRevision !== owner.codeRevision) {
+      throw new StateBranchConflictError({
+        cause: new TypeError("Pages attemptの固定sourceを変更できません"),
+      });
+    }
+    const sequence = previous.attempt.sequence + 1;
+    const lease = productionPagesEffectLeaseSchema.parse({
+      ...previous,
+      ...owner,
+      attempt: {
+        status: "reserved",
+        sequence,
+        key: productionPagesAttemptKey(idempotencyKey, sequence),
+      },
+    });
+    await changeLease(adapter, head, lease, now);
+    return lease;
   }
   if (previous?.status === "active" && previous.effect.phase === intent.phase) {
     throw new StateBranchConflictError({
@@ -203,7 +166,7 @@ export async function reserveProductionPagesEffectLease(
   }
   if (
     previous?.status === "active" &&
-    (previous.effect.childRunId == null ||
+    (previous.attempt.status !== "committed" ||
       initialDeploymentReceipt?.receiptType !== "pages_deployment" ||
       initialDeploymentReceipt.phase !== "initial" ||
       (initialDeploymentReceipt.status !== "deployed" &&
@@ -221,9 +184,10 @@ export async function reserveProductionPagesEffectLease(
       cause: new TypeError("成功した初回Pages receiptがないため履歴Pagesを予約できません"),
     });
   }
-  const lease = leaseSchema.parse({
-    schemaVersion: 1,
+  const lease = productionPagesEffectLeaseSchema.parse({
+    schemaVersion: 2,
     status: "active",
+    attempt: { status: "reserved", sequence: 1, key: productionPagesAttemptKey(idempotencyKey, 1) },
     runId: intent.runId,
     checkpointDigest: intent.checkpointDigest,
     parentRunId: owner.parentRunId,
@@ -237,7 +201,58 @@ export async function reserveProductionPagesEffectLease(
     },
   });
   await changeLease(adapter, head, lease, now);
-  return Object.freeze({ lease, created: true });
+  return lease;
+}
+
+/** 保存済みattemptだけをCASで次の状態へ進める。 */
+export async function advanceProductionPagesEffectAttempt(
+  adapter: StateBranchAdapter,
+  expected: ProductionPagesEffectLease,
+  next: ProductionPagesEffectLease["attempt"],
+  now: Date,
+): Promise<ProductionPagesEffectLease> {
+  const head = await adapter.resolveHead(PRODUCTION_PAGES_EFFECT_LEASE_BRANCH);
+  const current = await leaseAt(adapter, head);
+  const allowed: Readonly<
+    Record<
+      ProductionPagesEffectLease["attempt"]["status"],
+      readonly ProductionPagesEffectLease["attempt"]["status"][]
+    >
+  > = {
+    reserved: ["dispatch_started"],
+    dispatch_started: ["child_bound", "unknown"],
+    child_bound: ["effect_started", "no_effect", "unknown"],
+    effect_started: ["committed", "no_effect", "unknown"],
+    committed: [],
+    no_effect: [],
+    unknown: ["child_bound", "committed", "no_effect"],
+  };
+  if (
+    current?.status !== "active" ||
+    serializeCanonicalJsonLine(current) !== serializeCanonicalJsonLine(expected) ||
+    next.key !== current.attempt.key ||
+    next.sequence !== current.attempt.sequence ||
+    !allowed[current.attempt.status].includes(next.status) ||
+    ("dispatch" in current.attempt &&
+      current.attempt.dispatch != null &&
+      (!("dispatch" in next) ||
+        next.dispatch == null ||
+        serializeCanonicalJsonLine(current.attempt.dispatch) !==
+          serializeCanonicalJsonLine(next.dispatch))) ||
+    ("child" in current.attempt &&
+      current.attempt.child != null &&
+      (!("child" in next) ||
+        next.child == null ||
+        serializeCanonicalJsonLine(current.attempt.child) !==
+          serializeCanonicalJsonLine(next.child)))
+  ) {
+    throw new StateBranchConflictError({
+      cause: new TypeError("production Pages attemptの遷移が一致しません"),
+    });
+  }
+  const lease = productionPagesEffectLeaseSchema.parse({ ...current, attempt: next });
+  await changeLease(adapter, head, lease, now);
+  return lease;
 }
 
 /** childが実行IDをCASで確保し重複deployを拒否する。 */
@@ -247,28 +262,20 @@ export async function claimProductionPagesEffectLease(
   childRunId: string,
   childRunAttempt: number,
   now: Date,
-): Promise<void> {
-  const head = await adapter.resolveHead(PRODUCTION_PAGES_EFFECT_LEASE_BRANCH);
-  const current = await leaseAt(adapter, head);
-  if (
-    current?.status !== "active" ||
-    current.effect.idempotencyKey !== expected.effect.idempotencyKey ||
-    current.parentRunId !== expected.parentRunId ||
-    current.parentRunAttempt !== expected.parentRunAttempt ||
-    current.codeRevision !== expected.codeRevision ||
-    current.effect.childRunId != null
-  ) {
+): Promise<ProductionPagesEffectLease> {
+  if (expected.attempt.status !== "dispatch_started" || childRunAttempt !== 1) {
     throw new StateBranchConflictError({
       cause: new TypeError("production Pages childの効果予約が一致しません"),
     });
   }
-  await changeLease(
+  return advanceProductionPagesEffectAttempt(
     adapter,
-    head,
-    leaseSchema.parse({
-      ...current,
-      effect: { ...current.effect, childRunId, childRunAttempt },
-    }),
+    expected,
+    {
+      ...expected.attempt,
+      status: "child_bound",
+      child: { childRunId, childRunAttempt },
+    },
     now,
   );
 }
@@ -284,13 +291,18 @@ export async function releaseProductionPagesEffectLease(
   if (
     current?.status !== "active" ||
     serializeCanonicalJsonLine(current) !== serializeCanonicalJsonLine(expected) ||
-    current.effect.childRunId == null
+    current.attempt.status !== "committed"
   ) {
     throw new StateBranchConflictError({
       cause: new TypeError("解放対象のproduction Pages leaseが一致しません"),
     });
   }
-  await changeLease(adapter, head, leaseSchema.parse({ ...current, status: "released" }), now);
+  await changeLease(
+    adapter,
+    head,
+    productionPagesEffectLeaseSchema.parse({ ...current, status: "released" }),
+    now,
+  );
 }
 
 /** exact revisionのlease fileを読み取る。 */

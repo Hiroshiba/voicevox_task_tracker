@@ -19,6 +19,7 @@ import { writePublicDataFiles, buildWebOutput } from "../../pages/index.js";
 import { GitStateBranchAdapter } from "../../persistence/git-state-branch-adapter.js";
 import { assertExistingStatePublicSafety } from "../../persistence/public-safety.js";
 import {
+  advanceProductionPagesEffectAttempt,
   claimProductionPagesEffectLease,
   readActiveProductionPagesEffectLease,
 } from "../../persistence/production-pages-effect-lease.js";
@@ -76,7 +77,10 @@ export async function prepareSequentialPagesEffectChild(
     lease.effect.phase !== intent.phase ||
     lease.effect.sourceStateRevision !== intent.sourceStateRevision ||
     lease.effect.deploymentIntentDigest !== intent.deploymentIntentDigest ||
-    lease.effect.idempotencyKey !== payload.idempotencyKey
+    lease.effect.idempotencyKey !== payload.idempotencyKey ||
+    lease.attempt.key !== payload.attemptKey ||
+    lease.attempt.sequence !== payload.attemptSequence ||
+    lease.attempt.status !== "dispatch_started"
   ) {
     throw new TypeError("Pages childの入力とproduction leaseが一致しません");
   }
@@ -164,4 +168,40 @@ export async function prepareSequentialPagesEffectChild(
     new Date(),
   );
   return payload;
+}
+
+/** deploy actionの直前に同じchildの効果開始をCASで記録する。 */
+export async function beginSequentialPagesEffectChild(
+  repositoryPath: string,
+  value: unknown,
+  environment: Readonly<NodeJS.ProcessEnv>,
+): Promise<void> {
+  const payload = parseSequentialPagesActionsPayload(value);
+  const adapter = new GitStateBranchAdapter({
+    repositoryPath,
+    gitExecutable: "git",
+    authorName: "VOICEVOX Task Tracker",
+    authorEmail: "voicevox-task-tracker@users.noreply.github.com",
+  });
+  const lease = await readActiveProductionPagesEffectLease(adapter);
+  if (
+    environment["GITHUB_ACTIONS"] !== "true" ||
+    lease.attempt.status !== "child_bound" ||
+    lease.attempt.child.childRunId !== environment["GITHUB_RUN_ID"] ||
+    lease.attempt.child.childRunAttempt.toString() !== environment["GITHUB_RUN_ATTEMPT"] ||
+    lease.attempt.key !== payload.attemptKey ||
+    lease.effect.idempotencyKey !== payload.idempotencyKey ||
+    lease.parentRunId !== payload.owner.parentRunId ||
+    lease.parentRunAttempt !== payload.owner.parentRunAttempt ||
+    lease.codeRevision !== payload.owner.codeRevision ||
+    (await adapter.resolveRepositoryRevision()) !== lease.codeRevision
+  ) {
+    throw new TypeError("Pages deploy直前のchild claimが一致しません");
+  }
+  await advanceProductionPagesEffectAttempt(
+    adapter,
+    lease,
+    { ...lease.attempt, status: "effect_started" },
+    new Date(),
+  );
 }

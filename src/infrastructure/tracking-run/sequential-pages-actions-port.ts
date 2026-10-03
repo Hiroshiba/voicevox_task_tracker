@@ -17,10 +17,7 @@ import type { PagesDeploymentReceipt } from "../../application/tracking-run/rece
 import { pagesDeploymentExternalReferenceSchema } from "../../application/tracking-run/receipt-schema.js";
 import { serializeCanonicalJsonLine } from "../../canonical-json/value.js";
 import type { StateBranchAdapter } from "../../persistence/branch-adapter.js";
-import {
-  readActiveProductionPagesEffectLease,
-  reserveProductionPagesEffectLease,
-} from "../../persistence/production-pages-effect-lease.js";
+import { reserveProductionPagesEffectLease } from "../../persistence/production-pages-effect-lease.js";
 import { assertNonNullable } from "../../util/assert-non-nullable.js";
 import { nodeContentDigestPort } from "./content-digest.js";
 import type { SequentialPagesResult } from "./initial-pages-deployment.js";
@@ -33,11 +30,10 @@ import {
   type SequentialPagesActionsPayload,
 } from "./sequential-pages-actions-contract.js";
 import {
-  findSequentialPagesChildRun,
-  waitForClaimedSequentialPagesChildRun,
-  waitForSequentialPagesChildRun,
-  type SequentialPagesActionsRun,
-} from "./sequential-pages-actions-runs.js";
+  observeSequentialPagesAttempt,
+  settleSequentialPagesAttempt,
+} from "./sequential-pages-actions-attempt.js";
+import type { SequentialPagesActionsRun } from "./sequential-pages-actions-runs.js";
 import { sequentialReceiptPath } from "./sequential-receipt-path.js";
 
 const execFileAsync = promisify(execFile);
@@ -203,7 +199,7 @@ async function readChildObservation(
   const artifacts = artifactsSchema
     .parse(await response.json())
     .artifacts.filter(
-      (artifact) => artifact.name === sequentialPagesChildArtifactName(payload.idempotencyKey),
+      (artifact) => artifact.name === sequentialPagesChildArtifactName(payload.attemptKey),
     );
   if (artifacts.length !== 1 || artifacts[0]?.expired === true) {
     throw new TypeError("Pages childの観測artifactを一意に取得できません");
@@ -272,7 +268,7 @@ export async function deploySequentialPagesThroughActions(
     "Pages childのsource revision取得adapterがありません",
   );
   const codeRevision = await dependencies.adapter.resolveRepositoryRevision();
-  const reservation = await reserveProductionPagesEffectLease(
+  const lease = await reserveProductionPagesEffectLease(
     dependencies.adapter,
     intent,
     {
@@ -285,13 +281,14 @@ export async function deploySequentialPagesThroughActions(
       : undefined,
     dependencies.now(),
   );
-  const lease = reservation.lease;
   if (lease.codeRevision !== codeRevision) {
     throw new TypeError("Pages childのleaseと固定runtimeのsource revisionが一致しません");
   }
   const payload = parseSequentialPagesActionsPayload({
-    schemaVersion: 1,
+    schemaVersion: 2,
     idempotencyKey: lease.effect.idempotencyKey,
+    attemptKey: lease.attempt.key,
+    attemptSequence: lease.attempt.sequence,
     owner: {
       parentRunId: lease.parentRunId,
       parentRunAttempt: lease.parentRunAttempt,
@@ -300,46 +297,50 @@ export async function deploySequentialPagesThroughActions(
     intent,
   });
   const get = (path: string): Promise<Response> => apiRequest(context, path, "GET");
-  let child: SequentialPagesActionsRun;
-  if (lease.effect.childRunId != null) {
-    child = await waitForClaimedSequentialPagesChildRun(context.repository, payload, lease, get);
-  } else if (!reservation.created) {
-    const existing = await findSequentialPagesChildRun(context.repository, payload, get);
-    if (existing == null) {
-      throw new TypeError("予約済みPages childを確認できないため再dispatchできません");
+  const observed = await observeSequentialPagesAttempt(lease, payload, {
+    repository: context.repository,
+    adapter: dependencies.adapter,
+    now: dependencies.now,
+    get,
+    verifyWorkflow: () => assertChildWorkflowCompatible(context, dependencies.repositoryPath),
+    dispatch: async () => {
+      await apiRequest(
+        context,
+        `repos/${context.repository}/actions/workflows/${workflowFile}/dispatches`,
+        "POST",
+        { ref: context.ref, inputs: { payload: serializeCanonicalJsonLine(payload) } },
+      );
+    },
+  });
+  let observation: SequentialPagesActionsObservation;
+  try {
+    observation = await readChildObservation(context, payload, observed.child);
+    if (
+      observed.child.conclusion !== "success" ||
+      observation.uploadOutcome !== "success" ||
+      observation.deploymentOutcome !== "success" ||
+      observation.deploymentId == null ||
+      observation.pageUrl !== intent.expectedPageUrl
+    ) {
+      throw new TypeError("Pages childの公開効果が確定しませんでした");
     }
-    child = await waitForSequentialPagesChildRun(context.repository, payload, get);
-  } else {
-    if ((await findSequentialPagesChildRun(context.repository, payload, get)) != null) {
-      throw new TypeError("Pages childが既に存在するため再dispatchできません");
+  } catch (cause: unknown) {
+    if (observed.lease.attempt.status !== "committed") {
+      await settleSequentialPagesAttempt(
+        dependencies.adapter,
+        observed.lease,
+        "unknown",
+        dependencies.now(),
+      );
     }
-    await assertChildWorkflowCompatible(context, dependencies.repositoryPath);
-    await apiRequest(
-      context,
-      `repos/${context.repository}/actions/workflows/${workflowFile}/dispatches`,
-      "POST",
-      { ref: context.ref, inputs: { payload: serializeCanonicalJsonLine(payload) } },
-    );
-    child = await waitForSequentialPagesChildRun(context.repository, payload, get);
+    throw cause;
   }
-  const claimed = await readActiveProductionPagesEffectLease(dependencies.adapter);
-  if (
-    claimed.effect.idempotencyKey !== lease.effect.idempotencyKey ||
-    claimed.effect.childRunId !== child.id.toString() ||
-    claimed.effect.childRunAttempt !== child.run_attempt
-  ) {
-    throw new TypeError("Pages childのActions実行とleaseのclaimが一致しません");
-  }
-  const observation = await readChildObservation(context, payload, child);
-  if (
-    child.conclusion !== "success" ||
-    observation.uploadOutcome !== "success" ||
-    observation.deploymentOutcome !== "success" ||
-    observation.deploymentId == null ||
-    observation.pageUrl !== intent.expectedPageUrl
-  ) {
-    throw new TypeError("Pages childの公開効果が確定しませんでした");
-  }
+  await settleSequentialPagesAttempt(
+    dependencies.adapter,
+    observed.lease,
+    "committed",
+    dependencies.now(),
+  );
   const actionsArtifact =
     pagesDeploymentExternalReferenceSchema.options[0].shape.actionsArtifact.parse(
       observation.artifactId == null
@@ -360,6 +361,8 @@ export async function deploySequentialPagesThroughActions(
               artifactDigest: observation.artifactDigest,
             },
     );
+  assertNonNullable(observation.deploymentId, "Pages deployment IDがありません");
+  assertNonNullable(observation.pageUrl, "Pages URLがありません");
   return Object.freeze({
     deploymentReference: observation.deploymentId,
     pageUrl: observation.pageUrl,

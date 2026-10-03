@@ -86,7 +86,8 @@ export function createReadCompletedReportStage(
           lease.runId !== report.runId ||
           lease.checkpointDigest !== record.checkpointDigest ||
           lease.codeRevision !== plan.codeRevision ||
-          lease.effect.childRunId == null ||
+          !("child" in lease.attempt) ||
+          lease.attempt.child == null ||
           deployment?.receiptType !== "pages_deployment" ||
           (deployment.status !== "deployed" && deployment.status !== "replayed_same_content") ||
           deployment.effectCertainty !== "committed" ||

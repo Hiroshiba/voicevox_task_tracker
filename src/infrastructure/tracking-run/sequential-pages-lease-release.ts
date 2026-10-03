@@ -63,7 +63,7 @@ export async function releaseCompletedSequentialPagesLease(
     authorEmail: "voicevox-task-tracker@users.noreply.github.com",
   });
   const lease = await readActiveProductionPagesEffectLease(adapter);
-  if (lease.runId !== report.runId || lease.effect.childRunId == null) {
+  if (lease.runId !== report.runId || !("child" in lease.attempt) || lease.attempt.child == null) {
     throw new TypeError("production Pages leaseと完了した親runが一致しません");
   }
   const config = await loadConfig(resolve(repositoryPath, "config.yml"));

@@ -18,14 +18,18 @@ const ownerSchema = z.strictObject({
   codeRevision: revisionSchema,
 });
 const payloadSchema = z.strictObject({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   idempotencyKey: keySchema,
+  attemptKey: keySchema,
+  attemptSequence: z.number().int().positive(),
   owner: ownerSchema,
   intent: pagesDeploymentIntentSchema,
 });
 const observationSchema = z.strictObject({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   idempotencyKey: keySchema,
+  attemptKey: keySchema,
+  attemptSequence: z.number().int().positive(),
   parentRunId: actionsRunIdSchema,
   parentRunAttempt: z.number().int().positive(),
   childRunId: actionsRunIdSchema,
@@ -61,7 +65,15 @@ export function parseSequentialPagesActionsPayload(value: unknown): SequentialPa
       }),
     )
     .slice("sha256:".length);
-  if (key !== payload.idempotencyKey) {
+  const attemptKey = nodeContentDigestPort
+    .sha256Utf8(
+      serializeCanonicalJsonLine({
+        operationKey: key,
+        sequence: payload.attemptSequence,
+      }),
+    )
+    .slice("sha256:".length);
+  if (key !== payload.idempotencyKey || attemptKey !== payload.attemptKey) {
     throw new TypeError("Pages childのidempotency keyがintentと一致しません");
   }
   return Object.freeze({ ...payload, intent });
@@ -77,6 +89,8 @@ export function parseSequentialPagesActionsObservation(
   const observation = observationSchema.parse(value);
   if (
     observation.idempotencyKey !== payload.idempotencyKey ||
+    observation.attemptKey !== payload.attemptKey ||
+    observation.attemptSequence !== payload.attemptSequence ||
     observation.parentRunId !== payload.owner.parentRunId ||
     observation.parentRunAttempt !== payload.owner.parentRunAttempt ||
     observation.childRunId !== childRunId ||
@@ -93,11 +107,11 @@ export function parseSequentialPagesActionsObservation(
 }
 
 /** Actions run名へ使う固定keyを返す。 */
-export function sequentialPagesChildName(idempotencyKey: string): string {
-  return `tracking-sequential-pages-${keySchema.parse(idempotencyKey)}`;
+export function sequentialPagesChildName(attemptKey: string): string {
+  return `tracking-sequential-pages-${keySchema.parse(attemptKey)}`;
 }
 
 /** 一つのchild観測artifact名を返す。 */
-export function sequentialPagesChildArtifactName(idempotencyKey: string): string {
-  return `${sequentialPagesChildName(idempotencyKey)}-observation`;
+export function sequentialPagesChildArtifactName(attemptKey: string): string {
+  return `${sequentialPagesChildName(attemptKey)}-observation`;
 }

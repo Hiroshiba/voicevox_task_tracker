@@ -2,7 +2,7 @@ import type {
   StateBranchAdapter,
   StatePersistenceConfiguration,
 } from "../../persistence/branch-adapter.js";
-import type { ProductionPagesEffectLease } from "../../persistence/production-pages-effect-lease.js";
+import type { ProductionPagesEffectLease } from "../../persistence/production-pages-effect-lease-schema.js";
 import type { RecoveryStageInput } from "./recovery-stage.js";
 import { readNotificationMessageState } from "./notification-message-state.js";
 

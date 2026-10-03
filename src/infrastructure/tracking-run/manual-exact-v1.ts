@@ -84,7 +84,8 @@ async function assertSelectedState(
     lease.parentRunId !== sourceRunId ||
     lease.codeRevision !== plan.codeRevision ||
     lease.effect.phase !== "initial" ||
-    lease.effect.childRunId == null ||
+    !("child" in lease.attempt) ||
+    lease.attempt.child == null ||
     lease.effect.sourceStateRevision !== marker.initialStateRevision ||
     lease.effect.sourceStateRevision !== initialPagesEvidence.sourceStateRevision ||
     lease.effect.deploymentIntentDigest !== initialPagesEvidence.deploymentIntentDigest
