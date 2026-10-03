@@ -29,7 +29,7 @@ fi
 lease_file="$RUNNER_TEMP/production-pages-lease.json"
 git show "$revision:$lease_path" > "$lease_file"
 if ! jq -e --arg run_id "$recovery_run_id" \
-  '.schemaVersion == 1 and (.status == "released" or (.status == "active" and $run_id != "" and .runId == $run_id))' \
+  '(.schemaVersion == 1 or .schemaVersion == 2) and (.status == "released" or (.status == "active" and $run_id != "" and .runId == $run_id))' \
   "$lease_file" >/dev/null; then
   echo 'production Pages childの効果が未確定です' >&2
   exit 1

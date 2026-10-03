@@ -237,8 +237,11 @@ export function parseDurablePublicationRecord(
       ) ||
       [manifest.aiCache, manifest.personalReminderAiCache, manifest.deletions].some((entries) =>
         entries.some((entry, index) => {
+          if (index === 0) {
+            return false;
+          }
           const previous = entries.at(index - 1);
-          return previous != null && previous.path >= entry.path;
+          return previous != null && previous.path.localeCompare(entry.path, "en") >= 0;
         }),
       )
     ) {
