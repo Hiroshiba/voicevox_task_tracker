@@ -145,6 +145,9 @@ childの未発見、実行中、観測artifactの欠落や不一致、upload、d
 運用障害通知は`tracker-operations-alerts`の`state/operations-alert-ledger-v1.json`へ送信予約を保存してから送ります。
 同じincidentの送信済みまたは曖昧な予約を再送せず、receiptを失っても専用branchの実状態を先に確認します。
 通常runのmarkerを運用障害通知のcommitで書き換えません。
+本番の直列runでtracking jobが失敗した場合も、公開failure artifactを分割runと同じ通知jobへ渡します。
+直列runではCLI起動前の失敗でartifactがない場合だけ基盤障害として通知します。CLI起動後にartifactを取得できなければ送信を止めます。
+Pages leaseがactiveでも運用通知は専用branchだけを更新し、leaseを解放しません。
 
 ## 曖昧なDiscord送達を手動解決する
 

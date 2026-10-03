@@ -25,6 +25,7 @@ const dailyFailureJobs = new Set([
   "notification-history-pages",
   "complete",
   "recovery-router",
+  "tracking",
   "notify-operations",
   "report-workflow",
 ]);

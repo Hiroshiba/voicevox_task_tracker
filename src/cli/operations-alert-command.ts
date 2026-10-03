@@ -71,6 +71,7 @@ export function parseNotifyOperations(args: readonly string[]): NotifyOperations
     "complete",
     "recovery-router",
     "resolve-delivery",
+    "tracking",
   ]);
   if (failedJobs.some((job) => !allowedJobs.has(job))) {
     throw usageError("--failed-jobには既知のworkflow job名を指定してください");

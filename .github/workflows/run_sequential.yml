@@ -59,6 +59,8 @@ jobs:
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    outputs:
+      command_started: ${{ steps.run.outputs.command_started }}
     permissions:
       contents: write
       actions: write
@@ -142,6 +144,7 @@ jobs:
               arguments+=(--repository "$repository")
             done
           fi
+          echo 'command_started=true' >> "$GITHUB_OUTPUT"
           PATH="$PWD/node_modules/.bin:$PATH" node --enable-source-maps dist/cli/tracker-run.js "${arguments[@]}"
       - name: 直列runのreportを保存
         if: always()
@@ -195,3 +198,19 @@ jobs:
           runtime-cli: dist/cli/tracker-run.js
           retention-days: 7
           diagnostics-key: ${{ secrets.VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64 }}
+
+  notify-operations:
+    needs: tracking
+    if: always() && needs.tracking.result == 'failure'
+    permissions:
+      contents: write
+      actions: read
+    uses: ./.github/workflows/_tracking-notify-operations.yml
+    with:
+      state_ref: tracker-state
+      config_path: config.yml
+      workflow_kind: daily
+      stage_results_json: ${{ toJSON(needs) }}
+      infrastructure_failure_eligible: ${{ needs.tracking.outputs.command_started != 'true' }}
+      artifact_retention_days: 7
+    secrets: inherit
