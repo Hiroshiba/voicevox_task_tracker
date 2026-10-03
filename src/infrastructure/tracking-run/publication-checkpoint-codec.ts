@@ -66,7 +66,6 @@ export type DecodedPublicationArtifact = Readonly<{
 export type EncodedPublicationCheckpoint = Readonly<{
   artifactBytes: Uint8Array;
   sidecarBytes: Uint8Array;
-  decoded: DecodedPublicationArtifact;
 }>;
 
 /** 外部から期待するrun、base、設定、runtimeの識別。 */
@@ -279,29 +278,7 @@ export function encodePublicationCheckpoint(
     checkpointFileDigest: digest.sha256Bytes(artifactBytes),
   });
   const sidecarBytes = new TextEncoder().encode(serializeCanonicalJsonLine(sidecar));
-  const checkpoint = publicationCheckpointSchema.parse({
-    runIdentity: logical.runIdentity,
-    executionPolicy: logical.executionPolicy,
-    baseStateRevision: logical.baseStateRevision,
-    configDigest: logical.configDigest,
-    ...(input.analysisCompletedStages == null
-      ? {}
-      : { analysisCompletedStages: input.analysisCompletedStages }),
-    validatedPayload: validatedPayloadValue,
-    publicationPlan: storedPlan,
-  });
-  const decoded = Object.freeze({
-    checkpoint,
-    validatedPayload: input.validatedPayload,
-    validated,
-    publicationPlan,
-    runtimeIdentity: input.runtimeIdentity,
-    checkpointDigest,
-    checkpointFileDigest: sidecar.checkpointFileDigest,
-    artifactFileName: sidecar.artifactFileName,
-  });
-  issuedArtifacts.add(decoded);
-  return Object.freeze({ artifactBytes, sidecarBytes, decoded });
+  return Object.freeze({ artifactBytes, sidecarBytes });
 }
 
 /** sidecar、二重digest、識別、canonical frameと参照閉包を検証する。 */

@@ -2,6 +2,7 @@ import { basename, resolve } from "node:path";
 import type { SequentialPublicationInput } from "../sequential-publication-input.js";
 import type { PersistedRun } from "./contracts.js";
 
+import type { RuntimeIdentity } from "../../../application/tracking-run/contracts/runtime-identity.js";
 import {
   PagesEffectNotStartedError,
   publishPagesWithEffect,
@@ -22,7 +23,11 @@ import {
 import { readNotificationMessageState } from "../notification-message-state.js";
 import type { BoundPublicationCheckpoint } from "../publication-checkpoint-binding.js";
 import { bindPublicationCheckpoint } from "../publication-checkpoint-binding.js";
-import { encodePublicationCheckpoint } from "../publication-checkpoint-codec.js";
+import {
+  decodePublicationArtifact,
+  encodePublicationCheckpoint,
+  type DecodedPublicationArtifact,
+} from "../publication-checkpoint-codec.js";
 import { writePublicationCheckpointFile } from "../publication-checkpoint-file.js";
 import { nodeCheckpointCompressionPort } from "../publication-checkpoint-gzip.js";
 import {
@@ -35,6 +40,38 @@ import type { DailyPublicationStageHandlers } from "./stage-handler-contracts.js
 import type { RunPublicationAdapters } from "./contracts.js";
 import { buildPublicPages } from "./pages.js";
 import { persistValidatedRun } from "./persistence.js";
+
+function roundTripDailyCheckpoint(
+  input: SequentialPublicationInput,
+  runtimeIdentity: RuntimeIdentity,
+): DecodedPublicationArtifact {
+  const { configuration, planned } = input;
+  const validatedPayload = createCollectAnalyzePayload({
+    invocation: input.invocation,
+    configuration,
+    validated: planned.validated,
+    diagnostics: input.diagnostics,
+  });
+  const artifactFileName = "validated-run.cpk";
+  const encoded = encodePublicationCheckpoint(
+    { planned, validatedPayload, runtimeIdentity, artifactFileName },
+    nodeContentDigestPort,
+    nodeCheckpointCompressionPort,
+  );
+  return decodePublicationArtifact(
+    encoded.artifactBytes,
+    encoded.sidecarBytes,
+    {
+      runtimeIdentity,
+      expectedRunId: input.invocation.runId,
+      baseStateRevision: planned.validated.core.baseRevision,
+      configDigest: planned.validated.core.configDigest,
+      artifactFileName,
+    },
+    nodeContentDigestPort,
+    nodeCheckpointCompressionPort,
+  );
+}
 
 /** 完全性検証済みrunをcodec往復済みcheckpointへ結ぶ。 */
 export async function prepareDailyCheckpoint(
@@ -58,22 +95,7 @@ export async function prepareDailyCheckpoint(
     planned.validated.core.executionPolicy,
     dependencies.adapters.environment,
   );
-  const validatedPayload = createCollectAnalyzePayload({
-    invocation: input.invocation,
-    configuration,
-    validated: planned.validated,
-    diagnostics: input.diagnostics,
-  });
-  const encoded = encodePublicationCheckpoint(
-    {
-      planned,
-      validatedPayload,
-      runtimeIdentity: runtime.runtimeIdentity,
-      artifactFileName: "validated-run.cpk",
-    },
-    nodeContentDigestPort,
-    nodeCheckpointCompressionPort,
-  );
+  const decoded = roundTripDailyCheckpoint(input, runtime.runtimeIdentity);
   const adapter = dependencies.adapters.createStateBranchAdapter();
   const snapshot = await readExactStateSnapshot(
     adapter,
@@ -87,9 +109,9 @@ export async function prepareDailyCheckpoint(
     planned.validated.core.baseRevision,
   );
   const bound = bindPublicationCheckpoint(
-    encoded.decoded,
+    decoded,
     {
-      checkpointFileDigest: encoded.decoded.checkpointFileDigest,
+      checkpointFileDigest: decoded.checkpointFileDigest,
       runtimeRecoveryPlan: runtime.runtimeRecoveryPlan,
     },
     {
