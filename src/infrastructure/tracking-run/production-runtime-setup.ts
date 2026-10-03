@@ -15,15 +15,17 @@ import {
   type StatePersistenceConfiguration,
 } from "../../persistence/index.js";
 import { assertNoProductionPagesEffectLease } from "../../persistence/production-pages-effect-lease.js";
+import {
+  parseSandboxEnvironmentManifest,
+  type SandboxEnvironmentManifest,
+} from "../../persistence/sandbox-environment-manifest.js";
+import { SANDBOX_ENVIRONMENT_MANIFEST_PATH } from "../../persistence/sandbox-environment-path.js";
 import { UnreachableError, assertNonNullable } from "../../util/index.js";
 import { CliCodexAuthenticationError, CliCredentialsError, CliExecutableError } from "./errors.js";
 import {
-  SANDBOX_MANIFEST_PATH,
   assertSandboxManifestMatchesContext,
   assertSandboxOrigin,
-  parseSandboxManifest,
   sandboxBranchForEnvironment,
-  type SandboxManifest,
   type SandboxRunContext,
 } from "./sandbox-context.js";
 
@@ -55,7 +57,7 @@ export type RuntimeExecutionTarget =
   | Readonly<{
       kind: "sandbox";
       state: StatePersistenceConfiguration;
-      manifest: SandboxManifest;
+      manifest: SandboxEnvironmentManifest;
       context: SandboxRunContext;
     }>
   | Readonly<{
@@ -206,10 +208,6 @@ export function readRuntimeCredentials(
   });
 }
 
-function parseSandboxManifestBytes(bytes: Uint8Array): SandboxManifest {
-  return parseSandboxManifest(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)));
-}
-
 /** productionまたはsandboxの実行対象を解決する。 */
 export async function resolveRuntimeTarget(
   dependencies: RuntimeTargetDependencies,
@@ -257,11 +255,19 @@ export async function resolveRuntimeTarget(
   if (head.revision !== context.baseStateRevision) {
     throw new StateBranchConflictError();
   }
-  const manifestResult = await stateAdapter.readFile(head.revision, SANDBOX_MANIFEST_PATH);
+  const manifestResult = await stateAdapter.readFile(
+    head.revision,
+    SANDBOX_ENVIRONMENT_MANIFEST_PATH,
+  );
   if (manifestResult.status === "missing") {
     throw new TypeError("sandbox environment manifestがありません");
   }
-  const manifest = parseSandboxManifestBytes(manifestResult.bytes);
+  const manifest = parseSandboxEnvironmentManifest(
+    new TextDecoder("utf-8", { fatal: true }).decode(manifestResult.bytes),
+  );
+  if (manifest.schemaVersion !== 2) {
+    throw new TypeError("sandbox environment manifestの版が不正です");
+  }
   assertSandboxManifestMatchesContext(manifest, context);
   assertNonNullable(
     stateAdapter.resolveRepositoryRevision,

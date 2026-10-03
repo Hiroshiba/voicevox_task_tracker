@@ -5,8 +5,8 @@ import {
   createAiAnalysisTarget,
   type AiAnalysisTarget,
 } from "../../codex/index.js";
+import type { SandboxEnvironmentManifest } from "../../persistence/sandbox-environment-manifest.js";
 
-export const SANDBOX_MANIFEST_PATH = "state/sandbox-environment.json" as const;
 export const SANDBOX_BRANCH_PREFIX = "sandbox-state/" as const;
 export const SANDBOX_SOURCE_REPOSITORY = "Hiroshiba/voicevox_task_tracker" as const;
 
@@ -33,30 +33,18 @@ const analysisModeSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
-const sandboxManifestSchema = z.strictObject({
+const sandboxContextSchema = z.strictObject({
   schemaVersion: z.literal(1),
   environmentId: environmentIdSchema,
   sourceRepository: z.literal(SANDBOX_SOURCE_REPOSITORY),
   sourceRef: sourceRefSchema,
   seedRevision: gitRevisionSchema,
-});
-
-const sandboxContextSchema = z.strictObject({
-  ...sandboxManifestSchema.shape,
   codeRevision: gitRevisionSchema,
   baseStateRevision: gitRevisionSchema,
   workflowRunId: workflowRunIdSchema,
   workflowRunAttempt: workflowRunAttemptSchema,
   analysisMode: analysisModeSchema,
 });
-
-export type SandboxManifest = Readonly<{
-  schemaVersion: 1;
-  environmentId: string;
-  sourceRepository: typeof SANDBOX_SOURCE_REPOSITORY;
-  sourceRef: string;
-  seedRevision: string;
-}>;
 
 type SandboxAnalysisMode =
   | Readonly<{
@@ -67,24 +55,18 @@ type SandboxAnalysisMode =
       target: AiAnalysisTarget;
     }>;
 
-export type SandboxRunContext = SandboxManifest &
-  Readonly<{
-    codeRevision: string;
-    baseStateRevision: string;
-    workflowRunId: string;
-    workflowRunAttempt: number;
-    analysisMode: SandboxAnalysisMode;
-  }>;
-
-function freezeManifest(value: z.output<typeof sandboxManifestSchema>): SandboxManifest {
-  return Object.freeze({
-    schemaVersion: value.schemaVersion,
-    environmentId: value.environmentId,
-    sourceRepository: value.sourceRepository,
-    sourceRef: value.sourceRef,
-    seedRevision: value.seedRevision,
-  });
-}
+export type SandboxRunContext = Readonly<{
+  schemaVersion: 1;
+  environmentId: string;
+  sourceRepository: typeof SANDBOX_SOURCE_REPOSITORY;
+  sourceRef: string;
+  seedRevision: string;
+  codeRevision: string;
+  baseStateRevision: string;
+  workflowRunId: string;
+  workflowRunAttempt: number;
+  analysisMode: SandboxAnalysisMode;
+}>;
 
 function freezeAnalysisMode(value: z.output<typeof analysisModeSchema>): SandboxAnalysisMode {
   if (value.kind === "normal") {
@@ -98,23 +80,15 @@ function freezeAnalysisMode(value: z.output<typeof analysisModeSchema>): Sandbox
   });
 }
 
-/** 未検証値からsandbox manifestを生成する。 */
-export function parseSandboxManifest(value: unknown): SandboxManifest {
-  return freezeManifest(sandboxManifestSchema.parse(value));
-}
-
 /** 未検証値からsandbox実行contextを生成する。 */
 export function parseSandboxContext(value: unknown): SandboxRunContext {
   const parsed = sandboxContextSchema.parse(value);
-  const manifest = freezeManifest({
+  return Object.freeze({
     schemaVersion: parsed.schemaVersion,
     environmentId: parsed.environmentId,
     sourceRepository: parsed.sourceRepository,
     sourceRef: parsed.sourceRef,
     seedRevision: parsed.seedRevision,
-  });
-  return Object.freeze({
-    ...manifest,
     codeRevision: parsed.codeRevision,
     baseStateRevision: parsed.baseStateRevision,
     workflowRunId: parsed.workflowRunId,
@@ -131,15 +105,13 @@ export function sandboxBranchForEnvironment(environmentId: string): string {
 
 /** manifestとsandbox contextの固定識別情報が一致することを検証する。 */
 export function assertSandboxManifestMatchesContext(
-  manifest: SandboxManifest,
+  manifest: SandboxEnvironmentManifest,
   context: SandboxRunContext,
 ): void {
-  const parsedManifest = parseSandboxManifest(manifest);
-  const parsedContext = parseSandboxContext(context);
   if (
-    parsedManifest.environmentId !== parsedContext.environmentId ||
-    parsedManifest.sourceRef !== parsedContext.sourceRef ||
-    parsedManifest.seedRevision !== parsedContext.seedRevision
+    manifest.environmentId !== context.environmentId ||
+    manifest.sourceRef !== context.sourceRef ||
+    manifest.seedRevision !== context.seedRevision
   ) {
     throw new TypeError("sandbox manifestと実行contextの識別情報が一致しません");
   }
