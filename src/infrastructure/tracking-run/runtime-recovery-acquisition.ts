@@ -171,9 +171,8 @@ async function downloadWorkflowBundle(
     process.stderr.write("旧workflow artifactを取得できないためexact revisionから再buildします\n");
     return undefined;
   }
-  const root = join(destination, "runtime");
-  await verifyRecoveryBundle(root, plan);
-  return root;
+  await verifyRecoveryBundle(destination, plan);
+  return destination;
 }
 
 export type SequentialRuntimeRecoveryV1 = Readonly<{
