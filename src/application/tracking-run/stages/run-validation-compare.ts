@@ -100,9 +100,13 @@ export function frozenRunCopy<Value>(value: Value): Value {
     if (typeof current !== "object" || current == null || visited.has(current)) continue;
     visited.add(current);
     if (isUnknownArray(current)) {
-      pending.push(...current);
+      for (const element of current) {
+        pending.push(element);
+      }
     } else if (isRecord(current)) {
-      pending.push(...Object.values(current));
+      for (const propertyValue of Object.values(current)) {
+        pending.push(propertyValue);
+      }
     }
     Object.freeze(current);
   }
