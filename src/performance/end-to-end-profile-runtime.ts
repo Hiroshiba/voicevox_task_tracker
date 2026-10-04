@@ -81,6 +81,9 @@ export async function runEndToEndPerformanceRuntime(
     const runner = new SequentialRunRunner(
       createDailyDependencies({
         ...harness.adapters,
+        observePerformanceDetail: (detail) => {
+          observeMemory({ phase, boundary: "detail", ...detail });
+        },
         observeInitialStateCommit: (step) => {
           observeMemory({ phase, boundary: "initial_state_commit", step });
         },

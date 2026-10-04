@@ -1,4 +1,5 @@
 import type { PagesDeploymentIntent } from "../../../application/tracking-run/pages-build-contracts.js";
+import type { PerformanceDetailObserver } from "../../../application/tracking-run/contracts/performance-detail-observation.js";
 import type {
   CodexAdapterConfiguration,
   CodexAdapterDependencies,
@@ -32,6 +33,7 @@ export type ProductionRuntimeAdapters = Readonly<{
   environment: Readonly<NodeJS.ProcessEnv>;
   diagnosticsRecorder?: DiagnosticsJsonlRecorder;
   observeInitialStateCommit?: InitialStateCommitObserver;
+  observePerformanceDetail?: PerformanceDetailObserver;
   repositoryPath: string;
   pagesOutputDirectory: string;
   loadConfig: typeof loadConfig;

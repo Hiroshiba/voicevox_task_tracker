@@ -13,7 +13,11 @@ type SequentialStageDependencies = SequentialRunDependencies;
 export function createPrepareCheckpointStage(
   adapters: Pick<
     ProductionRuntimeAdapters,
-    "repositoryPath" | "environment" | "createStateBranchAdapter" | "now"
+    | "repositoryPath"
+    | "environment"
+    | "createStateBranchAdapter"
+    | "now"
+    | "observePerformanceDetail"
   >,
 ): SequentialStageDependencies["prepareCheckpoint"] {
   return (input) => prepareDailyCheckpoint({ adapters }, input);
@@ -23,7 +27,7 @@ export function createPrepareCheckpointStage(
 export function createCommitPreparedCheckpointStage(
   adapters: Pick<
     ProductionRuntimeAdapters,
-    "createStateBranchAdapter" | "now" | "observeInitialStateCommit"
+    "createStateBranchAdapter" | "now" | "observeInitialStateCommit" | "observePerformanceDetail"
   >,
 ): SequentialStageDependencies["commitPreparedCheckpoint"] {
   return (configuration, checkpoint) =>
@@ -32,7 +36,10 @@ export function createCommitPreparedCheckpointStage(
 
 /** 初回commit後のexact stateを再読込する。 */
 export function createReadCommittedStateStage(
-  adapters: Pick<ProductionRuntimeAdapters, "createStateBranchAdapter" | "now">,
+  adapters: Pick<
+    ProductionRuntimeAdapters,
+    "createStateBranchAdapter" | "now" | "observePerformanceDetail"
+  >,
 ): SequentialStageDependencies["readCommittedState"] {
   return ({ configuration, reference }) =>
     readCommittedInitialState({
@@ -41,5 +48,8 @@ export function createReadCommittedStateStage(
       knownSecrets: configuration.credentials.knownSecrets,
       reference,
       now: adapters.now,
+      ...(adapters.observePerformanceDetail == null
+        ? {}
+        : { observePerformanceDetail: adapters.observePerformanceDetail }),
     });
 }

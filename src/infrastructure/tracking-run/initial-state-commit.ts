@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import type { PerformanceDetailObserver } from "../../application/tracking-run/contracts/performance-detail-observation.js";
 import { stateCommitReceiptOperationId } from "../../application/tracking-run/observed-state-commit.js";
 import { createReceipt } from "../../application/tracking-run/receipt-codec.js";
 import type { InitialStateCommitReceipt } from "../../application/tracking-run/receipt-schema.js";
@@ -30,6 +31,7 @@ export type InitialStateCommitPort = Readonly<{
   knownSecrets: readonly string[];
   now: () => Date;
   observeProgress?: InitialStateCommitObserver;
+  observePerformanceDetail?: PerformanceDetailObserver;
 }>;
 
 /** 初回state commitの確定revisionと実行または再観測receipt。 */
@@ -82,37 +84,44 @@ export async function commitInitialState(
     operationId,
     runId: bound.checkpoint.runIdentity.runId,
   });
-  const written = await writeStateCas(statePort.adapter, statePort.configuration, expectedHead, {
-    commitIdentity,
-    build: async (parent) => {
-      const files = await prepareInitialStateFiles(
-        bound,
-        statePort.adapter,
-        statePort.configuration,
-        statePort.migrationTimezone,
-        parent,
-        statePort.knownSecrets,
-        statePort.observeProgress,
-      );
-      return {
-        updates: files.updates,
-        deletions: files.deletions,
-        message,
-        committedAt: bound.publicationPlan.initialStateWriteSet.snapshot.generatedAt,
-        commitIdentity,
-      };
+  const written = await writeStateCas(
+    statePort.adapter,
+    statePort.configuration,
+    expectedHead,
+    {
+      commitIdentity,
+      build: async (parent) => {
+        const files = await prepareInitialStateFiles(
+          bound,
+          statePort.adapter,
+          statePort.configuration,
+          statePort.migrationTimezone,
+          parent,
+          statePort.knownSecrets,
+          statePort.observeProgress,
+          statePort.observePerformanceDetail,
+        );
+        return {
+          updates: files.updates,
+          deletions: files.deletions,
+          message,
+          committedAt: bound.publicationPlan.initialStateWriteSet.snapshot.generatedAt,
+          commitIdentity,
+        };
+      },
+      verifyCandidate: (files, _revision, request) => {
+        verifyInitialStateCandidate(
+          bound,
+          statePort.configuration,
+          files,
+          request.updates,
+          statePort.knownSecrets,
+          statePort.observeProgress,
+        );
+      },
     },
-    verifyCandidate: (files, _revision, request) => {
-      verifyInitialStateCandidate(
-        bound,
-        statePort.configuration,
-        files,
-        request.updates,
-        statePort.knownSecrets,
-        statePort.observeProgress,
-      );
-    },
-  });
+    statePort.observePerformanceDetail,
+  );
   statePort.observeProgress?.("cas_completed");
   if (written.status === "conflict") {
     throw new StateBranchConflictError();
@@ -134,6 +143,7 @@ export async function commitInitialState(
       observedAt: statePort.now().toISOString(),
       position: { kind: "first" },
     },
+    statePort.observePerformanceDetail,
   );
   statePort.observeProgress?.("receipt_observed");
   if (observed.receipt.receiptType !== "initial_state_commit") {

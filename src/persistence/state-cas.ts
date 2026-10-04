@@ -1,3 +1,4 @@
+import type { PerformanceDetailObserver } from "../application/tracking-run/contracts/performance-detail-observation.js";
 import { assertRunTransactionMarkerTransition } from "../application/tracking-run/run-transaction-marker.js";
 import {
   validateStatePersistenceConfiguration,
@@ -65,6 +66,7 @@ export async function writeStateCas(
   configuration: StatePersistenceConfiguration,
   expectedTrackingHead: StateBranchHead,
   requestInput: StateCasCommitRequestInput,
+  observePerformanceDetail?: PerformanceDetailObserver,
 ): Promise<StateCasWriteResult> {
   validateStatePersistenceConfiguration(configuration);
   const observedHead = await adapter.resolveHead(configuration.branch);
@@ -124,6 +126,10 @@ export async function writeStateCas(
         )
       : new Map<string, StateFileReadResult>();
   const previousVerified = verifyRunTransactionFiles(previousFiles, configuration);
+  observePerformanceDetail?.({
+    step: "cas_previous_transaction_verified",
+    count: previousFiles.size,
+  });
   if (previousVerified != null && observedHead.status === "present") {
     if (
       previousVerified.snapshotSchemaVersion === "21" &&
@@ -163,6 +169,11 @@ export async function writeStateCas(
     }
     throw error;
   }
+  observePerformanceDetail?.({
+    step: "cas_adapter_commit_completed",
+    count: request.updates.length,
+    bytes: request.updates.reduce((total, update) => total + update.bytes.length, 0),
+  });
   const inspectedCommit = await adapter.readCommit(commit.revision);
   if (
     inspectedCommit.metadata.changedPathManifestDigest !==
@@ -180,12 +191,17 @@ export async function writeStateCas(
     throw new TypeError("commit候補のmetadataをexact commitから照合できません");
   }
   const candidateFiles = await verifyStateCasCandidate(adapter, inspectedCommit, request);
+  observePerformanceDetail?.({ step: "cas_candidate_tree_read", count: candidateFiles.size });
   if ("build" in requestInput) {
     await requestInput.verifyCandidate?.(candidateFiles, commit.revision, request);
   }
   const verifiedCandidate = isOrthogonalStateCommitScope(commit.metadata.commitScope)
     ? verifyRunTransactionFiles(candidateFiles, configuration)
     : verifyCurrentRunTransactionFiles(candidateFiles, configuration);
+  observePerformanceDetail?.({
+    step: "cas_current_transaction_verified",
+    count: candidateFiles.size,
+  });
   if (previousVerified != null && verifiedCandidate == null) {
     throw new TypeError("既存run transactionをcommit候補から削除できません");
   }
@@ -225,6 +241,7 @@ export async function writeStateCas(
           ? commit.revision
           : verifiedCandidate.marker.initialStateRevision,
       );
+      observePerformanceDetail?.({ step: "cas_commit_chain_verified" });
     }
   }
   try {
@@ -261,5 +278,6 @@ export async function writeStateCas(
     }
     return Object.freeze({ status: "conflict", observedHead: after });
   }
+  observePerformanceDetail?.({ step: "cas_published" });
   return Object.freeze({ status: "committed", commit, advance, observed: false });
 }

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import type { PerformanceDetailObserver } from "../../../application/tracking-run/contracts/performance-detail-observation.js";
 import type { InitialStateCommitReference } from "../../../application/tracking-run/engine.js";
 import type { StateCommitReceiptEvidence } from "../../../application/tracking-run/observed-state-commit.js";
 import { verifyReceiptChain } from "../../../application/tracking-run/receipt-chain.js";
@@ -21,6 +22,7 @@ export async function readCommittedInitialState(
     knownSecrets: readonly string[];
     reference: InitialStateCommitReference;
     now: () => Date;
+    observePerformanceDetail?: PerformanceDetailObserver;
   }>,
 ): Promise<
   PersistedRun &
@@ -34,6 +36,7 @@ export async function readCommittedInitialState(
     input.configuration,
     input.reference.stateRevision,
   );
+  input.observePerformanceDetail?.({ step: "committed_tree_read", count: state.files.size });
   const observed = await observeStateCommitAtRevision(
     input.adapter,
     input.configuration,
@@ -45,7 +48,9 @@ export async function readCommittedInitialState(
       observedAt: input.now().toISOString(),
       position: { kind: "first" },
     },
+    input.observePerformanceDetail,
   );
+  input.observePerformanceDetail?.({ step: "committed_receipt_reobserved" });
   const receipt = observed.receipt;
   if (observed.evidence.receiptType !== "initial_state_commit") {
     throw new TypeError("初回state commitの再観測証拠がありません");
@@ -79,6 +84,7 @@ export async function readCommittedInitialState(
     [record, marker],
     input.knownSecrets,
   );
+  input.observePerformanceDetail?.({ step: "committed_public_safety_checked" });
   return Object.freeze({
     result: Object.freeze({ revision: state.revision, receipt }),
     stateContentDigest: receipt.result.stateContentDigest,

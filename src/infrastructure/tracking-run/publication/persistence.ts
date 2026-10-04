@@ -1,4 +1,5 @@
 import { serializeCanonicalJson } from "../../../canonical-json/index.js";
+import type { PerformanceDetailObserver } from "../../../application/tracking-run/contracts/performance-detail-observation.js";
 import type { StateBranchAdapter } from "../../../persistence/index.js";
 import type { PublicationPlan } from "../../../publication/publication-plan-contracts.js";
 import type { InitialStateCommitObserver } from "../initial-state-commit-progress.js";
@@ -16,6 +17,7 @@ export type PersistValidatedRunInput = Readonly<{
   adapter: StateBranchAdapter;
   now: () => Date;
   observeProgress?: InitialStateCommitObserver;
+  observePerformanceDetail?: PerformanceDetailObserver;
 }>;
 
 /** 完全性検証済みrunを初期保存し、後続段階へcommit結果だけを渡す。 */
@@ -28,6 +30,9 @@ export async function persistValidatedRun(input: PersistValidatedRunInput): Prom
     knownSecrets: input.configuration.credentials.knownSecrets,
     now: input.now,
     ...(input.observeProgress == null ? {} : { observeProgress: input.observeProgress }),
+    ...(input.observePerformanceDetail == null
+      ? {}
+      : { observePerformanceDetail: input.observePerformanceDetail }),
   });
   return Object.freeze({ result });
 }

@@ -3,6 +3,7 @@ import type {
   PagesDeploymentIntent,
 } from "../../../application/tracking-run/pages-build-contracts.js";
 import type { ReceiptChainEvidence } from "../../../application/tracking-run/receipt-chain-schema.js";
+import type { PerformanceDetailObserver } from "../../../application/tracking-run/contracts/performance-detail-observation.js";
 import type { PagesBuildReceipt } from "../../../application/tracking-run/receipt-schema.js";
 import type { Sha256Hash } from "../../../canonical-json/sha256.js";
 import type { Config, loadConfig } from "../../../config/index.js";
@@ -94,6 +95,7 @@ export type RunPublicationAdapters = Readonly<{
   environment: Readonly<NodeJS.ProcessEnv>;
   diagnosticsRecorder?: DiagnosticsJsonlRecorder;
   observeInitialStateCommit?: InitialStateCommitObserver;
+  observePerformanceDetail?: PerformanceDetailObserver;
   repositoryPath: string;
   pagesOutputDirectory: string;
   loadConfig: typeof loadConfig;

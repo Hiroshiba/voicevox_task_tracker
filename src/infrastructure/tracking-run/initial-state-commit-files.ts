@@ -1,3 +1,4 @@
+import type { PerformanceDetailObserver } from "../../application/tracking-run/contracts/performance-detail-observation.js";
 import {
   DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
   INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1,
@@ -140,6 +141,7 @@ export async function prepareInitialStateFiles(
   parent: StateBranchHead,
   knownSecrets: readonly string[],
   observeProgress: InitialStateCommitObserver | undefined,
+  observePerformanceDetail: PerformanceDetailObserver | undefined,
 ): Promise<PreparedInitialFiles> {
   assertStatePaths(bound, configuration);
   observeProgress?.("value_digests");
@@ -217,13 +219,26 @@ export async function prepareInitialStateFiles(
   }
   observeProgress?.("evidence_closure");
   assertPersonalReminderEvidenceClosure(snapshot);
-  const evidenceIndex = createPersonalReminderEvidenceSourceIndex([
-    ...snapshot.items.map((item) => item.evidence),
-    ...snapshot.relations.map((relation) => relation.evidence),
-    ...(previousSnapshot?.items.map((item) => item.evidence) ?? []),
-    ...(previousSnapshot?.relations.map((relation) => relation.evidence) ?? []),
-  ]);
-  assertPersonalReminderEvidenceRecordsClosure(snapshot, evidenceIndex);
+  observePerformanceDetail?.({
+    step: "closure_current_complete",
+    count: snapshot.items.length + snapshot.relations.length,
+  });
+  if (previousSnapshot != null) {
+    const evidenceIndex = createPersonalReminderEvidenceSourceIndex([
+      ...snapshot.items.map((item) => item.evidence),
+      ...snapshot.relations.map((relation) => relation.evidence),
+      ...previousSnapshot.items.map((item) => item.evidence),
+      ...previousSnapshot.relations.map((relation) => relation.evidence),
+    ]);
+    assertPersonalReminderEvidenceRecordsClosure(snapshot, evidenceIndex);
+  }
+  observePerformanceDetail?.({
+    step: "closure_prior_records_complete",
+    count:
+      previousSnapshot == null
+        ? 0
+        : previousSnapshot.items.length + previousSnapshot.relations.length,
+  });
   observeProgress?.("history");
   const historyRecord = createStateHistoryRecord(
     previousSnapshot,

@@ -2,6 +2,7 @@ import { basename, resolve } from "node:path";
 import type { SequentialPublicationInput } from "../sequential-publication-input.js";
 import type { PersistedRun } from "./contracts.js";
 
+import type { PerformanceDetailObserver } from "../../../application/tracking-run/contracts/performance-detail-observation.js";
 import type { RuntimeIdentity } from "../../../application/tracking-run/contracts/runtime-identity.js";
 import {
   PagesEffectNotStartedError,
@@ -44,6 +45,7 @@ import { assertPlannedAiCacheAdditions, persistValidatedRun } from "./persistenc
 function roundTripDailyCheckpoint(
   input: SequentialPublicationInput,
   runtimeIdentity: RuntimeIdentity,
+  observePerformanceDetail: PerformanceDetailObserver | undefined,
 ): DecodedPublicationArtifact {
   const { configuration, planned } = input;
   const validatedPayload = createCollectAnalyzePayload({
@@ -52,13 +54,22 @@ function roundTripDailyCheckpoint(
     validated: planned.validated,
     diagnostics: input.diagnostics,
   });
+  observePerformanceDetail?.({
+    step: "checkpoint_payload_created",
+    count: planned.validated.snapshot.items.length,
+  });
   const artifactFileName = "validated-run.cpk";
   const encoded = encodePublicationCheckpoint(
     { planned, validatedPayload, runtimeIdentity, artifactFileName },
     nodeContentDigestPort,
     nodeCheckpointCompressionPort,
   );
-  return decodePublicationArtifact(
+  observePerformanceDetail?.({
+    step: "checkpoint_encoded",
+    count: 2,
+    bytes: encoded.artifactBytes.length + encoded.sidecarBytes.length,
+  });
+  const decoded = decodePublicationArtifact(
     encoded.artifactBytes,
     encoded.sidecarBytes,
     {
@@ -71,6 +82,11 @@ function roundTripDailyCheckpoint(
     nodeContentDigestPort,
     nodeCheckpointCompressionPort,
   );
+  observePerformanceDetail?.({
+    step: "checkpoint_decoded",
+    count: decoded.validated.evidenceClosureWitness.resolvedUses.length,
+  });
+  return decoded;
 }
 
 /** 完全性検証済みrunをcodec往復済みcheckpointへ結ぶ。 */
@@ -78,7 +94,11 @@ export async function prepareDailyCheckpoint(
   dependencies: Readonly<{
     adapters: Pick<
       RunPublicationAdapters,
-      "repositoryPath" | "environment" | "createStateBranchAdapter" | "now"
+      | "repositoryPath"
+      | "environment"
+      | "createStateBranchAdapter"
+      | "now"
+      | "observePerformanceDetail"
     >;
   }>,
   input: SequentialPublicationInput,
@@ -95,7 +115,11 @@ export async function prepareDailyCheckpoint(
     planned.validated.core.executionPolicy,
     dependencies.adapters.environment,
   );
-  const decoded = roundTripDailyCheckpoint(input, runtime.runtimeIdentity);
+  const decoded = roundTripDailyCheckpoint(
+    input,
+    runtime.runtimeIdentity,
+    dependencies.adapters.observePerformanceDetail,
+  );
   const adapter = dependencies.adapters.createStateBranchAdapter();
   const snapshot = await readExactStateSnapshot(
     adapter,
@@ -103,13 +127,21 @@ export async function prepareDailyCheckpoint(
     configuration.config.staleness.timezone,
     planned.validated.core.baseRevision,
   );
+  dependencies.adapters.observePerformanceDetail?.({
+    step: "checkpoint_base_snapshot_read",
+    count: snapshot.status === "available" ? snapshot.snapshot.items.length : 0,
+  });
   const previousNotificationLedger = await loadStateNotificationLedgers(
     adapter,
     configuration.target.state,
     planned.validated.core.baseRevision,
   );
+  dependencies.adapters.observePerformanceDetail?.({
+    step: "checkpoint_base_ledger_read",
+    count: previousNotificationLedger.entries.length,
+  });
   assertPlannedAiCacheAdditions(input.state, decoded.publicationPlan);
-  return bindPublicationCheckpoint(
+  const bound = bindPublicationCheckpoint(
     decoded,
     {
       checkpointFileDigest: decoded.checkpointFileDigest,
@@ -122,6 +154,11 @@ export async function prepareDailyCheckpoint(
     },
     nodeContentDigestPort,
   );
+  dependencies.adapters.observePerformanceDetail?.({
+    step: "checkpoint_bound",
+    count: bound.logicalCandidateCount,
+  });
+  return bound;
 }
 
 /** 検証済みcheckpointから初回stateだけをcommitする。 */
@@ -129,7 +166,7 @@ export async function commitDailyCheckpoint(
   dependencies: Readonly<{
     adapters: Pick<
       RunPublicationAdapters,
-      "createStateBranchAdapter" | "now" | "observeInitialStateCommit"
+      "createStateBranchAdapter" | "now" | "observeInitialStateCommit" | "observePerformanceDetail"
     >;
   }>,
   configuration: SequentialPublicationInput["configuration"],
@@ -143,6 +180,9 @@ export async function commitDailyCheckpoint(
     ...(dependencies.adapters.observeInitialStateCommit == null
       ? {}
       : { observeProgress: dependencies.adapters.observeInitialStateCommit }),
+    ...(dependencies.adapters.observePerformanceDetail == null
+      ? {}
+      : { observePerformanceDetail: dependencies.adapters.observePerformanceDetail }),
   });
 }
 

@@ -98,7 +98,8 @@ export function verifyRunTransactionFiles(
       cause: new TypeError("永続stateに回復不能なruntimeを保存できません"),
     });
   }
-  const snapshotSource = source(requiredFile(files, configuration.snapshotPath));
+  const snapshotBytes = requiredFile(files, configuration.snapshotPath);
+  const snapshotSource = source(snapshotBytes);
   const snapshotValue: unknown = JSON.parse(snapshotSource);
   const snapshotVersion = z
     .object({ schemaVersion: z.string() })
@@ -130,7 +131,9 @@ export function verifyRunTransactionFiles(
         cause: new TypeError("snapshotがcanonical JSONではありません"),
       });
     }
-    snapshotDigest = hashCanonicalJson(snapshot);
+    snapshotDigest = nodeContentDigestPort.sha256Bytes(
+      snapshotBytes.subarray(0, snapshotBytes.length - 1),
+    );
     snapshotRunId = snapshot.run.id;
   } else {
     throw new StateFormatError("snapshot", {

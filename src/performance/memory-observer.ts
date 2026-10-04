@@ -3,6 +3,7 @@ import { performance } from "node:perf_hooks";
 import { getHeapStatistics } from "node:v8";
 import { z } from "zod";
 
+import { performanceDetailEventSchema } from "../application/tracking-run/contracts/performance-detail-observation.js";
 import { runFailureStageSchema } from "../application/tracking-run/failure-artifact.js";
 import { initialStateCommitStepSchema } from "../infrastructure/tracking-run/initial-state-commit-progress.js";
 
@@ -13,6 +14,7 @@ const observationEventSchema = z.discriminatedUnion("boundary", [
     boundary: z.literal("initial_state_commit"),
     step: initialStateCommitStepSchema,
   }),
+  performanceDetailEventSchema.extend({ phase: phaseSchema, boundary: z.literal("detail") }),
   z.strictObject({ phase: phaseSchema, boundary: z.enum(["begin", "success"]) }),
   z.strictObject({
     phase: phaseSchema,

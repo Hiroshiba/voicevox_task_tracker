@@ -220,7 +220,7 @@ export async function assertStateCommitChain(
   for (let count = 0; count < MAX_INTERVENING_COMMITS; count += 1) {
     const [commit, current] = await Promise.all([
       adapter.readCommit(revision),
-      readVerifiedAt(adapter, configuration, revision),
+      count === 0 ? latest : readVerifiedAt(adapter, configuration, revision),
     ]);
     const parentRevision = commit.parent.status === "present" ? commit.parent.revision : "unborn";
     if (

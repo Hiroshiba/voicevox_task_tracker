@@ -1,3 +1,4 @@
+import type { PerformanceDetailObserver } from "../../application/tracking-run/contracts/performance-detail-observation.js";
 import { RUN_TRANSACTION_MARKER_STATE_PATH_V1 } from "../../application/tracking-run/contracts/recovery-paths.js";
 import {
   observeStateCommitReceipt,
@@ -154,6 +155,7 @@ export async function observeStateCommitAtRevision(
     observedAt: string;
     position: ObservedStateCommitPosition;
   }>,
+  observePerformanceDetail?: PerformanceDetailObserver,
 ): Promise<
   ObservedCommit<InitialStateCommitReceipt | NotificationSettlementReceipt | RunFinalizationReceipt>
 > {
@@ -161,6 +163,7 @@ export async function observeStateCommitAtRevision(
     readVerifiedTree(adapter, configuration, revision),
     adapter.readCommit(revision),
   ]);
+  observePerformanceDetail?.({ step: "receipt_tree_read", count: tree.files.size });
   const { marker, record } = tree.transaction;
   await assertStateCommitChain(
     adapter,
@@ -169,6 +172,7 @@ export async function observeStateCommitAtRevision(
     tree.transaction,
     initialStateRevision,
   );
+  observePerformanceDetail?.({ step: "receipt_commit_chain_verified" });
   if (
     commit.metadata.commitScope !== "tracking_run" ||
     commit.metadata.runId !== marker.runId ||
@@ -251,5 +255,6 @@ export async function observeStateCommitAtRevision(
     [{ receipt, evidence: { kind: "state_commit", state: evidence } }],
     nodeContentDigestPort,
   );
+  observePerformanceDetail?.({ step: "receipt_created" });
   return Object.freeze({ receipt, evidence });
 }
