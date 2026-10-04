@@ -1,4 +1,5 @@
 import type { InitialPagesPublicationEvidence } from "../../application/tracking-run/initial-pages-evidence-codec.js";
+import type { PerformanceDetailObserver } from "../../application/tracking-run/contracts/performance-detail-observation.js";
 import type { ReceiptChainEvidence } from "../../application/tracking-run/receipt-chain-schema.js";
 import type {
   InitialStateCommitReceipt,
@@ -52,6 +53,7 @@ export type NotificationMessageDeliveryPort = Readonly<{
   sender: NotificationMessageSendPort;
   recordDiagnostic: (cause: unknown) => Promise<void>;
   now: () => Date;
+  observePerformanceDetail?: PerformanceDetailObserver;
 }>;
 
 /** 後続のsettlementが判断できる送達結果。 */

@@ -27,6 +27,7 @@ import { bindPublicationCheckpoint } from "../publication-checkpoint-binding.js"
 import {
   decodePublicationArtifact,
   encodePublicationCheckpoint,
+  readPublicationArtifactManifest,
   type DecodedPublicationArtifact,
 } from "../publication-checkpoint-codec.js";
 import { writePublicationCheckpointFile } from "../publication-checkpoint-file.js";
@@ -69,6 +70,22 @@ function roundTripDailyCheckpoint(
     count: 2,
     bytes: encoded.artifactBytes.length + encoded.sidecarBytes.length,
   });
+  if (observePerformanceDetail != null) {
+    const { artifact } = readPublicationArtifactManifest(encoded.artifactBytes);
+    observePerformanceDetail({
+      step: "checkpoint_artifact_encoded",
+      bytes: encoded.artifactBytes.length,
+    });
+    observePerformanceDetail({
+      step: "checkpoint_sidecar_encoded",
+      bytes: encoded.sidecarBytes.length,
+    });
+    observePerformanceDetail({
+      step: "checkpoint_frames_encoded",
+      count: artifact.logical.frames.length,
+      bytes: artifact.logical.frames.reduce((sum, frame) => sum + frame.uncompressedByteLength, 0),
+    });
+  }
   const decoded = decodePublicationArtifact(
     encoded.artifactBytes,
     encoded.sidecarBytes,

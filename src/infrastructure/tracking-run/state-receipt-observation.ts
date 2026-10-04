@@ -51,7 +51,7 @@ async function readVerifiedTree(
 ): Promise<VerifiedTree> {
   const paths = await adapter.listFiles(revision, "state");
   const files = await adapter.readFiles(revision, paths);
-  if (files.size !== paths.length) {
+  if (files.size !== paths.length || paths.some((path) => files.get(path)?.status !== "present")) {
     throw new TypeError("観測対象のexact state file一覧が不足しています");
   }
   const transaction = verifyRunTransactionFiles(files, configuration);
@@ -171,6 +171,7 @@ export async function observeStateCommitAtRevision(
     revision,
     tree.transaction,
     initialStateRevision,
+    { revision, files: tree.files, transaction: tree.transaction },
   );
   observePerformanceDetail?.({ step: "receipt_commit_chain_verified" });
   if (

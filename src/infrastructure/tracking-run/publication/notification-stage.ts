@@ -17,6 +17,7 @@ type NotificationAdapters = Pick<
   | "now"
   | "sleep"
   | "random"
+  | "observePerformanceDetail"
 >;
 
 /** 初回Pages成功後の通知を保存済みrecordと同じsettlement stageで確定する。 */
@@ -31,6 +32,10 @@ export async function settleDailyNotifications(
     configuration,
     initialStateReceipt.result.resultingStateRevision,
   );
+  adapters.observePerformanceDetail?.({
+    step: "notification_initial_tree_read",
+    count: initial.files.size,
+  });
   const outcome = await settleNotifications(
     {
       record: initial.transaction.record,
@@ -52,6 +57,7 @@ export async function settleDailyNotifications(
     ),
   );
   if (outcome.kind !== "settled") {
+    adapters.observePerformanceDetail?.({ step: "notification_failure_boundary_started" });
     throw new NotificationSettlementFailureError(outcome);
   }
   const sentAt = outcome.messageReceipts
@@ -59,6 +65,10 @@ export async function settleDailyNotifications(
     .map((entry) => entry.receipt.effectOccurredAt)
     .sort()
     .at(-1);
+  adapters.observePerformanceDetail?.({
+    step: "notification_finalization_ready",
+    count: outcome.notificationCount,
+  });
   return Object.freeze({
     value: outcome,
     notificationCount: outcome.notificationCount,

@@ -17,6 +17,7 @@ type NotificationRuntimeAdapters = Pick<
   | "random"
   | "sendDiscord"
   | "diagnosticsRecorder"
+  | "observePerformanceDetail"
 >;
 
 /** 日次runの通知settlementを共通stageへ接続する。 */

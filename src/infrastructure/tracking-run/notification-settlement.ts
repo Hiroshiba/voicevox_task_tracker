@@ -272,6 +272,7 @@ async function initialState(
     input.initialStateReceipt,
     port.now().toISOString(),
   );
+  port.observePerformanceDetail?.({ step: "notification_initial_receipt_reobserved" });
   const initial = await readNotificationMessageState(
     port.adapter,
     port.configuration,
@@ -380,6 +381,10 @@ async function settleNotificationsChecked(
       undefined,
     );
   }
+  port.observePerformanceDetail?.({
+    step: "notification_current_tree_verified",
+    count: current.files.size,
+  });
   let evidence: InitialPagesPublicationEvidence;
   try {
     evidence = validatePagesSource(
@@ -449,6 +454,10 @@ async function settleNotificationsChecked(
     messages,
     throughRevision,
   );
+  port.observePerformanceDetail?.({
+    step: "notification_history_restored",
+    count: history.messageReceipts.length,
+  });
   messageReceipts.push(...history.messageReceipts);
   if (input.manualResolutionReceipt != null) {
     const verified = await verifyManualResolutionReceipt(
@@ -652,6 +661,9 @@ export async function settleNotificationsWithPreflight(
       initial.receiptEvidence,
     );
   } catch (cause: unknown) {
+    port.observePerformanceDetail?.({
+      step: "notification_settlement_failure_classification_started",
+    });
     if (!(cause instanceof NotificationStructureError)) {
       throw cause;
     }

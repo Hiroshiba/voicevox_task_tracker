@@ -18,6 +18,7 @@ type NotificationStageAdapters = Pick<
   | "sleep"
   | "random"
   | "diagnosticsRecorder"
+  | "observePerformanceDetail"
 >;
 
 /** productionまたはsandboxの通知effectを同じsettlement stageへ接続する。 */
@@ -97,5 +98,8 @@ export function createNotificationSettlementPort(
       });
     },
     now: adapters.now,
+    ...(adapters.observePerformanceDetail == null
+      ? {}
+      : { observePerformanceDetail: adapters.observePerformanceDetail }),
   });
 }

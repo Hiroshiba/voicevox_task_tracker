@@ -206,9 +206,13 @@ export async function assertStateCommitChain(
   headRevision: string,
   verified: VerifiedRunTransactionFiles,
   initialStateRevision: string,
+  latestTree?: VerifiedTree & Readonly<{ revision: string }>,
 ): Promise<string> {
   const latestRevision = await previousTrackingRevision(adapter, configuration, headRevision);
-  const latest = await readVerifiedAt(adapter, configuration, latestRevision);
+  const latest =
+    latestTree != null && latestRevision === headRevision && latestTree.revision === headRevision
+      ? latestTree
+      : await readVerifiedAt(adapter, configuration, latestRevision);
   if (
     serializeCanonicalJson(latest.transaction.marker) !== serializeCanonicalJson(verified.marker) ||
     latest.transaction.record.recordDigest !== verified.record.recordDigest

@@ -147,20 +147,32 @@ export async function commitNotificationSettlement(
       }
     },
   };
+  port.observePerformanceDetail?.({
+    step: "notification_settlement_cas_started",
+    count: receipts.length,
+  });
+  let attempts = 1;
   let written = await writeStateCas(
     port.adapter,
     port.configuration,
     { status: "present", revision: expectedStateRevision },
     request,
+    port.observePerformanceDetail,
   );
   for (let retry = 0; retry < 2 && written.status === "no_effect"; retry += 1) {
+    attempts += 1;
     written = await writeStateCas(
       port.adapter,
       port.configuration,
       { status: "present", revision: expectedStateRevision },
       request,
+      port.observePerformanceDetail,
     );
   }
+  port.observePerformanceDetail?.({
+    step: "notification_settlement_cas_completed",
+    count: attempts,
+  });
   if (written.status === "no_effect") {
     return { kind: "no_effect" };
   }

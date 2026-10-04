@@ -126,7 +126,9 @@ export async function receiptForSettlement(
         previousPhaseSequence: previousReceipt.phaseSequence,
       },
     },
+    port.observePerformanceDetail,
   );
+  port.observePerformanceDetail?.({ step: "notification_settlement_receipt_reobserved" });
   if (
     observed.receipt.receiptType !== "notification_settlement" ||
     observed.evidence.receiptType !== "notification_settlement"
