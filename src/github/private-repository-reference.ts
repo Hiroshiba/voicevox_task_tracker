@@ -221,7 +221,9 @@ export function containsDisallowedAiTextUrlInValues(
     }
     visited.add(value);
     if (isUnknownArray(value)) {
-      pending.push(...value);
+      for (const element of value) {
+        pending.push(element);
+      }
     } else {
       for (const propertyValue of Object.values(value)) {
         pending.push(propertyValue);
@@ -276,7 +278,9 @@ export function containsUnallowlistedGitHubRepositoryUrl(
     }
     visited.add(value);
     if (isUnknownArray(value)) {
-      pending.push(...value);
+      for (const element of value) {
+        pending.push(element);
+      }
     } else {
       for (const propertyValue of Object.values(value)) {
         pending.push(propertyValue);

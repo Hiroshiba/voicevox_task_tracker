@@ -119,7 +119,9 @@ function scanValues(
     }
     visited.add(value);
     if (isUnknownArray(value)) {
-      pending.push(...value);
+      for (const element of value) {
+        pending.push(element);
+      }
       continue;
     }
 
