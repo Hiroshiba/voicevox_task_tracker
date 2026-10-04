@@ -22,6 +22,7 @@ import type {
   InitialPagesDeploymentOutcome,
   SequentialPagesResult,
 } from "../initial-pages-deployment.js";
+import type { InitialStateCommitObserver } from "../initial-state-commit-progress.js";
 import type { InitialStateCommitResult } from "../initial-state-commit.js";
 import type { NotificationHistoryPagesBuildArtifact } from "../notification-history-pages-build-artifact.js";
 import type { NotificationHistoryPagesDeploymentOutcome } from "../notification-history-pages-deployment-outcome.js";
@@ -92,6 +93,7 @@ export type PublicationRepositoryInventory = Readonly<{
 export type RunPublicationAdapters = Readonly<{
   environment: Readonly<NodeJS.ProcessEnv>;
   diagnosticsRecorder?: DiagnosticsJsonlRecorder;
+  observeInitialStateCommit?: InitialStateCommitObserver;
   repositoryPath: string;
   pagesOutputDirectory: string;
   loadConfig: typeof loadConfig;

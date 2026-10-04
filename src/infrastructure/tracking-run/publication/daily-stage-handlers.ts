@@ -39,7 +39,7 @@ import { createCollectAnalyzePayload } from "./artifact.js";
 import type { DailyPublicationStageHandlers } from "./stage-handler-contracts.js";
 import type { RunPublicationAdapters } from "./contracts.js";
 import { buildPublicPages } from "./pages.js";
-import { persistValidatedRun } from "./persistence.js";
+import { assertPlannedAiCacheAdditions, persistValidatedRun } from "./persistence.js";
 
 function roundTripDailyCheckpoint(
   input: SequentialPublicationInput,
@@ -121,23 +121,29 @@ export async function prepareDailyCheckpoint(
     },
     nodeContentDigestPort,
   );
+  assertPlannedAiCacheAdditions(input.state, bound.publicationPlan);
   return bound;
 }
 
 /** 検証済みcheckpointから初回stateだけをcommitする。 */
 export async function commitDailyCheckpoint(
   dependencies: Readonly<{
-    adapters: Pick<RunPublicationAdapters, "createStateBranchAdapter" | "now">;
+    adapters: Pick<
+      RunPublicationAdapters,
+      "createStateBranchAdapter" | "now" | "observeInitialStateCommit"
+    >;
   }>,
-  input: SequentialPublicationInput,
+  configuration: SequentialPublicationInput["configuration"],
   bound: BoundPublicationCheckpoint,
 ): Promise<PersistedRun> {
   return persistValidatedRun({
-    configuration: input.configuration,
-    state: input.state,
+    configuration,
     bound,
     adapter: dependencies.adapters.createStateBranchAdapter(),
     now: dependencies.adapters.now,
+    ...(dependencies.adapters.observeInitialStateCommit == null
+      ? {}
+      : { observeProgress: dependencies.adapters.observeInitialStateCommit }),
   });
 }
 

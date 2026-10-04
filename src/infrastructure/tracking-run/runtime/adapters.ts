@@ -23,6 +23,7 @@ import type {
   StatePersistenceSession,
 } from "../../../persistence/index.js";
 import type { SequentialPagesResult } from "../initial-pages-deployment.js";
+import type { InitialStateCommitObserver } from "../initial-state-commit-progress.js";
 import type { SandboxRunContext } from "../sandbox-context.js";
 import type { verifyPersistentStateDirectory } from "../state-verification.js";
 
@@ -30,6 +31,7 @@ import type { verifyPersistentStateDirectory } from "../state-verification.js";
 export type ProductionRuntimeAdapters = Readonly<{
   environment: Readonly<NodeJS.ProcessEnv>;
   diagnosticsRecorder?: DiagnosticsJsonlRecorder;
+  observeInitialStateCommit?: InitialStateCommitObserver;
   repositoryPath: string;
   pagesOutputDirectory: string;
   loadConfig: typeof loadConfig;

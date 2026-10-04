@@ -4,9 +4,15 @@ import { getHeapStatistics } from "node:v8";
 import { z } from "zod";
 
 import { runFailureStageSchema } from "../application/tracking-run/failure-artifact.js";
+import { initialStateCommitStepSchema } from "../infrastructure/tracking-run/initial-state-commit-progress.js";
 
 const phaseSchema = z.enum(["baseline", "second"]);
 const observationEventSchema = z.discriminatedUnion("boundary", [
+  z.strictObject({
+    phase: phaseSchema,
+    boundary: z.literal("initial_state_commit"),
+    step: initialStateCommitStepSchema,
+  }),
   z.strictObject({ phase: phaseSchema, boundary: z.enum(["begin", "success"]) }),
   z.strictObject({
     phase: phaseSchema,

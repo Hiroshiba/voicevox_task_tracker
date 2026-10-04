@@ -13,9 +13,9 @@ import {
 } from "../../application/tracking-run/stages/run-validation-artifact-witness.js";
 import { assertRetainedItemAiAnalysisMatchesBase } from "../../application/tracking-run/stages/run-validation-ai-lineage.js";
 import { assertPreviousPendingCausesMatchBase } from "../../application/tracking-run/stages/run-validation-previous-ledger-history.js";
+import { assertValidatedRun } from "../../application/tracking-run/stages/validate-run.js";
 import { parseSha256Hash, type Sha256Hash } from "../../canonical-json/sha256.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
-import type { PublicationPlannedRun } from "../../publication/publication-plan-contracts.js";
 import { createStateHistoryRecord } from "../../persistence/history.js";
 import { validatedRunPayloadRepositoryInventory } from "./validated-run-payload.js";
 import type { StateNotificationLedger } from "../../persistence/state-documents.js";
@@ -49,10 +49,10 @@ export type CheckpointBindingProof = Readonly<{
 /** 後続のstate commitへ渡す単一の検証済み入力。 */
 export type BoundPublicationCheckpoint = Readonly<{
   checkpoint: DecodedPublicationArtifact["checkpoint"];
-  validatedPayload: DecodedPublicationArtifact["validatedPayload"];
-  validated: DecodedPublicationArtifact["validated"];
+  repositoryInventory: DecodedPublicationArtifact["validatedPayload"]["repositoryInventory"];
+  logicalCandidateCount: number;
+  publicationInputs: DecodedPublicationArtifact["validated"]["publicationInputs"];
   publicationPlan: DecodedPublicationArtifact["publicationPlan"];
-  planned: PublicationPlannedRun;
   runtimeIdentity: RuntimeIdentity;
   checkpointDigest: Sha256Hash;
   binding: CheckpointBindingMetadata;
@@ -181,15 +181,14 @@ export function bindPublicationCheckpoint(
     ),
     [checkpointBindingProofBrand]: true,
   });
+  assertValidatedRun(decoded.validated);
   const bound = Object.freeze({
     checkpoint: decoded.checkpoint,
-    validatedPayload: decoded.validatedPayload,
-    validated: decoded.validated,
+    repositoryInventory: validatedRunPayloadRepositoryInventory(decoded.validatedPayload),
+    publicationInputs: decoded.validated.publicationInputs,
+    logicalCandidateCount:
+      decoded.validatedPayload.validation.core.aiBudgetSummary.logicalCandidateCount,
     publicationPlan: decoded.publicationPlan,
-    planned: Object.freeze({
-      validated: decoded.validated,
-      publicationPlan: decoded.publicationPlan,
-    }),
     runtimeIdentity: decoded.runtimeIdentity,
     checkpointDigest: decoded.checkpointDigest,
     binding: metadata,

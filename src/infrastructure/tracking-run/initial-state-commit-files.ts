@@ -53,8 +53,8 @@ import { normalNotificationLedgerValue } from "../../publication/publication-ord
 import { createInitialStateWriteManifest } from "../../persistence/initial-state-write-manifest.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import { materializeDurablePublicationRecord } from "./durable-record.js";
+import type { InitialStateCommitObserver } from "./initial-state-commit-progress.js";
 import type { BoundPublicationCheckpoint } from "./publication-checkpoint-binding.js";
-import { validatedRunPayloadRepositoryInventory } from "./validated-run-payload.js";
 
 type PreparedInitialFiles = Readonly<{
   updates: readonly StateFileUpdate[];
@@ -72,21 +72,35 @@ function assertFileState(file: StateFileReadResult, expected: InitialPublication
   }
 }
 
-function assertValueDigests(bound: BoundPublicationCheckpoint): void {
+function assertValueDigests(
+  bound: BoundPublicationCheckpoint,
+  observeProgress: InitialStateCommitObserver | undefined,
+): void {
   const writeSet = bound.publicationPlan.initialStateWriteSet;
+  const initialStateWriteManifest = digest.sha256Utf8(
+    serializeCanonicalJson(writeSet.paths.initialStateWriteManifest),
+  );
+  observeProgress?.("snapshot_digest");
+  const snapshot = digest.sha256Utf8Chunks(canonicalJsonPieces(writeSet.snapshot));
+  observeProgress?.("history_digest");
+  const historyInputEvents = digest.sha256Utf8(serializeCanonicalJson(writeSet.historyInputEvents));
+  observeProgress?.("ai_cache_digest");
+  const aiCacheAdditions = digest.sha256Utf8(serializeCanonicalJson(writeSet.aiCacheAdditions));
+  observeProgress?.("personal_cache_digest");
+  const personalReminderAiCacheAdditions = digest.sha256Utf8(
+    serializeCanonicalJson(writeSet.personalReminderAiCacheAdditions),
+  );
+  observeProgress?.("ledger_digest");
+  const notificationLedger = digest.sha256Utf8(
+    serializeCanonicalJson(normalNotificationLedgerValue(writeSet.notificationLedger)),
+  );
   const actual = {
-    initialStateWriteManifest: digest.sha256Utf8(
-      serializeCanonicalJson(writeSet.paths.initialStateWriteManifest),
-    ),
-    snapshot: digest.sha256Utf8Chunks(canonicalJsonPieces(writeSet.snapshot)),
-    historyInputEvents: digest.sha256Utf8(serializeCanonicalJson(writeSet.historyInputEvents)),
-    aiCacheAdditions: digest.sha256Utf8(serializeCanonicalJson(writeSet.aiCacheAdditions)),
-    personalReminderAiCacheAdditions: digest.sha256Utf8(
-      serializeCanonicalJson(writeSet.personalReminderAiCacheAdditions),
-    ),
-    notificationLedger: digest.sha256Utf8(
-      serializeCanonicalJson(normalNotificationLedgerValue(writeSet.notificationLedger)),
-    ),
+    initialStateWriteManifest,
+    snapshot,
+    historyInputEvents,
+    aiCacheAdditions,
+    personalReminderAiCacheAdditions,
+    notificationLedger,
   };
   if (serializeCanonicalJson(actual) !== serializeCanonicalJson(writeSet.valueDigests)) {
     throw new TypeError("公開計画の業務値digestがwrite setと一致しません");
@@ -125,13 +139,16 @@ export async function prepareInitialStateFiles(
   migrationTimezone: string,
   parent: StateBranchHead,
   knownSecrets: readonly string[],
+  observeProgress: InitialStateCommitObserver | undefined,
 ): Promise<PreparedInitialFiles> {
   assertStatePaths(bound, configuration);
-  assertValueDigests(bound);
+  observeProgress?.("value_digests");
+  assertValueDigests(bound, observeProgress);
   const writeSet = bound.publicationPlan.initialStateWriteSet;
+  observeProgress?.("snapshot_normalization");
   const snapshot = createStateSnapshot(writeSet.snapshot);
   const ledger = createStateNotificationLedger(writeSet.notificationLedger);
-  const inventory = validatedRunPayloadRepositoryInventory(bound.validatedPayload);
+  const inventory = bound.repositoryInventory;
   const aiCachePaths = writeSet.aiCacheAdditions.map((entry) =>
     cachePath(configuration, entry.cacheKey),
   );
@@ -145,6 +162,7 @@ export async function prepareInitialStateFiles(
     ...aiCachePaths,
     ...personalCachePaths,
   ];
+  observeProgress?.("base_state_read");
   const [previous, migration, previousLedger, baseFiles] = await Promise.all([
     readExactStateSnapshot(adapter, configuration, migrationTimezone, parent),
     readAiCacheMigrationPlan(adapter, configuration, parent),
@@ -157,6 +175,7 @@ export async function prepareInitialStateFiles(
         )
       : adapter.readFiles(parent.revision, [...new Set(basePaths)]),
   ]);
+  observeProgress?.("base_state_validation");
   if (
     digest.sha256Utf8(serializeCanonicalJson(normalNotificationLedgerValue(previousLedger))) !==
     bound.publicationPlan.notificationOutbox.previousLedgerDigest
@@ -196,6 +215,7 @@ export async function prepareInitialStateFiles(
       throw new TypeError("削除対象の旧state fileがCAS親にありません");
     }
   }
+  observeProgress?.("evidence_closure");
   assertPersonalReminderEvidenceClosure(snapshot);
   const evidenceIndex = createPersonalReminderEvidenceSourceIndex([
     ...snapshot.items.map((item) => item.evidence),
@@ -204,6 +224,7 @@ export async function prepareInitialStateFiles(
     ...(previousSnapshot?.relations.map((relation) => relation.evidence) ?? []),
   ]);
   assertPersonalReminderEvidenceRecordsClosure(snapshot, evidenceIndex);
+  observeProgress?.("history");
   const historyRecord = createStateHistoryRecord(
     previousSnapshot,
     snapshot,
@@ -217,6 +238,7 @@ export async function prepareInitialStateFiles(
       : undefined;
   const historySource = appendStateHistoryRecord(oldHistory, historyRecord);
   const historyRecords = parseStateHistoryRecords(historySource);
+  observeProgress?.("cache_normalization");
   const aiCache = writeSet.aiCacheAdditions.map((value) => createAiCacheEntry(value));
   const personalCache = writeSet.personalReminderAiCacheAdditions.map((value) =>
     createPersonalReminderAiCacheEntry(value),
@@ -228,6 +250,7 @@ export async function prepareInitialStateFiles(
   ) {
     throw new TypeError("初回cache entryが公開計画の業務値から変化しました");
   }
+  observeProgress?.("ledger_validation");
   const mergedLedger = createStateNotificationLedger({
     ...ledger,
     operationsAlerts: previousLedger.operationsAlerts,
@@ -247,6 +270,7 @@ export async function prepareInitialStateFiles(
     path: writeSet.paths.historyPath,
     bytes: new TextEncoder().encode(historySource),
   };
+  observeProgress?.("cache_encoding");
   const aiCacheUpdates = aiCache.map((entry) => ({
     path: cachePath(configuration, entry.cacheKey),
     bytes: new TextEncoder().encode(serializeCanonicalJsonLine(entry)),
@@ -263,6 +287,7 @@ export async function prepareInitialStateFiles(
     writeSet.deletions,
     baseFiles,
   );
+  observeProgress?.("record_materialization");
   const record = materializeDurablePublicationRecord(bound, digest, manifest);
   const marker = parseRunTransactionMarker({
     recoveryBootstrapVersion: 1,
@@ -280,6 +305,7 @@ export async function prepareInitialStateFiles(
     notificationLedgerDigest: record.initialStateContentDigests.notificationLedger,
     publicationRecordDigest: record.recordDigest,
   });
+  observeProgress?.("public_safety");
   assertStatePublicSafety({
     snapshot,
     repositoryInventory: inventory,
@@ -294,19 +320,24 @@ export async function prepareInitialStateFiles(
     ],
     knownSecrets,
   });
+  observeProgress?.("snapshot_encoding");
+  const snapshotUpdate = {
+    path: configuration.snapshotPath,
+    bytes: new TextEncoder().encode(serializeStateSnapshot(snapshot)),
+  };
+  observeProgress?.("ledger_encoding");
+  const ledgerUpdates = await createStateLedgerUpdates(
+    adapter,
+    configuration,
+    parent,
+    mergedLedger,
+    "tracking_run",
+  );
+  observeProgress?.("record_encoding");
   const updates: StateFileUpdate[] = [
-    {
-      path: configuration.snapshotPath,
-      bytes: new TextEncoder().encode(serializeStateSnapshot(snapshot)),
-    },
+    snapshotUpdate,
     historyUpdate,
-    ...(await createStateLedgerUpdates(
-      adapter,
-      configuration,
-      parent,
-      mergedLedger,
-      "tracking_run",
-    )),
+    ...ledgerUpdates,
     ...aiCacheUpdates,
     ...personalCacheUpdates,
     {
@@ -319,5 +350,6 @@ export async function prepareInitialStateFiles(
     },
   ];
   updates.sort((left, right) => left.path.localeCompare(right.path, "en"));
+  observeProgress?.("files_prepared");
   return Object.freeze({ updates, deletions: writeSet.deletions });
 }

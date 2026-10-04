@@ -14,6 +14,7 @@ import {
 } from "../../persistence/index.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import { verifyInitialStateCandidate } from "./initial-state-commit-candidate.js";
+import type { InitialStateCommitObserver } from "./initial-state-commit-progress.js";
 import { prepareInitialStateFiles } from "./initial-state-commit-files.js";
 import {
   assertBoundPublicationCheckpoint,
@@ -28,6 +29,7 @@ export type InitialStateCommitPort = Readonly<{
   migrationTimezone: string;
   knownSecrets: readonly string[];
   now: () => Date;
+  observeProgress?: InitialStateCommitObserver;
 }>;
 
 /** 初回state commitの確定revisionと実行または再観測receipt。 */
@@ -90,6 +92,7 @@ export async function commitInitialState(
         statePort.migrationTimezone,
         parent,
         statePort.knownSecrets,
+        statePort.observeProgress,
       );
       return {
         updates: files.updates,
@@ -106,9 +109,11 @@ export async function commitInitialState(
         files,
         request.updates,
         statePort.knownSecrets,
+        statePort.observeProgress,
       );
     },
   });
+  statePort.observeProgress?.("cas_completed");
   if (written.status === "conflict") {
     throw new StateBranchConflictError();
   }
@@ -117,6 +122,7 @@ export async function commitInitialState(
       cause: new TypeError("初回state commitをremoteへ反映できませんでした"),
     });
   }
+  statePort.observeProgress?.("receipt_observation");
   const observed = await observeStateCommitAtRevision(
     statePort.adapter,
     statePort.configuration,
@@ -129,6 +135,7 @@ export async function commitInitialState(
       position: { kind: "first" },
     },
   );
+  statePort.observeProgress?.("receipt_observed");
   if (observed.receipt.receiptType !== "initial_state_commit") {
     throw new TypeError("初回state commitの再観測receipt種別が不正です");
   }

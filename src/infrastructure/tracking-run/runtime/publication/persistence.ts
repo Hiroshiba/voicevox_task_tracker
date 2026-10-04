@@ -21,9 +21,13 @@ export function createPrepareCheckpointStage(
 
 /** 検証済みcheckpointを初回stateへcommitする。 */
 export function createCommitPreparedCheckpointStage(
-  adapters: Pick<ProductionRuntimeAdapters, "createStateBranchAdapter" | "now">,
+  adapters: Pick<
+    ProductionRuntimeAdapters,
+    "createStateBranchAdapter" | "now" | "observeInitialStateCommit"
+  >,
 ): SequentialStageDependencies["commitPreparedCheckpoint"] {
-  return (input, checkpoint) => commitDailyCheckpoint({ adapters }, input, checkpoint);
+  return (configuration, checkpoint) =>
+    commitDailyCheckpoint({ adapters }, configuration, checkpoint);
 }
 
 /** 初回commit後のexact stateを再読込する。 */

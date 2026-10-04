@@ -78,12 +78,20 @@ export async function runEndToEndPerformanceRuntime(
     const harness = createPerformanceHarness(source, config, fixture);
     const observeMemory = createPerformanceMemoryObserver();
     let phase: PerformanceMemoryEvent["phase"] = "baseline";
-    const runner = new SequentialRunRunner(createDailyDependencies(harness.adapters), {
-      now: harness.adapters.now,
-      beforeStage: (stage) => {
-        observeMemory({ phase, boundary: "stage", stage });
+    const runner = new SequentialRunRunner(
+      createDailyDependencies({
+        ...harness.adapters,
+        observeInitialStateCommit: (step) => {
+          observeMemory({ phase, boundary: "initial_state_commit", step });
+        },
+      }),
+      {
+        now: harness.adapters.now,
+        beforeStage: (stage) => {
+          observeMemory({ phase, boundary: "stage", stage });
+        },
       },
-    });
+    );
     const runDaily = async (runAt: UtcIsoDateTime): Promise<DailyRunExecutionResult> => {
       const command = parseCliArguments([
         "dry-run",

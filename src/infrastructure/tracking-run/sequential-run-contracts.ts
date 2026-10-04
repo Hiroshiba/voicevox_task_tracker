@@ -90,7 +90,7 @@ export type SequentialRunDependencies = Readonly<{
   planPublication: (validated: PublicationValidatedRun) => PublicationPlannedRun;
   prepareCheckpoint: (input: SequentialPublicationInput) => Promise<BoundPublicationCheckpoint>;
   commitPreparedCheckpoint: (
-    input: SequentialPublicationInput,
+    configuration: RuntimeConfiguration,
     checkpoint: BoundPublicationCheckpoint,
   ) => Promise<PersistedRun>;
   readCommittedState: (

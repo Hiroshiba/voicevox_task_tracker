@@ -59,8 +59,7 @@ export function materializeDurablePublicationRecord(
       checkpointFileDigest: bound.binding.checkpointFileDigest,
       baseStateRevision: bound.checkpoint.baseStateRevision,
       completedStages,
-      plannedLogicalCandidateCount:
-        bound.validatedPayload.validation.core.aiBudgetSummary.logicalCandidateCount,
+      plannedLogicalCandidateCount: bound.logicalCandidateCount,
     });
   }
   const payload = {

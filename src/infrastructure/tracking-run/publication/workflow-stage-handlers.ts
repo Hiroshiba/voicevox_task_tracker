@@ -8,7 +8,6 @@ import type { Config } from "../../../config/index.js";
 import type { StateBranchAdapter } from "../../../persistence/index.js";
 import { joinStatePath, readExactStateSnapshot } from "../../../persistence/index.js";
 import { loadStateNotificationLedgers } from "../../../persistence/state-ledger-files.js";
-import type { PublicationValidatedRun } from "../../../publication/publication-plan-contracts.js";
 import type { VerifyCheckpointCliCommand } from "../command-input.js";
 import { nodeContentDigestPort } from "../content-digest.js";
 import { BoundPublicationFailureError } from "../failure-context-error.js";
@@ -43,17 +42,14 @@ type WorkflowStateAdapters = Pick<
   | "writeJsonArtifact"
 >;
 
-function assertWorkflowConfig(
-  artifact: Readonly<{ validated: PublicationValidatedRun }>,
-  config: Config,
-): void {
+function assertWorkflowConfig(artifact: BoundPublicationCheckpoint, config: Config): void {
   if (
     nodeContentDigestPort.sha256Utf8(serializeCanonicalJson(config)) !==
-    artifact.validated.core.configDigest
+    artifact.checkpoint.configDigest
   ) {
     throw new TypeError("workflow artifactと現在の設定でconfig digestが一致しません");
   }
-  const projection = artifact.validated.publicationInputs;
+  const projection = artifact.publicationInputs;
   if (
     serializeCanonicalJson(projectPublicationSettings(config)) !==
       serializeCanonicalJson({
@@ -70,7 +66,7 @@ function assertWorkflowConfig(
     projection.state.historyPath !==
       joinStatePath(
         config.state.historyDirectory,
-        `${artifact.validated.snapshot.generatedAt.slice(0, 10)}.jsonl`,
+        `${artifact.publicationPlan.initialStateWriteSet.snapshot.generatedAt.slice(0, 10)}.jsonl`,
       )
   ) {
     throw new TypeError("workflow artifactと現在の設定で公開計画の投影が一致しません");

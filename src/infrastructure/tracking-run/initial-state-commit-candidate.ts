@@ -9,9 +9,9 @@ import { assertStatePublicSafety } from "../../persistence/public-safety.js";
 import { parseStateSnapshot } from "../../persistence/snapshot-v23.js";
 import { verifyRunTransactionFiles } from "../../persistence/state-transaction-files.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
+import type { InitialStateCommitObserver } from "./initial-state-commit-progress.js";
 import type { BoundPublicationCheckpoint } from "./publication-checkpoint-binding.js";
 import { materializeDurablePublicationRecord } from "./durable-record.js";
-import { validatedRunPayloadRepositoryInventory } from "./validated-run-payload.js";
 
 function parseStateValues(path: string, bytes: Uint8Array): readonly unknown[] {
   const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
@@ -38,7 +38,9 @@ export function verifyInitialStateCandidate(
   files: ReadonlyMap<string, StateFileReadResult>,
   updates: readonly StateFileUpdate[],
   knownSecrets: readonly string[],
+  observeProgress: InitialStateCommitObserver | undefined,
 ): void {
+  observeProgress?.("candidate_transaction");
   const verified = verifyRunTransactionFiles(files, configuration);
   if (verified == null) {
     throw new TypeError("初回commit候補にrun transactionがありません");
@@ -48,6 +50,7 @@ export function verifyInitialStateCandidate(
     throw new TypeError("初回commit候補にwrite manifestがありません");
   }
   const record = materializeDurablePublicationRecord(bound, digest, manifest);
+  observeProgress?.("candidate_content");
   assertInitialStateBusinessContent(
     manifest,
     record.initialStateContentDigests,
@@ -84,9 +87,11 @@ export function verifyInitialStateCandidate(
   if (snapshotFile?.status !== "present") {
     throw new TypeError("初回commit候補のsnapshotがありません");
   }
+  observeProgress?.("candidate_snapshot");
   const snapshot = parseStateSnapshot(
     new TextDecoder("utf-8", { fatal: true }).decode(snapshotFile.bytes),
   );
+  observeProgress?.("candidate_public_values");
   const values: unknown[] = [];
   for (const [path, file] of files) {
     if (file.status !== "present") {
@@ -94,9 +99,10 @@ export function verifyInitialStateCandidate(
     }
     values.push(...parseStateValues(path, file.bytes));
   }
+  observeProgress?.("candidate_public_safety");
   assertStatePublicSafety({
     snapshot,
-    repositoryInventory: validatedRunPayloadRepositoryInventory(bound.validatedPayload),
+    repositoryInventory: bound.repositoryInventory,
     repositoryAllowlist: bound.publicationPlan.initialPagesProjection.repositoryAllowlist,
     additionalValues: values,
     knownSecrets,
@@ -107,4 +113,5 @@ export function verifyInitialStateCandidate(
   ) {
     throw new TypeError("初回commit候補の業務digestがcheckpointと一致しません");
   }
+  observeProgress?.("candidate_verified");
 }

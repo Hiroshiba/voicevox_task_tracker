@@ -52,7 +52,7 @@ export type EncodePublicationCheckpointInput = Readonly<{
 
 /** sidecarとruntimeを照合して復元したartifact。 */
 export type DecodedPublicationArtifact = Readonly<{
-  checkpoint: PublicationCheckpoint;
+  checkpoint: Omit<PublicationCheckpoint, "validatedPayload" | "publicationPlan">;
   validatedPayload: ValidatedRunPayload;
   validated: ValidatedRunPayload["validated"];
   publicationPlan: PublicationPlan;
@@ -112,7 +112,7 @@ function parsePublicationCheckpoint(
   value: unknown,
   digest: ContentDigestPort,
 ): Readonly<{
-  checkpoint: PublicationCheckpoint;
+  checkpoint: Omit<PublicationCheckpoint, "validatedPayload" | "publicationPlan">;
   validatedPayload: ValidatedRunPayload;
   validated: ValidatedRunPayload["validated"];
   publicationPlan: PublicationPlan;
@@ -137,7 +137,16 @@ function parsePublicationCheckpoint(
   if (publicationPlan.initialStateWriteSet.snapshot !== validated.snapshot) {
     throw new TypeError("checkpointのsnapshot参照が検証済みsnapshotと一致しません");
   }
-  return Object.freeze({ checkpoint, validatedPayload, validated, publicationPlan });
+  const metadata = Object.freeze({
+    runIdentity: checkpoint.runIdentity,
+    executionPolicy: checkpoint.executionPolicy,
+    baseStateRevision: checkpoint.baseStateRevision,
+    configDigest: checkpoint.configDigest,
+    ...(checkpoint.analysisCompletedStages == null
+      ? {}
+      : { analysisCompletedStages: checkpoint.analysisCompletedStages }),
+  });
+  return Object.freeze({ checkpoint: metadata, validatedPayload, validated, publicationPlan });
 }
 
 /** v24 .cpkのcanonical manifestとframe境界を読む。 */

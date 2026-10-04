@@ -86,14 +86,9 @@ export function createDailyPublicationStages(
   progress: DailyPublicationProgress,
   getInput: () => PublicationStageInput,
 ): Readonly<{
-  encodeCheckpoint: (
-    input: PublicationStageInput,
-  ) => Promise<Readonly<{ bound: BoundPublicationCheckpoint; input: PublicationStageInput }>>;
+  encodeCheckpoint: (input: PublicationStageInput) => Promise<BoundPublicationCheckpoint>;
   commitInitialState: (
-    checkpoint: Readonly<{
-      bound: BoundPublicationCheckpoint;
-      input: PublicationStageInput;
-    }>,
+    checkpoint: BoundPublicationCheckpoint,
   ) => Promise<InitialStateCommitReference>;
   readCommittedState: (reference: InitialStateCommitReference) => Promise<CommittedDailyState>;
   initialPagesPrepared: (committed: CommittedDailyState) => Promise<PreparedDailyPages>;
@@ -114,10 +109,12 @@ export function createDailyPublicationStages(
     await dependencies.writeReceiptChain(getInput().invocation.runId, receiptChain);
   };
   return Object.freeze({
-    encodeCheckpoint: async (input) =>
-      Object.freeze({ bound: await dependencies.prepareCheckpoint(input), input }),
-    commitInitialState: async ({ bound, input }) => {
-      const persisted = await dependencies.commitPreparedCheckpoint(input, bound);
+    encodeCheckpoint: (input) => dependencies.prepareCheckpoint(input),
+    commitInitialState: async (bound) => {
+      const persisted = await dependencies.commitPreparedCheckpoint(
+        getInput().configuration,
+        bound,
+      );
       progress.stateCommitted();
       return Object.freeze({
         stateRevision: persisted.result.revision,
