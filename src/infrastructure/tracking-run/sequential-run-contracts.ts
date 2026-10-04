@@ -43,7 +43,8 @@ import type {
 } from "./publication/contracts.js";
 import type { RecoveryStageInput } from "./recovery-stage.js";
 import type { FinalizeRunOutcome } from "./run-finalization-contracts.js";
-import { type DryRunArtifact } from "./sequential-report.js";
+import type { DryRunResultSpool } from "./dry-run-result-spool.js";
+import type { DryRunArtifactMetadata } from "./sequential-report.js";
 
 export type { DryRunArtifact } from "./sequential-report.js";
 
@@ -159,7 +160,8 @@ export type SequentialRunDependencies = Readonly<{
   ) => Promise<NotificationHistoryPublishedRun>;
   writeDryRunArtifact: (
     path: string,
-    artifact: DryRunArtifact<PublicationPlannedRun>,
+    metadata: DryRunArtifactMetadata,
+    result: DryRunResultSpool,
   ) => Promise<void>;
   writeCollectAnalyzeArtifact: (
     path: string,

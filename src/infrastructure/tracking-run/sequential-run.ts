@@ -19,7 +19,10 @@ import {
   type NewRunStagePorts,
   type TrackingRunFailurePort,
 } from "../../application/tracking-run/engine.js";
-import { createFailedRun } from "../../application/tracking-run/failure-artifact.js";
+import {
+  createFailedRun,
+  type FailedRun,
+} from "../../application/tracking-run/failure-artifact.js";
 import type { PreparedRun } from "../../application/tracking-run/prepare-run.js";
 import type { Receipt } from "../../application/tracking-run/receipt-schema.js";
 import type { RunIdentity, RunRequest } from "../../application/tracking-run/request.js";
@@ -49,6 +52,7 @@ import type {
   RunSequentialCliCommand,
 } from "./command-input.js";
 import { safeErrorDiagnostic } from "./error-diagnostic.js";
+import { createDryRunResultSpool, type DryRunResultSpool } from "./dry-run-result-spool.js";
 import { observeCliFailureContext } from "./failure-context.js";
 import { publicBoundaryDiagnosticDetails } from "./public-boundary-diagnostic.js";
 import { isPublicBoundaryViolation } from "./public-boundary-error.js";
@@ -56,6 +60,7 @@ import { publicDiagnosticCode } from "./public-failure-boundary.js";
 import type { RecoveryStageInput } from "./recovery-stage.js";
 import { RunCoordinator, type CoordinatedRunResult } from "./run-coordinator.js";
 import { parseRunRequest } from "./run-request-input.js";
+import type { PostCheckpointPublicationContext } from "./sequential-publication-input.js";
 import {
   createDailyPublicationStages,
   type DailyPublicationStageValues,
@@ -64,7 +69,7 @@ import {
 import {
   completedReport,
   completedReportFromState,
-  createDryRunArtifact,
+  createDryRunArtifactMetadata,
   currentTime,
   failureReport,
   isPreCheckpointFailureStage,
@@ -259,6 +264,9 @@ export class SequentialRunRunner {
     let prepared: PreparedRun | undefined;
     let analysisStages: AnalysisStages | undefined;
     let publicationInput: PublicationStageInput | undefined;
+    let publicationContext: PostCheckpointPublicationContext | undefined;
+    let dryRunResultSpool: DryRunResultSpool | undefined;
+    let boundEvidence: Extract<FailedRun["evidence"], { bindingKind: "checkpoint" }> | undefined;
     let runStatus: "success" | "fallback" = "success";
     let lastReceipt: Receipt | undefined;
     let failedResult: DailyRunExecutionResult | undefined;
@@ -286,7 +294,7 @@ export class SequentialRunRunner {
           lastReceipt = receipt;
         },
       },
-      () => required(publicationInput, "公開段階の入力がありません"),
+      () => required(publicationContext, "結合済み公開段階の入力がありません"),
     );
     const boundary: TrackingRunFailurePort = {
       beforeStage: (failedStage) => {
@@ -318,14 +326,15 @@ export class SequentialRunRunner {
           effects,
         );
         const failureEvidence =
-          prepared == null || !isPreCheckpointFailureStage(reportContext.stage)
+          boundEvidence ??
+          (prepared == null || !isPreCheckpointFailureStage(reportContext.stage)
             ? undefined
             : {
                 bindingKind: "run_pre_checkpoint_alert" as const,
                 runId: prepared.core.identity.runId,
                 baseStateRevision: prepared.core.baseState.revision,
                 configDigest: prepared.core.configDigest,
-              };
+              });
         const context = await observeCliFailureContext(
           command,
           error,
@@ -438,78 +447,111 @@ export class SequentialRunRunner {
         } satisfies PublicationStageInput;
         return Promise.resolve(publicationInput);
       },
+      afterCheckpointBound: async (bound) => {
+        boundEvidence = Object.freeze({
+          bindingKind: "checkpoint",
+          runId: bound.checkpoint.runIdentity.runId,
+          checkpointDigest: bound.checkpointDigest,
+          checkpointFileDigest: bound.bindingProof.checkpointFileDigest,
+          runtimeIdentityDigest: bound.bindingProof.runtimeIdentityDigest,
+          baseStateRevision: bound.checkpoint.baseStateRevision,
+        });
+        const input = required(publicationInput, "結合直後の公開計画がありません");
+        if (request.output.kind === "dry_run_artifact") {
+          dryRunResultSpool = await createDryRunResultSpool(input.planned);
+        }
+        publicationContext = Object.freeze({
+          invocation: input.invocation,
+          configuration: input.configuration,
+        });
+        publicationInput = undefined;
+        analysisStages = undefined;
+        state = undefined;
+        prepared = undefined;
+      },
       ...publicationStages,
     } satisfies NewRunStagePorts<
       SequentialEngineStageValues,
       Awaited<ReturnType<typeof publicationStages.encodeCheckpoint>>
     >;
     if (request.output.kind !== "analysis_artifact") {
-      let pendingRunId: string | undefined;
-      const outcome = await runTrackingRunSequentially<
-        SequentialEngineStageValues,
-        Awaited<ReturnType<typeof publicationStages.encodeCheckpoint>>,
-        RecoveryStageInput
-      >(
-        async () => {
-          const launch = await this.#dependencies.inspectLaunch(request, invocation.invocationId, {
-            kind: "start_new",
-          });
-          if (launch.decision.kind === "start_new") {
-            baseStateHead = launch.decision.baseRevision;
-          } else if (launch.decision.kind === "resume_pending") {
-            pendingRunId = launch.decision.pending.record.runIdentity.runId;
-            invocation = Object.freeze({
-              ...invocation,
-              runId: pendingRunId,
-            });
-            lastReceipt = launch.decision.pending.receiptChain.at(-1);
-          } else if (launch.decision.kind === "completed") {
-            invocation = Object.freeze({ ...invocation, runId: launch.decision.runId });
-            lastReceipt = launch.decision.completed.chain.receipts.at(-1);
-          }
-          return launch;
-        },
-        stages,
-        this.#dependencies.pendingRun(
-          request,
-          invocation.invocationId,
-          () => required(pendingRunId, "再開run IDがありません"),
-          (receipt) => {
-            lastReceipt = receipt;
-          },
-        ),
-        boundary,
-      );
-      if (outcome.status === "failed") {
-        return required(failedResult, "失敗runの報告結果がありません");
-      }
       try {
-        const stateReport = await this.#dependencies.readCompletedReport(request, outcome);
-        if (request.output.kind === "dry_run_artifact") {
-          await this.#dependencies.writeDryRunArtifact(
-            request.output.path,
-            createDryRunArtifact(
-              invocation,
-              stateReport.status,
-              required(publicationInput, "dry-runの公開計画がありません").planned,
-              stateReport.metrics,
-              stateReport.diagnostics,
-              currentTime(this.#runtime),
-              outcome,
-            ),
-          );
-          effects.artifactWritten = true;
+        let pendingRunId: string | undefined;
+        const outcome = await runTrackingRunSequentially<
+          SequentialEngineStageValues,
+          Awaited<ReturnType<typeof publicationStages.encodeCheckpoint>>,
+          RecoveryStageInput
+        >(
+          async () => {
+            const launch = await this.#dependencies.inspectLaunch(
+              request,
+              invocation.invocationId,
+              {
+                kind: "start_new",
+              },
+            );
+            if (launch.decision.kind === "start_new") {
+              baseStateHead = launch.decision.baseRevision;
+            } else if (launch.decision.kind === "resume_pending") {
+              pendingRunId = launch.decision.pending.record.runIdentity.runId;
+              invocation = Object.freeze({
+                ...invocation,
+                runId: pendingRunId,
+              });
+              lastReceipt = launch.decision.pending.receiptChain.at(-1);
+            } else if (launch.decision.kind === "completed") {
+              invocation = Object.freeze({ ...invocation, runId: launch.decision.runId });
+              lastReceipt = launch.decision.completed.chain.receipts.at(-1);
+            }
+            return launch;
+          },
+          stages,
+          this.#dependencies.pendingRun(
+            request,
+            invocation.invocationId,
+            () => required(pendingRunId, "再開run IDがありません"),
+            (receipt) => {
+              lastReceipt = receipt;
+            },
+          ),
+          boundary,
+        );
+        if (outcome.status === "failed") {
+          return required(failedResult, "失敗runの報告結果がありません");
         }
-        const report = completedReportFromState(invocation, stateReport, outcome);
-        await this.#dependencies.writeReport(request.reportPath, report);
-        return Object.freeze({
-          report,
-          effects: freezeEffects(effects),
-          completedRun: outcome,
-        });
-      } catch (error: unknown) {
-        await boundary.fail("completed", error);
-        return required(failedResult, "失敗runの報告結果がありません");
+        try {
+          const stateReport = await this.#dependencies.readCompletedReport(request, outcome);
+          if (request.output.kind === "dry_run_artifact") {
+            await this.#dependencies.writeDryRunArtifact(
+              request.output.path,
+              createDryRunArtifactMetadata(
+                invocation,
+                stateReport.status,
+                stateReport.metrics,
+                stateReport.diagnostics,
+                currentTime(this.#runtime),
+                outcome,
+              ),
+              required(dryRunResultSpool, "dry-runの一時結果がありません"),
+            );
+            effects.artifactWritten = true;
+          }
+          const report = completedReportFromState(invocation, stateReport, outcome);
+          await this.#dependencies.writeReport(request.reportPath, report);
+          return Object.freeze({
+            report,
+            effects: freezeEffects(effects),
+            completedRun: outcome,
+          });
+        } catch (error: unknown) {
+          await boundary.fail("completed", error);
+          return required(failedResult, "失敗runの報告結果がありません");
+        }
+      } finally {
+        if (dryRunResultSpool != null) {
+          await dryRunResultSpool.dispose();
+          dryRunResultSpool = undefined;
+        }
       }
     }
     const launch = await this.#dependencies.inspectLaunch(request, invocation.invocationId, {

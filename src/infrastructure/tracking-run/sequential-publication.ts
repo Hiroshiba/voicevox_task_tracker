@@ -17,7 +17,10 @@ import type {
   PersistedRun,
 } from "./publication/contracts.js";
 import type { FinalizeRunOutcome } from "./run-finalization-contracts.js";
-import type { SequentialPublicationInput } from "./sequential-publication-input.js";
+import type {
+  PostCheckpointPublicationContext,
+  SequentialPublicationInput,
+} from "./sequential-publication-input.js";
 import type { SequentialRunDependencies } from "./sequential-run-contracts.js";
 import type { DailyRunRuntime, NotificationStageResult } from "./sequential-result.js";
 
@@ -84,7 +87,7 @@ export function createDailyPublicationStages(
   dependencies: SequentialRunDependencies,
   runtime: DailyRunRuntime,
   progress: DailyPublicationProgress,
-  getInput: () => PublicationStageInput,
+  getContext: () => PostCheckpointPublicationContext,
 ): Readonly<{
   encodeCheckpoint: (input: PublicationStageInput) => Promise<BoundPublicationCheckpoint>;
   commitInitialState: (
@@ -106,13 +109,13 @@ export function createDailyPublicationStages(
   const receiptChain: ReceiptChainEntry[] = [];
   const appendReceipts = async (...entries: readonly ReceiptChainEntry[]): Promise<void> => {
     receiptChain.push(...entries);
-    await dependencies.writeReceiptChain(getInput().invocation.runId, receiptChain);
+    await dependencies.writeReceiptChain(getContext().invocation.runId, receiptChain);
   };
   return Object.freeze({
     encodeCheckpoint: (input) => dependencies.prepareCheckpoint(input),
     commitInitialState: async (bound) => {
       const persisted = await dependencies.commitPreparedCheckpoint(
-        getInput().configuration,
+        getContext().configuration,
         bound,
       );
       progress.stateCommitted();
@@ -123,7 +126,7 @@ export function createDailyPublicationStages(
     },
     readCommittedState: async (reference) => {
       const committed = await dependencies.readCommittedState({
-        configuration: getInput().configuration,
+        configuration: getContext().configuration,
         reference,
       });
       progress.receiptRecorded(committed.result.receipt);
@@ -134,7 +137,7 @@ export function createDailyPublicationStages(
       return committed;
     },
     initialPagesPrepared: async (committed) => {
-      const input = getInput();
+      const input = getContext();
       const pagesPrepared = await dependencies.buildPages({
         invocation: input.invocation,
         configuration: input.configuration,
@@ -146,7 +149,7 @@ export function createDailyPublicationStages(
       return Object.freeze({ committed, pagesPrepared });
     },
     initialPagesPublished: async (prepared) => {
-      const input = getInput();
+      const input = getContext();
       const pages = await dependencies.deployPages({
         invocation: input.invocation,
         configuration: input.configuration,
@@ -161,7 +164,7 @@ export function createDailyPublicationStages(
       return Object.freeze({ committed: prepared.committed, pages });
     },
     notificationsSettled: async (published) => {
-      const input = getInput();
+      const input = getContext();
       progress.notificationStarted();
       const notifications = await dependencies.settleNotifications({
         invocation: input.invocation,
@@ -178,7 +181,7 @@ export function createDailyPublicationStages(
       return Object.freeze({ ...published, notifications });
     },
     runFinalized: async (settled) => {
-      const input = getInput();
+      const input = getContext();
       const finalization = await dependencies.finalizeRun({
         invocation: input.invocation,
         configuration: input.configuration,
@@ -194,7 +197,7 @@ export function createDailyPublicationStages(
     },
     notificationHistoryPagesPrepared: async (finalized) => {
       const historyPagesPrepared = await dependencies.buildNotificationHistoryPages({
-        configuration: getInput().configuration,
+        configuration: getContext().configuration,
         settlementReceipt: finalized.notifications.value.receipt,
         finalizationReceipt: finalized.finalization.receipt,
       });
@@ -203,7 +206,7 @@ export function createDailyPublicationStages(
       return Object.freeze({ ...finalized, historyPagesPrepared });
     },
     notificationHistoryPagesPublished: async (prepared) => {
-      const input = getInput();
+      const input = getContext();
       const historyPages = await dependencies.deployNotificationHistoryPages({
         configuration: input.configuration,
         prepared: prepared.historyPagesPrepared,
@@ -224,7 +227,7 @@ export function createDailyPublicationStages(
           {
             entries: receiptChain,
             finalStateRevision: published.finalization.stateRevision,
-            invocationId: getInput().invocation.invocationId,
+            invocationId: getContext().invocation.invocationId,
             observedAt: runtime.now().toISOString(),
           },
           nodeContentDigestPort,

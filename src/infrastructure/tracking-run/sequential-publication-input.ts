@@ -12,3 +12,9 @@ export type SequentialPublicationInput = Readonly<{
   status: "success" | "fallback";
   diagnostics: readonly string[];
 }>;
+
+/** 結合済みcheckpoint以降の公開段階が使う小さい入力。 */
+export type PostCheckpointPublicationContext = Pick<
+  SequentialPublicationInput,
+  "invocation" | "configuration"
+>;

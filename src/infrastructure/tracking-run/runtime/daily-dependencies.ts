@@ -70,7 +70,7 @@ export function createDailyDependencies(
     finalizeRun: createFinalizeRunStage(adapters),
     buildNotificationHistoryPages: createBuildNotificationHistoryPagesStage(adapters),
     deployNotificationHistoryPages: createDeployNotificationHistoryPagesStage(adapters),
-    writeDryRunArtifact: createWriteDryRunArtifactStage(adapters),
+    writeDryRunArtifact: createWriteDryRunArtifactStage(),
     writeCollectAnalyzeArtifact: createWriteCollectAnalyzeArtifactStage(adapters),
     writeReport: createWriteReportStage(adapters),
     writeReceiptChain: createWriteReceiptChainStage(adapters),

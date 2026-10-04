@@ -12,7 +12,6 @@ import { sequentialReceiptPath } from "../../sequential-receipt-path.js";
 import type { ProductionRuntimeAdapters } from "../adapters.js";
 
 type SequentialStageDependencies = SequentialRunDependencies;
-type JsonArtifactRuntimeAdapters = Pick<ProductionRuntimeAdapters, "writeJsonArtifact">;
 type CheckpointRuntimeAdapters = Pick<
   ProductionRuntimeAdapters,
   "repositoryPath" | "environment" | "writeJsonArtifact"
@@ -20,10 +19,8 @@ type CheckpointRuntimeAdapters = Pick<
 type ReportRuntimeAdapters = Pick<ProductionRuntimeAdapters, "writeTextFile">;
 
 /** dry-runのartifact書込みを既存adapterへ接続する。 */
-export function createWriteDryRunArtifactStage(
-  adapters: JsonArtifactRuntimeAdapters,
-): SequentialStageDependencies["writeDryRunArtifact"] {
-  return (path, artifact) => adapters.writeJsonArtifact(path, artifact);
+export function createWriteDryRunArtifactStage(): SequentialStageDependencies["writeDryRunArtifact"] {
+  return (path, metadata, result) => result.writeArtifact(path, metadata);
 }
 
 /** collect-analyzeのartifact書込みを既存公開処理へ接続する。 */

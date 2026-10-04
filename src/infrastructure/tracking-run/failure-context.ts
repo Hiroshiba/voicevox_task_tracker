@@ -268,7 +268,16 @@ export async function observeCliFailureContext(
     context = {
       ...context,
       evidence,
-      ...(evidence.bindingKind === "run_pre_checkpoint_alert" ? { runId: evidence.runId } : {}),
+      ...(evidence.bindingKind === "run_pre_checkpoint_alert" ||
+      evidence.bindingKind === "checkpoint"
+        ? { runId: evidence.runId }
+        : {}),
+      ...(evidence.bindingKind === "checkpoint"
+        ? {
+            checkpointDigest: evidence.checkpointDigest,
+            checkpointFileDigest: evidence.checkpointFileDigest,
+          }
+        : {}),
     };
   }
   if (error instanceof BoundPublicationFailureError) {
@@ -308,7 +317,8 @@ export async function observeCliFailureContext(
     if (bootstrap != null) {
       if (
         bootstrap.evidence?.bindingKind === "state_bootstrap_alert" &&
-        !(error instanceof VerifiedPendingRuntimeFailureError)
+        !(error instanceof VerifiedPendingRuntimeFailureError) &&
+        context.evidence?.bindingKind !== "checkpoint"
       ) {
         context = bootstrap;
         stage = "runtime_bootstrap";

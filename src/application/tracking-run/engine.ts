@@ -74,6 +74,7 @@ export type NewRunStagePorts<Stages extends TrackingRunStageValues, Checkpoint> 
   validated: (value: Stages["personal_reminder_finalized"]) => Promise<Stages["validated"]>;
   publicationPlanned: (value: Stages["validated"]) => Promise<Stages["publication_planned"]>;
   encodeCheckpoint: (value: Stages["publication_planned"]) => Promise<Checkpoint>;
+  afterCheckpointBound: (checkpoint: Checkpoint) => Promise<void>;
   commitInitialState: (checkpoint: Checkpoint) => Promise<InitialStateCommitReference>;
   readCommittedState: (
     reference: InitialStateCommitReference,
@@ -186,21 +187,22 @@ export async function runTrackingAnalysis<Stages extends TrackingRunStageValues,
   }
 }
 
-/** 新規runの解析、checkpoint、公開、完了をcanonical順に実行する。 */
-export async function runNewTrackingRun<Stages extends TrackingRunStageValues, Checkpoint>(
+/** 解析frameを終えてから新規runのcheckpointと公開をcanonical順に実行する。 */
+export function runNewTrackingRun<Stages extends TrackingRunStageValues, Checkpoint>(
   stages: NewRunStagePorts<Stages, Checkpoint>,
   boundary: TrackingRunFailurePort,
 ): Promise<CompletedRun | FailedRun> {
-  const analysis = await runTrackingAnalysis(stages, boundary);
-  if (analysis.kind === "failed") {
-    return analysis.failure;
-  }
-  return runPlannedTrackingRun(analysis.value, stages, boundary);
+  return runTrackingAnalysis(stages, boundary).then((analysis) => {
+    if (analysis.kind === "failed") {
+      return analysis.failure;
+    }
+    return runPlannedTrackingRun({ value: analysis.value }, stages, boundary);
+  });
 }
 
-/** 解析済みrunをcheckpointから完了まで同じcanonical順序で進める。 */
+/** 解析済みrunを進め、非同期frameの計画とcheckpoint参照を段階ごとに破棄する。 */
 export async function runPlannedTrackingRun<Stages extends TrackingRunStageValues, Checkpoint>(
-  planned: Stages["publication_planned"],
+  plannedSlot: { value: Stages["publication_planned"] | undefined },
   stages: NewRunStagePorts<Stages, Checkpoint>,
   boundary: TrackingRunFailurePort,
 ): Promise<CompletedRun | FailedRun> {
@@ -214,13 +216,28 @@ export async function runPlannedTrackingRun<Stages extends TrackingRunStageValue
     return action();
   };
   try {
-    let reference: InitialStateCommitReference;
-    {
-      const checkpoint = await step("checkpoint_encoding", () => stages.encodeCheckpoint(planned));
-      reference = await step("initial_state_committed", () =>
-        stages.commitInitialState(checkpoint),
-      );
-    }
+    const checkpointSlot: { value: Checkpoint | undefined } = {
+      value: await step("checkpoint_encoding", () => {
+        if (plannedSlot.value == null) {
+          throw new TypeError("公開計画がありません");
+        }
+        return stages.encodeCheckpoint(plannedSlot.value);
+      }),
+    };
+    plannedSlot.value = undefined;
+    await step("checkpoint_binding", () => {
+      if (checkpointSlot.value == null) {
+        throw new TypeError("結合済みcheckpointがありません");
+      }
+      return stages.afterCheckpointBound(checkpointSlot.value);
+    });
+    const reference = await step("initial_state_committed", () => {
+      if (checkpointSlot.value == null) {
+        throw new TypeError("結合済みcheckpointがありません");
+      }
+      return stages.commitInitialState(checkpointSlot.value);
+    });
+    checkpointSlot.value = undefined;
     const committed = await step("initial_state_committed", () =>
       stages.readCommittedState(reference),
     );

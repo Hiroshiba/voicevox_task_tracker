@@ -33,6 +33,9 @@ export type DryRunArtifact<Value> = Readonly<{
   diagnostics: readonly string[];
 }>;
 
+/** resultを一時保存した間に組み立てるdry-run artifactの小さい部分。 */
+export type DryRunArtifactMetadata = Omit<DryRunArtifact<unknown>, "result">;
+
 /** run runtimeの現在時刻をUTC日時へ変換する。 */
 export function currentTime(runtime: DailyRunRuntime): UtcIsoDateTime {
   const value = runtime.now();
@@ -56,16 +59,15 @@ export function updateMetrics(metrics: RunMetrics, values: Partial<RunMetrics>):
   return Object.freeze(updated);
 }
 
-/** dry-runの検証済みartifactを作る。 */
-export function createDryRunArtifact<Value>(
+/** dry-runの検証済みartifactに必要な小さい部分を作る。 */
+export function createDryRunArtifactMetadata(
   invocation: RunInvocation,
   status: "success" | "fallback",
-  planned: Value,
   metrics: RunMetrics,
   diagnostics: readonly string[],
   finishedAt: UtcIsoDateTime,
   completed: CompletedRun,
-): DryRunArtifact<Value> {
+): DryRunArtifactMetadata {
   const completedMetrics = updateMetrics(metrics, {
     durationMilliseconds: Date.parse(finishedAt) - Date.parse(invocation.startedAt),
   });
@@ -75,7 +77,6 @@ export function createDryRunArtifact<Value>(
     command: "dry-run",
     status,
     complete: true,
-    result: planned,
     effectReport: Object.freeze({
       effectTarget: "recording",
       stateStorage: "isolated_local_git",

@@ -108,7 +108,8 @@ export async function prepareDailyCheckpoint(
     configuration.target.state,
     planned.validated.core.baseRevision,
   );
-  const bound = bindPublicationCheckpoint(
+  assertPlannedAiCacheAdditions(input.state, decoded.publicationPlan);
+  return bindPublicationCheckpoint(
     decoded,
     {
       checkpointFileDigest: decoded.checkpointFileDigest,
@@ -121,8 +122,6 @@ export async function prepareDailyCheckpoint(
     },
     nodeContentDigestPort,
   );
-  assertPlannedAiCacheAdditions(input.state, bound.publicationPlan);
-  return bound;
 }
 
 /** 検証済みcheckpointから初回stateだけをcommitする。 */
