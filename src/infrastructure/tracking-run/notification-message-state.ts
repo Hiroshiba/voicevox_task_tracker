@@ -49,6 +49,11 @@ import {
 } from "../../persistence/notification-history-events.js";
 import { notificationLedgerEntry } from "../../persistence/notification-ledger-normalization.js";
 import {
+  assertPostSaveExactTree,
+  parseProvenStateSnapshot,
+  postSaveExactProof,
+} from "./post-save-exact-proof.js";
+import {
   restoreNotificationSelection,
   type NotificationMessageContext,
 } from "./notification-message-context.js";
@@ -97,12 +102,16 @@ export type NotificationMessageState = Readonly<{
   files: ReadonlyMap<string, StateFileReadResult>;
 }>;
 
-function requiredSource(files: ReadonlyMap<string, StateFileReadResult>, path: string): string {
+function requiredBytes(files: ReadonlyMap<string, StateFileReadResult>, path: string): Uint8Array {
   const file = files.get(path);
   if (file?.status !== "present") {
     throw new TypeError(`通知messageのstate fileがありません。対象: ${path}`);
   }
-  return new TextDecoder("utf-8", { fatal: true }).decode(file.bytes);
+  return file.bytes;
+}
+
+function requiredSource(files: ReadonlyMap<string, StateFileReadResult>, path: string): string {
+  return new TextDecoder("utf-8", { fatal: true }).decode(requiredBytes(files, path));
 }
 
 /** snapshot、ledger、marker、recordを同じcommit treeから読む。 */
@@ -116,11 +125,22 @@ export async function readNotificationMessageState(
   if (files.size !== paths.length || paths.some((path) => files.get(path)?.status !== "present")) {
     throw new TypeError("通知messageのexact state file一覧が不足しています");
   }
-  const transaction = verifyRunTransactionFiles(files, configuration);
+  const proof = postSaveExactProof(adapter, configuration, revision);
+  if (proof != null) {
+    assertPostSaveExactTree(proof, paths, files);
+  }
+  const transaction = proof?.transaction ?? verifyRunTransactionFiles(files, configuration);
   if (transaction == null) {
     throw new TypeError("通知messageのrun transactionがありません");
   }
-  const snapshot = parseStateSnapshot(requiredSource(files, configuration.snapshotPath));
+  const snapshot =
+    proof == null
+      ? parseStateSnapshot(requiredSource(files, configuration.snapshotPath))
+      : parseProvenStateSnapshot(
+          proof,
+          configuration,
+          requiredBytes(files, configuration.snapshotPath),
+        );
   const normalLedger = parseStateNotificationLedger(
     requiredSource(files, configuration.notificationLedgerPath),
   );

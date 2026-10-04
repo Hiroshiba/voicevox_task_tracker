@@ -51,6 +51,10 @@ export type { DryRunArtifact } from "./sequential-report.js";
 /** 日次transactionの外部接続と各モジュールの結合境界。 */
 export type SequentialRunDependencies = Readonly<{
   diagnosticsRecorder?: DiagnosticsJsonlRecorder;
+  stateProofScope?: Readonly<{
+    beginRun: (runId: string) => void;
+    endRun: (runId: string) => void;
+  }>;
   readAiProcessAttemptCount: (configuration: RuntimeConfiguration) => number;
   inspectLaunch: (
     request: RunRequest,

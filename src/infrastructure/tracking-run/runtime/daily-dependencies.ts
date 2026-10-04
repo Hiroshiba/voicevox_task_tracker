@@ -3,6 +3,7 @@ import { createAnalysisStages } from "./analysis-stages.js";
 
 import { planPublication } from "../../../publication/plan-publication.js";
 import { nodeContentDigestPort } from "../content-digest.js";
+import { PostSaveExactProofScope } from "../post-save-exact-proof.js";
 import { GitHubRunSessions } from "../github-port.js";
 import type { ProductionRuntimeAdapters } from "./adapters.js";
 import { createReadCompletedReportStage } from "./daily-startup/completed-report.js";
@@ -37,42 +38,59 @@ import {
 export function createDailyDependencies(
   adapters: ProductionRuntimeAdapters,
 ): SequentialRunDependencies {
+  const proofScope = new PostSaveExactProofScope();
+  const runAdapters: ProductionRuntimeAdapters = Object.freeze({
+    ...adapters,
+    createStateBranchAdapter: () => {
+      const adapter = adapters.createStateBranchAdapter();
+      proofScope.register(adapter);
+      return adapter;
+    },
+  });
   const githubSessions = new GitHubRunSessions();
-  const inspectLaunch = createInspectLaunchStage(adapters, adapters.now);
+  const inspectLaunch = createInspectLaunchStage(runAdapters, adapters.now);
   return Object.freeze({
     ...(adapters.diagnosticsRecorder == null
       ? {}
       : { diagnosticsRecorder: adapters.diagnosticsRecorder }),
+    stateProofScope: Object.freeze({
+      beginRun: (runId: string): void => {
+        proofScope.beginRun(runId);
+      },
+      endRun: (runId: string): void => {
+        proofScope.endRun(runId);
+      },
+    }),
     readAiProcessAttemptCount: createReadAiProcessAttemptCountStage(),
     inspectLaunch,
-    readCompletedReport: createReadCompletedReportStage(adapters),
+    readCompletedReport: createReadCompletedReportStage(runAdapters),
     pendingRun: (request, invocationId, getRunId, onReceiptRecorded) =>
       createPendingRunStage(
-        adapters,
+        runAdapters,
         request,
         invocationId,
         inspectLaunch,
         getRunId,
         onReceiptRecorded,
       ),
-    validateConfiguration: createValidateConfigurationStage(adapters),
-    loadState: createLoadStateStage(adapters),
+    validateConfiguration: createValidateConfigurationStage(runAdapters),
+    loadState: createLoadStateStage(runAdapters),
     prepareRun: createPrepareRunStage(),
     createAnalysisStages: (context, progress) =>
-      createAnalysisStages(adapters, githubSessions, context, progress),
+      createAnalysisStages(runAdapters, githubSessions, context, progress),
     planPublication: (validated) => planPublication(validated, nodeContentDigestPort),
-    prepareCheckpoint: createPrepareCheckpointStage(adapters),
-    commitPreparedCheckpoint: createCommitPreparedCheckpointStage(adapters),
-    readCommittedState: createReadCommittedStateStage(adapters),
-    buildPages: createBuildPagesStage(adapters),
-    deployPages: createDeployPagesStage(adapters),
-    settleNotifications: createSettleNotificationsStage(adapters),
-    finalizeRun: createFinalizeRunStage(adapters),
-    buildNotificationHistoryPages: createBuildNotificationHistoryPagesStage(adapters),
-    deployNotificationHistoryPages: createDeployNotificationHistoryPagesStage(adapters),
+    prepareCheckpoint: createPrepareCheckpointStage(runAdapters),
+    commitPreparedCheckpoint: createCommitPreparedCheckpointStage(runAdapters),
+    readCommittedState: createReadCommittedStateStage(runAdapters),
+    buildPages: createBuildPagesStage(runAdapters),
+    deployPages: createDeployPagesStage(runAdapters),
+    settleNotifications: createSettleNotificationsStage(runAdapters),
+    finalizeRun: createFinalizeRunStage(runAdapters),
+    buildNotificationHistoryPages: createBuildNotificationHistoryPagesStage(runAdapters),
+    deployNotificationHistoryPages: createDeployNotificationHistoryPagesStage(runAdapters),
     writeDryRunArtifact: createWriteDryRunArtifactStage(),
-    writeCollectAnalyzeArtifact: createWriteCollectAnalyzeArtifactStage(adapters),
-    writeReport: createWriteReportStage(adapters),
-    writeReceiptChain: createWriteReceiptChainStage(adapters),
+    writeCollectAnalyzeArtifact: createWriteCollectAnalyzeArtifactStage(runAdapters),
+    writeReport: createWriteReportStage(runAdapters),
+    writeReceiptChain: createWriteReceiptChainStage(runAdapters),
   } satisfies SequentialRunDependencies);
 }

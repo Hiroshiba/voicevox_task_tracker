@@ -147,6 +147,7 @@ export async function commitInitialState(
       position: { kind: "first" },
     },
     statePort.observePerformanceDetail,
+    true,
   );
   statePort.observeProgress?.("receipt_observed");
   if (observed.receipt.receiptType !== "initial_state_commit") {

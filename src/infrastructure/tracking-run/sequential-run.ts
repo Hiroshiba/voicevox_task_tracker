@@ -610,8 +610,13 @@ export class SequentialRunRunner {
       executionPolicy: request.executionPolicy,
       commandKind: command.kind,
     });
-    return this.#coordinator.runExclusive(invocation.runId, () =>
-      this.#execute(command, invocation, request, identity),
-    );
+    return this.#coordinator.runExclusive(invocation.runId, async () => {
+      this.#dependencies.stateProofScope?.beginRun(invocation.runId);
+      try {
+        return await this.#execute(command, invocation, request, identity);
+      } finally {
+        this.#dependencies.stateProofScope?.endRun(invocation.runId);
+      }
+    });
   }
 }

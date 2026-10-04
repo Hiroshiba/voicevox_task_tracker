@@ -33,6 +33,14 @@ import {
   type VerifiedRunTransactionFiles,
 } from "../../persistence/state-transaction-files.js";
 import { nodeContentDigestPort } from "./content-digest.js";
+import {
+  assertPostSaveExactDependencies,
+  assertPostSaveExactTree,
+  hasPostSaveExactProofScope,
+  postSaveExactProof,
+  recordPostSaveExactReads,
+  retainPostSaveExactProof,
+} from "./post-save-exact-proof.js";
 
 type ObservedCommit<T> = Readonly<{
   receipt: T;
@@ -54,7 +62,11 @@ async function readVerifiedTree(
   if (files.size !== paths.length || paths.some((path) => files.get(path)?.status !== "present")) {
     throw new TypeError("観測対象のexact state file一覧が不足しています");
   }
-  const transaction = verifyRunTransactionFiles(files, configuration);
+  const proof = postSaveExactProof(adapter, configuration, revision);
+  if (proof != null) {
+    assertPostSaveExactTree(proof, paths, files);
+  }
+  const transaction = proof?.transaction ?? verifyRunTransactionFiles(files, configuration);
   if (transaction == null) {
     throw new TypeError("観測対象のexact stateにrun transactionがありません");
   }
@@ -156,23 +168,34 @@ export async function observeStateCommitAtRevision(
     position: ObservedStateCommitPosition;
   }>,
   observePerformanceDetail?: PerformanceDetailObserver,
+  issuePostSaveProof?: boolean,
 ): Promise<
   ObservedCommit<InitialStateCommitReceipt | NotificationSettlementReceipt | RunFinalizationReceipt>
 > {
+  const proof = postSaveExactProof(adapter, configuration, revision);
+  const recording =
+    issuePostSaveProof === true && proof == null && hasPostSaveExactProofScope(adapter)
+      ? recordPostSaveExactReads(adapter)
+      : undefined;
+  const readingAdapter = recording?.adapter ?? adapter;
   const [tree, commit] = await Promise.all([
-    readVerifiedTree(adapter, configuration, revision),
-    adapter.readCommit(revision),
+    readVerifiedTree(readingAdapter, configuration, revision),
+    readingAdapter.readCommit(revision),
   ]);
   observePerformanceDetail?.({ step: "receipt_tree_read", count: tree.files.size });
   const { marker, record } = tree.transaction;
-  await assertStateCommitChain(
-    adapter,
-    configuration,
-    revision,
-    tree.transaction,
-    initialStateRevision,
-    { revision, files: tree.files, transaction: tree.transaction },
-  );
+  if (proof == null) {
+    await assertStateCommitChain(
+      readingAdapter,
+      configuration,
+      revision,
+      tree.transaction,
+      initialStateRevision,
+      { revision, files: tree.files, transaction: tree.transaction },
+    );
+  } else {
+    await assertPostSaveExactDependencies(adapter, proof, tree.files, commit);
+  }
   observePerformanceDetail?.({ step: "receipt_commit_chain_verified" });
   if (
     commit.metadata.commitScope !== "tracking_run" ||
@@ -193,7 +216,7 @@ export async function observeStateCommitAtRevision(
     }
     expectedTrackingStateRevision = marker.baseStateRevision;
     const advance = await authorizeAdvanceAfterOrthogonalCommits(
-      adapter,
+      readingAdapter,
       configuration,
       expectedTrackingStateRevision,
       parentRevision,
@@ -201,7 +224,7 @@ export async function observeStateCommitAtRevision(
     interveningOperationsAlertCommits = advance.interveningOperationsAlertCommits;
   } else {
     const ancestry = await assertCommitAncestry(
-      adapter,
+      readingAdapter,
       configuration,
       revision,
       initialStateRevision,
@@ -256,6 +279,9 @@ export async function observeStateCommitAtRevision(
     [{ receipt, evidence: { kind: "state_commit", state: evidence } }],
     nodeContentDigestPort,
   );
+  if (recording != null) {
+    retainPostSaveExactProof(adapter, recording.issue(configuration, revision, tree.transaction));
+  }
   observePerformanceDetail?.({ step: "receipt_created" });
   return Object.freeze({ receipt, evidence });
 }

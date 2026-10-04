@@ -19,6 +19,11 @@ import { parseStateSnapshot } from "../../persistence/snapshot-v23.js";
 import { verifyRunTransactionFiles } from "../../persistence/state-transaction-files.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import {
+  assertPostSaveExactTree,
+  parseProvenStateSnapshot,
+  postSaveExactProof,
+} from "./post-save-exact-proof.js";
+import {
   resumeInitialPagesBuild,
   type InitialPagesBuildInput,
 } from "./publication-resume-inputs.js";
@@ -32,12 +37,16 @@ export type InitialPagesSource = Readonly<{
   historyRecords: readonly StateHistoryRecord[];
 }>;
 
-function requiredSource(files: ReadonlyMap<string, StateFileReadResult>, path: string): string {
+function requiredBytes(files: ReadonlyMap<string, StateFileReadResult>, path: string): Uint8Array {
   const file = files.get(path);
   if (file?.status !== "present") {
     throw new TypeError(`Pages buildに必要なstate fileがありません。対象: ${path}`);
   }
-  return new TextDecoder("utf-8", { fatal: true }).decode(file.bytes);
+  return file.bytes;
+}
+
+function requiredSource(files: ReadonlyMap<string, StateFileReadResult>, path: string): string {
+  return new TextDecoder("utf-8", { fatal: true }).decode(requiredBytes(files, path));
 }
 
 /** exact stateの全履歴fileをcanonical形式で読む。 */
@@ -121,7 +130,11 @@ export async function readInitialPagesSource(
   if (files.size !== paths.length || paths.some((path) => files.get(path)?.status !== "present")) {
     throw new TypeError("初回Pages buildのexact state file一覧が不足しています");
   }
-  const transaction = verifyRunTransactionFiles(files, stateConfiguration);
+  const proof = postSaveExactProof(adapter, stateConfiguration, revision);
+  if (proof != null) {
+    assertPostSaveExactTree(proof, paths, files);
+  }
+  const transaction = proof?.transaction ?? verifyRunTransactionFiles(files, stateConfiguration);
   if (transaction?.marker.phase !== "initial_state_committed") {
     throw new TypeError("初回Pages buildのexact stateに初回run transactionがありません");
   }
@@ -149,7 +162,14 @@ export async function readInitialPagesSource(
     }
     previousRepositoryId = repository.id;
   }
-  const snapshot = parseStateSnapshot(requiredSource(files, stateConfiguration.snapshotPath));
+  const snapshot =
+    proof == null
+      ? parseStateSnapshot(requiredSource(files, stateConfiguration.snapshotPath))
+      : parseProvenStateSnapshot(
+          proof,
+          stateConfiguration,
+          requiredBytes(files, stateConfiguration.snapshotPath),
+        );
   const historyRecords = readPagesHistoryRecords(files, stateConfiguration.historyDirectory);
   const matching = historyRecords.filter((record) => record.runId === transaction.marker.runId);
   if (
