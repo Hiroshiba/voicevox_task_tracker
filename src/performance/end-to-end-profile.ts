@@ -2,7 +2,11 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
-import { CODEX_ELEMENT_OUTPUT_SCHEMA_VERSION, type CodexAnalysisInput } from "../codex/index.js";
+import {
+  CODEX_ELEMENT_OUTPUT_SCHEMA_VERSION,
+  listNativeRelationConstraints,
+  type CodexAnalysisInput,
+} from "../codex/index.js";
 import { loadConfig, type Config } from "../config/index.js";
 import {
   buildSourceId,
@@ -424,6 +428,12 @@ function createCodexOutput(input: CodexAnalysisInput): unknown {
     `性能profileのCodex入力に作者候補IDがありません。対象: ${input.item.nodeId}`,
   );
   const selectedElements = new Set(input.selectedElements);
+  const nativeRelationVerdicts = new Map(
+    listNativeRelationConstraints(input).map((constraint) => [
+      constraint.candidateId,
+      constraint.verdict,
+    ]),
+  );
   const evidence = Object.freeze([
     Object.freeze({
       sourceId: source.id,
@@ -465,7 +475,7 @@ function createCodexOutput(input: CodexAnalysisInput): unknown {
           relations: result(
             input.candidates.relations.map((candidate) => ({
               candidateId: candidate.id,
-              verdict: "related",
+              verdict: nativeRelationVerdicts.get(candidate.id) ?? "related",
               reasonSummary: "性能profileでは曖昧な関係を関連として扱います",
               sourceIds: [source.id],
               confidence: 0.95,

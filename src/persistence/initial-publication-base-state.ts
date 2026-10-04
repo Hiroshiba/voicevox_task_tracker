@@ -17,7 +17,7 @@ import {
 import { appendStateHistoryRecord, createStateHistoryRecord } from "./history.js";
 import type { StateHistoryInputEvent } from "./history-contracts.js";
 import { createInitialStateWriteManifest } from "./initial-state-write-manifest.js";
-import { version19SnapshotFields, type StateSnapshot } from "./snapshot-v23.js";
+import type { StateSnapshot } from "./snapshot-v23.js";
 import { assertNonNullable } from "../util/assert-non-nullable.js";
 import { cachePath, personalReminderAiCachePath } from "./state-cache-paths.js";
 
@@ -83,8 +83,8 @@ export async function readInitialPublicationBaseState(
   assertNonNullable(history, "公開計画の固定revisionから履歴を読み取れません");
   assertNonNullable(evidence, "公開計画の固定revisionからPages証拠を読み取れません");
   const record = createStateHistoryRecord(
-    previousSnapshot == null ? undefined : version19SnapshotFields(previousSnapshot),
-    version19SnapshotFields(snapshot),
+    previousSnapshot,
+    snapshot,
     snapshot.generatedAt.slice(0, 10),
     inventory,
     sortByKey(historyInputEvents, (event) => serializeCanonicalJson(event)),

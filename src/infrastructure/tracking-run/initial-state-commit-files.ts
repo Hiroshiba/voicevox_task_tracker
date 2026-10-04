@@ -35,7 +35,6 @@ import {
   assertPersonalReminderEvidenceRecordsClosure,
   createStateSnapshot,
   serializeStateSnapshot,
-  version19SnapshotFields,
 } from "../../persistence/snapshot-v23.js";
 import { createPersonalReminderEvidenceSourceIndex } from "../../persistence/snapshot-evidence-closure.js";
 import { readAiCacheMigrationPlan } from "../../persistence/state-ai-cache-migration-plan.js";
@@ -206,8 +205,8 @@ export async function prepareInitialStateFiles(
   ]);
   assertPersonalReminderEvidenceRecordsClosure(snapshot, evidenceIndex);
   const historyRecord = createStateHistoryRecord(
-    previousSnapshot == null ? undefined : version19SnapshotFields(previousSnapshot),
-    version19SnapshotFields(snapshot),
+    previousSnapshot,
+    snapshot,
     snapshot.generatedAt.slice(0, 10),
     inventory,
     writeSet.historyInputEvents,

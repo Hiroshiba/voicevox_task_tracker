@@ -5,6 +5,7 @@ import type {
   StateHistoryEvent,
   StateHistoryInputEvent,
   StateHistoryProjection,
+  StateHistorySnapshot,
 } from "./history-contracts.js";
 import { compareStrings } from "./history-contracts.js";
 import {
@@ -13,7 +14,6 @@ import {
   responsibilitySchema,
   severitySchema,
 } from "./history-fields-schema.js";
-import type { StateSnapshot } from "./snapshot-contracts.js";
 
 function compareInputEvents(left: StateHistoryInputEvent, right: StateHistoryInputEvent): number {
   const occurredAtComparison = compareStrings(left.occurredAt, right.occurredAt);
@@ -44,8 +44,8 @@ export function createStateHistoryInputEvents(value: unknown): readonly StateHis
 }
 
 export function createRepositoryExclusionEvents(
-  previousSnapshot: StateSnapshot | undefined,
-  currentSnapshot: StateSnapshot,
+  previousSnapshot: StateHistorySnapshot | undefined,
+  currentSnapshot: StateHistorySnapshot,
   repositoryInventory: readonly Repository[],
 ): readonly StateHistoryEvent[] {
   if (previousSnapshot == null) {
@@ -78,7 +78,7 @@ export function createRepositoryExclusionEvents(
 }
 
 function snapshotInputEventItems(
-  snapshot: StateSnapshot,
+  snapshot: StateHistorySnapshot,
 ): ReadonlyMap<string, ReadonlySet<string>> {
   const itemNodeIdsBySourceId = new Map<string, Set<string>>();
   for (const item of snapshot.items) {
@@ -98,8 +98,8 @@ function snapshotInputEventItems(
 }
 
 export function createNewInputEvents(
-  previousSnapshot: StateSnapshot | undefined,
-  currentSnapshot: StateSnapshot,
+  previousSnapshot: StateHistorySnapshot | undefined,
+  currentSnapshot: StateHistorySnapshot,
   value: readonly StateHistoryInputEvent[],
 ): readonly StateHistoryInputEvent[] {
   const inputEvents = createStateHistoryInputEvents(value);
@@ -122,7 +122,7 @@ export function createNewInputEvents(
   return Object.freeze(events);
 }
 
-export function createProjection(snapshot: StateSnapshot): StateHistoryProjection {
+export function createProjection(snapshot: StateHistorySnapshot): StateHistoryProjection {
   return {
     responsibilities: new Map(
       snapshot.items.map((item) => [

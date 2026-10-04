@@ -23,15 +23,39 @@ export type AiResultOrigin = Readonly<{
   origin: "current" | "historical";
 }>;
 
-/** source参照の保存位置に対応するAI resultを探す。 */
-export function aiResultSlotForUse(
-  path: readonly (string | number)[],
+/** source参照の保存位置に対応するAI resultの検索口を作る。 */
+export function createAiResultSlotLookup(
   slots: readonly AiResultSlot[],
-): AiResultSlot | undefined {
-  return slots.find(
-    (slot) =>
-      path.length > slot.path.length && slot.path.every((part, index) => part === path[index]),
-  );
+): (path: readonly (string | number)[]) => AiResultSlot | undefined {
+  interface Node {
+    children: Map<string | number, Node>;
+    match?: Readonly<{ index: number; slot: AiResultSlot }>;
+  }
+  const root: Node = { children: new Map() };
+  for (const [index, slot] of slots.entries()) {
+    let node = root;
+    for (const part of slot.path) {
+      let child = node.children.get(part);
+      if (child == null) {
+        child = { children: new Map() };
+        node.children.set(part, child);
+      }
+      node = child;
+    }
+    node.match ??= { index, slot };
+  }
+  return (path) => {
+    let node: Node | undefined = root;
+    let match: Node["match"];
+    for (const part of path) {
+      if (node.match != null && (match == null || node.match.index < match.index)) {
+        match = node.match;
+      }
+      node = node.children.get(part);
+      if (node == null) break;
+    }
+    return match?.slot;
+  };
 }
 
 /** AI分析の全保存resultを要素と所有者付きで列挙する。 */

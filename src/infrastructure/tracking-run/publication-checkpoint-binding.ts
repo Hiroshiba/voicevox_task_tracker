@@ -17,7 +17,6 @@ import { parseSha256Hash, type Sha256Hash } from "../../canonical-json/sha256.js
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import type { PublicationPlannedRun } from "../../publication/publication-plan-contracts.js";
 import { createStateHistoryRecord } from "../../persistence/history.js";
-import { version19SnapshotFields } from "../../persistence/snapshot-v23.js";
 import { validatedRunPayloadRepositoryInventory } from "./validated-run-payload.js";
 import type { StateNotificationLedger } from "../../persistence/state-documents.js";
 import type { StateSnapshotReadResult } from "../../persistence/state-persistence-session.js";
@@ -130,8 +129,8 @@ export function bindPublicationCheckpoint(
       : undefined;
   const writeSet = decoded.publicationPlan.initialStateWriteSet;
   const expectedHistoryRecord = createStateHistoryRecord(
-    snapshot == null ? undefined : version19SnapshotFields(snapshot),
-    version19SnapshotFields(writeSet.snapshot),
+    snapshot,
+    writeSet.snapshot,
     writeSet.snapshot.generatedAt.slice(0, 10),
     validatedRunPayloadRepositoryInventory(decoded.validatedPayload),
     writeSet.historyInputEvents,

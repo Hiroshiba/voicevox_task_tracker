@@ -14,6 +14,7 @@ import type {
   StateHistoryNotificationEvent,
   StateHistoryRecord,
   StateHistoryResponsibility,
+  StateHistorySnapshot,
   StateHistoryValue,
 } from "./history-contracts.js";
 import { compareStrings } from "./history-contracts.js";
@@ -29,12 +30,11 @@ import {
   createSetAndRemoveEvents,
   valuesEqual,
 } from "./history-projection.js";
-import type { StateSnapshot } from "./snapshot-contracts.js";
 
 /** previous snapshotからcurrent snapshotへの日次履歴recordを生成する。 */
 export function createStateHistoryRecord(
-  previousSnapshot: StateSnapshot | undefined,
-  currentSnapshot: StateSnapshot,
+  previousSnapshot: StateHistorySnapshot | undefined,
+  currentSnapshot: StateHistorySnapshot,
   date: string,
   repositoryInventory: readonly Repository[],
   inputEvents: readonly StateHistoryInputEvent[],

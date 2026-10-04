@@ -17,9 +17,8 @@ import {
 import {
   assertPersonalReminderEvidenceClosure as assertVersion22EvidenceClosure,
   assertPersonalReminderEvidenceRecordsClosure as assertVersion22EvidenceRecordsClosure,
+  assertNoPendingPersonalReminderClock,
   createStateSnapshot as createVersion22Snapshot,
-  parseStateSnapshot as parseVersion22Snapshot,
-  serializeStateSnapshot as serializeVersion22Snapshot,
   snapshotEffectiveGraphStateByNodeId as version22EffectiveGraphStateByNodeId,
   version19SnapshotFields as version22ToVersion19Fields,
   type StateSnapshot as StateSnapshotVersion22,
@@ -95,7 +94,7 @@ export function createStateSnapshot(value: unknown): StateSnapshot {
 /** 現行snapshotを末尾改行付きcanonical JSONへ変換する。 */
 export function serializeStateSnapshot(snapshot: StateSnapshot): string {
   const validated = createStateSnapshot(snapshot);
-  serializeVersion22Snapshot(version22Projection(validated));
+  assertNoPendingPersonalReminderClock(validated);
   return serializeCanonicalJsonLine(validated);
 }
 
@@ -109,7 +108,7 @@ export function parseStateSnapshot(source: string): StateSnapshot {
     throw new StateFormatError("snapshot", { cause: error });
   }
   const snapshot = createStateSnapshot(value);
-  parseVersion22Snapshot(serializeCanonicalJsonLine(version22Projection(snapshot)));
+  assertNoPendingPersonalReminderClock(snapshot);
   return snapshot;
 }
 

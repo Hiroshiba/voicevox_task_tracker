@@ -19,7 +19,7 @@ import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import { EvidenceCatalog } from "./evidence-catalog.js";
 import { collectOwnedHistoricalAiResults } from "./evidence-closure-historical-ai.js";
 import {
-  aiResultSlotForUse,
+  createAiResultSlotLookup,
   collectAiResultSlots,
   matchingHistoricalAiResults,
   type AiResultOrigin,
@@ -68,11 +68,10 @@ export type EvidenceClosureWitness = Readonly<{
 
 function canonicalSort<Value>(values: readonly Value[]): readonly Value[] {
   return Object.freeze(
-    [...values].sort((left, right) => {
-      const first = serializeCanonicalJson(left);
-      const second = serializeCanonicalJson(right);
-      return first < second ? -1 : first > second ? 1 : 0;
-    }),
+    values
+      .map((value) => ({ value, key: serializeCanonicalJson(value) }))
+      .sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0))
+      .map(({ value }) => value),
   );
 }
 
@@ -175,18 +174,16 @@ export function assertHistoricalEvidenceWitnessMatchesBaseSnapshot(
 
 function resolvedAiSlot(
   path: readonly (string | number)[],
-  slots: readonly AiResultSlot[],
-  origins: readonly AiResultOrigin[],
+  findSlot: (path: readonly (string | number)[]) => AiResultSlot | undefined,
+  origins: ReadonlyMap<string, AiResultOrigin>,
 ): Readonly<{ slot: AiResultSlot; origin: AiResultOrigin["origin"] }> | undefined {
-  const slot = aiResultSlotForUse(path, slots);
+  const slot = findSlot(path);
   if (slot == null) {
     if (path[0] === "snapshot" && path.includes("aiAnalysis"))
       throw new RunCompletenessError("invalid_reference", "ai", path, undefined);
     return undefined;
   }
-  const origin = origins.find(
-    (value) => serializeCanonicalJson(value.path) === serializeCanonicalJson(slot.path),
-  );
+  const origin = origins.get(serializeCanonicalJson(slot.path));
   if (origin == null)
     throw new RunCompletenessError("missing_value", slot.owner.itemNodeId, slot.path, undefined);
   return { slot, origin: origin.origin };
@@ -265,6 +262,10 @@ export function createEvidenceClosureWitness(
   const aiResultOrigins = createAiResultOrigins(tracked, collection, aiItems, historicalAiResults);
   assertSavedAiOriginShape(values, aiResultOrigins);
   const aiSlots = collectSavedAiResultSlots(values);
+  const findAiResultSlot = createAiResultSlotLookup(aiSlots);
+  const originsByPath = new Map(
+    aiResultOrigins.map((origin) => [serializeCanonicalJson(origin.path), origin]),
+  );
   const selectedAi = selectedHistoricalAiResults(aiSlots, aiResultOrigins, historicalAiResults);
   const usedIds = new Set(sourceUses.map(({ use }) => use.sourceId));
   const candidateCurrentSources = canonicalSort(
@@ -281,7 +282,7 @@ export function createEvidenceClosureWitness(
   const selectedHistorical = new Map<string, OwnedHistoricalEvidence>();
   const selectedCurrentIds = new Set<string>();
   for (const { use, annotation } of sourceUses) {
-    const aiSlot = resolvedAiSlot(use.path, aiSlots, aiResultOrigins);
+    const aiSlot = resolvedAiSlot(use.path, findAiResultSlot, originsByPath);
     const actual = resolveEvidenceUse(
       use,
       candidateCurrentById,
@@ -316,7 +317,7 @@ export function createEvidenceClosureWitness(
           historicalById,
           context,
           annotation,
-          resolvedAiSlot(use.path, aiSlots, aiResultOrigins),
+          resolvedAiSlot(use.path, findAiResultSlot, originsByPath),
         ).resolved,
     ),
   );
@@ -578,6 +579,10 @@ export function assertEvidenceClosureWitness(
     witness.previousPendingCauses,
   );
   const aiSlots = collectSavedAiResultSlots(values);
+  const findAiResultSlot = createAiResultSlotLookup(aiSlots);
+  const originsByPath = new Map(
+    witness.aiResultOrigins.map((origin) => [serializeCanonicalJson(origin.path), origin]),
+  );
   assertSavedAiOriginShape(values, witness.aiResultOrigins);
   assertRunValueMatches(
     selectedHistoricalAiResults(aiSlots, witness.aiResultOrigins, witness.historicalAiResults),
@@ -654,7 +659,7 @@ export function assertEvidenceClosureWitness(
       historicalById,
       context,
       sourceUse.annotation,
-      resolvedAiSlot(sourceUse.use.path, aiSlots, witness.aiResultOrigins),
+      resolvedAiSlot(sourceUse.use.path, findAiResultSlot, originsByPath),
     );
     assertRunValueMatches(
       actual.resolved,

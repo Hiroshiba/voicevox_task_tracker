@@ -61,11 +61,30 @@ const validateSnapshotSchema = ajv.compile<StateSnapshot>(snapshotSchema);
 
 /** 現行snapshotから旧版の共通保存値を取り出す。 */
 export function version19SnapshotFields(snapshot: StateSnapshot): StateSnapshotVersion19 {
+  return createVersion19Snapshot(projectVersion19SnapshotFields(snapshot));
+}
+
+function projectVersion19SnapshotFields(snapshot: StateSnapshot): Omit<
+  StateSnapshotVersion19,
+  "items" | "collection"
+> &
+  Readonly<{
+    items: readonly ReturnType<typeof legacyAiAnalysisItem<SnapshotTrackedItem>>[];
+    collection: Readonly<{
+      repositories: readonly (Omit<
+        StateSnapshotVersion19["collection"]["repositories"][number],
+        "items"
+      > &
+        Readonly<{
+          items: readonly ReturnType<typeof legacyAiAnalysisItem<SnapshotCollectionItem>>[];
+        }>)[];
+    }>;
+  }> {
   const { finalGraphProjection, finalGraphProjectionDigest, items, collection, ...fields } =
     snapshot;
   void finalGraphProjection;
   void finalGraphProjectionDigest;
-  return createVersion19Snapshot({
+  return {
     ...fields,
     schemaVersion: "19",
     items: items.map(legacyAiAnalysisItem),
@@ -75,7 +94,7 @@ export function version19SnapshotFields(snapshot: StateSnapshot): StateSnapshotV
         items: repository.items.map(legacyAiAnalysisItem),
       })),
     },
-  });
+  };
 }
 
 function legacyAiAnalysisItem<Item extends Pick<TrackedItem, "aiAnalysis">>(
@@ -201,7 +220,7 @@ export function createStateSnapshot(value: unknown): StateSnapshot {
   }
   assertCurrentAiElements(value);
   const base = createVersion20Snapshot({
-    ...version19SnapshotFields(value),
+    ...projectVersion19SnapshotFields(value),
     schemaVersion: "20",
     finalGraphProjection: value.finalGraphProjection,
     finalGraphProjectionDigest: value.finalGraphProjectionDigest,

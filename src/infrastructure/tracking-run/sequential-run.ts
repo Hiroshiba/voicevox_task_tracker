@@ -425,6 +425,7 @@ export class SequentialRunRunner {
       validated: (value) => required(analysisStages, "解析adapterがありません").validated(value),
       publicationPlanned: (validated) => {
         const planned = this.#dependencies.planPublication(validated);
+        analysisStages = undefined;
         publicationInput = {
           invocation,
           configuration: required(configuration, "実行設定がありません"),

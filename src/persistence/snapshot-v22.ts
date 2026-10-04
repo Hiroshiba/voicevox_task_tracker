@@ -85,7 +85,8 @@ function version21Projection(snapshot: StateSnapshot): StateSnapshotVersion21 {
   });
 }
 
-function assertNoPendingClock(snapshot: StateSnapshot): void {
+/** 保存する個人催促時計に未確定の再確認がないことを確認する。 */
+export function assertNoPendingPersonalReminderClock(snapshot: Pick<StateSnapshot, "items">): void {
   for (const item of snapshot.items) {
     for (const cause of item.personalReminderCauses) {
       const bases = [
@@ -209,7 +210,7 @@ export function createStateSnapshot(value: unknown): StateSnapshot {
 /** 現行snapshotを末尾改行付きcanonical JSONへ変換する。 */
 export function serializeStateSnapshot(snapshot: StateSnapshot): string {
   const validated = createStateSnapshot(snapshot);
-  assertNoPendingClock(validated);
+  assertNoPendingPersonalReminderClock(validated);
   return serializeCanonicalJsonLine(validated);
 }
 
@@ -223,7 +224,7 @@ export function parseStateSnapshot(source: string): StateSnapshot {
     throw new StateFormatError("snapshot", { cause: error });
   }
   const snapshot = createStateSnapshot(value);
-  assertNoPendingClock(snapshot);
+  assertNoPendingPersonalReminderClock(snapshot);
   return snapshot;
 }
 
@@ -243,7 +244,7 @@ export function snapshotEffectiveGraphStateByNodeId(
 
 /** personal reminderのEvidence参照が現行snapshot内で閉じていることを検証する。 */
 export function assertPersonalReminderEvidenceClosure(snapshot: StateSnapshot): void {
-  assertNoPendingClock(snapshot);
+  assertNoPendingPersonalReminderClock(snapshot);
   assertVersion21EvidenceClosure(createVersion21Snapshot(version21Projection(snapshot)));
   assertReconfirmedProvenance(snapshot);
 }
@@ -253,7 +254,7 @@ export function assertPersonalReminderEvidenceRecordsClosure(
   snapshot: StateSnapshot,
   expectedEvidenceBySourceId: ReadonlyMap<SourceId, readonly Evidence[]>,
 ): void {
-  assertNoPendingClock(snapshot);
+  assertNoPendingPersonalReminderClock(snapshot);
   assertVersion21EvidenceRecordsClosure(
     createVersion21Snapshot(version21Projection(snapshot)),
     expectedEvidenceBySourceId,

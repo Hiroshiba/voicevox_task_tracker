@@ -28,6 +28,12 @@ import type {
 } from "./history-record-schema.js";
 import type { StateSnapshot } from "./snapshot-contracts.js";
 
+/** 日次履歴の生成に使うsnapshotの確定済み保存値。 */
+export type StateHistorySnapshot = Pick<
+  StateSnapshot,
+  "run" | "generatedAt" | "items" | "relations" | "repositories"
+>;
+
 /** 履歴へ保存する責務状態。 */
 export type StateHistoryResponsibility = z.output<typeof responsibilitySchema>;
 

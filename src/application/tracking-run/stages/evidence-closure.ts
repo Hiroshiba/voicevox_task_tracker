@@ -11,7 +11,7 @@ import type {
   ResolvedEvidenceUse,
 } from "../contracts/evidence-closure.js";
 import { EvidenceCatalog } from "./evidence-catalog.js";
-import { aiResultSlotForUse, collectAiResultSlots } from "./evidence-ai-results.js";
+import { createAiResultSlotLookup, collectAiResultSlots } from "./evidence-ai-results.js";
 import { collectAdoptionAiResultSlots, createAiResultOrigins } from "./evidence-ai-provenance.js";
 import { collectCurrentSourceFacts } from "./evidence-catalog-source-facts.js";
 import { resolveEvidenceUse } from "./evidence-closure-resolve.js";
@@ -31,11 +31,10 @@ export type EvidenceClosureAdditions = Pick<
 
 function canonicalSort<Value>(values: readonly Value[]): readonly Value[] {
   return Object.freeze(
-    [...values].sort((left, right) => {
-      const a = serializeCanonicalJson(left);
-      const b = serializeCanonicalJson(right);
-      return a < b ? -1 : a > b ? 1 : 0;
-    }),
+    values
+      .map((value) => ({ value, key: serializeCanonicalJson(value) }))
+      .sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0))
+      .map(({ value }) => value),
   );
 }
 
@@ -92,17 +91,16 @@ function appendEvidence(
 function evidenceAdditions(
   use: EvidenceUse,
   records: readonly OwnedHistoricalEvidence[],
-  outward: EvidenceClosureOutward,
+  items: ReadonlyMap<string, EvidenceClosureOutward["items"][number]>,
+  collectionItemIds: ReadonlySet<string>,
+  relations: ReadonlyMap<string, EvidenceClosureOutward["relations"][number]>,
 ): readonly Evidence[] {
   if (records.length === 0) {
     const destination = use.destination;
     if (
       destination.kind === "item" &&
-      !outward.items.some((entry) => entry.item.nodeId === destination.itemNodeId) &&
-      !(
-        use.path[0] === "collectionAiItems" &&
-        outward.collectionAiItems.some((item) => item.nodeId === destination.itemNodeId)
-      )
+      !items.has(destination.itemNodeId) &&
+      !(use.path[0] === "collectionAiItems" && collectionItemIds.has(destination.itemNodeId))
     ) {
       throw new RunCompletenessError("wrong_owner", use.sourceId, use.path, use);
     }
@@ -110,7 +108,7 @@ function evidenceAdditions(
   }
   if (use.destination.kind === "item") {
     const itemNodeId = use.destination.itemNodeId;
-    const item = outward.items.find((entry) => entry.item.nodeId === itemNodeId);
+    const item = items.get(itemNodeId);
     if (item == null) {
       throw new RunCompletenessError("wrong_owner", use.sourceId, use.path, use);
     }
@@ -122,7 +120,7 @@ function evidenceAdditions(
     );
   }
   const relationId = use.destination.relationId;
-  const relation = outward.relations.find((entry) => entry.id === relationId);
+  const relation = relations.get(relationId);
   if (relation == null) return Object.freeze([]);
   const existing = new Set(relation.evidence.map(serializeCanonicalJson));
   return Object.freeze(
@@ -268,6 +266,7 @@ export function closeEvidenceReferences(
   );
   const adoptionSlots = collectAdoptionAiResultSlots(outward.aiItems, repositories);
   aiSlots.push(...adoptionSlots.slots);
+  const findAiResultSlot = createAiResultSlotLookup(aiSlots);
   const originByPath = new Map(
     [...aiOrigins, ...adoptionSlots.origins].map((value) => [
       serializeCanonicalJson(value.path),
@@ -285,6 +284,15 @@ export function closeEvidenceReferences(
   let uses: readonly EvidenceUse[];
   let resolvedUses: readonly ResolvedEvidenceUse[];
   for (;;) {
+    const items = new Map<string, EvidenceClosureOutward["items"][number]>();
+    for (const entry of outward.items) {
+      if (!items.has(entry.item.nodeId)) items.set(entry.item.nodeId, entry);
+    }
+    const collectionItemIds = new Set(outward.collectionAiItems.map((item) => item.nodeId));
+    const relations = new Map<string, EvidenceClosureOutward["relations"][number]>();
+    for (const relation of outward.relations) {
+      if (!relations.has(relation.id)) relations.set(relation.id, relation);
+    }
     uses = walkOutwardEvidenceUses(outward);
     const resolved: ResolvedEvidenceUse[] = [];
     const additions = new Map<
@@ -295,7 +303,7 @@ export function closeEvidenceReferences(
       }>
     >();
     for (const use of uses) {
-      const slot = aiResultSlotForUse(use.path, aiSlots);
+      const slot = findAiResultSlot(use.path);
       const origin = slot == null ? undefined : originByPath.get(serializeCanonicalJson(slot.path));
       const match = resolveEvidenceUse(
         use,
@@ -313,7 +321,13 @@ export function closeEvidenceReferences(
           registeredHistorical.add(identity);
         }
       }
-      for (const evidence of evidenceAdditions(use, match.historical, outward)) {
+      for (const evidence of evidenceAdditions(
+        use,
+        match.historical,
+        items,
+        collectionItemIds,
+        relations,
+      )) {
         const addition = Object.freeze({ destination: use.destination, evidence });
         additions.set(serializeCanonicalJson(addition), addition);
       }
