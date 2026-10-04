@@ -4,7 +4,6 @@ import type { StateCommitIdentity } from "../../persistence/state-commit-metadat
 import { createStateCommitOperationId } from "../../persistence/state-commit-metadata.js";
 import { parseStateNotificationLedger } from "../../persistence/state-documents.js";
 import type { OrthogonalCommitAdvance } from "../../persistence/state-orthogonal-advance.js";
-import { verifyRunTransactionFiles } from "../../persistence/state-transaction-files.js";
 import { advanceMessageMarker } from "../../persistence/state-notification-transition.js";
 import {
   prepareNotificationMessageContext,
@@ -110,8 +109,7 @@ export async function commitMessageTransition(
         commitIdentity,
       };
     },
-    verifyCandidate: (files) => {
-      const verified = verifyRunTransactionFiles(files, port.configuration);
+    verifyCandidate: (files, _revision, _request, verified) => {
       if (verified == null) {
         throw new TypeError("通知messageのCAS候補にrun transactionがありません");
       }

@@ -16,6 +16,10 @@ import {
 } from "./branch-adapter.js";
 import { assertInitialStateWriteManifest } from "./initial-state-write-manifest.js";
 import {
+  isVerifiedStateCasCandidateTree,
+  type VerifiedStateCasCandidateTree,
+} from "./state-cas-candidate.js";
+import {
   createStateChangedPathManifest,
   isOrthogonalStateCommitScope,
 } from "./state-commit-metadata.js";
@@ -64,23 +68,43 @@ async function assertInitialWriteSet(
   configuration: StatePersistenceConfiguration,
   commit: Awaited<ReturnType<StateBranchAdapter["readCommit"]>>,
   current: VerifiedTree,
+  candidate: VerifiedStateCasCandidateTree | undefined,
 ): Promise<void> {
   const manifest = current.transaction.record.initialStateWriteManifest;
   if (manifest == null) {
     throw new TypeError("旧初回commitの履歴とAI cacheを元recordから証明できません");
   }
-  const [parentFiles, currentFiles] = await Promise.all([
-    readFullTree(adapter, commit.parent),
-    readFullTree(adapter, { status: "present", revision: commit.revision }),
-  ]);
-  const paths = new Set([...parentFiles.keys(), ...currentFiles.keys()]);
-  const before = new Map<string, StateFileReadResult>();
-  const after = new Map<string, StateFileReadResult>();
-  for (const path of paths) {
-    before.set(path, parentFiles.get(path) ?? { status: "missing" });
-    after.set(path, currentFiles.get(path) ?? { status: "missing" });
+  let before: ReadonlyMap<string, StateFileReadResult>;
+  let after: ReadonlyMap<string, StateFileReadResult>;
+  let changed: ReturnType<typeof createStateChangedPathManifest>;
+  if (candidate != null) {
+    const parentRevision = commit.parent.status === "present" ? commit.parent.revision : "unborn";
+    if (
+      candidate.revision !== commit.revision ||
+      candidate.parentRevision !== parentRevision ||
+      candidate.files !== current.files
+    ) {
+      throw new TypeError("初回commitの候補証明とGit祖先が一致しません");
+    }
+    before = candidate.before;
+    after = candidate.after;
+    changed = candidate.changedPathManifest;
+  } else {
+    const [parentFiles, currentFiles] = await Promise.all([
+      readFullTree(adapter, commit.parent),
+      readFullTree(adapter, { status: "present", revision: commit.revision }),
+    ]);
+    const paths = new Set([...parentFiles.keys(), ...currentFiles.keys()]);
+    const fullBefore = new Map<string, StateFileReadResult>();
+    const fullAfter = new Map<string, StateFileReadResult>();
+    for (const path of paths) {
+      fullBefore.set(path, parentFiles.get(path) ?? { status: "missing" });
+      fullAfter.set(path, currentFiles.get(path) ?? { status: "missing" });
+    }
+    before = fullBefore;
+    after = fullAfter;
+    changed = createStateChangedPathManifest(before, after);
   }
-  const changed = createStateChangedPathManifest(before, after);
   if (serializeCanonicalJson(changed) !== serializeCanonicalJson(commit.changedPathManifest)) {
     throw new TypeError("初回commitの親tree差分とGit変更manifestが一致しません");
   }
@@ -209,6 +233,13 @@ export async function assertStateCommitChain(
   latestTree?: VerifiedTree & Readonly<{ revision: string }>,
 ): Promise<string> {
   const latestRevision = await previousTrackingRevision(adapter, configuration, headRevision);
+  if (
+    latestTree != null &&
+    isVerifiedStateCasCandidateTree(latestTree) &&
+    (latestTree.revision !== headRevision || latestRevision !== headRevision)
+  ) {
+    throw new TypeError("CAS候補証明のrevisionがchain先頭と一致しません");
+  }
   const latest =
     latestTree != null && latestRevision === headRevision && latestTree.revision === headRevision
       ? latestTree
@@ -280,7 +311,13 @@ export async function assertStateCommitChain(
         );
       }
       await assertTrackingCommitPaths(adapter, configuration, commit, current, undefined);
-      await assertInitialWriteSet(adapter, configuration, commit, current);
+      await assertInitialWriteSet(
+        adapter,
+        configuration,
+        commit,
+        current,
+        isVerifiedStateCasCandidateTree(latest) && revision === latestRevision ? latest : undefined,
+      );
       if (settled != null) {
         assertSettledOutboxLedger(current, settled, configuration);
       }

@@ -7,7 +7,7 @@ import type {
 import { assertInitialStateBusinessContent } from "../../persistence/initial-state-write-manifest.js";
 import { assertStatePublicSafety } from "../../persistence/public-safety.js";
 import { parseStateSnapshot } from "../../persistence/snapshot-v23.js";
-import { verifyRunTransactionFiles } from "../../persistence/state-transaction-files.js";
+import type { VerifiedRunTransactionFiles } from "../../persistence/state-transaction-files.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import type { InitialStateCommitObserver } from "./initial-state-commit-progress.js";
 import type { BoundPublicationCheckpoint } from "./publication-checkpoint-binding.js";
@@ -36,15 +36,12 @@ export function verifyInitialStateCandidate(
   bound: BoundPublicationCheckpoint,
   configuration: StatePersistenceConfiguration,
   files: ReadonlyMap<string, StateFileReadResult>,
+  verified: VerifiedRunTransactionFiles,
   updates: readonly StateFileUpdate[],
   knownSecrets: readonly string[],
   observeProgress: InitialStateCommitObserver | undefined,
 ): void {
   observeProgress?.("candidate_transaction");
-  const verified = verifyRunTransactionFiles(files, configuration);
-  if (verified == null) {
-    throw new TypeError("初回commit候補にrun transactionがありません");
-  }
   const manifest = verified.record.initialStateWriteManifest;
   if (manifest == null) {
     throw new TypeError("初回commit候補にwrite manifestがありません");

@@ -13,6 +13,7 @@ import {
   type StateBranchHead,
   type StatePersistenceConfiguration,
 } from "../../persistence/index.js";
+import { assertNonNullable } from "../../util/assert-non-nullable.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import { verifyInitialStateCandidate } from "./initial-state-commit-candidate.js";
 import type { InitialStateCommitObserver } from "./initial-state-commit-progress.js";
@@ -109,11 +110,13 @@ export async function commitInitialState(
           commitIdentity,
         };
       },
-      verifyCandidate: (files, _revision, request) => {
+      verifyCandidate: (files, _revision, request, transaction) => {
+        assertNonNullable(transaction, "初回commit候補にrun transactionがありません");
         verifyInitialStateCandidate(
           bound,
           statePort.configuration,
           files,
+          transaction,
           request.updates,
           statePort.knownSecrets,
           statePort.observeProgress,

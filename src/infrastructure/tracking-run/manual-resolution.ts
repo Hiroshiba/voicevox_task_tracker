@@ -16,7 +16,6 @@ import { assertStatePublicSafety } from "../../persistence/public-safety.js";
 import { writeStateCas, type StateCasCommitRequestFactory } from "../../persistence/state-cas.js";
 import { createStateLedgerUpdates } from "../../persistence/state-ledger-files.js";
 import { MAX_INTERVENING_COMMITS } from "../../persistence/state-orthogonal-advance.js";
-import { verifyRunTransactionFiles } from "../../persistence/state-transaction-files.js";
 import { advanceMessageMarker } from "../../persistence/state-notification-transition.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import {
@@ -228,8 +227,7 @@ export async function resolveManualNotificationDelivery(
         commitIdentity,
       };
     },
-    verifyCandidate: (files) => {
-      const verified = verifyRunTransactionFiles(files, port.configuration);
+    verifyCandidate: (_files, _revision, _request, verified) => {
       if (
         verified?.marker.phase !== "notifications_in_progress" ||
         verified.marker.runId !== target.runId ||

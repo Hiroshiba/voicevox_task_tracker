@@ -17,7 +17,6 @@ import type { PreparedDiscordDigestMessage } from "../../discord/payload-contrac
 import { createGitHubRepositoryId } from "../../domain/index.js";
 import { assertStatePublicSafety } from "../../persistence/public-safety.js";
 import { writeStateCas, type StateCasCommitRequestFactory } from "../../persistence/state-cas.js";
-import { verifyRunTransactionFiles } from "../../persistence/state-transaction-files.js";
 import { advanceSettlementMarker } from "../../persistence/state-notification-transition.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import {
@@ -133,8 +132,7 @@ export async function commitNotificationSettlement(
         commitIdentity,
       };
     },
-    verifyCandidate: (files) => {
-      const verified = verifyRunTransactionFiles(files, port.configuration);
+    verifyCandidate: (_files, _revision, _request, verified) => {
       if (
         verified?.marker.phase !== "notifications_settled" ||
         verified.record.recordDigest !== input.record.recordDigest ||

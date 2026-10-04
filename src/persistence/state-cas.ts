@@ -10,7 +10,12 @@ import {
 } from "./branch-adapter.js";
 import { StateBranchConflictError } from "./errors.js";
 import { assertStateCommitChain } from "./state-commit-chain-verification.js";
-import { verifyStateCasCandidate } from "./state-cas-candidate.js";
+import {
+  assertStateCasCandidateFilesUnchanged,
+  copyStateCasCandidateFiles,
+  verifyStateCasCandidate,
+  verifyStateCasCandidateTransaction,
+} from "./state-cas-candidate.js";
 import {
   materializeCommitRequest,
   observeCommittedStateWrite,
@@ -23,10 +28,7 @@ import {
   findInitialStateRevision,
   type OrthogonalCommitAdvance,
 } from "./state-orthogonal-advance.js";
-import {
-  verifyCurrentRunTransactionFiles,
-  verifyRunTransactionFiles,
-} from "./state-transaction-files.js";
+import { verifyRunTransactionFiles } from "./state-transaction-files.js";
 
 export {
   type StateCasCommitRequestFactory,
@@ -190,17 +192,27 @@ export async function writeStateCas(
   ) {
     throw new TypeError("commit候補のmetadataをexact commitから照合できません");
   }
-  const candidateFiles = await verifyStateCasCandidate(adapter, inspectedCommit, request);
-  observePerformanceDetail?.({ step: "cas_candidate_tree_read", count: candidateFiles.size });
-  if ("build" in requestInput) {
-    await requestInput.verifyCandidate?.(candidateFiles, commit.revision, request);
+  const candidate = await verifyStateCasCandidate(adapter, inspectedCommit, request);
+  observePerformanceDetail?.({ step: "cas_candidate_tree_read", count: candidate.files.size });
+  const candidateTree = verifyStateCasCandidateTransaction(
+    candidate,
+    configuration,
+    !isOrthogonalStateCommitScope(commit.metadata.commitScope),
+  );
+  if ("build" in requestInput && requestInput.verifyCandidate != null) {
+    const inspectionFiles = copyStateCasCandidateFiles(candidate);
+    await requestInput.verifyCandidate(
+      inspectionFiles,
+      commit.revision,
+      request,
+      candidateTree?.transaction,
+    );
+    assertStateCasCandidateFilesUnchanged(candidate, inspectionFiles);
   }
-  const verifiedCandidate = isOrthogonalStateCommitScope(commit.metadata.commitScope)
-    ? verifyRunTransactionFiles(candidateFiles, configuration)
-    : verifyCurrentRunTransactionFiles(candidateFiles, configuration);
+  const verifiedCandidate = candidateTree?.transaction;
   observePerformanceDetail?.({
     step: "cas_current_transaction_verified",
-    count: candidateFiles.size,
+    count: candidate.files.size,
   });
   if (previousVerified != null && verifiedCandidate == null) {
     throw new TypeError("既存run transactionをcommit候補から削除できません");
@@ -240,6 +252,7 @@ export async function writeStateCas(
         verifiedCandidate.marker.phase === "initial_state_committed"
           ? commit.revision
           : verifiedCandidate.marker.initialStateRevision,
+        candidateTree,
       );
       observePerformanceDetail?.({ step: "cas_commit_chain_verified" });
     }

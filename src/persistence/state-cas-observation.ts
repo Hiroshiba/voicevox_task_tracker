@@ -9,7 +9,11 @@ import {
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
 import { StateBranchConflictError } from "./errors.js";
-import { verifyStateCasCandidate } from "./state-cas-candidate.js";
+import {
+  assertStateCasCandidateFilesUnchanged,
+  copyStateCasCandidateFiles,
+  verifyStateCasCandidate,
+} from "./state-cas-candidate.js";
 import { assertStateCommitChain } from "./state-commit-chain-verification.js";
 import type { StateCommitIdentity } from "./state-commit-metadata.js";
 import {
@@ -47,6 +51,7 @@ export type StateCasCommitRequestFactory = Readonly<{
     files: ReadonlyMap<string, StateFileReadResult>,
     revision: string,
     request: Omit<StateBranchCommitRequest, "branch" | "expectedHead">,
+    transaction: VerifiedRunTransactionFiles | undefined,
   ) => void | Promise<void>;
   build: (
     parent: StateBranchHead,
@@ -227,12 +232,19 @@ export async function observeCommittedStateWrite(
         throw new StateBranchConflictError();
       }
       try {
-        const candidateFiles = await verifyStateCasCandidate(adapter, inspected, request);
-        if (!isOrthogonalStateCommitScope(inspected.metadata.commitScope)) {
-          verifyCurrentRunTransactionFiles(candidateFiles, configuration);
-        }
-        if ("build" in requestInput) {
-          await requestInput.verifyCandidate?.(candidateFiles, inspected.revision, request);
+        const candidate = await verifyStateCasCandidate(adapter, inspected, request);
+        const transaction = !isOrthogonalStateCommitScope(inspected.metadata.commitScope)
+          ? verifyCurrentRunTransactionFiles(candidate.files, configuration)
+          : undefined;
+        if ("build" in requestInput && requestInput.verifyCandidate != null) {
+          const inspectionFiles = copyStateCasCandidateFiles(candidate);
+          await requestInput.verifyCandidate(
+            inspectionFiles,
+            inspected.revision,
+            request,
+            transaction,
+          );
+          assertStateCasCandidateFilesUnchanged(candidate, inspectionFiles);
         }
       } catch (error: unknown) {
         throw new StateBranchConflictError({ cause: error });

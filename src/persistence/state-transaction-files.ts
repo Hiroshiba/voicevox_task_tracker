@@ -41,8 +41,11 @@ import {
   parseStateOperationsAlertLedger,
 } from "./state-documents.js";
 
+const verifiedRunTransactionBrand: unique symbol = Symbol("verifiedRunTransactionFiles");
+
 /** 一つのstate revisionで検証したrun transaction file。 */
 export type VerifiedRunTransactionFiles = Readonly<{
+  [verifiedRunTransactionBrand]: true;
   marker: RunTransactionMarker;
   record: DurablePublicationRecord;
   initialPagesEvidence?: InitialPagesPublicationEvidence;
@@ -187,13 +190,14 @@ export function verifyRunTransactionFiles(
       });
     }
     return Object.freeze({
+      [verifiedRunTransactionBrand]: true,
       marker,
       record,
       snapshotDigest,
       snapshotSchemaVersion: snapshotVersion,
       notificationLedgerDigest,
       ...(operationsAlertLedgerDigest == null ? {} : { operationsAlertLedgerDigest }),
-    });
+    } satisfies VerifiedRunTransactionFiles);
   }
   if (evidenceBytes == null) {
     throw new StateFormatError("initial Pages evidence", {
@@ -215,6 +219,7 @@ export function verifyRunTransactionFiles(
     });
   }
   return Object.freeze({
+    [verifiedRunTransactionBrand]: true,
     marker,
     record,
     initialPagesEvidence,
@@ -222,7 +227,7 @@ export function verifyRunTransactionFiles(
     snapshotSchemaVersion: snapshotVersion,
     notificationLedgerDigest,
     ...(operationsAlertLedgerDigest == null ? {} : { operationsAlertLedgerDigest }),
-  });
+  } satisfies VerifiedRunTransactionFiles);
 }
 
 /** 新しいstate候補のsnapshotが現行形式であることを検証する。 */

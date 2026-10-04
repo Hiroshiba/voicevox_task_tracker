@@ -12,7 +12,6 @@ import {
   createStateRunReport,
   serializeStateRunReport,
 } from "../../persistence/state-run-report.js";
-import { verifyRunTransactionFiles } from "../../persistence/state-transaction-files.js";
 import { advanceFinalizationMarker } from "../../persistence/state-finalization-values.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import {
@@ -122,8 +121,7 @@ export async function commitRunFinalization(
         commitIdentity,
       };
     },
-    verifyCandidate: (files) => {
-      const verified = verifyRunTransactionFiles(files, port.configuration);
+    verifyCandidate: (files, _revision, _request, verified) => {
       const reportFile = files.get(reportPath);
       if (reportFile?.status !== "present") {
         throw new TypeError("run finalization候補のreportがありません");
