@@ -288,6 +288,7 @@ export function createEvidenceClosureWitness(
       candidateCurrentById,
       fullHistoricalById,
       fullContext,
+      digest,
       annotation,
       aiSlot,
     );
@@ -316,6 +317,7 @@ export function createEvidenceClosureWitness(
           currentById,
           historicalById,
           context,
+          digest,
           annotation,
           resolvedAiSlot(use.path, findAiResultSlot, originsByPath),
         ).resolved,
@@ -658,6 +660,7 @@ export function assertEvidenceClosureWitness(
       currentById,
       historicalById,
       context,
+      digest,
       sourceUse.annotation,
       resolvedAiSlot(sourceUse.use.path, findAiResultSlot, originsByPath),
     );

@@ -194,7 +194,7 @@ const witnessSchema = z.strictObject({
     z.strictObject({
       use: evidenceUseSchema,
       resolution: z.enum(["current", "historical"]),
-      recordIdentity: z.string().min(1),
+      recordDigest: sha256Schema,
     }),
   ),
   materializedReferences: z.array(

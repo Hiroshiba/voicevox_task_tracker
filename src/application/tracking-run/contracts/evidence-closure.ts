@@ -13,6 +13,7 @@ import type {
   UtcIsoDateTime,
 } from "../../../domain/types.js";
 import type { PendingNotification } from "../../../domain/pending-notification.js";
+import type { Sha256Hash } from "../../../canonical-json/sha256.js";
 import type { TrackedItemAiAnalysis } from "../../../domain/tracked-item-ai-analysis.js";
 import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
 import type { PersonalReminderFinalizedItem } from "./personal-reminder-outcome.js";
@@ -78,7 +79,7 @@ export type EvidenceUse = Readonly<{
 export type ResolvedEvidenceUse = Readonly<{
   use: EvidenceUse;
   resolution: "current" | "historical";
-  recordIdentity: string;
+  recordDigest: Sha256Hash;
 }>;
 
 /** 保存予定の汎用AI cache要素が参照する値。 */

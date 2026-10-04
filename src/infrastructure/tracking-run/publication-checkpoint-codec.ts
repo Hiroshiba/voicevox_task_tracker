@@ -37,11 +37,11 @@ import {
 
 export const MAX_CHECKPOINT_MANIFEST_BYTES = 1024 * 1024;
 export const MAX_CHECKPOINT_FILE_BYTES = 128 * 1024 * 1024;
-const CHECKPOINT_MAGIC = new TextEncoder().encode("VVCPK23\n");
+const CHECKPOINT_MAGIC = new TextEncoder().encode("VVCPK24\n");
 const HEADER_BYTE_LENGTH = CHECKPOINT_MAGIC.length + 4;
 const issuedArtifacts = new WeakSet<object>();
 
-/** 保存前のv23 checkpoint入力。 */
+/** 保存前のv24 checkpoint入力。 */
 export type EncodePublicationCheckpointInput = Readonly<{
   planned: PublicationPlannedRun;
   validatedPayload: ValidatedRunPayload;
@@ -140,7 +140,7 @@ function parsePublicationCheckpoint(
   return Object.freeze({ checkpoint, validatedPayload, validated, publicationPlan });
 }
 
-/** v23 .cpkのcanonical manifestとframe境界を読む。 */
+/** v24 .cpkのcanonical manifestとframe境界を読む。 */
 export function readPublicationArtifactManifest(artifactBytes: Uint8Array): Readonly<{
   artifact: PublicationArtifact;
   frameOffset: number;
@@ -152,7 +152,7 @@ export function readPublicationArtifactManifest(artifactBytes: Uint8Array): Read
     throw new TypeError("checkpoint artifactのbyte数が不正です");
   }
   if (!CHECKPOINT_MAGIC.every((byte, index) => artifactBytes[index] === byte)) {
-    throw new TypeError("checkpoint artifactのversionがv23ではありません");
+    throw new TypeError("checkpoint artifactのversionがv24ではありません");
   }
   const header = new DataView(artifactBytes.buffer, artifactBytes.byteOffset, HEADER_BYTE_LENGTH);
   const manifestByteLength = header.getUint32(CHECKPOINT_MAGIC.length, false);
@@ -204,7 +204,7 @@ function frameBytes(
   return frames;
 }
 
-/** v23 checkpointとsidecarを同じcodecから生成する。 */
+/** v24 checkpointとsidecarを同じcodecから生成する。 */
 export function encodePublicationCheckpoint(
   input: EncodePublicationCheckpointInput,
   digest: ContentDigestPort,
@@ -228,7 +228,7 @@ export function encodePublicationCheckpoint(
   const validatedPayloadNode = encoder.encode(validatedPayloadValue, "validatedPayload");
   const publicationPlanNode = encoder.encode(storedPlan, "publicationPlan");
   const logical = {
-    schemaVersion: 23,
+    schemaVersion: 24,
     kind: "publication_planned_tracking_run",
     runtimeIdentity: input.runtimeIdentity,
     runIdentity: validated.core.identity,

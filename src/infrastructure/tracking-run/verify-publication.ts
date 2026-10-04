@@ -24,7 +24,7 @@ import { verifyWorkflowCheckpoint } from "./publication/workflow-stage-handlers.
 import { verifyAcquiredRuntimeV1 } from "./runtime-recovery-acquisition.js";
 import type { ProductionRuntimeAdapters } from "./runtime/adapters.js";
 
-/** v23 checkpointの実fileとexact baseへの結合を検証する。 */
+/** v24 checkpointの実fileとexact baseへの結合を検証する。 */
 export async function verifyCheckpointCommand(
   adapters: ProductionRuntimeAdapters,
   command: VerifyCheckpointCliCommand,

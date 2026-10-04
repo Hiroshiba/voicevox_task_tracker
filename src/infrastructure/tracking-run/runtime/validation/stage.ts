@@ -55,7 +55,7 @@ export async function validateRunCompleteness(
     notification.notificationItems,
     notification.pendingNotifications,
   );
-  const closure = closeFinalizedRunEvidence(finalized, initialAdditions);
+  const closure = closeFinalizedRunEvidence(finalized, initialAdditions, nodeContentDigestPort);
   const candidate = buildFinalSnapshot(finalized, closure, nodeContentDigestPort);
   const completeSnapshot = createStateSnapshot({
     ...candidate,

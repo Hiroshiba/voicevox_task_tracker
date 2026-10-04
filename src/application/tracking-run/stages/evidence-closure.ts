@@ -2,6 +2,7 @@ import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type { Evidence } from "../../../domain/types.js";
 import type { PersonalReminderFinalizedRun } from "./personal-reminder-finalization.js";
 import type { CurrentSourceFact, EvidenceUseScope } from "../contracts/evidence-catalog.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import type {
   EvidenceClosureContext,
   EvidenceClosureOutward,
@@ -228,6 +229,7 @@ export function closeEvidenceReferences(
   catalog: EvidenceCatalog,
   context: EvidenceClosureContext,
   initial: EvidenceClosureOutward,
+  digest: ContentDigestPort,
 ): EvidenceClosureResult {
   let outward = canonicalOutward(initial);
   const currentById = sourceFactsById(catalog.snapshot().currentSources);
@@ -310,6 +312,7 @@ export function closeEvidenceReferences(
         currentById,
         previousById,
         context,
+        digest,
         undefined,
         slot == null || origin == null ? undefined : { slot, origin },
       );
@@ -352,6 +355,7 @@ export function closeEvidenceReferences(
 export function closeFinalizedRunEvidence(
   run: PersonalReminderFinalizedRun,
   additions: EvidenceClosureAdditions,
+  digest: ContentDigestPort,
 ): EvidenceClosureResult {
   const catalog = new EvidenceCatalog();
   try {
@@ -382,7 +386,7 @@ export function closeFinalizedRunEvidence(
     aiItems: run.data.aiItems,
     ...additions,
   });
-  return closeEvidenceReferences(catalog, context, outward);
+  return closeEvidenceReferences(catalog, context, outward, digest);
 }
 
 /** 最終outward値の参照集合が閉包時と一致することを照合する。 */

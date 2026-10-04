@@ -2,6 +2,7 @@ import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import { parseSourceId } from "../../../domain/source-id.js";
 import { isProductionSourceIdKind } from "../../../github/production-source-id.js";
 import type { CurrentSourceFact } from "../contracts/evidence-catalog.js";
+import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import type {
   EvidenceClosureContext,
   EvidenceUse,
@@ -92,6 +93,7 @@ export function resolveEvidenceUse(
   currentById: ReadonlyMap<string, readonly CurrentSourceFact[]>,
   historicalById: ReadonlyMap<string, readonly OwnedHistoricalEvidence[]>,
   context: EvidenceClosureContext,
+  digest: ContentDigestPort,
   annotation?: Readonly<{ supports: string; summary: string }>,
   aiSlot?: Readonly<{ slot: AiResultSlot; origin: "current" | "historical" }>,
 ): Readonly<{ resolved: ResolvedEvidenceUse; historical: readonly OwnedHistoricalEvidence[] }> {
@@ -120,10 +122,12 @@ export function resolveEvidenceUse(
         resolved: Object.freeze({
           use,
           resolution: "historical",
-          recordIdentity: serializeCanonicalJson({
-            matched,
-            ...(annotation == null ? {} : { annotation }),
-          }),
+          recordDigest: digest.sha256Utf8(
+            serializeCanonicalJson({
+              matched,
+              ...(annotation == null ? {} : { annotation }),
+            }),
+          ),
         }),
         historical: Object.freeze([]),
       });
@@ -142,10 +146,12 @@ export function resolveEvidenceUse(
       resolved: Object.freeze({
         use,
         resolution: "current",
-        recordIdentity: serializeCanonicalJson({
-          facts,
-          ...(annotation == null ? {} : { annotation }),
-        }),
+        recordDigest: digest.sha256Utf8(
+          serializeCanonicalJson({
+            facts,
+            ...(annotation == null ? {} : { annotation }),
+          }),
+        ),
       }),
       historical: Object.freeze([]),
     });
@@ -172,10 +178,12 @@ export function resolveEvidenceUse(
     resolved: Object.freeze({
       use,
       resolution: "historical",
-      recordIdentity: serializeCanonicalJson({
-        matched,
-        ...(annotation == null ? {} : { annotation }),
-      }),
+      recordDigest: digest.sha256Utf8(
+        serializeCanonicalJson({
+          matched,
+          ...(annotation == null ? {} : { annotation }),
+        }),
+      ),
     }),
     historical: Object.freeze(matched),
   });
