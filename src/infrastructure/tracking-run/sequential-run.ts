@@ -291,6 +291,7 @@ export class SequentialRunRunner {
     const boundary: TrackingRunFailurePort = {
       beforeStage: (failedStage) => {
         stage = reportStageForEngine(failedStage);
+        this.#runtime.beforeStage?.(failedStage);
         return Promise.resolve();
       },
       fail: async (failedStage, error) => {

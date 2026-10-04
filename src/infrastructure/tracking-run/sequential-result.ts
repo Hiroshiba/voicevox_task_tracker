@@ -28,7 +28,8 @@ export type DailyRunExecutionResult = Readonly<{
   failureEvidence?: FailedRun["evidence"];
 }>;
 
-/** 日次transactionの時刻を注入する境界。 */
+/** 日次transactionの時刻とstage開始観測を注入する境界。 */
 export type DailyRunRuntime = Readonly<{
   now: () => Date;
+  beforeStage?: (stage: FailedRun["failedStage"]) => void;
 }>;

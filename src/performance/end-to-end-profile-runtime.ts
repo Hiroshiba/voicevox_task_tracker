@@ -18,6 +18,7 @@ import {
   createPerformanceHarness,
   type PerformanceRuntimeFixture,
 } from "./end-to-end-profile-adapters.js";
+import { createPerformanceMemoryObserver, type PerformanceMemoryEvent } from "./memory-observer.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -75,8 +76,13 @@ export async function runEndToEndPerformanceRuntime(
 ): Promise<PerformanceRuntimeResult> {
   return withPerformanceSource(repositoryPath, async (source) => {
     const harness = createPerformanceHarness(source, config, fixture);
+    const observeMemory = createPerformanceMemoryObserver();
+    let phase: PerformanceMemoryEvent["phase"] = "baseline";
     const runner = new SequentialRunRunner(createDailyDependencies(harness.adapters), {
       now: harness.adapters.now,
+      beforeStage: (stage) => {
+        observeMemory({ phase, boundary: "stage", stage });
+      },
     });
     const runDaily = async (runAt: UtcIsoDateTime): Promise<DailyRunExecutionResult> => {
       const command = parseCliArguments([
@@ -96,14 +102,20 @@ export async function runEndToEndPerformanceRuntime(
       const coordinated = await runner.run(command, randomUUID());
       return coordinated.value;
     };
+    observeMemory({ phase, boundary: "begin" });
     harness.beginBaseline();
     requireSuccessfulRunMetrics(await runDaily(fixture.baselineRunAt));
+    observeMemory({ phase, boundary: "success" });
+    phase = "second";
+    observeMemory({ phase, boundary: "begin" });
     harness.beginProfile();
     const startedAt = performance.now();
     const execution = await runDaily(fixture.profileRunAt);
     const durationMilliseconds = performance.now() - startedAt;
+    const metrics = requireSuccessfulRunMetrics(execution);
+    observeMemory({ phase, boundary: "success" });
     return Object.freeze({
-      metrics: requireSuccessfulRunMetrics(execution),
+      metrics,
       durationMilliseconds,
       githubApiUsed: harness.apiBudget.used(),
       githubApiRemaining: harness.apiBudget.remaining(),
