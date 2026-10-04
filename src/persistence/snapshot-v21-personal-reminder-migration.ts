@@ -174,9 +174,9 @@ function subjectChanges(
 }
 
 /** 旧AI証明の降格後にpersonal reminderの主体変化を再分類する。 */
-export function migratePersonalReminderSubjectChanges(
-  snapshot: StateSnapshotVersion20,
-): StateSnapshotVersion20 {
+export function migratePersonalReminderSubjectChanges<
+  Snapshot extends Pick<StateSnapshotVersion20, "items" | "relations">,
+>(snapshot: Snapshot): Snapshot {
   const itemsByNodeId = new Map(snapshot.items.map((item) => [item.nodeId, item]));
   const relationsById = new Map(snapshot.relations.map((relation) => [relation.id, relation]));
   return {

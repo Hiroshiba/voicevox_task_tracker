@@ -1,6 +1,7 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 
+import currentSnapshotSchema from "../../schemas/snapshot-v23.schema.json" with { type: "json" };
 import snapshotSchema from "../../schemas/snapshot-v21.schema.json" with { type: "json" };
 import { serializeCanonicalJsonLine, type Sha256Hash } from "../canonical-json/index.js";
 import {
@@ -57,7 +58,15 @@ ajv.addFormat("date-time", {
     return !Number.isNaN(Date.parse(value));
   },
 });
-const validateSnapshotSchema = ajv.compile<StateSnapshot>(snapshotSchema);
+const validateLegacySnapshotSchema = ajv.compile<StateSnapshot>(snapshotSchema);
+const validateSnapshotSchema = ajv.compile<StateSnapshot>({
+  ...snapshotSchema,
+  $id: `${snapshotSchema.$id}/current-ai`,
+  $defs: {
+    ...snapshotSchema.$defs,
+    trackedItemAiAnalysis: currentSnapshotSchema.$defs.trackedItemAiAnalysis,
+  },
+});
 
 /** 現行snapshotから旧版の共通保存値を取り出す。 */
 export function version19SnapshotFields(snapshot: StateSnapshot): StateSnapshotVersion19 {
@@ -214,11 +223,22 @@ function splitCollectionItem(
 
 /** 未検証の値をschema検証済みの現行snapshotへ変換する。 */
 export function createStateSnapshot(value: unknown): StateSnapshot {
+  return createSnapshot(value, "current");
+}
+
+/** 旧保存形式のAI証明を当時のschemaで検証する。 */
+export function createLegacyStateSnapshot(value: unknown): StateSnapshot {
+  return createSnapshot(value, "legacy");
+}
+
+function createSnapshot(value: unknown, proofVersion: "current" | "legacy"): StateSnapshot {
   snapshotVersionSchema.parse(value);
-  if (!validateSnapshotSchema(value)) {
-    throw new StateSnapshotSchemaError(validateSnapshotSchema.errors?.length ?? 1);
+  const validate =
+    proofVersion === "current" ? validateSnapshotSchema : validateLegacySnapshotSchema;
+  if (!validate(value)) {
+    throw new StateSnapshotSchemaError(validate.errors?.length ?? 1);
   }
-  assertCurrentAiElements(value);
+  if (proofVersion === "current") assertCurrentAiElements(value);
   const base = createVersion20Snapshot({
     ...projectVersion19SnapshotFields(value),
     schemaVersion: "20",
@@ -246,7 +266,7 @@ export function createStateSnapshot(value: unknown): StateSnapshot {
 
 /** 現行snapshotを末尾改行付きcanonical JSONへ変換する。 */
 export function serializeStateSnapshot(snapshot: StateSnapshot): string {
-  return serializeCanonicalJsonLine(createStateSnapshot(snapshot));
+  return serializeCanonicalJsonLine(createLegacyStateSnapshot(snapshot));
 }
 
 /** canonical JSONから現行snapshotを検証して読み取る。 */
@@ -258,7 +278,7 @@ export function parseStateSnapshot(source: string): StateSnapshot {
   } catch (error: unknown) {
     throw new StateFormatError("snapshot", { cause: error });
   }
-  return createStateSnapshot(value);
+  return createLegacyStateSnapshot(value);
 }
 
 /** 保存済み公開投影に含まれるeffective graph状態を返す。 */

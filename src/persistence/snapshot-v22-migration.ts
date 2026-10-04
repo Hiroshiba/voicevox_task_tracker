@@ -11,6 +11,7 @@ import { StateFormatError } from "./errors.js";
 import { migrateStateSnapshot as migrateVersion21Snapshot } from "./snapshot-v21-migration.js";
 import type { StateSnapshot as StateSnapshotVersion21 } from "./snapshot-v21.js";
 import { createStateSnapshot, parseStateSnapshot, type StateSnapshot } from "./snapshot-v22.js";
+import { migrateSeparatedLegacyCurrentAi } from "./snapshot-separated-ai-proof-migration.js";
 
 const snapshotVersionSchema = z.object({ schemaVersion: z.string() });
 const clockEventSourceKinds = new Set([
@@ -117,7 +118,9 @@ export function migrateStateSnapshot(
   if (!version.success) {
     throw StateFormatError.fromZodError("snapshot", version.error);
   }
-  if (version.data.schemaVersion === "22") return parseStateSnapshot(source);
+  if (version.data.schemaVersion === "22") {
+    return createStateSnapshot(migrateSeparatedLegacyCurrentAi(parseStateSnapshot(source)));
+  }
   const previous = migrateVersion21Snapshot(source, legacyEntriesByCacheKey, timezone);
   const reviewRequestSourceIds = clockOnlyReviewRequestSourceIds(previous);
   return createStateSnapshot({

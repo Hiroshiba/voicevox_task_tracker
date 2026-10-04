@@ -1,6 +1,7 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 
+import currentSnapshotSchema from "../../schemas/snapshot-v23.schema.json" with { type: "json" };
 import snapshotSchema from "../../schemas/snapshot-v22.schema.json" with { type: "json" };
 import { serializeCanonicalJsonLine } from "../canonical-json/index.js";
 import type {
@@ -19,6 +20,7 @@ import {
   assertPersonalReminderEvidenceClosure as assertVersion21EvidenceClosure,
   assertPersonalReminderEvidenceRecordsClosure as assertVersion21EvidenceRecordsClosure,
   createStateSnapshot as createVersion21Snapshot,
+  createLegacyStateSnapshot as createLegacyVersion21Snapshot,
   snapshotEffectiveGraphStateByNodeId as version21EffectiveGraphStateByNodeId,
   version19SnapshotFields as version21ToVersion19Fields,
   type StateSnapshot as StateSnapshotVersion21,
@@ -42,7 +44,15 @@ ajv.addFormat("date-time", {
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(value) &&
     !Number.isNaN(Date.parse(value)),
 });
-const validateSnapshotSchema = ajv.compile<StateSnapshot>(snapshotSchema);
+const validateLegacySnapshotSchema = ajv.compile<StateSnapshot>(snapshotSchema);
+const validateSnapshotSchema = ajv.compile<StateSnapshot>({
+  ...snapshotSchema,
+  $id: `${snapshotSchema.$id}/current-ai`,
+  $defs: {
+    ...snapshotSchema.$defs,
+    trackedItemAiAnalysis: currentSnapshotSchema.$defs.trackedItemAiAnalysis,
+  },
+});
 
 function version21Basis(basis: PersonalReminderTimeBasis): PersonalReminderTimeBasis {
   if (basis.source === "reconfirmation_pending" || basis.source === "reconfirmed_observation") {
@@ -167,11 +177,23 @@ function assertReconfirmedProvenance(snapshot: StateSnapshot): void {
 
 /** 未検証の値をschema検証済みの現行snapshotへ変換する。 */
 export function createStateSnapshot(value: unknown): StateSnapshot {
+  return createSnapshot(value, "current");
+}
+
+function createLegacyStateSnapshot(value: unknown): StateSnapshot {
+  return createSnapshot(value, "legacy");
+}
+
+function createSnapshot(value: unknown, proofVersion: "current" | "legacy"): StateSnapshot {
   snapshotVersionSchema.parse(value);
-  if (!validateSnapshotSchema(value)) {
-    throw new StateSnapshotSchemaError(validateSnapshotSchema.errors?.length ?? 1);
+  const validate =
+    proofVersion === "current" ? validateSnapshotSchema : validateLegacySnapshotSchema;
+  if (!validate(value)) {
+    throw new StateSnapshotSchemaError(validate.errors?.length ?? 1);
   }
-  const legacy = createVersion21Snapshot(version21Projection(value));
+  const createVersion21 =
+    proofVersion === "current" ? createVersion21Snapshot : createLegacyVersion21Snapshot;
+  const legacy = createVersion21(version21Projection(value));
   const causesByNodeId = new Map(
     value.items.map((item) => [
       item.nodeId,
@@ -209,7 +231,7 @@ export function createStateSnapshot(value: unknown): StateSnapshot {
 
 /** 現行snapshotを末尾改行付きcanonical JSONへ変換する。 */
 export function serializeStateSnapshot(snapshot: StateSnapshot): string {
-  const validated = createStateSnapshot(snapshot);
+  const validated = createLegacyStateSnapshot(snapshot);
   assertNoPendingPersonalReminderClock(validated);
   return serializeCanonicalJsonLine(validated);
 }
@@ -223,7 +245,7 @@ export function parseStateSnapshot(source: string): StateSnapshot {
   } catch (error: unknown) {
     throw new StateFormatError("snapshot", { cause: error });
   }
-  const snapshot = createStateSnapshot(value);
+  const snapshot = createLegacyStateSnapshot(value);
   assertNoPendingPersonalReminderClock(snapshot);
   return snapshot;
 }
@@ -232,7 +254,7 @@ export function parseStateSnapshot(source: string): StateSnapshot {
 export function version19SnapshotFields(
   snapshot: StateSnapshot,
 ): ReturnType<typeof version21ToVersion19Fields> {
-  return version21ToVersion19Fields(createVersion21Snapshot(version21Projection(snapshot)));
+  return version21ToVersion19Fields(version21Projection(snapshot));
 }
 
 /** 保存済み公開投影に含まれるeffective graph状態を返す。 */

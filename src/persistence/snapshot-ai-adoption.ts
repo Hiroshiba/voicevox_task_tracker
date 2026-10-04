@@ -367,8 +367,10 @@ export function assertAiAnalysisApplicationsMatchStoredElements(
           adopted.reuseProof.inputProjectionVersion ===
             AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS[element];
         const legacyProof =
-          adopted.reuseProof.inputProjectionVersion === 1 &&
-          (adopted.reuseProof.revision === currentRevision ||
+          (adopted.reuseProof.inputProjectionVersion === 1 &&
+            adopted.reuseProof.revision === currentRevision) ||
+          ((adopted.reuseProof.inputProjectionVersion === 1 ||
+            adopted.reuseProof.inputProjectionVersion === 2) &&
             adopted.reuseProof.revision === LEGACY_AI_ANALYSIS_ELEMENT_REVISIONS[element]);
         if (!currentProof && !legacyProof) {
           throw new StateSnapshotSemanticError(
