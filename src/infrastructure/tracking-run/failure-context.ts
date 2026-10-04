@@ -205,7 +205,11 @@ export async function observeCliFailureContext(
   ) {
     effectCertainty = "ambiguous";
   }
-  if (error instanceof StateBranchConflictError) {
+  if (
+    error instanceof StateBranchConflictError ||
+    (error instanceof BoundPublicationFailureError &&
+      error.cause instanceof StateBranchConflictError)
+  ) {
     effectCertainty = "no_effect";
   }
   if (error instanceof PagesEffectNotStartedError) {
@@ -310,7 +314,11 @@ export async function observeCliFailureContext(
   ) {
     let bootstrap;
     try {
-      bootstrap = await observeBootstrap(path, runId);
+      bootstrap = await observeBootstrap(
+        path,
+        runId,
+        context.evidence?.bindingKind === "checkpoint" ? context.evidence : undefined,
+      );
     } catch (bootstrapError: unknown) {
       context = { ...context, bootstrapError };
     }

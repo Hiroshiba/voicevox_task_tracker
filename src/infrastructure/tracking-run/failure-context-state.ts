@@ -26,6 +26,8 @@ export type BootstrapFailureObservation = Readonly<{
   bootstrapError?: unknown;
 }>;
 
+type CheckpointFailureEvidence = Extract<FailedRun["evidence"], { bindingKind: "checkpoint" }>;
+
 function observedFile(
   file: StateFileReadResult,
 ): Readonly<{ kind: "missing" }> | Readonly<{ kind: "present"; fileDigest: string }> {
@@ -38,6 +40,7 @@ function observedFile(
 export async function observeBootstrap(
   configPath: string,
   expectedRunId: string | undefined,
+  expectedCheckpoint?: CheckpointFailureEvidence,
 ): Promise<BootstrapFailureObservation | undefined> {
   const config = await loadConfig(configPath);
   const adapter = new GitStateBranchAdapter({
@@ -82,6 +85,15 @@ export async function observeBootstrap(
       marker.publicationRecordDigest !== record.recordDigest
     ) {
       throw new TypeError("markerとrecordのbootstrap識別が一致しません");
+    }
+    if (
+      expectedCheckpoint != null &&
+      (marker.runId !== expectedCheckpoint.runId ||
+        marker.checkpointDigest !== expectedCheckpoint.checkpointDigest ||
+        record.checkpointFileDigest !== expectedCheckpoint.checkpointFileDigest ||
+        record.runtimeIdentityDigest !== expectedCheckpoint.runtimeIdentityDigest)
+    ) {
+      return { stateObservation: { kind: "conflict", revision: head.revision } };
     }
     if (expectedRunId != null && marker.runId !== expectedRunId) {
       return {
