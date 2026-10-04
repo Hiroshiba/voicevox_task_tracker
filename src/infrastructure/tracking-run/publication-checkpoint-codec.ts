@@ -225,8 +225,8 @@ export function encodePublicationCheckpoint(
   const storedPlan = checkpointStoredPlan(publicationPlan);
   const validatedPayloadValue = validatedRunSerializablePayload(input.validatedPayload);
   const encoder = createCheckpointFrameEncoder(digest, compression);
-  const validatedPayloadNode = encoder.encode(validatedPayloadValue);
-  const publicationPlanNode = encoder.encode(storedPlan);
+  const validatedPayloadNode = encoder.encode(validatedPayloadValue, "validatedPayload");
+  const publicationPlanNode = encoder.encode(storedPlan, "publicationPlan");
   const logical = {
     schemaVersion: 23,
     kind: "publication_planned_tracking_run",

@@ -18,6 +18,7 @@ export type CheckpointCompressionPort = Readonly<{
 }>;
 
 type CheckpointFrameMetadata = PublicationArtifact["logical"]["frames"][number];
+type CheckpointRoot = "validatedPayload" | "publicationPlan";
 type FrameNode = Readonly<{ kind: "frame"; index: number }>;
 type ObjectNode = Readonly<{
   kind: "object";
@@ -37,7 +38,7 @@ export function createCheckpointFrameEncoder(
   digest: ContentDigestPort,
   compression: CheckpointCompressionPort,
 ): Readonly<{
-  encode: (value: unknown) => CheckpointNode;
+  encode: (value: unknown, root: CheckpointRoot) => CheckpointNode;
   frames: readonly CheckpointFrameMetadata[];
   compressedFrames: readonly Uint8Array[];
 }> {
@@ -46,17 +47,22 @@ export function createCheckpointFrameEncoder(
   const encoder = new TextEncoder();
   let totalUncompressedBytes = 0;
 
-  function appendFrame(source: string): number {
+  function appendFrame(source: string, root: CheckpointRoot): number {
     const bytes = encoder.encode(source);
     if (bytes.length === 0 || bytes.length > MAX_CHECKPOINT_FRAME_BYTES) {
-      throw new TypeError("checkpoint frameの非圧縮byte数が上限を超えています");
+      throw new TypeError(
+        `checkpoint frameの非圧縮byte数が上限を超えています。root=${root} frameBytes=${bytes.length.toString()} frameLimitBytes=${MAX_CHECKPOINT_FRAME_BYTES.toString()}`,
+      );
     }
     totalUncompressedBytes += bytes.length;
     if (
       totalUncompressedBytes > MAX_CHECKPOINT_TOTAL_UNCOMPRESSED_BYTES ||
       frames.length >= MAX_CHECKPOINT_FRAME_COUNT
     ) {
-      throw new TypeError("checkpointの非圧縮byte数またはframe数が上限を超えています");
+      const compressedFrameBytes = compressedFrames.reduce((sum, frame) => sum + frame.length, 0);
+      throw new TypeError(
+        `checkpointの非圧縮byte数またはframe数が上限を超えています。root=${root} frameBytes=${bytes.length.toString()} frameLimitBytes=${MAX_CHECKPOINT_FRAME_BYTES.toString()} totalUncompressedBytes=${totalUncompressedBytes.toString()} totalLimitBytes=${MAX_CHECKPOINT_TOTAL_UNCOMPRESSED_BYTES.toString()} frameCount=${(frames.length + 1).toString()} frameCountLimit=${MAX_CHECKPOINT_FRAME_COUNT.toString()} completedCompressedFrameBytes=${compressedFrameBytes.toString()}`,
+      );
     }
     const index = frames.length;
     frames.push({
@@ -68,9 +74,9 @@ export function createCheckpointFrameEncoder(
     return index;
   }
 
-  function encode(value: unknown): CheckpointNode {
+  function encode(value: unknown, root: CheckpointRoot): CheckpointNode {
     const source = serializeCanonicalJsonBounded(value, MAX_CHECKPOINT_FRAME_BYTES);
-    if (source != null) return { kind: "frame", index: appendFrame(source) };
+    if (source != null) return { kind: "frame", index: appendFrame(source, root) };
     if (Array.isArray(value)) {
       const parts: (ArrayFramePart | ArrayItemPart)[] = [];
       let items: string[] = [];
@@ -80,7 +86,7 @@ export function createCheckpointFrameEncoder(
         if (items.length === 0) return;
         parts.push({
           kind: "frame",
-          index: appendFrame(`[${items.join(",")}]`),
+          index: appendFrame(`[${items.join(",")}]`, root),
           start,
           count: items.length,
         });
@@ -92,7 +98,7 @@ export function createCheckpointFrameEncoder(
         const itemSource = serializeCanonicalJsonBounded(item, MAX_CHECKPOINT_FRAME_BYTES - 2);
         if (itemSource == null) {
           flush();
-          parts.push({ kind: "item", index, node: encode(item) });
+          parts.push({ kind: "item", index, node: encode(item, root) });
           start = index + 1;
           continue;
         }
@@ -111,7 +117,7 @@ export function createCheckpointFrameEncoder(
         left < right ? -1 : left > right ? 1 : 0,
       )) {
         if (key === "__proto__") throw new TypeError("checkpointのobject keyが不正です");
-        fields.push([key, encode(child)]);
+        fields.push([key, encode(child, root)]);
       }
       return { kind: "object", fields };
     }
