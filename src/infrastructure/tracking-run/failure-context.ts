@@ -210,7 +210,7 @@ export async function observeCliFailureContext(
     (error instanceof BoundPublicationFailureError &&
       error.cause instanceof StateBranchConflictError)
   ) {
-    effectCertainty = "no_effect";
+    effectCertainty = "ambiguous";
   }
   if (error instanceof PagesEffectNotStartedError) {
     effectCertainty = "no_effect";
