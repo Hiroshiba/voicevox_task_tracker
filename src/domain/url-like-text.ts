@@ -27,7 +27,15 @@ export const NO_URL_LIKE_TEXT_PATTERN = new RegExp(
 
 type UrlLikeTextScan =
   | Readonly<{ status: "valid"; candidates: readonly string[]; decodedTexts: readonly string[] }>
-  | Readonly<{ status: "invalid" }>;
+  | Readonly<{
+      status: "invalid";
+      reason:
+        | "text_limit"
+        | "invalid_encoding"
+        | "candidate_characters_limit"
+        | "candidate_count_limit"
+        | "decode_depth_limit";
+    }>;
 
 /** URLの全開始位置と有界な復号段階を検査し、候補内の曖昧な符号化を拒否する。 */
 export function scanUrlLikeText(value: string): UrlLikeTextScan {
@@ -36,7 +44,8 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
   let current = value;
   let candidateCharacters = 0;
   for (let depth = 0; ; depth += 1) {
-    if (current.length > 1_000_000) return Object.freeze({ status: "invalid" });
+    if (current.length > 1_000_000)
+      return Object.freeze({ status: "invalid", reason: "text_limit" });
     decodedTexts.push(current);
     for (const match of current.matchAll(URL_LIKE_START_PATTERN)) {
       const suffix = current.slice(match.index);
@@ -49,12 +58,14 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
         decodeURIComponent(candidate);
       } catch (error: unknown) {
         if (!(error instanceof URIError)) throw error;
-        return Object.freeze({ status: "invalid" });
+        return Object.freeze({ status: "invalid", reason: "invalid_encoding" });
       }
       candidateCharacters += candidate.length;
-      if (candidateCharacters > 1_000_000) return Object.freeze({ status: "invalid" });
+      if (candidateCharacters > 1_000_000)
+        return Object.freeze({ status: "invalid", reason: "candidate_characters_limit" });
       candidates.add(candidate);
-      if (candidates.size > 4096) return Object.freeze({ status: "invalid" });
+      if (candidates.size > 4096)
+        return Object.freeze({ status: "invalid", reason: "candidate_count_limit" });
     }
     const decoded = current.replaceAll(PERCENT_ENCODED_UTF8_CHARACTER_PATTERN, (encoded) =>
       decodeURIComponent(encoded),
@@ -66,7 +77,7 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
         decodedTexts: Object.freeze(decodedTexts),
       });
     }
-    if (depth === 4) return Object.freeze({ status: "invalid" });
+    if (depth === 4) return Object.freeze({ status: "invalid", reason: "decode_depth_limit" });
     current = decoded;
   }
 }

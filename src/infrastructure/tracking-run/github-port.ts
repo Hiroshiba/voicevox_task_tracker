@@ -6,7 +6,6 @@ import type {
 import type { Repository } from "../../domain/index.js";
 import type { CreateGitHubClientOptions, GitHubClient } from "../../github/client.js";
 import type { GitHubAppCredentials } from "../../github/credentials.js";
-import { GitHubPublicBoundaryViolationError } from "../../github/errors.js";
 import type { collectGitHubItemDetails } from "../../github/item-detail-collection.js";
 import { inspectLegacyReviewRequests } from "../../github/legacy-review-request.js";
 import {
@@ -14,12 +13,14 @@ import {
   type enumerateOpenGitHubItems,
 } from "../../github/item-enumeration.js";
 import { normalizeObservedGitHubItems } from "../../github/item-normalization.js";
-import { containsPrivateRepositoryReference } from "../../github/private-repository-reference.js";
+import { findPrivateRepositoryReference } from "../../github/private-repository-reference.js";
 import { createPublicRepositoryAllowlist } from "../../github/public-repository-allowlist.js";
 import {
   collectRepositoryMetadata,
   type discoverRepositoryInventory,
 } from "../../github/repository-inventory.js";
+
+import { createPublicBoundaryDiagnosticError } from "./public-boundary-diagnostic.js";
 
 type GitHubInventoryDependencies = Readonly<{
   credentials: GitHubAppCredentials;
@@ -79,8 +80,9 @@ export class GitHubRunSessions {
     if (privateRepositories == null) {
       throw new TypeError("runのGitHub sessionがありません");
     }
-    if (containsPrivateRepositoryReference(values, privateRepositories)) {
-      throw new GitHubPublicBoundaryViolationError(1);
+    const finding = findPrivateRepositoryReference(values, privateRepositories);
+    if (finding != null) {
+      throw createPublicBoundaryDiagnosticError(finding);
     }
   }
 
@@ -107,8 +109,9 @@ function assertStoredPrivateRepositoryBoundary(
     prepared.core.baseState.personalReminderAiCache,
     prepared.core.baseState.notificationLedger,
   ];
-  if (containsPrivateRepositoryReference(storedValues, inventory)) {
-    throw new GitHubPublicBoundaryViolationError(1);
+  const finding = findPrivateRepositoryReference(storedValues, inventory);
+  if (finding != null) {
+    throw createPublicBoundaryDiagnosticError(finding);
   }
 }
 

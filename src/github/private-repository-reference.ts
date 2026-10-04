@@ -5,6 +5,8 @@ import {
   type VerifiedExternalReference,
 } from "../domain/verified-external-reference.js";
 
+import { assertNonNullable } from "../util/index.js";
+
 type RepositoryReference = Pick<Repository, "id" | "owner" | "name" | "visibility">;
 
 const URL_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//u;
@@ -54,9 +56,12 @@ function decodedPathComponent(value: string): string | undefined {
   }
 }
 
-function containsRepositoryReference(value: string, repository: RepositoryReference): boolean {
+function repositoryReferenceReason(
+  value: string,
+  repository: RepositoryReference,
+): PrivateRepositoryReferenceFinding["reason"] | undefined {
   const scan = scanUrlLikeText(value);
-  if (scan.status === "invalid") return true;
+  if (scan.status === "invalid") return `scanner_${scan.reason}`;
   const urls = scan.candidates;
   if (
     urls.some((url) => {
@@ -70,16 +75,16 @@ function containsRepositoryReference(value: string, repository: RepositoryRefere
       );
     })
   ) {
-    return true;
+    return "private_repository_url";
   }
   let remaining = value;
   for (const url of urls) {
     remaining = remaining.replaceAll(url, " ");
   }
-  return (
-    containsRepositoryName(remaining, repository) ||
+  return containsRepositoryName(remaining, repository) ||
     scan.decodedTexts.some((text) => containsRepositoryName(text, repository))
-  );
+    ? "private_repository_name"
+    : undefined;
 }
 
 function hasGitHubAuthority(candidate: string): boolean {
@@ -296,24 +301,39 @@ function isUnknownArray(value: unknown): value is unknown[] {
   return Array.isArray(value);
 }
 
-/** 既知の非公開repositoryへの構造化IDまたは境界付きの名前参照を検出する。 */
-export function containsPrivateRepositoryReference(
+export type PrivateRepositoryReferenceFinding = Readonly<{
+  reason:
+    | "private_repository_id"
+    | "private_repository_url"
+    | "private_repository_name"
+    | `scanner_${Extract<ReturnType<typeof scanUrlLikeText>, { status: "invalid" }>["reason"]}`;
+  path: readonly (string | number)[];
+  value: string;
+}>;
+
+/** 既知の非公開repository参照または検査不能な値の最初の位置を返す。 */
+export function findPrivateRepositoryReference(
   values: readonly unknown[],
   inventory: readonly RepositoryReference[],
-): boolean {
+): PrivateRepositoryReferenceFinding | undefined {
   const privateRepositories = inventory.filter((repository) => repository.visibility !== "public");
   if (privateRepositories.length === 0) {
-    return false;
+    return undefined;
   }
-  const pending: unknown[] = [...values];
+  const pending: { value: unknown; path: readonly (string | number)[] }[] = values.map(
+    (value, index) => ({ value, path: [index] }),
+  );
   const visited = new WeakSet<object>();
   while (pending.length > 0) {
-    const value = pending.pop();
+    const entry = pending.pop();
+    assertNonNullable(entry, "非公開repository参照の検査対象がありません");
+    const { value, path } = entry;
     if (typeof value === "string") {
-      if (
-        privateRepositories.some((repository) => containsRepositoryReference(value, repository))
-      ) {
-        return true;
+      for (const repository of privateRepositories) {
+        const reason = repositoryReferenceReason(value, repository);
+        if (reason != null) {
+          return Object.freeze({ reason, path, value });
+        }
       }
       continue;
     }
@@ -322,19 +342,32 @@ export function containsPrivateRepositoryReference(
     }
     visited.add(value);
     if (isUnknownArray(value)) {
-      pending.push(...value);
+      pending.push(...value.map((item, index) => ({ value: item, path: [...path, index] })));
       continue;
     }
     for (const [key, propertyValue] of Object.entries(value)) {
+      const propertyPath = [...path, key];
       if (
         isRepositoryIdField(key, value) &&
         typeof propertyValue === "string" &&
         privateRepositories.some((repository) => propertyValue === repository.id)
       ) {
-        return true;
+        return Object.freeze({
+          reason: "private_repository_id",
+          path: propertyPath,
+          value: propertyValue,
+        });
       }
-      pending.push(propertyValue);
+      pending.push({ value: propertyValue, path: propertyPath });
     }
   }
-  return false;
+  return undefined;
+}
+
+/** 既知の非公開repositoryへの構造化IDまたは境界付きの名前参照を検出する。 */
+export function containsPrivateRepositoryReference(
+  values: readonly unknown[],
+  inventory: readonly RepositoryReference[],
+): boolean {
+  return findPrivateRepositoryReference(values, inventory) != null;
 }

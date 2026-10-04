@@ -50,6 +50,7 @@ import type {
 } from "./command-input.js";
 import { safeErrorDiagnostic } from "./error-diagnostic.js";
 import { observeCliFailureContext } from "./failure-context.js";
+import { publicBoundaryDiagnosticDetails } from "./public-boundary-diagnostic.js";
 import { isPublicBoundaryViolation } from "./public-boundary-error.js";
 import { publicDiagnosticCode } from "./public-failure-boundary.js";
 import type { RecoveryStageInput } from "./recovery-stage.js";
@@ -221,6 +222,7 @@ export class SequentialRunRunner {
           command: invocation.commandKind,
           stage,
           recordId,
+          ...publicBoundaryDiagnosticDetails(error),
           ...(mismatchError != null
             ? {
                 personalReminderAiDependencyMismatch: mismatchError.diagnosticDetails(),

@@ -3,6 +3,8 @@ import { z } from "zod";
 import type { FailureDiagnosticState } from "../../application/tracking-run/failure-artifact.js";
 import type { DiagnosticsJsonlRecorder } from "../../diagnostics/recorder.js";
 
+import { publicBoundaryDiagnosticDetails } from "./public-boundary-diagnostic.js";
+
 const recordIdSchema = z.string().regex(/^[A-Za-z0-9._:-]{1,200}$/u);
 
 /** 既存の暗号化対象診断へ記録済みの失敗を示す。 */
@@ -27,7 +29,7 @@ export async function recordFailureDiagnostic(
   const checkedId = recordIdSchema.parse(recordId);
   await recorder.append({
     event: "tracking_run.failed",
-    details: { recordId: checkedId },
+    details: { recordId: checkedId, ...publicBoundaryDiagnosticDetails(state.error) },
     error: state.error,
   });
   return Object.freeze({ kind: "recorded", error: state.error, recordIds: [checkedId] });
