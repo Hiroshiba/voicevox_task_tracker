@@ -69,7 +69,7 @@ function optionalFile(
 }
 
 function source(bytes: Uint8Array): string {
-  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
 }
 
 /** marker、record、snapshot、通常ledger、Pages証拠を同じtreeで照合する。 */
