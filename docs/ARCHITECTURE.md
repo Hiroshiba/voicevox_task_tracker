@@ -471,6 +471,8 @@ Web UIは停滞レベルを表示、絞り込み、並び替え、依存グラ�
 3. Pages guardはDTO生成直前に別実装で収集段階のallowlist、inventory、snapshotを照合し、repository identity、既知の非公開repository参照、secret、安全でないURL、不要な全文を再検査します。
 
 自然文のURLは共通の規則で候補を抽出し、GitHubのhostとowner/nameを正規化してから公開allowlistと検証済み外部参照に照合します。外部参照の公開証明は今回取得したrepository metadataへ結合します。URLや符号化を一意に解析できない場合、または現在の公開状態を確認できない場合は、保存と公開を停止します。
+Markdownはlinkとimageのラベル、参照先、title、definitionの原文位置で候補を区切り、別の部分をURLとして連結しません。code、HTML、imageのaltも省略せず、各部分と各復号段階でURLの全開始位置を検査します。URL候補の後ろにlinkが隣接する場合と、linkラベル内のURL候補にlink終了後の文字列が隣接する場合は、参照先を一意に解析できない値として停止します。linkとimage、definitionの参照先は、参照先そのものの原文範囲で検査します。
+URL候補は原文のpercent escapeとUTF-8を厳密に検証します。有効な`%25`の復号で生じたliteral `%`は原文の不正なescapeと区別し、復号後に残るpercent escape列の不正なUTF-8も拒否します。裸のowner/nameは原文と全復号段階の全文から検査し、構造化されたrepository ID、文字数、候補総文字数、候補数、復号深度の上限も維持します。
 
 `config.yml`の`maintainers`に書いたGitHubユーザー名と、GitHubのreview requestや本文とコメントから得たteam識別子は公開情報としてguardを通過できます。
 GitHubのteam member一覧は収集しないため、snapshot、公開DTO、Discord通知の入力にも含まれません。
