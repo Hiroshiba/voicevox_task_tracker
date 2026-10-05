@@ -24,17 +24,8 @@ const fieldKindSchema = z.enum([
   "name",
 ]);
 const hashSchema = z.string().regex(/^[0-9a-f]{64}$/u);
-const diagnosticSchema = z.strictObject({
-  reason: z.enum([
-    "private_repository_id",
-    "private_repository_url",
-    "private_repository_name",
-    "scanner_text_limit",
-    "scanner_invalid_encoding",
-    "scanner_candidate_characters_limit",
-    "scanner_candidate_count_limit",
-    "scanner_decode_depth_limit",
-  ]),
+const encodingStateSchema = z.enum(["valid", "invalid_percent_escape", "invalid_utf8"]);
+const diagnosticBaseSchema = z.strictObject({
   path: z.array(
     z.discriminatedUnion("kind", [
       z.strictObject({ kind: z.literal("array_index"), index: z.number().int().nonnegative() }),
@@ -44,12 +35,46 @@ const diagnosticSchema = z.strictObject({
   ),
   valueHash: hashSchema,
 });
+const diagnosticSchema = z.discriminatedUnion("reason", [
+  diagnosticBaseSchema.extend({
+    reason: z.enum([
+      "private_repository_id",
+      "private_repository_url",
+      "private_repository_name",
+      "scanner_text_limit",
+      "scanner_candidate_characters_limit",
+      "scanner_candidate_count_limit",
+      "scanner_decode_depth_limit",
+    ]),
+  }),
+  diagnosticBaseSchema.extend({
+    reason: z.literal("scanner_invalid_encoding"),
+    encoding: z.strictObject({
+      candidateHash: hashSchema,
+      originalCandidateHash: hashSchema,
+      decodeDepth: z.number().int().nonnegative().max(4),
+      originalEncoding: encodingStateSchema,
+      failedEncoding: encodingStateSchema.exclude(["valid"]),
+      originalContainsEncodedPercent: z.boolean(),
+    }),
+  }),
+]);
 type PublicBoundaryDiagnostic = z.output<typeof diagnosticSchema>;
 
 const diagnostics = new WeakMap<Error, PublicBoundaryDiagnostic>();
 
 function hash(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function percentEncodingState(value: string): z.output<typeof encodingStateSchema> {
+  try {
+    decodeURIComponent(value);
+    return "valid";
+  } catch (error: unknown) {
+    if (!(error instanceof URIError)) throw error;
+    return /%(?![0-9a-f]{2})/iu.test(value) ? "invalid_percent_escape" : "invalid_utf8";
+  }
 }
 
 /** 原文を保持せず暗号化診断用の停止理由を公開境界エラーに結び付ける。 */
@@ -69,6 +94,18 @@ export function createPublicBoundaryDiagnosticError(
     reason: finding.reason,
     path,
     valueHash: hash(finding.value),
+    ...(finding.reason === "scanner_invalid_encoding"
+      ? {
+          encoding: {
+            candidateHash: hash(finding.scanFailure.candidate),
+            originalCandidateHash: hash(finding.scanFailure.originalCandidate),
+            decodeDepth: finding.scanFailure.decodeDepth,
+            originalEncoding: percentEncodingState(finding.scanFailure.originalCandidate),
+            failedEncoding: percentEncodingState(finding.scanFailure.candidate),
+            originalContainsEncodedPercent: /%25/iu.test(finding.scanFailure.originalCandidate),
+          },
+        }
+      : {}),
   });
   const error = new GitHubPublicBoundaryViolationError(1);
   diagnostics.set(error, diagnostic);

@@ -8,6 +8,18 @@ import {
 import { assertNonNullable } from "../util/index.js";
 
 type RepositoryReference = Pick<Repository, "id" | "owner" | "name" | "visibility">;
+type InvalidUrlLikeTextScan = Extract<ReturnType<typeof scanUrlLikeText>, { status: "invalid" }>;
+type RepositoryTextReferenceFinding =
+  | Readonly<{
+      reason:
+        | "private_repository_url"
+        | "private_repository_name"
+        | `scanner_${Exclude<InvalidUrlLikeTextScan["reason"], "invalid_encoding">}`;
+    }>
+  | Readonly<{
+      reason: "scanner_invalid_encoding";
+      scanFailure: Extract<InvalidUrlLikeTextScan, { reason: "invalid_encoding" }>["failure"];
+    }>;
 
 const URL_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//u;
 
@@ -56,12 +68,16 @@ function decodedPathComponent(value: string): string | undefined {
   }
 }
 
-function repositoryReferenceReason(
+function repositoryTextReferenceFinding(
   value: string,
   repository: RepositoryReference,
-): PrivateRepositoryReferenceFinding["reason"] | undefined {
+): RepositoryTextReferenceFinding | undefined {
   const scan = scanUrlLikeText(value);
-  if (scan.status === "invalid") return `scanner_${scan.reason}`;
+  if (scan.status === "invalid") {
+    return scan.reason === "invalid_encoding"
+      ? { reason: "scanner_invalid_encoding", scanFailure: scan.failure }
+      : { reason: `scanner_${scan.reason}` };
+  }
   const urls = scan.candidates;
   if (
     urls.some((url) => {
@@ -75,7 +91,7 @@ function repositoryReferenceReason(
       );
     })
   ) {
-    return "private_repository_url";
+    return { reason: "private_repository_url" };
   }
   let remaining = value;
   for (const url of urls) {
@@ -83,7 +99,7 @@ function repositoryReferenceReason(
   }
   return containsRepositoryName(remaining, repository) ||
     scan.decodedTexts.some((text) => containsRepositoryName(text, repository))
-    ? "private_repository_name"
+    ? { reason: "private_repository_name" }
     : undefined;
 }
 
@@ -306,14 +322,10 @@ function isUnknownArray(value: unknown): value is unknown[] {
 }
 
 export type PrivateRepositoryReferenceFinding = Readonly<{
-  reason:
-    | "private_repository_id"
-    | "private_repository_url"
-    | "private_repository_name"
-    | `scanner_${Extract<ReturnType<typeof scanUrlLikeText>, { status: "invalid" }>["reason"]}`;
   path: readonly (string | number)[];
   value: string;
-}>;
+}> &
+  (Readonly<{ reason: "private_repository_id" }> | RepositoryTextReferenceFinding);
 
 /** 既知の非公開repository参照または検査不能な値の最初の位置を返す。 */
 export function findPrivateRepositoryReference(
@@ -334,9 +346,9 @@ export function findPrivateRepositoryReference(
     const { value, path } = entry;
     if (typeof value === "string") {
       for (const repository of privateRepositories) {
-        const reason = repositoryReferenceReason(value, repository);
-        if (reason != null) {
-          return Object.freeze({ reason, path, value });
+        const finding = repositoryTextReferenceFinding(value, repository);
+        if (finding != null) {
+          return Object.freeze({ ...finding, path, value });
         }
       }
       continue;

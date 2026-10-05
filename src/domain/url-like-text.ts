@@ -36,13 +36,19 @@ type UrlLikeTextScan =
   | Readonly<{ status: "valid"; candidates: readonly string[]; decodedTexts: readonly string[] }>
   | Readonly<{
       status: "invalid";
+      reason: "invalid_encoding";
+      failure: Readonly<{ candidate: string; originalCandidate: string; decodeDepth: number }>;
+    }>
+  | Readonly<{
+      status: "invalid";
       reason:
         | "text_limit"
-        | "invalid_encoding"
         | "candidate_characters_limit"
         | "candidate_count_limit"
         | "decode_depth_limit";
     }>;
+
+type UrlLikeCandidate = Readonly<{ value: string; start: number; end: number }>;
 
 function* urlLikeStartIndices(value: string): Generator<number> {
   const nonSchemeStart = new RegExp(NON_SCHEME_URL_LIKE_START_PATTERN.source, "iyu");
@@ -72,7 +78,7 @@ function* urlLikeStartIndices(value: string): Generator<number> {
   }
 }
 
-function* urlLikeCandidates(value: string): Generator<string> {
+function* urlLikeCandidates(value: string): Generator<UrlLikeCandidate> {
   let token:
     | Readonly<{ status: "unscanned" }>
     | Readonly<{ status: "scanned"; end: number; candidateEnd: number }> = { status: "unscanned" };
@@ -91,8 +97,34 @@ function* urlLikeCandidates(value: string): Generator<string> {
       }
       token = { status: "scanned", end, candidateEnd };
     }
-    yield value.slice(index, token.candidateEnd);
+    yield { value: value.slice(index, token.candidateEnd), start: index, end: token.candidateEnd };
   }
+}
+
+function originalTextIndex(value: string, index: number, edge: "start" | "end"): number {
+  let lengthDifference = 0;
+  for (const match of value.matchAll(PERCENT_ENCODED_UTF8_CHARACTER_PATTERN)) {
+    const encoded = match[0];
+    const decodedStart = match.index - lengthDifference;
+    const decodedEnd = decodedStart + decodeURIComponent(encoded).length;
+    if (index <= decodedStart) return index + lengthDifference;
+    if (index < decodedEnd) return edge === "start" ? match.index : match.index + encoded.length;
+    lengthDifference += encoded.length - (decodedEnd - decodedStart);
+  }
+  return index + lengthDifference;
+}
+
+function originalUrlLikeCandidate(
+  value: string,
+  decodedTexts: readonly string[],
+  candidate: UrlLikeCandidate,
+): string {
+  let { start, end } = candidate;
+  for (const text of decodedTexts.slice(0, -1).toReversed()) {
+    start = originalTextIndex(text, start, "start");
+    end = originalTextIndex(text, end, "end");
+  }
+  return value.slice(start, end);
 }
 
 /** URLの全開始位置と有界な復号段階を検査し、候補内の曖昧な符号化を拒否する。 */
@@ -107,15 +139,23 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
     decodedTexts.push(current);
     for (const candidate of urlLikeCandidates(current)) {
       try {
-        decodeURIComponent(candidate);
+        decodeURIComponent(candidate.value);
       } catch (error: unknown) {
         if (!(error instanceof URIError)) throw error;
-        return Object.freeze({ status: "invalid", reason: "invalid_encoding" });
+        return Object.freeze({
+          status: "invalid",
+          reason: "invalid_encoding",
+          failure: Object.freeze({
+            candidate: candidate.value,
+            originalCandidate: originalUrlLikeCandidate(value, decodedTexts, candidate),
+            decodeDepth: depth,
+          }),
+        });
       }
-      candidateCharacters += candidate.length;
+      candidateCharacters += candidate.value.length;
       if (candidateCharacters > 1_000_000)
         return Object.freeze({ status: "invalid", reason: "candidate_characters_limit" });
-      candidates.add(candidate);
+      candidates.add(candidate.value);
       if (candidates.size > 4096)
         return Object.freeze({ status: "invalid", reason: "candidate_count_limit" });
     }
