@@ -15,6 +15,7 @@ import { assertRunTransactionMarkerTransition } from "../../application/tracking
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import {
   type StateBranchAdapter,
+  type StateBranchCommitInspection,
   type StateFileReadResult,
   type StatePersistenceConfiguration,
 } from "../../persistence/branch-adapter.js";
@@ -32,15 +33,184 @@ import {
   verifyRunTransactionFiles,
   type VerifiedRunTransactionFiles,
 } from "../../persistence/state-transaction-files.js";
+import type { StateSnapshot } from "../../persistence/snapshot-v23.js";
 import { nodeContentDigestPort } from "./content-digest.js";
 import {
-  assertPostSaveExactDependencies,
-  assertPostSaveExactTree,
-  hasPostSaveExactProofScope,
-  postSaveExactProof,
+  assertPostSaveExactReadDependencies,
+  assertPostSaveExactReadTree,
+  assertPostSaveExactSnapshotBytes,
   recordPostSaveExactReads,
-  retainPostSaveExactProof,
-} from "./post-save-exact-proof.js";
+  type PostSaveExactReadFootprint,
+} from "./post-save-exact-reads.js";
+
+const postSaveExactProofBrand: unique symbol = Symbol("postSaveExactProof");
+
+/** 公開済みrevisionの完全検証と読込元だけを保持する短命証明。 */
+type PostSaveExactProof = Readonly<{
+  [postSaveExactProofBrand]: true;
+  transaction: VerifiedRunTransactionFiles;
+}>;
+
+type ProofRun = Readonly<{ runId: string; token: symbol; proof?: PostSaveExactProof }>;
+type ProofDetails = Readonly<{
+  scope: PostSaveExactProofScope;
+  runToken: symbol;
+  revision: string;
+  configuration: string;
+  footprint: PostSaveExactReadFootprint;
+}>;
+
+const adapterScopes = new WeakMap<StateBranchAdapter, PostSaveExactProofScope>();
+const scopeRuns = new WeakMap<PostSaveExactProofScope, ProofRun>();
+const issuedProofDetails = new WeakMap<PostSaveExactProof, ProofDetails>();
+
+/** 日次run内の同じadapter生成元だけに証明を渡す。 */
+export class PostSaveExactProofScope {
+  /** 日次runの開始時に前の証明を破棄する。 */
+  public beginRun(runId: string): void {
+    scopeRuns.set(this, { runId, token: Symbol("postSaveExactProofRun") });
+  }
+
+  /** 日次runの終了時に証明を破棄する。 */
+  public endRun(runId: string): void {
+    if (scopeRuns.get(this)?.runId === runId) {
+      scopeRuns.delete(this);
+    }
+  }
+
+  /** 同じadapter生成元から得たadapterをscopeへ結び付ける。 */
+  public register(adapter: StateBranchAdapter): void {
+    adapterScopes.set(adapter, this);
+  }
+}
+
+function activePostSaveExactProofDetails(proof: PostSaveExactProof): ProofDetails {
+  const details = issuedProofDetails.get(proof);
+  const run = details == null ? undefined : scopeRuns.get(details.scope);
+  if (details == null || run?.proof !== proof || run.token !== details.runToken) {
+    throw new TypeError("公開済みexact revisionの証明が現在のrunに属していません");
+  }
+  return details;
+}
+
+/** 同じrunと設定で保持した公開済みrevisionの証明を返す。 */
+export function postSaveExactProof(
+  adapter: StateBranchAdapter,
+  configuration: StatePersistenceConfiguration,
+  revision: string,
+): PostSaveExactProof | undefined {
+  const scope = adapterScopes.get(adapter);
+  const proof = scope == null ? undefined : scopeRuns.get(scope)?.proof;
+  if (proof == null) {
+    return undefined;
+  }
+  const details = activePostSaveExactProofDetails(proof);
+  return details.revision === revision &&
+    details.configuration === serializeCanonicalJson(configuration)
+    ? proof
+    : undefined;
+}
+
+function freezeTransaction(value: unknown): void {
+  if (typeof value !== "object" || value == null) {
+    return;
+  }
+  for (const nested of Object.values(value)) {
+    freezeTransaction(nested);
+  }
+  if (!Object.isFrozen(value)) {
+    Object.freeze(value);
+  }
+}
+
+function issueAndRetainPostSaveExactProof(
+  scope: PostSaveExactProofScope,
+  runToken: symbol,
+  configuration: StatePersistenceConfiguration,
+  revision: string,
+  transaction: VerifiedRunTransactionFiles,
+  footprint: PostSaveExactReadFootprint,
+): void {
+  const run = scopeRuns.get(scope);
+  if (
+    run?.token !== runToken ||
+    transaction.marker.runId !== run.runId ||
+    transaction.snapshotSchemaVersion !== "23" ||
+    transaction.marker.phase !== "initial_state_committed"
+  ) {
+    throw new TypeError("初回公開済みexact revisionの証明入力が現在のrunに一致しません");
+  }
+  freezeTransaction(transaction);
+  const proof = Object.freeze({
+    [postSaveExactProofBrand]: true,
+    transaction,
+  } satisfies PostSaveExactProof);
+  issuedProofDetails.set(
+    proof,
+    Object.freeze({
+      scope,
+      runToken,
+      revision,
+      configuration: serializeCanonicalJson(configuration),
+      footprint,
+    }),
+  );
+  scopeRuns.set(scope, { ...run, proof });
+}
+
+/** freshなpath、byte列を完全検証時の同じexact treeへ照合する。 */
+export function assertPostSaveExactTree(
+  proof: PostSaveExactProof,
+  paths: readonly string[],
+  files: ReadonlyMap<string, StateFileReadResult>,
+): void {
+  const details = activePostSaveExactProofDetails(proof);
+  assertPostSaveExactReadTree(details.footprint, details.revision, paths, files);
+}
+
+/** chain検証に使用した全revisionの読込値をfreshなadapter応答と照合する。 */
+export async function assertPostSaveExactDependencies(
+  adapter: StateBranchAdapter,
+  proof: PostSaveExactProof,
+  currentFiles: ReadonlyMap<string, StateFileReadResult>,
+  currentCommit: StateBranchCommitInspection,
+): Promise<void> {
+  const details = activePostSaveExactProofDetails(proof);
+  if (adapterScopes.get(adapter) !== details.scope) {
+    throw new TypeError("公開済みexact revisionのadapter生成元が証明と一致しません");
+  }
+  await assertPostSaveExactReadDependencies(
+    adapter,
+    details.footprint,
+    details.revision,
+    currentFiles,
+    currentCommit,
+  );
+  activePostSaveExactProofDetails(proof);
+}
+
+/** 証明済みsnapshot byteだけを同じ論理値として復元する。 */
+export function parseProvenStateSnapshot(
+  proof: PostSaveExactProof,
+  configuration: StatePersistenceConfiguration,
+  bytes: Uint8Array,
+): StateSnapshot {
+  const details = activePostSaveExactProofDetails(proof);
+  if (details.configuration !== serializeCanonicalJson(configuration)) {
+    throw new TypeError("snapshotの設定が公開済みexact revisionの証明と一致しません");
+  }
+  assertPostSaveExactSnapshotBytes(
+    details.footprint,
+    details.revision,
+    configuration.snapshotPath,
+    bytes,
+  );
+  const source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  const parse: (value: string) => StateSnapshot = JSON.parse;
+  const snapshot = parse(source);
+  freezeTransaction(snapshot);
+  return snapshot;
+}
 
 type ObservedCommit<T> = Readonly<{
   receipt: T;
@@ -173,9 +343,15 @@ export async function observeStateCommitAtRevision(
   ObservedCommit<InitialStateCommitReceipt | NotificationSettlementReceipt | RunFinalizationReceipt>
 > {
   const proof = postSaveExactProof(adapter, configuration, revision);
+  const scope = adapterScopes.get(adapter);
+  const proofRun = scope == null ? undefined : scopeRuns.get(scope);
   const recording =
-    issuePostSaveProof === true && proof == null && hasPostSaveExactProofScope(adapter)
-      ? recordPostSaveExactReads(adapter)
+    issuePostSaveProof === true && proof == null && scope != null && proofRun != null
+      ? Object.freeze({
+          ...recordPostSaveExactReads(adapter),
+          scope,
+          runToken: proofRun.token,
+        })
       : undefined;
   const readingAdapter = recording?.adapter ?? adapter;
   const [tree, commit] = await Promise.all([
@@ -280,7 +456,14 @@ export async function observeStateCommitAtRevision(
     nodeContentDigestPort,
   );
   if (recording != null) {
-    retainPostSaveExactProof(adapter, recording.issue(configuration, revision, tree.transaction));
+    issueAndRetainPostSaveExactProof(
+      recording.scope,
+      recording.runToken,
+      configuration,
+      revision,
+      tree.transaction,
+      recording.footprint,
+    );
   }
   observePerformanceDetail?.({ step: "receipt_created" });
   return Object.freeze({ receipt, evidence });

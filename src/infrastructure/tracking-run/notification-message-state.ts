@@ -52,7 +52,7 @@ import {
   assertPostSaveExactTree,
   parseProvenStateSnapshot,
   postSaveExactProof,
-} from "./post-save-exact-proof.js";
+} from "./state-receipt-observation.js";
 import {
   restoreNotificationSelection,
   type NotificationMessageContext,

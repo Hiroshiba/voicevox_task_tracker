@@ -3,7 +3,7 @@ import { createAnalysisStages } from "./analysis-stages.js";
 
 import { planPublication } from "../../../publication/plan-publication.js";
 import { nodeContentDigestPort } from "../content-digest.js";
-import { PostSaveExactProofScope } from "../post-save-exact-proof.js";
+import { PostSaveExactProofScope } from "../state-receipt-observation.js";
 import { GitHubRunSessions } from "../github-port.js";
 import type { ProductionRuntimeAdapters } from "./adapters.js";
 import { createReadCompletedReportStage } from "./daily-startup/completed-report.js";

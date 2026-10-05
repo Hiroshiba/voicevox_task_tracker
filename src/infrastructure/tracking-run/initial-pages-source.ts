@@ -20,15 +20,15 @@ import { verifyRunTransactionFiles } from "../../persistence/state-transaction-f
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import {
   assertPostSaveExactTree,
+  observeStateCommitAtRevision,
   parseProvenStateSnapshot,
   postSaveExactProof,
-} from "./post-save-exact-proof.js";
+} from "./state-receipt-observation.js";
 import {
   resumeInitialPagesBuild,
   type InitialPagesBuildInput,
 } from "./publication-resume-inputs.js";
 import { projectPublicationSettings } from "./publication/settings.js";
-import { observeStateCommitAtRevision } from "./state-receipt-observation.js";
 
 /** 初回state revisionから一度だけPagesへ投影する保存済み入力。 */
 export type InitialPagesSource = Readonly<{
