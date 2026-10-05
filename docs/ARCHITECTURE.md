@@ -92,7 +92,8 @@ codecは検証後のraw payloadとraw公開計画を返しません。結合後�
 直列runの保存待ちAI cacheと公開計画の一致は、checkpointの準備が完了する前に検証します。
 保存後はメモリ上の計画を破棄し、結果revisionからsnapshot、record、markerとledgerを再読み込みます。
 日次run内では、初回push後のexact revisionをtransaction、Git祖先、receiptまで完全に検証してから、その読込結果の証明を保持します。
-証明はschema version 23の初回stateに限り、同じrun、state設定、adapter生成元、revisionで使用します。
+日次runの開始時にadapterを一つ生成し、全methodの関数参照と呼出先を固定します。run内の保存、完全検証、公開head確認、後続の読込は同じadapterを使います。
+証明はschema version 23の初回stateに限り、同じrun、state設定、固定したadapter、revisionで使用します。次のrunではadapterを生成し直し、前runのadapterへ証明を渡しません。
 後続の読込ではpath一覧と全fileの実byteを取得し、長さとSHA-256を証明に照合します。receiptの再観測では、Git祖先検証に使った各revisionのpath、byte、commit metadataも再取得して照合します。
 一致した場合だけtransactionとGit祖先の再検証を省き、snapshotは取得したbyteから同じ論理値へ復元します。
 証明にはsnapshotやfile byteを保持せず、runの終了時に破棄します。新しいrevisionは完全検証します。

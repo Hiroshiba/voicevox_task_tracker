@@ -52,11 +52,21 @@ type PostSaveExactProof = Readonly<{
   transaction: VerifiedRunTransactionFiles;
 }>;
 
-type ProofRun = Readonly<{ runId: string; token: symbol; proof?: PostSaveExactProof }>;
-type PostSaveExactProofScope = Readonly<{ createSource: () => StateBranchAdapter }>;
+type ProofRun = Readonly<{
+  runId: string;
+  token: symbol;
+  adapter: StateBranchAdapter;
+  proof?: PostSaveExactProof;
+}>;
+type PostSaveExactProofScope = Readonly<{
+  createStateBranchAdapter: () => StateBranchAdapter;
+  beginRun: (runId: string) => void;
+  endRun: (runId: string) => void;
+}>;
 type ProofDetails = Readonly<{
   scope: PostSaveExactProofScope;
   runToken: symbol;
+  adapter: StateBranchAdapter;
   revision: string;
   configuration: string;
   footprint: PostSaveExactReadFootprint;
@@ -84,21 +94,17 @@ function bindStateBranchAdapter(source: StateBranchAdapter): StateBranchAdapter 
   });
 }
 
-/** 設定済みadapter生成元から日次runに束縛したadapterだけを作る。 */
-export function createPostSaveExactProofScope(createSource: () => StateBranchAdapter): Readonly<{
-  createStateBranchAdapter: () => StateBranchAdapter;
-  beginRun: (runId: string) => void;
-  endRun: (runId: string) => void;
-}> {
-  const scope = Object.freeze({ createSource });
-  return Object.freeze({
-    createStateBranchAdapter: (): StateBranchAdapter => {
+/** 日次runごとに保存と観測が共有するadapterを固定する。 */
+export function createPostSaveExactProofScope(
+  createSource: () => StateBranchAdapter,
+): PostSaveExactProofScope {
+  const scope: PostSaveExactProofScope = Object.freeze({
+    createStateBranchAdapter: (): StateBranchAdapter =>
+      scopeRuns.get(scope)?.adapter ?? bindStateBranchAdapter(createSource()),
+    beginRun: (runId: string): void => {
       const adapter = bindStateBranchAdapter(createSource());
       adapterScopes.set(adapter, scope);
-      return adapter;
-    },
-    beginRun: (runId: string): void => {
-      scopeRuns.set(scope, { runId, token: Symbol("postSaveExactProofRun") });
+      scopeRuns.set(scope, { runId, token: Symbol("postSaveExactProofRun"), adapter });
     },
     endRun: (runId: string): void => {
       if (scopeRuns.get(scope)?.runId === runId) {
@@ -106,12 +112,18 @@ export function createPostSaveExactProofScope(createSource: () => StateBranchAda
       }
     },
   });
+  return scope;
 }
 
 function activePostSaveExactProofDetails(proof: PostSaveExactProof): ProofDetails {
   const details = issuedProofDetails.get(proof);
   const run = details == null ? undefined : scopeRuns.get(details.scope);
-  if (details == null || run?.proof !== proof || run.token !== details.runToken) {
+  if (
+    details == null ||
+    run?.proof !== proof ||
+    run.token !== details.runToken ||
+    run.adapter !== details.adapter
+  ) {
     throw new TypeError("公開済みexact revisionの証明が現在のrunに属していません");
   }
   return details;
@@ -130,7 +142,8 @@ export function postSaveExactProof(
   }
   const details = activePostSaveExactProofDetails(proof);
   return details.revision === revision &&
-    details.configuration === serializeCanonicalJson(configuration)
+    details.configuration === serializeCanonicalJson(configuration) &&
+    details.adapter === adapter
     ? proof
     : undefined;
 }
@@ -174,6 +187,7 @@ function issueAndRetainPostSaveExactProof(
     Object.freeze({
       scope,
       runToken,
+      adapter: run.adapter,
       revision,
       configuration: serializeCanonicalJson(configuration),
       footprint,
@@ -200,8 +214,8 @@ export async function assertPostSaveExactDependencies(
   currentCommit: StateBranchCommitInspection,
 ): Promise<void> {
   const details = activePostSaveExactProofDetails(proof);
-  if (adapterScopes.get(adapter) !== details.scope) {
-    throw new TypeError("公開済みexact revisionのadapter生成元が証明と一致しません");
+  if (adapterScopes.get(adapter) !== details.scope || adapter !== details.adapter) {
+    throw new TypeError("公開済みexact revisionの読込adapterが証明と一致しません");
   }
   await assertPostSaveExactReadDependencies(
     adapter,
@@ -372,16 +386,19 @@ async function observePublishedStateCommitAtRevision(
   const proof = postSaveExactProof(adapter, configuration, revision);
   const scope = adapterScopes.get(adapter);
   const proofRun = scope == null ? undefined : scopeRuns.get(scope);
-  const publishedSource = bindStateBranchAdapter(scope == null ? adapter : scope.createSource());
+  if (proofRun != null && proofRun.adapter !== adapter) {
+    throw new TypeError("公開stateの読込adapterが現在のrunに属していません");
+  }
+  const source = scope == null ? bindStateBranchAdapter(adapter) : adapter;
   const recording =
     observationKind === "initial_publication" && proof == null && scope != null && proofRun != null
       ? Object.freeze({
-          ...recordPostSaveExactReads(adapter),
+          ...recordPostSaveExactReads(source),
           scope,
           runToken: proofRun.token,
         })
       : undefined;
-  const readingAdapter = recording?.adapter ?? adapter;
+  const readingAdapter = recording?.adapter ?? source;
   const [tree, commit] = await Promise.all([
     readVerifiedTree(readingAdapter, configuration, revision),
     readingAdapter.readCommit(revision),
@@ -484,7 +501,7 @@ async function observePublishedStateCommitAtRevision(
     [{ receipt, evidence: { kind: "state_commit", state: evidence } }],
     nodeContentDigestPort,
   );
-  await assertPublishedStateCommit(publishedSource, configuration, commit);
+  await assertPublishedStateCommit(source, configuration, commit);
   if (
     adapterScopes.get(adapter) !== scope ||
     (scope != null && scopeRuns.get(scope)?.token !== proofRun?.token) ||
