@@ -24,6 +24,7 @@ import {
   MAX_INTERVENING_COMMITS,
 } from "../../persistence/state-orthogonal-advance.js";
 import { assertStateCommitChain } from "../../persistence/state-commit-chain-verification.js";
+import { assertPublishedStateCommit } from "../../persistence/state-cas-observation.js";
 import { isOrthogonalStateCommitScope } from "../../persistence/state-commit-metadata.js";
 import {
   finalizedHistoryDigest,
@@ -52,6 +53,7 @@ type PostSaveExactProof = Readonly<{
 }>;
 
 type ProofRun = Readonly<{ runId: string; token: symbol; proof?: PostSaveExactProof }>;
+type PostSaveExactProofScope = Readonly<{ createSource: () => StateBranchAdapter }>;
 type ProofDetails = Readonly<{
   scope: PostSaveExactProofScope;
   runToken: symbol;
@@ -64,24 +66,46 @@ const adapterScopes = new WeakMap<StateBranchAdapter, PostSaveExactProofScope>()
 const scopeRuns = new WeakMap<PostSaveExactProofScope, ProofRun>();
 const issuedProofDetails = new WeakMap<PostSaveExactProof, ProofDetails>();
 
-/** 日次run内の同じadapter生成元だけに証明を渡す。 */
-export class PostSaveExactProofScope {
-  /** 日次runの開始時に前の証明を破棄する。 */
-  public beginRun(runId: string): void {
-    scopeRuns.set(this, { runId, token: Symbol("postSaveExactProofRun") });
-  }
+function bindStateBranchAdapter(source: StateBranchAdapter): StateBranchAdapter {
+  return Object.freeze({
+    resolveHead: source.resolveHead.bind(source),
+    ...(source.resolveRepositoryRevision == null
+      ? {}
+      : { resolveRepositoryRevision: source.resolveRepositoryRevision.bind(source) }),
+    ...(source.resolveOriginUrls == null
+      ? {}
+      : { resolveOriginUrls: source.resolveOriginUrls.bind(source) }),
+    readFile: source.readFile.bind(source),
+    readFiles: source.readFiles.bind(source),
+    listFiles: source.listFiles.bind(source),
+    readCommit: source.readCommit.bind(source),
+    commit: source.commit.bind(source),
+    publish: source.publish.bind(source),
+  });
+}
 
-  /** 日次runの終了時に証明を破棄する。 */
-  public endRun(runId: string): void {
-    if (scopeRuns.get(this)?.runId === runId) {
-      scopeRuns.delete(this);
-    }
-  }
-
-  /** 同じadapter生成元から得たadapterをscopeへ結び付ける。 */
-  public register(adapter: StateBranchAdapter): void {
-    adapterScopes.set(adapter, this);
-  }
+/** 設定済みadapter生成元から日次runに束縛したadapterだけを作る。 */
+export function createPostSaveExactProofScope(createSource: () => StateBranchAdapter): Readonly<{
+  createStateBranchAdapter: () => StateBranchAdapter;
+  beginRun: (runId: string) => void;
+  endRun: (runId: string) => void;
+}> {
+  const scope = Object.freeze({ createSource });
+  return Object.freeze({
+    createStateBranchAdapter: (): StateBranchAdapter => {
+      const adapter = bindStateBranchAdapter(createSource());
+      adapterScopes.set(adapter, scope);
+      return adapter;
+    },
+    beginRun: (runId: string): void => {
+      scopeRuns.set(scope, { runId, token: Symbol("postSaveExactProofRun") });
+    },
+    endRun: (runId: string): void => {
+      if (scopeRuns.get(scope)?.runId === runId) {
+        scopeRuns.delete(scope);
+      }
+    },
+  });
 }
 
 function activePostSaveExactProofDetails(proof: PostSaveExactProof): ProofDetails {
@@ -217,6 +241,12 @@ type ObservedCommit<T> = Readonly<{
   evidence: StateCommitReceiptEvidence;
 }>;
 
+type StateCommitObservation = Readonly<{
+  invocationId: string;
+  observedAt: string;
+  position: ObservedStateCommitPosition;
+}>;
+
 type VerifiedTree = Readonly<{
   files: ReadonlyMap<string, StateFileReadResult>;
   transaction: VerifiedRunTransactionFiles;
@@ -325,28 +355,26 @@ async function assertCommitAncestry(
   throw new TypeError("後続state commitの祖先探索が上限を超えています");
 }
 
-/** commit metadataと全marker遷移から復旧用のstate receiptを再観測する。 */
-export async function observeStateCommitAtRevision(
+async function observePublishedStateCommitAtRevision(
   adapter: StateBranchAdapter,
-  configuration: StatePersistenceConfiguration,
+  currentConfiguration: StatePersistenceConfiguration,
   revision: string,
   initialStateRevision: string,
   receiptType: StateCommitReceiptEvidence["receiptType"],
-  observation: Readonly<{
-    invocationId: string;
-    observedAt: string;
-    position: ObservedStateCommitPosition;
-  }>,
-  observePerformanceDetail?: PerformanceDetailObserver,
-  issuePostSaveProof?: boolean,
+  observation: StateCommitObservation,
+  observePerformanceDetail: PerformanceDetailObserver | undefined,
+  observationKind: "initial_publication" | "receipt_reobservation",
 ): Promise<
   ObservedCommit<InitialStateCommitReceipt | NotificationSettlementReceipt | RunFinalizationReceipt>
 > {
+  const configuration = Object.freeze({ ...currentConfiguration });
+  const configurationIdentity = serializeCanonicalJson(configuration);
   const proof = postSaveExactProof(adapter, configuration, revision);
   const scope = adapterScopes.get(adapter);
   const proofRun = scope == null ? undefined : scopeRuns.get(scope);
+  const publishedSource = bindStateBranchAdapter(scope == null ? adapter : scope.createSource());
   const recording =
-    issuePostSaveProof === true && proof == null && scope != null && proofRun != null
+    observationKind === "initial_publication" && proof == null && scope != null && proofRun != null
       ? Object.freeze({
           ...recordPostSaveExactReads(adapter),
           scope,
@@ -374,6 +402,7 @@ export async function observeStateCommitAtRevision(
   }
   observePerformanceDetail?.({ step: "receipt_commit_chain_verified" });
   if (
+    commit.revision !== revision ||
     commit.metadata.commitScope !== "tracking_run" ||
     commit.metadata.runId !== marker.runId ||
     commit.changedPathManifest.entries.every(
@@ -455,7 +484,16 @@ export async function observeStateCommitAtRevision(
     [{ receipt, evidence: { kind: "state_commit", state: evidence } }],
     nodeContentDigestPort,
   );
-  if (recording != null) {
+  await assertPublishedStateCommit(publishedSource, configuration, commit);
+  if (
+    adapterScopes.get(adapter) !== scope ||
+    (scope != null && scopeRuns.get(scope)?.token !== proofRun?.token) ||
+    serializeCanonicalJson(currentConfiguration) !== configurationIdentity ||
+    (recording != null && marker.runId !== proofRun?.runId)
+  ) {
+    throw new TypeError("公開stateの観測中に生成元、runまたは設定が変化しました");
+  }
+  if (recording != null && tree.transaction.snapshotSchemaVersion === "23") {
     issueAndRetainPostSaveExactProof(
       recording.scope,
       recording.runToken,
@@ -467,4 +505,52 @@ export async function observeStateCommitAtRevision(
   }
   observePerformanceDetail?.({ step: "receipt_created" });
   return Object.freeze({ receipt, evidence });
+}
+
+/** 公開済み初回stateを完全検証して同じ日次runの証明を保持する。 */
+export async function observeInitialPublishedStateCommit(
+  adapter: StateBranchAdapter,
+  configuration: StatePersistenceConfiguration,
+  revision: string,
+  observation: StateCommitObservation,
+  observePerformanceDetail?: PerformanceDetailObserver,
+): Promise<ObservedCommit<InitialStateCommitReceipt>> {
+  const observed = await observePublishedStateCommitAtRevision(
+    adapter,
+    configuration,
+    revision,
+    revision,
+    "initial_state_commit",
+    observation,
+    observePerformanceDetail,
+    "initial_publication",
+  );
+  if (observed.receipt.receiptType !== "initial_state_commit") {
+    throw new TypeError("初回公開stateのreceipt種別が不正です");
+  }
+  return Object.freeze({ receipt: observed.receipt, evidence: observed.evidence });
+}
+
+/** 公開head、commit metadataと全marker遷移からstate receiptを再観測する。 */
+export async function observeStateCommitAtRevision(
+  adapter: StateBranchAdapter,
+  configuration: StatePersistenceConfiguration,
+  revision: string,
+  initialStateRevision: string,
+  receiptType: StateCommitReceiptEvidence["receiptType"],
+  observation: StateCommitObservation,
+  observePerformanceDetail?: PerformanceDetailObserver,
+): Promise<
+  ObservedCommit<InitialStateCommitReceipt | NotificationSettlementReceipt | RunFinalizationReceipt>
+> {
+  return observePublishedStateCommitAtRevision(
+    adapter,
+    configuration,
+    revision,
+    initialStateRevision,
+    receiptType,
+    observation,
+    observePerformanceDetail,
+    "receipt_reobservation",
+  );
 }

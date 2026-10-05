@@ -22,7 +22,7 @@ import {
   assertBoundPublicationCheckpoint,
   type BoundPublicationCheckpoint,
 } from "./publication-checkpoint-binding.js";
-import { observeStateCommitAtRevision } from "./state-receipt-observation.js";
+import { observeInitialPublishedStateCommit } from "./state-receipt-observation.js";
 
 /** 初回state commitで使用する副作用境界。 */
 export type InitialStateCommitPort = Readonly<{
@@ -135,24 +135,18 @@ export async function commitInitialState(
     });
   }
   statePort.observeProgress?.("receipt_observation");
-  const observed = await observeStateCommitAtRevision(
+  const observed = await observeInitialPublishedStateCommit(
     statePort.adapter,
     statePort.configuration,
     written.commit.revision,
-    written.commit.revision,
-    "initial_state_commit",
     {
       invocationId,
       observedAt: statePort.now().toISOString(),
       position: { kind: "first" },
     },
     statePort.observePerformanceDetail,
-    true,
   );
   statePort.observeProgress?.("receipt_observed");
-  if (observed.receipt.receiptType !== "initial_state_commit") {
-    throw new TypeError("初回state commitの再観測receipt種別が不正です");
-  }
   if (written.observed) {
     return Object.freeze({ revision: written.commit.revision, receipt: observed.receipt });
   }

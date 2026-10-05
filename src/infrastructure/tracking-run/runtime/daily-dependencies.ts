@@ -3,7 +3,7 @@ import { createAnalysisStages } from "./analysis-stages.js";
 
 import { planPublication } from "../../../publication/plan-publication.js";
 import { nodeContentDigestPort } from "../content-digest.js";
-import { PostSaveExactProofScope } from "../state-receipt-observation.js";
+import { createPostSaveExactProofScope } from "../state-receipt-observation.js";
 import { GitHubRunSessions } from "../github-port.js";
 import type { ProductionRuntimeAdapters } from "./adapters.js";
 import { createReadCompletedReportStage } from "./daily-startup/completed-report.js";
@@ -38,14 +38,10 @@ import {
 export function createDailyDependencies(
   adapters: ProductionRuntimeAdapters,
 ): SequentialRunDependencies {
-  const proofScope = new PostSaveExactProofScope();
+  const proofScope = createPostSaveExactProofScope(adapters.createStateBranchAdapter);
   const runAdapters: ProductionRuntimeAdapters = Object.freeze({
     ...adapters,
-    createStateBranchAdapter: () => {
-      const adapter = adapters.createStateBranchAdapter();
-      proofScope.register(adapter);
-      return adapter;
-    },
+    createStateBranchAdapter: proofScope.createStateBranchAdapter,
   });
   const githubSessions = new GitHubRunSessions();
   const inspectLaunch = createInspectLaunchStage(runAdapters, adapters.now);

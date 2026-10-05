@@ -44,13 +44,12 @@ function headsEqual(left: StateBranchHead, right: StateBranchHead): boolean {
 
 /** 性能profile用にstate branchとcommitをメモリ上に保持するadapter。 */
 export class MemoryStateBranchAdapter implements StateBranchAdapter {
-  readonly #branches = new Map<string, string>();
   readonly #commits = new Map<string, MemoryCommit>();
   readonly #publishedBranches = new Map<string, string>();
   #revisionSequence = 0;
 
   public resolveHead(branch: string): Promise<StateBranchHead> {
-    const revision = this.#branches.get(branch);
+    const revision = this.#publishedBranches.get(branch);
     if (revision == null) {
       return Promise.resolve(
         Object.freeze({
@@ -186,7 +185,7 @@ export class MemoryStateBranchAdapter implements StateBranchAdapter {
       assertValidStatePath(path);
     }
 
-    const currentRevision = this.#branches.get(request.branch);
+    const currentRevision = this.#publishedBranches.get(request.branch);
     const currentHead: StateBranchHead =
       currentRevision == null
         ? Object.freeze({
@@ -261,7 +260,6 @@ export class MemoryStateBranchAdapter implements StateBranchAdapter {
         changedPathManifest,
       }),
     );
-    this.#branches.set(request.branch, revision);
     return Promise.resolve(
       Object.freeze({
         revision,
@@ -293,18 +291,24 @@ export class MemoryStateBranchAdapter implements StateBranchAdapter {
   /** メモリ上のstate branchを公開済みとして扱う。 */
   public async publish(request: StateBranchPublishRequest): Promise<void> {
     assertValidStateStorageBranch(request.branch);
-    if (!this.#commits.has(request.revision)) {
+    const commit = this.#commits.get(request.revision);
+    if (commit == null) {
       return Promise.reject(
         new StateBranchReadError({
           cause: new TypeError("公開対象revisionが保存されていません"),
         }),
       );
     }
-    if (this.#branches.get(request.branch) !== request.revision) {
-      return Promise.reject(new StateBranchConflictError());
-    }
-    if (this.#publishedBranches.get(request.branch) === request.revision) {
+    const currentRevision = this.#publishedBranches.get(request.branch);
+    const currentHead: StateBranchHead =
+      currentRevision == null
+        ? Object.freeze({ status: "missing" })
+        : Object.freeze({ status: "present", revision: currentRevision });
+    if (currentHead.status === "present" && currentHead.revision === request.revision) {
       return Promise.resolve();
+    }
+    if (!headsEqual(currentHead, commit.parent)) {
+      return Promise.reject(new StateBranchConflictError());
     }
     this.#publishedBranches.set(request.branch, request.revision);
     return Promise.resolve();

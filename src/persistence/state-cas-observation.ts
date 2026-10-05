@@ -152,6 +152,56 @@ async function authorizeObservedSuccessors(
   }
 }
 
+/** 公開headが対象commitか同じrunの検証済み後続commitだと確かめる。 */
+export async function assertPublishedStateCommit(
+  adapter: StateBranchAdapter,
+  configuration: StatePersistenceConfiguration,
+  candidate: StateBranchCommitInspection,
+): Promise<void> {
+  const head = await adapter.resolveHead(configuration.branch);
+  if (head.status !== "present") {
+    throw new StateBranchConflictError();
+  }
+  if (head.revision === candidate.revision) {
+    return;
+  }
+  const successorsNewestFirst: StateBranchCommitInspection[] = [];
+  let revision = head.revision;
+  for (let count = 0; count < MAX_INTERVENING_COMMITS; count += 1) {
+    if (revision === candidate.revision) {
+      await authorizeObservedSuccessors(adapter, configuration, candidate, successorsNewestFirst);
+      const latest = await verifiedFilesAtRevision(adapter, configuration, head.revision);
+      if (latest == null) {
+        throw new StateBranchConflictError();
+      }
+      await assertStateCommitChain(
+        adapter,
+        configuration,
+        head.revision,
+        latest,
+        latest.marker.phase === "initial_state_committed"
+          ? await findInitialStateRevision(
+              adapter,
+              configuration,
+              head.revision,
+              latest.marker.runId,
+            )
+          : latest.marker.initialStateRevision,
+      );
+      return;
+    }
+    const successor = await adapter.readCommit(revision);
+    if (successor.revision !== revision || successor.parent.status !== "present") {
+      throw new StateBranchConflictError();
+    }
+    successorsNewestFirst.push(successor);
+    revision = successor.parent.revision;
+  }
+  throw new StateBranchConflictError({
+    cause: new TypeError("公開state commitの祖先探索が上限を超えています"),
+  });
+}
+
 export async function observeCommittedStateWrite(
   adapter: StateBranchAdapter,
   configuration: StatePersistenceConfiguration,
