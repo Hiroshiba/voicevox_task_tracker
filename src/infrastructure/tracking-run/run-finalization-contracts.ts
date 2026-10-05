@@ -1,3 +1,4 @@
+import type { PerformanceDetailObserver } from "../../application/tracking-run/contracts/performance-detail-observation.js";
 import type { ReceiptChainEvidence } from "../../application/tracking-run/receipt-chain-schema.js";
 import type {
   InitialStateCommitReceipt,
@@ -27,6 +28,7 @@ export type FinalizeRunPort = Readonly<{
   knownSecrets: readonly string[];
   recordDiagnostic: (cause: unknown) => Promise<void>;
   now: () => Date;
+  observePerformanceDetail?: PerformanceDetailObserver;
 }>;
 
 /** finalizationの確定状態または未確定状態。 */

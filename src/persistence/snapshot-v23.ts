@@ -1,5 +1,6 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
+import { freezeJsonValue } from "../util/freeze-json-value.js";
 
 import snapshotSchema from "../../schemas/snapshot-v23.schema.json" with { type: "json" };
 import { serializeCanonicalJsonLine } from "../canonical-json/index.js";
@@ -30,6 +31,8 @@ export type StateSnapshot = Omit<StateSnapshotVersion22, "schemaVersion"> &
     schemaVersion: "23";
     verifiedExternalReferences: readonly VerifiedExternalReference[];
   }>;
+
+const validatedSnapshots = new WeakSet<StateSnapshot>();
 
 const snapshotVersionSchema = z.object({ schemaVersion: z.literal("23") });
 const ajv = new Ajv2020({
@@ -88,12 +91,14 @@ export function createStateSnapshot(value: unknown): StateSnapshot {
     verifiedExternalReferences,
   } satisfies StateSnapshot);
   assertExternalReferenceProof(snapshot);
+  freezeJsonValue(snapshot);
+  validatedSnapshots.add(snapshot);
   return snapshot;
 }
 
 /** 現行snapshotを末尾改行付きcanonical JSONへ変換する。 */
 export function serializeStateSnapshot(snapshot: StateSnapshot): string {
-  const validated = createStateSnapshot(snapshot);
+  const validated = validatedSnapshots.has(snapshot) ? snapshot : createStateSnapshot(snapshot);
   assertNoPendingPersonalReminderClock(validated);
   return serializeCanonicalJsonLine(validated);
 }

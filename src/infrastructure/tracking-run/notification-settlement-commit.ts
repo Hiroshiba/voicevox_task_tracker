@@ -57,12 +57,12 @@ export async function commitNotificationSettlement(
   });
   const request: StateCasCommitRequestFactory = {
     commitIdentity,
-    build: async (parent) => {
+    build: async (parent, _advance, readingAdapter) => {
       if (parent.status !== "present") {
         throw new TypeError("通知settlementのCAS親がありません");
       }
       const state = await readNotificationMessageState(
-        port.adapter,
+        readingAdapter,
         port.configuration,
         parent.revision,
       );

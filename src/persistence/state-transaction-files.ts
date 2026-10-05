@@ -1,3 +1,4 @@
+import { freezeJsonValue } from "../util/freeze-json-value.js";
 import {
   DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
   INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1,
@@ -12,7 +13,6 @@ import {
   type RunTransactionMarker,
 } from "../application/tracking-run/run-transaction-marker.js";
 import { hashCanonicalJson } from "../canonical-json/index.js";
-import { z } from "zod";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
 import {
   decodeDurablePublicationRecord,
@@ -21,15 +21,10 @@ import {
 import { normalNotificationLedgerValue } from "../publication/publication-order.js";
 import { type StateFileReadResult, type StatePersistenceConfiguration } from "./branch-adapter.js";
 import { StateFormatError } from "./errors.js";
-import {
-  parseStateSnapshot as parseStateSnapshotV21,
-  serializeStateSnapshot as serializeStateSnapshotV21,
-} from "./snapshot-v21.js";
-import {
-  parseStateSnapshot as parseStateSnapshotV22,
-  serializeStateSnapshot as serializeStateSnapshotV22,
-} from "./snapshot-v22.js";
-import { parseStateSnapshot, serializeStateSnapshot } from "./snapshot-v23.js";
+import type { StateSnapshot as SnapshotV21 } from "./snapshot-v21.js";
+import type { StateSnapshot as SnapshotV22 } from "./snapshot-v22.js";
+import type { StateSnapshot } from "./snapshot-v23.js";
+import { createStateFileValidationProofs, StateFileValidation } from "./state-file-validation.js";
 import {
   finalizedHistoryDigest,
   finalizedRunReportDigest,
@@ -39,6 +34,7 @@ import {
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
   parseRunTransactionNotificationLedger,
   parseStateOperationsAlertLedger,
+  type StateNotificationLedger,
 } from "./state-documents.js";
 
 const verifiedRunTransactionBrand: unique symbol = Symbol("verifiedRunTransactionFiles");
@@ -54,6 +50,44 @@ export type VerifiedRunTransactionFiles = Readonly<{
   notificationLedgerDigest: string;
   operationsAlertLedgerDigest?: string;
 }>;
+
+const transactionValues = new WeakMap<
+  VerifiedRunTransactionFiles,
+  Readonly<{
+    snapshot: SnapshotV21 | SnapshotV22 | StateSnapshot;
+    ledger: StateNotificationLedger;
+  }>
+>();
+
+/** transactionと同じbyteで完全検証したsnapshotを返す。 */
+export function runTransactionSnapshot(
+  transaction: VerifiedRunTransactionFiles,
+): SnapshotV21 | SnapshotV22 | StateSnapshot {
+  const values = transactionValues.get(transaction);
+  if (values == null) throw new TypeError("transactionの検証済みsnapshotがありません");
+  return values.snapshot;
+}
+
+/** transactionと同じbyteで完全検証した通常ledgerを返す。 */
+export function runTransactionNotificationLedger(
+  transaction: VerifiedRunTransactionFiles,
+): StateNotificationLedger {
+  const values = transactionValues.get(transaction);
+  if (values == null) throw new TypeError("transactionの検証済みledgerがありません");
+  return values.ledger;
+}
+
+function retainTransactionValues(
+  transaction: VerifiedRunTransactionFiles,
+  snapshot: SnapshotV21 | SnapshotV22 | StateSnapshot,
+  ledger: StateNotificationLedger,
+): VerifiedRunTransactionFiles {
+  freezeJsonValue(transaction);
+  freezeJsonValue(snapshot);
+  freezeJsonValue(ledger);
+  transactionValues.set(transaction, { snapshot, ledger });
+  return transaction;
+}
 
 function requiredFile(files: ReadonlyMap<string, StateFileReadResult>, path: string): Uint8Array {
   const file = files.get(path);
@@ -79,6 +113,7 @@ function source(bytes: Uint8Array): string {
 export function verifyRunTransactionFiles(
   files: ReadonlyMap<string, StateFileReadResult>,
   configuration: StatePersistenceConfiguration,
+  fileValidation?: StateFileValidation,
 ): VerifiedRunTransactionFiles | undefined {
   const markerBytes = optionalFile(files, RUN_TRANSACTION_MARKER_STATE_PATH_V1);
   const recordBytes = optionalFile(files, DURABLE_PUBLICATION_RECORD_STATE_PATH_V1);
@@ -91,56 +126,23 @@ export function verifyRunTransactionFiles(
       cause: new TypeError("markerとrecordが同じrevisionにありません"),
     });
   }
+  const validation = fileValidation ?? new StateFileValidation(createStateFileValidationProofs());
+  const { snapshot, digest: snapshotDigest } = validation.snapshot(
+    requiredFile(files, configuration.snapshotPath),
+  );
+  const snapshotVersion = snapshot.schemaVersion;
+  const snapshotRunId = snapshot.run.id;
+  const record =
+    snapshotVersion === "23"
+      ? validation.record(recordBytes)
+      : decodeDurablePublicationRecord(recordBytes, nodeContentDigestPort);
   const marker = decodeRunTransactionMarker(markerBytes);
-  const record = decodeDurablePublicationRecord(recordBytes, nodeContentDigestPort);
   if (
     record.runtimeRecoveryPlan.kind === "not_reproducible" &&
     record.executionPolicy.effectTarget !== "recording"
   ) {
     throw new StateFormatError("run transaction", {
       cause: new TypeError("永続stateに回復不能なruntimeを保存できません"),
-    });
-  }
-  const snapshotBytes = requiredFile(files, configuration.snapshotPath);
-  const snapshotSource = source(snapshotBytes);
-  const snapshotValue: unknown = JSON.parse(snapshotSource);
-  const snapshotVersion = z
-    .object({ schemaVersion: z.string() })
-    .parse(snapshotValue).schemaVersion;
-  let snapshotDigest: string;
-  let snapshotRunId: string;
-  if (snapshotVersion === "21") {
-    const snapshot = parseStateSnapshotV21(snapshotSource);
-    if (snapshotSource !== serializeStateSnapshotV21(snapshot)) {
-      throw new StateFormatError("snapshot", {
-        cause: new TypeError("旧snapshotがcanonical JSONではありません"),
-      });
-    }
-    snapshotDigest = hashCanonicalJson(snapshot);
-    snapshotRunId = snapshot.run.id;
-  } else if (snapshotVersion === "22") {
-    const snapshot = parseStateSnapshotV22(snapshotSource);
-    if (snapshotSource !== serializeStateSnapshotV22(snapshot)) {
-      throw new StateFormatError("snapshot", {
-        cause: new TypeError("snapshotがcanonical JSONではありません"),
-      });
-    }
-    snapshotDigest = hashCanonicalJson(snapshot);
-    snapshotRunId = snapshot.run.id;
-  } else if (snapshotVersion === "23") {
-    const snapshot = parseStateSnapshot(snapshotSource);
-    if (snapshotSource !== serializeStateSnapshot(snapshot)) {
-      throw new StateFormatError("snapshot", {
-        cause: new TypeError("snapshotがcanonical JSONではありません"),
-      });
-    }
-    snapshotDigest = nodeContentDigestPort.sha256Bytes(
-      snapshotBytes.subarray(0, snapshotBytes.length - 1),
-    );
-    snapshotRunId = snapshot.run.id;
-  } else {
-    throw new StateFormatError("snapshot", {
-      cause: new TypeError("snapshotのschemaVersionは未対応です"),
     });
   }
   const ledgerSource = source(requiredFile(files, configuration.notificationLedgerPath));
@@ -180,7 +182,7 @@ export function verifyRunTransactionFiles(
     });
   }
   if (marker.phase === "run_finalized") {
-    finalizedHistoryDigest(files, configuration, marker, record);
+    finalizedHistoryDigest(files, configuration, marker, record, fileValidation);
     finalizedRunReportDigest(files, configuration, marker, record);
   }
   if (marker.phase === "initial_state_committed") {
@@ -189,15 +191,19 @@ export function verifyRunTransactionFiles(
         cause: new TypeError("初回commitへPages証拠を保存できません"),
       });
     }
-    return Object.freeze({
-      [verifiedRunTransactionBrand]: true,
-      marker,
-      record,
-      snapshotDigest,
-      snapshotSchemaVersion: snapshotVersion,
-      notificationLedgerDigest,
-      ...(operationsAlertLedgerDigest == null ? {} : { operationsAlertLedgerDigest }),
-    } satisfies VerifiedRunTransactionFiles);
+    return retainTransactionValues(
+      Object.freeze({
+        [verifiedRunTransactionBrand]: true,
+        marker,
+        record,
+        snapshotDigest,
+        snapshotSchemaVersion: snapshotVersion,
+        notificationLedgerDigest,
+        ...(operationsAlertLedgerDigest == null ? {} : { operationsAlertLedgerDigest }),
+      } satisfies VerifiedRunTransactionFiles),
+      snapshot,
+      ledger,
+    );
   }
   if (evidenceBytes == null) {
     throw new StateFormatError("initial Pages evidence", {
@@ -218,24 +224,29 @@ export function verifyRunTransactionFiles(
       cause: new TypeError("markerとPages証拠が一致しません"),
     });
   }
-  return Object.freeze({
-    [verifiedRunTransactionBrand]: true,
-    marker,
-    record,
-    initialPagesEvidence,
-    snapshotDigest,
-    snapshotSchemaVersion: snapshotVersion,
-    notificationLedgerDigest,
-    ...(operationsAlertLedgerDigest == null ? {} : { operationsAlertLedgerDigest }),
-  } satisfies VerifiedRunTransactionFiles);
+  return retainTransactionValues(
+    Object.freeze({
+      [verifiedRunTransactionBrand]: true,
+      marker,
+      record,
+      initialPagesEvidence,
+      snapshotDigest,
+      snapshotSchemaVersion: snapshotVersion,
+      notificationLedgerDigest,
+      ...(operationsAlertLedgerDigest == null ? {} : { operationsAlertLedgerDigest }),
+    } satisfies VerifiedRunTransactionFiles),
+    snapshot,
+    ledger,
+  );
 }
 
 /** 新しいstate候補のsnapshotが現行形式であることを検証する。 */
 export function verifyCurrentRunTransactionFiles(
   files: ReadonlyMap<string, StateFileReadResult>,
   configuration: StatePersistenceConfiguration,
+  validation?: StateFileValidation,
 ): VerifiedRunTransactionFiles {
-  const verified = verifyRunTransactionFiles(files, configuration);
+  const verified = verifyRunTransactionFiles(files, configuration, validation);
   if (verified?.snapshotSchemaVersion !== "23") {
     throw new StateFormatError("snapshot", {
       cause: new TypeError("新しいtracking state候補にはv23のrun transactionが必要です"),

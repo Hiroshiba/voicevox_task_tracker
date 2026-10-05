@@ -54,12 +54,12 @@ export async function commitMessageTransition(
   } satisfies StateCommitIdentity);
   const request: StateCasCommitRequestFactory = {
     commitIdentity,
-    build: async (parent) => {
+    build: async (parent, _advance, readingAdapter) => {
       if (parent.status !== "present") {
         throw new TypeError("通知messageのCAS親がありません");
       }
       const state = await readNotificationMessageState(
-        port.adapter,
+        readingAdapter,
         port.configuration,
         parent.revision,
       );
@@ -89,7 +89,7 @@ export async function commitMessageTransition(
         context.deliveryId,
       );
       const updates = await messageStateUpdates(
-        port.adapter,
+        readingAdapter,
         port.configuration,
         state,
         nextLedger,

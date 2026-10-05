@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { freezeJsonValue } from "../util/freeze-json-value.js";
 import { initialStateWriteManifestSchema } from "../application/tracking-run/contracts/initial-state-write-manifest.js";
 
 import { publicRunDiagnosticsSchema } from "../application/tracking-run/contracts/public-diagnostics.js";
@@ -27,6 +28,8 @@ import { PUBLIC_DTO_SCHEMA_VERSION } from "../pages/public-dto-primitives.js";
 import { NOTIFICATION_LEDGER_REASON_CODE_VALUES } from "../persistence/state-documents.js";
 import { runMetricsSchema } from "./run-report.js";
 import { analysisStageRecordSchema } from "./analysis-stage-record.js";
+
+const validatedRecords = new WeakSet<DurablePublicationRecord>();
 
 const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const MAX_RECORD_BYTES = 8 * 1024 * 1024;
@@ -198,7 +201,9 @@ export function encodeDurablePublicationRecord(
   digest: ContentDigestPort,
 ): Uint8Array {
   return new TextEncoder().encode(
-    serializeCanonicalJsonLine(parseDurablePublicationRecord(record, digest)),
+    serializeCanonicalJsonLine(
+      validatedRecords.has(record) ? record : parseDurablePublicationRecord(record, digest),
+    ),
   );
 }
 
@@ -298,6 +303,8 @@ export function parseDurablePublicationRecord(
   ) {
     throw new TypeError("永続stateへ回復不能なrecordを保存できません");
   }
+  freezeJsonValue(record);
+  validatedRecords.add(record);
   return record;
 }
 

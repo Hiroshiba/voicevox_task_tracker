@@ -1,3 +1,4 @@
+import type { StateFileValidation } from "./state-file-validation.js";
 import { hashCanonicalJson } from "../canonical-json/index.js";
 import type { RunTransactionMarker } from "../application/tracking-run/run-transaction-marker.js";
 import type { DurablePublicationRecord } from "../publication/durable-record-schema.js";
@@ -23,12 +24,16 @@ export function finalizedHistoryDigest(
   configuration: StatePersistenceConfiguration,
   marker: RunTransactionMarker,
   record: DurablePublicationRecord,
+  validation?: StateFileValidation,
 ): string {
   const date = record.initialPagesProjection.generatedAt.slice(0, 10);
   const path = joinStatePath(configuration.historyDirectory, `${date}.jsonl`);
   const source = requiredSource(files, path);
-  const records = parseStateHistoryRecords(source);
-  if (serializeStateHistoryRecords(records) !== source) {
+  const file = files.get(path);
+  if (file?.status !== "present") throw new TypeError("完了済みrunの履歴fileがありません");
+  const records =
+    validation == null ? parseStateHistoryRecords(source) : validation.history(file.bytes);
+  if (validation == null && serializeStateHistoryRecords(records) !== source) {
     throw new TypeError("通知履歴のstate fileがcanonical JSON Linesではありません");
   }
   const matching = records.filter((entry) => entry.runId === marker.runId);

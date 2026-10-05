@@ -91,7 +91,7 @@ summaryは最初に、detailsは詳細表示や検索時に、通知履歴は履
 `dry-run`も実GitHub収集と実Codexを使うため、認証不要の静的確認には使えません。
 実サービスの確認は、対象範囲と予算を決めたsandbox workflowで行い、連続runと通知actionの証拠を保存します。
 性能計測は通常CIから分離した`performance.yml`の手動workflowで行います。
-性能profileではstage開始に加え、初回commit内の正規化、直列化、候補検証などの処理境界でメモリ使用量を記録します。観測値は固定の処理名と数値に限定し、通常runでは出力しません。
+性能profileではstage開始に加え、初回commitの正規化、直列化、候補検証、fileの完全検証と証明の再利用、finalizationのsettlement検証、CAS、receipt、完了の境界でメモリ使用量を記録します。観測値は固定の処理名と数値に限定し、通常runでは出力しません。
 
 CLIは明示的なsubcommandを受け取り、option形式のcommand変換を行いません。
 `run-sequential`、`daily`、`dry-run`、`backfill`は同じcanonical engineを使います。

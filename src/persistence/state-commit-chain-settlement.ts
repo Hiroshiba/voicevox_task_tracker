@@ -1,11 +1,11 @@
-import { serializeCanonicalJson } from "../canonical-json/value.js";
+import { canonicalJsonEquals } from "../canonical-json/value.js";
 import type { BuildDiscordDigestPlanInput } from "../discord/payload-contracts.js";
 import { buildDiscordDigestPlan } from "../discord/payload.js";
 import type { DurablePublicationRecord } from "../publication/durable-record-schema.js";
 import { notificationSelectionFromRecord } from "./notification-selection-from-record.js";
 import { normalNotificationLedgerValue } from "../publication/publication-order.js";
 import type { StatePersistenceConfiguration } from "./branch-adapter.js";
-import { parseStateSnapshot as parseStateSnapshotV23 } from "./snapshot-v23.js";
+import { runTransactionSnapshot } from "./state-transaction-files.js";
 import { parseRunTransactionNotificationLedger } from "./state-documents.js";
 import type { VerifiedCommitTree } from "./state-commit-chain-paths.js";
 
@@ -18,15 +18,13 @@ function requiredSource(tree: VerifiedCommitTree, path: string): string {
 }
 
 function same(left: unknown, right: unknown): boolean {
-  return serializeCanonicalJson(left) === serializeCanonicalJson(right);
+  return canonicalJsonEquals(left, right);
 }
 
 function snapshotForPlan(
   initial: VerifiedCommitTree,
-  configuration: StatePersistenceConfiguration,
 ): Pick<BuildDiscordDigestPlanInput, "items" | "generatedAt"> {
-  const source = requiredSource(initial, configuration.snapshotPath);
-  return parseStateSnapshotV23(source);
+  return runTransactionSnapshot(initial.transaction);
 }
 
 /** 固定outboxからsettlementへ直接進めるphaseか検証する。 */
@@ -111,7 +109,7 @@ export function assertSettledOutboxLedger(
   ) {
     throw new TypeError("固定outboxの候補と予約key集合が一致しません");
   }
-  const snapshot = snapshotForPlan(initial, configuration);
+  const snapshot = snapshotForPlan(initial);
   if (snapshot.generatedAt !== record.initialPagesProjection.generatedAt) {
     throw new TypeError("固定outboxの生成時刻が初回snapshotと一致しません");
   }

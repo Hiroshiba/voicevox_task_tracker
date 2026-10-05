@@ -1,3 +1,4 @@
+import type { StateFileValidation } from "./state-file-validation.js";
 import { serializeCanonicalJson } from "../canonical-json/value.js";
 import type {
   StateBranchAdapter,
@@ -69,16 +70,6 @@ function sameFile(left: StateFileReadResult, right: StateFileReadResult): boolea
   );
 }
 
-function freezeTransactionValues(value: unknown): void {
-  if (typeof value !== "object" || value == null) {
-    return;
-  }
-  for (const nested of Object.values(value)) {
-    freezeTransactionValues(nested);
-  }
-  Object.freeze(value);
-}
-
 /** exact親と候補treeの全byteおよび差分manifestを公開前に照合する。 */
 export async function verifyStateCasCandidate(
   adapter: StateBranchAdapter,
@@ -146,14 +137,14 @@ export function verifyStateCasCandidateTransaction(
   candidate: VerifiedStateCasCandidate,
   configuration: StatePersistenceConfiguration,
   current: boolean,
+  validation?: StateFileValidation,
 ): VerifiedStateCasCandidateTree | undefined {
   const transaction = current
-    ? verifyCurrentRunTransactionFiles(candidate.files, configuration)
-    : verifyRunTransactionFiles(candidate.files, configuration);
+    ? verifyCurrentRunTransactionFiles(candidate.files, configuration, validation)
+    : verifyRunTransactionFiles(candidate.files, configuration, validation);
   if (transaction == null) {
     return undefined;
   }
-  freezeTransactionValues(transaction);
   return Object.freeze({
     ...candidate,
     [verifiedCandidateTreeBrand]: true,

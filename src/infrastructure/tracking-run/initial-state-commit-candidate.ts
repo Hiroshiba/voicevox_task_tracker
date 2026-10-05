@@ -6,8 +6,10 @@ import type {
 } from "../../persistence/branch-adapter.js";
 import { assertInitialStateBusinessContent } from "../../persistence/initial-state-write-manifest.js";
 import { assertStatePublicSafety } from "../../persistence/public-safety.js";
-import { parseStateSnapshot } from "../../persistence/snapshot-v23.js";
-import type { VerifiedRunTransactionFiles } from "../../persistence/state-transaction-files.js";
+import {
+  runTransactionSnapshot,
+  type VerifiedRunTransactionFiles,
+} from "../../persistence/state-transaction-files.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import type { InitialStateCommitObserver } from "./initial-state-commit-progress.js";
 import type { BoundPublicationCheckpoint } from "./publication-checkpoint-binding.js";
@@ -80,18 +82,19 @@ export function verifyInitialStateCandidate(
       throw new TypeError("初回commit候補の履歴またはcacheの実byte digestが一致しません");
     }
   }
-  const snapshotFile = files.get(configuration.snapshotPath);
-  if (snapshotFile?.status !== "present") {
-    throw new TypeError("初回commit候補のsnapshotがありません");
-  }
   observeProgress?.("candidate_snapshot");
-  const snapshot = parseStateSnapshot(
-    new TextDecoder("utf-8", { fatal: true }).decode(snapshotFile.bytes),
-  );
+  const snapshot = runTransactionSnapshot(verified);
+  if (snapshot.schemaVersion !== "23")
+    throw new TypeError("初回commit候補には現行snapshotが必要です");
   observeProgress?.("candidate_public_values");
   const values: unknown[] = [];
-  for (const [path, file] of files) {
-    if (file.status !== "present") {
+  for (const path of files.keys()) {
+    if (path === configuration.snapshotPath) {
+      values.push(snapshot);
+      continue;
+    }
+    const file = files.get(path);
+    if (file?.status !== "present") {
       throw new TypeError("初回commit候補の一覧に欠落したfileがあります");
     }
     values.push(...parseStateValues(path, file.bytes));

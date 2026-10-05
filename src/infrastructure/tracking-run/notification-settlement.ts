@@ -32,6 +32,7 @@ import {
   StateHistoryError,
 } from "../../persistence/errors.js";
 import { loadStateNotificationLedgers } from "../../persistence/state-ledger-files.js";
+import { exactStateValidationSession } from "../../persistence/exact-state-validation-session.js";
 import { parseDurablePublicationRecord } from "../../publication/durable-record-schema.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import { verifyInitialStateCommitReceiptAtRevision } from "./initial-pages-source.js";
@@ -265,6 +266,12 @@ async function initialState(
     receiptEvidence: Extract<StateCommitReceiptEvidence, { receiptType: "initial_state_commit" }>;
   }>
 > {
+  const session = exactStateValidationSession(
+    port.adapter,
+    port.configuration,
+    port.observePerformanceDetail,
+  );
+  port = Object.freeze({ ...port, adapter: session.adapter });
   const initialRevision = input.initialStateReceipt.result.resultingStateRevision;
   const receiptEvidence = await verifyInitialStateCommitReceiptAtRevision(
     port.adapter,

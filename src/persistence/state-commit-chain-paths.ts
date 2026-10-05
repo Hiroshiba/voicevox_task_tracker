@@ -11,7 +11,9 @@ import {
   type StateFileReadResult,
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
-import { parseStateHistoryRecords, serializeStateHistoryRecords } from "./history.js";
+import { parseStateHistoryRecords } from "./history.js";
+import { exactStateValidationSession } from "./exact-state-validation-session.js";
+import type { StateFileValidation } from "./state-file-validation.js";
 import { readAiCacheMigrationPlan } from "./state-ai-cache-migration-plan.js";
 import {
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
@@ -88,14 +90,12 @@ function assertHistoryPreserved(
   path: string,
   runId: string,
   initial: boolean,
+  validation: StateFileValidation,
 ): void {
   const beforeSource = beforeFile.status === "present" ? source(beforeFile, path) : undefined;
-  const afterSource = source(afterFile, path);
   const before = beforeSource == null ? [] : parseStateHistoryRecords(beforeSource);
-  const after = parseStateHistoryRecords(afterSource);
-  if (serializeStateHistoryRecords(after) !== afterSource) {
-    throw new TypeError("Git祖先の履歴fileがcanonical JSON Linesではありません");
-  }
+  if (afterFile.status !== "present") throw new TypeError("Git祖先の履歴fileがありません");
+  const after = validation.history(afterFile.bytes);
   if (initial) {
     if (
       after.length !== before.length + 1 ||
@@ -256,6 +256,13 @@ export async function assertTrackingCommitPaths(
         ? await adapter.readFile(commit.parent.revision, historyPath)
         : ({ status: "missing" } satisfies StateFileReadResult);
     const after = await adapter.readFile(commit.revision, historyPath);
-    assertHistoryPreserved(before, after, historyPath, current.transaction.marker.runId, initial);
+    assertHistoryPreserved(
+      before,
+      after,
+      historyPath,
+      current.transaction.marker.runId,
+      initial,
+      exactStateValidationSession(adapter, configuration).validation,
+    );
   }
 }

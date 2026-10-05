@@ -38,7 +38,10 @@ import {
 export function createDailyDependencies(
   adapters: ProductionRuntimeAdapters,
 ): SequentialRunDependencies {
-  const proofScope = createPostSaveExactProofScope(adapters.createStateBranchAdapter);
+  const proofScope = createPostSaveExactProofScope(
+    adapters.createStateBranchAdapter,
+    adapters.observePerformanceDetail,
+  );
   const runAdapters: ProductionRuntimeAdapters = Object.freeze({
     ...adapters,
     createStateBranchAdapter: proofScope.createStateBranchAdapter,

@@ -1,3 +1,4 @@
+import type { PerformanceDetailObserver } from "../../application/tracking-run/contracts/performance-detail-observation.js";
 import { randomUUID } from "node:crypto";
 
 import type { StateCommitReceiptEvidence } from "../../application/tracking-run/observed-state-commit.js";
@@ -15,13 +16,16 @@ import {
   type StateSnapshot,
 } from "../../persistence/index.js";
 import { assertStateValuesPublicSafety } from "../../persistence/public-safety.js";
-import { parseStateSnapshot } from "../../persistence/snapshot-v23.js";
-import { verifyRunTransactionFiles } from "../../persistence/state-transaction-files.js";
+import { exactStateValidationSession } from "../../persistence/exact-state-validation-session.js";
+import type { StateFileValidation } from "../../persistence/state-file-validation.js";
+import {
+  verifyRunTransactionFiles,
+  runTransactionSnapshot,
+} from "../../persistence/state-transaction-files.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import {
   assertPostSaveExactTree,
   observeStateCommitAtRevision,
-  parseProvenStateSnapshot,
   postSaveExactProof,
 } from "./state-receipt-observation.js";
 import {
@@ -53,6 +57,7 @@ function requiredSource(files: ReadonlyMap<string, StateFileReadResult>, path: s
 export function readPagesHistoryRecords(
   files: ReadonlyMap<string, StateFileReadResult>,
   historyDirectory: string,
+  validation?: StateFileValidation,
 ): readonly StateHistoryRecord[] {
   const paths = [...files.keys()].filter((path) => path.startsWith(`${historyDirectory}/`)).sort();
   const records: StateHistoryRecord[] = [];
@@ -62,9 +67,12 @@ export function readPagesHistoryRecords(
       throw new TypeError("Pages buildのhistory file名が不正です");
     }
     const source = requiredSource(files, path);
-    const fileRecords = parseStateHistoryRecords(source);
+    const fileRecords =
+      validation == null
+        ? parseStateHistoryRecords(source)
+        : validation.history(requiredBytes(files, path));
     if (
-      source !== serializeStateHistoryRecords(fileRecords) ||
+      (validation == null && source !== serializeStateHistoryRecords(fileRecords)) ||
       fileRecords.some((record) => `${record.date}.jsonl` !== date)
     ) {
       throw new TypeError("Pages buildのhistory fileがcanonical recordではありません");
@@ -80,6 +88,7 @@ export async function verifyInitialStateCommitReceiptAtRevision(
   stateConfiguration: StatePersistenceConfiguration,
   initialReceipt: InitialStateCommitReceipt,
   observedAt: string,
+  observePerformanceDetail?: PerformanceDetailObserver,
 ): Promise<Extract<StateCommitReceiptEvidence, { receiptType: "initial_state_commit" }>> {
   const receipt = parseReceipt(initialReceipt, digest);
   if (
@@ -97,6 +106,7 @@ export async function verifyInitialStateCommitReceiptAtRevision(
     revision,
     "initial_state_commit",
     { invocationId: randomUUID(), observedAt, position: { kind: "first" } },
+    observePerformanceDetail,
   );
   if (observed.evidence.receiptType !== "initial_state_commit") {
     throw new TypeError("初回Pagesのstate commit証拠の種別が不正です");
@@ -125,16 +135,18 @@ export async function readInitialPagesSource(
     throw new TypeError("初回Pages buildには初回state commit receiptが必要です");
   }
   const revision = receipt.result.resultingStateRevision;
+  const proof = postSaveExactProof(adapter, stateConfiguration, revision);
+  const session = exactStateValidationSession(adapter, stateConfiguration);
+  adapter = session.adapter;
   const paths = await adapter.listFiles(revision, "state");
   const files = await adapter.readFiles(revision, paths);
   if (files.size !== paths.length || paths.some((path) => files.get(path)?.status !== "present")) {
     throw new TypeError("初回Pages buildのexact state file一覧が不足しています");
   }
-  const proof = postSaveExactProof(adapter, stateConfiguration, revision);
   if (proof != null) {
     assertPostSaveExactTree(proof, paths, files);
   }
-  const transaction = proof?.transaction ?? verifyRunTransactionFiles(files, stateConfiguration);
+  const transaction = verifyRunTransactionFiles(files, stateConfiguration, session.validation);
   if (transaction?.marker.phase !== "initial_state_committed") {
     throw new TypeError("初回Pages buildのexact stateに初回run transactionがありません");
   }
@@ -162,15 +174,13 @@ export async function readInitialPagesSource(
     }
     previousRepositoryId = repository.id;
   }
-  const snapshot =
-    proof == null
-      ? parseStateSnapshot(requiredSource(files, stateConfiguration.snapshotPath))
-      : parseProvenStateSnapshot(
-          proof,
-          stateConfiguration,
-          requiredBytes(files, stateConfiguration.snapshotPath),
-        );
-  const historyRecords = readPagesHistoryRecords(files, stateConfiguration.historyDirectory);
+  const snapshot = runTransactionSnapshot(transaction);
+  if (snapshot.schemaVersion !== "23") throw new TypeError("初回Pagesには現行snapshotが必要です");
+  const historyRecords = readPagesHistoryRecords(
+    files,
+    stateConfiguration.historyDirectory,
+    session.validation,
+  );
   const matching = historyRecords.filter((record) => record.runId === transaction.marker.runId);
   if (
     snapshot.run.id !== transaction.marker.runId ||

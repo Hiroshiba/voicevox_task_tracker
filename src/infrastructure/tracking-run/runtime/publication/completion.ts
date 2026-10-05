@@ -13,6 +13,7 @@ type CompletionRuntimeAdapters = Pick<
   | "now"
   | "sleep"
   | "random"
+  | "observePerformanceDetail"
 >;
 
 /** 日次runの最終CASを共通stageへ接続する。 */

@@ -55,12 +55,12 @@ export async function commitRunFinalization(
   );
   const request: StateCasCommitRequestFactory = {
     commitIdentity,
-    build: async (parent) => {
+    build: async (parent, _advance, readingAdapter) => {
       if (parent.status !== "present") {
         throw new TypeError("run finalizationのCAS親がありません");
       }
       const current = await readNotificationMessageState(
-        port.adapter,
+        readingAdapter,
         port.configuration,
         parent.revision,
       );
@@ -76,9 +76,10 @@ export async function commitRunFinalization(
         throw new TypeError("run finalizationのCAS親がsettlement正本と一致しません");
       }
       const values = finalRunValues(record, current, finishedAt);
+      const snapshotBytes = new TextEncoder().encode(serializeStateSnapshot(values.snapshot));
       const marker = advanceFinalizationMarker(
         current.transaction.marker,
-        values.snapshot,
+        digest.sha256Bytes(snapshotBytes.subarray(0, snapshotBytes.length - 1)),
         values.report,
         parent.revision,
       );
@@ -104,7 +105,7 @@ export async function commitRunFinalization(
         updates: [
           {
             path: port.configuration.snapshotPath,
-            bytes: new TextEncoder().encode(serializeStateSnapshot(values.snapshot)),
+            bytes: snapshotBytes,
           },
           {
             path: reportPath,
@@ -142,20 +143,26 @@ export async function commitRunFinalization(
       }
     },
   };
+  port.observePerformanceDetail?.({ step: "run_finalization_cas_started" });
+  let attempts = 1;
   let written = await writeStateCas(
     port.adapter,
     port.configuration,
     { status: "present", revision: expectedRevision },
     request,
+    port.observePerformanceDetail,
   );
   for (let retry = 0; retry < 2 && written.status === "no_effect"; retry += 1) {
+    attempts += 1;
     written = await writeStateCas(
       port.adapter,
       port.configuration,
       { status: "present", revision: expectedRevision },
       request,
+      port.observePerformanceDetail,
     );
   }
+  port.observePerformanceDetail?.({ step: "run_finalization_cas_completed", count: attempts });
   if (written.status === "no_effect") {
     return { kind: "state_unconfirmed" };
   }

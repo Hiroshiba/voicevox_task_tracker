@@ -1,5 +1,5 @@
 import { hashCanonicalJson } from "../../canonical-json/index.js";
-import { serializeCanonicalJson } from "../../canonical-json/value.js";
+import { canonicalJsonEquals } from "../../canonical-json/value.js";
 import { createStateSnapshot, type StateSnapshot } from "../../persistence/snapshot-v23.js";
 import type { StateRunReport } from "../../persistence/state-run-report.js";
 import { deriveFinalRunValues } from "../../persistence/state-finalization-values.js";
@@ -34,21 +34,30 @@ export function assertFinalRunValues(
   finalized: NotificationMessageState,
   report: StateRunReport,
 ): void {
-  const expected = finalRunValues(record, settled, report.finishedAt);
+  const expected = deriveFinalRunValues(
+    record,
+    settled.snapshot,
+    settled.ledger,
+    report.finishedAt,
+  );
+  const expectedSnapshot = { ...settled.snapshot, trackingStartAt: expected.trackingStartAt };
   if (
     finalized.transaction.marker.phase !== "run_finalized" ||
     finalized.transaction.record.recordDigest !== record.recordDigest ||
     finalized.transaction.marker.finalRunReportDigest !== hashCanonicalJson(report) ||
     finalized.transaction.notificationLedgerDigest !==
       settled.transaction.notificationLedgerDigest ||
-    serializeCanonicalJson(finalized.snapshot) !== serializeCanonicalJson(expected.snapshot) ||
-    serializeCanonicalJson(finalized.ledger.entries) !==
-      serializeCanonicalJson(settled.ledger.entries) ||
-    serializeCanonicalJson(finalized.ledger.pendingNotifications) !==
-      serializeCanonicalJson(settled.ledger.pendingNotifications) ||
-    serializeCanonicalJson(finalized.transaction.initialPagesEvidence) !==
-      serializeCanonicalJson(settled.transaction.initialPagesEvidence) ||
-    serializeCanonicalJson(report) !== serializeCanonicalJson(expected.report)
+    !canonicalJsonEquals(finalized.snapshot, expectedSnapshot) ||
+    !canonicalJsonEquals(finalized.ledger.entries, settled.ledger.entries) ||
+    !canonicalJsonEquals(
+      finalized.ledger.pendingNotifications,
+      settled.ledger.pendingNotifications,
+    ) ||
+    !canonicalJsonEquals(
+      finalized.transaction.initialPagesEvidence,
+      settled.transaction.initialPagesEvidence,
+    ) ||
+    !canonicalJsonEquals(report, expected.report)
   ) {
     throw new TypeError("run finalizationのreport、ledgerまたはsnapshotがsettlementと一致しません");
   }

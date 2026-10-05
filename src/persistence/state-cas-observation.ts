@@ -8,6 +8,7 @@ import {
   type StateFileReadResult,
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
+import { exactStateValidationSession } from "./exact-state-validation-session.js";
 import { StateBranchConflictError } from "./errors.js";
 import {
   assertStateCasCandidateFilesUnchanged,
@@ -56,6 +57,7 @@ export type StateCasCommitRequestFactory = Readonly<{
   build: (
     parent: StateBranchHead,
     advance: OrthogonalCommitAdvance,
+    adapter: StateBranchAdapter,
   ) =>
     | Omit<StateBranchCommitRequest, "branch" | "expectedHead">
     | Promise<Omit<StateBranchCommitRequest, "branch" | "expectedHead">>;
@@ -68,11 +70,12 @@ export async function materializeCommitRequest(
   input: StateCasCommitRequestInput,
   parent: StateBranchHead,
   advance: OrthogonalCommitAdvance,
+  adapter: StateBranchAdapter,
 ): Promise<Omit<StateBranchCommitRequest, "branch" | "expectedHead">> {
   if (!("build" in input)) {
     return input;
   }
-  const request = await input.build(parent, advance);
+  const request = await input.build(parent, advance, adapter);
   if (
     request.commitIdentity.operationId !== input.commitIdentity.operationId ||
     request.commitIdentity.commitScope !== input.commitIdentity.commitScope ||
@@ -89,7 +92,11 @@ async function verifiedFilesAtRevision(
   revision: string,
 ): Promise<VerifiedRunTransactionFiles | undefined> {
   const paths = await adapter.listFiles(revision, "state");
-  return verifyRunTransactionFiles(await adapter.readFiles(revision, paths), configuration);
+  return verifyRunTransactionFiles(
+    await adapter.readFiles(revision, paths),
+    configuration,
+    exactStateValidationSession(adapter, configuration).validation,
+  );
 }
 
 async function authorizeObservedSuccessors(
@@ -209,6 +216,7 @@ export async function observeCommittedStateWrite(
   observedHeadRevision: string,
   requestInput: StateCasCommitRequestInput,
 ): Promise<StateCasWriteResult | undefined> {
+  adapter = exactStateValidationSession(adapter, configuration).adapter;
   let revision = observedHeadRevision;
   const successorsNewestFirst: StateBranchCommitInspection[] = [];
   const expectedRevision =
@@ -244,7 +252,12 @@ export async function observeCommittedStateWrite(
           actualParent,
         );
       }
-      const request = await materializeCommitRequest(requestInput, inspected.parent, advance);
+      const request = await materializeCommitRequest(
+        requestInput,
+        inspected.parent,
+        advance,
+        adapter,
+      );
       if (
         inspected.metadata.commitScope !== request.commitIdentity.commitScope ||
         inspected.metadata.runId !== request.commitIdentity.runId
@@ -284,7 +297,11 @@ export async function observeCommittedStateWrite(
       try {
         const candidate = await verifyStateCasCandidate(adapter, inspected, request);
         const transaction = !isOrthogonalStateCommitScope(inspected.metadata.commitScope)
-          ? verifyCurrentRunTransactionFiles(candidate.files, configuration)
+          ? verifyCurrentRunTransactionFiles(
+              candidate.files,
+              configuration,
+              exactStateValidationSession(adapter, configuration).validation,
+            )
           : undefined;
         if ("build" in requestInput && requestInput.verifyCandidate != null) {
           const inspectionFiles = copyStateCasCandidateFiles(candidate);

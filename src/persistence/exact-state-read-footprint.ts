@@ -1,10 +1,10 @@
-import { serializeCanonicalJson } from "../../canonical-json/value.js";
+import { serializeCanonicalJson } from "../canonical-json/value.js";
 import type {
   StateBranchAdapter,
   StateBranchCommitInspection,
   StateFileReadResult,
-} from "../../persistence/branch-adapter.js";
-import { nodeContentDigestPort } from "./content-digest.js";
+} from "./branch-adapter.js";
+import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
 
 type FileFingerprint =
   Readonly<{ status: "missing" }> | Readonly<{ status: "present"; length: number; digest: string }>;
@@ -204,18 +204,5 @@ export async function assertPostSaveExactReadDependencies(
     if (nodeContentDigestPort.sha256Utf8(serializeCanonicalJson(commit)) !== expectedDigest) {
       throw new TypeError("公開済みexact revisionのcommit metadataが証明と一致しません");
     }
-  }
-}
-
-/** snapshotの実byteを完全検証時の読込値へ照合する。 */
-export function assertPostSaveExactSnapshotBytes(
-  footprint: PostSaveExactReadFootprint,
-  revision: string,
-  snapshotPath: string,
-  bytes: Uint8Array,
-): void {
-  const expected = footprint.files.get(revision)?.get(snapshotPath);
-  if (expected?.status !== "present" || !sameFingerprint(expected, { status: "present", bytes })) {
-    throw new TypeError("snapshotの設定またはbyteが公開済みexact revisionの証明と一致しません");
   }
 }

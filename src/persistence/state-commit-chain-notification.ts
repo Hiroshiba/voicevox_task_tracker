@@ -1,5 +1,5 @@
 import { receiptIdentifiers } from "../application/tracking-run/receipt-codec.js";
-import { serializeCanonicalJson } from "../canonical-json/value.js";
+import { canonicalJsonEquals, serializeCanonicalJson } from "../canonical-json/value.js";
 import { buildDiscordDigestPlan } from "../discord/payload.js";
 import type { NotificationManualResolution } from "../domain/notification-delivery-attempt.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
@@ -12,9 +12,7 @@ import {
   createNotificationHistoryContext,
   createNotificationHistoryEventsForMessage,
 } from "./notification-history-events.js";
-import { parseStateSnapshot as parseSnapshotV21 } from "./snapshot-v21.js";
-import { parseStateSnapshot as parseSnapshotV22 } from "./snapshot-v22.js";
-import { parseStateSnapshot as parseSnapshotV23 } from "./snapshot-v23.js";
+import { runTransactionSnapshot } from "./state-transaction-files.js";
 import { parseRunTransactionNotificationLedger } from "./state-documents.js";
 import { createStateCommitOperationId } from "./state-commit-metadata.js";
 import {
@@ -28,7 +26,7 @@ function same(left: unknown, right: unknown): boolean {
   if (left == null || right == null) {
     return left === right;
   }
-  return serializeCanonicalJson(left) === serializeCanonicalJson(right);
+  return canonicalJsonEquals(left, right);
 }
 
 function source(tree: VerifiedCommitTree, path: string): string {
@@ -37,18 +35,6 @@ function source(tree: VerifiedCommitTree, path: string): string {
     throw new TypeError(`Git祖先の通知遷移に必要なfileがありません。対象: ${path}`);
   }
   return new TextDecoder("utf-8", { fatal: true }).decode(file.bytes);
-}
-
-function snapshot(tree: VerifiedCommitTree, configuration: StatePersistenceConfiguration) {
-  const value = source(tree, configuration.snapshotPath);
-  switch (tree.transaction.snapshotSchemaVersion) {
-    case "21":
-      return parseSnapshotV21(value);
-    case "22":
-      return parseSnapshotV22(value);
-    case "23":
-      return parseSnapshotV23(value);
-  }
 }
 
 function messageIndex(deliveryId: string): number {
@@ -66,7 +52,6 @@ function messageIndex(deliveryId: string): number {
 function expectedMessageKeys(
   record: DurablePublicationRecord,
   tree: VerifiedCommitTree,
-  configuration: StatePersistenceConfiguration,
   deliveryId: string,
   actualKeys: readonly string[],
 ): readonly string[] {
@@ -83,7 +68,7 @@ function expectedMessageKeys(
   ) {
     throw new TypeError("通知commitのPages証拠が固定outboxと一致しません");
   }
-  const value = parseSnapshotV23(source(tree, configuration.snapshotPath));
+  const value = runTransactionSnapshot(tree.transaction);
   const plan = buildDiscordDigestPlan({
     candidates: selection.candidates,
     ledgerReservations: selection.ledgerReservations,
@@ -222,13 +207,7 @@ export function assertNotificationCommitTransition(
     ) {
       throw new TypeError("手動解決commitのkey集合が開始済み試行と一致しません");
     }
-    const keys = expectedMessageKeys(
-      record,
-      current,
-      configuration,
-      resolution.deliveryId,
-      startedKeys,
-    );
+    const keys = expectedMessageKeys(record, current, resolution.deliveryId, startedKeys);
     const expected = transitionManualNotificationLedger(prior, record, resolution, keys);
     assertMarkerAndLedger(previous, current, configuration, resolution.deliveryId, expected);
     return;
@@ -246,13 +225,7 @@ export function assertNotificationCommitTransition(
   ) {
     throw new TypeError("通知commitの送達試行が一意ではありません");
   }
-  const keys = expectedMessageKeys(
-    record,
-    current,
-    configuration,
-    deliveryId,
-    attempt.notificationKeys,
-  );
+  const keys = expectedMessageKeys(record, current, deliveryId, attempt.notificationKeys);
   const index = messageIndex(deliveryId);
   const expectedOperationId = receiptIdentifiers(
     {
@@ -305,7 +278,7 @@ export function assertNotificationCommitTransition(
   );
   assertMarkerAndLedger(previous, current, configuration, deliveryId, expected);
   if (attempt.result === "sent") {
-    const value = snapshot(previous, configuration);
+    const value = runTransactionSnapshot(previous.transaction);
     const context = createNotificationHistoryContext(
       value,
       notificationSelectionFromRecord(record),

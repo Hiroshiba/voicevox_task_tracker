@@ -27,18 +27,19 @@ import {
   serializeStateHistoryRecords,
 } from "../../persistence/history.js";
 import { assertStatePublicSafety } from "../../persistence/public-safety.js";
-import { parseStateSnapshot, type StateSnapshot } from "../../persistence/snapshot-v23.js";
+import type { StateSnapshot } from "../../persistence/snapshot-v23.js";
 import { transitionNotificationMessageLedger } from "../../persistence/state-notification-transition.js";
 import {
   OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
   createStateNotificationLedger,
-  parseStateNotificationLedger,
   parseStateOperationsAlertLedger,
   type StateNotificationLedger,
 } from "../../persistence/state-documents.js";
 import { createStateLedgerUpdates } from "../../persistence/state-ledger-files.js";
 import {
   verifyRunTransactionFiles,
+  runTransactionSnapshot,
+  runTransactionNotificationLedger,
   type VerifiedRunTransactionFiles,
 } from "../../persistence/state-transaction-files.js";
 import type { DurablePublicationRecord } from "../../publication/durable-record-schema.js";
@@ -48,11 +49,7 @@ import {
   createNotificationHistoryEventsForMessage,
 } from "../../persistence/notification-history-events.js";
 import { notificationLedgerEntry } from "../../persistence/notification-ledger-normalization.js";
-import {
-  assertPostSaveExactTree,
-  parseProvenStateSnapshot,
-  postSaveExactProof,
-} from "./state-receipt-observation.js";
+import { exactStateValidationSession } from "../../persistence/exact-state-validation-session.js";
 import {
   restoreNotificationSelection,
   type NotificationMessageContext,
@@ -102,48 +99,26 @@ export type NotificationMessageState = Readonly<{
   files: ReadonlyMap<string, StateFileReadResult>;
 }>;
 
-function requiredBytes(files: ReadonlyMap<string, StateFileReadResult>, path: string): Uint8Array {
-  const file = files.get(path);
-  if (file?.status !== "present") {
-    throw new TypeError(`通知messageのstate fileがありません。対象: ${path}`);
-  }
-  return file.bytes;
-}
-
-function requiredSource(files: ReadonlyMap<string, StateFileReadResult>, path: string): string {
-  return new TextDecoder("utf-8", { fatal: true }).decode(requiredBytes(files, path));
-}
-
 /** snapshot、ledger、marker、recordを同じcommit treeから読む。 */
 export async function readNotificationMessageState(
   adapter: StateBranchAdapter,
   configuration: StatePersistenceConfiguration,
   revision: string,
 ): Promise<NotificationMessageState> {
+  const session = exactStateValidationSession(adapter, configuration);
+  adapter = session.adapter;
   const paths = await adapter.listFiles(revision, "state");
   const files = await adapter.readFiles(revision, paths);
   if (files.size !== paths.length || paths.some((path) => files.get(path)?.status !== "present")) {
     throw new TypeError("通知messageのexact state file一覧が不足しています");
   }
-  const proof = postSaveExactProof(adapter, configuration, revision);
-  if (proof != null) {
-    assertPostSaveExactTree(proof, paths, files);
-  }
-  const transaction = proof?.transaction ?? verifyRunTransactionFiles(files, configuration);
+  const transaction = verifyRunTransactionFiles(files, configuration, session.validation);
   if (transaction == null) {
     throw new TypeError("通知messageのrun transactionがありません");
   }
-  const snapshot =
-    proof == null
-      ? parseStateSnapshot(requiredSource(files, configuration.snapshotPath))
-      : parseProvenStateSnapshot(
-          proof,
-          configuration,
-          requiredBytes(files, configuration.snapshotPath),
-        );
-  const normalLedger = parseStateNotificationLedger(
-    requiredSource(files, configuration.notificationLedgerPath),
-  );
+  const snapshot = runTransactionSnapshot(transaction);
+  if (snapshot.schemaVersion !== "23") throw new TypeError("通知messageには現行snapshotが必要です");
+  const normalLedger = runTransactionNotificationLedger(transaction);
   const operationsFile = files.get(OPERATIONS_ALERT_LEDGER_STATE_PATH_V1);
   const ledger = createStateNotificationLedger({
     ...normalLedger,

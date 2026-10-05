@@ -1,9 +1,7 @@
-import { serializeCanonicalJson } from "../canonical-json/value.js";
+import { canonicalJsonEquals, serializeCanonicalJson } from "../canonical-json/value.js";
 import type { StatePersistenceConfiguration } from "./branch-adapter.js";
 import { joinStatePath } from "./branch-adapter.js";
-import { parseStateSnapshot as parseSnapshotV21 } from "./snapshot-v21.js";
-import { parseStateSnapshot as parseSnapshotV22 } from "./snapshot-v22.js";
-import { parseStateSnapshot as parseSnapshotV23 } from "./snapshot-v23.js";
+import { runTransactionSnapshot } from "./state-transaction-files.js";
 import { parseRunTransactionNotificationLedger } from "./state-documents.js";
 import { advanceFinalizationMarker, deriveFinalRunValues } from "./state-finalization-values.js";
 import { createStateRunReport, serializeStateRunReport } from "./state-run-report.js";
@@ -15,18 +13,6 @@ function source(tree: VerifiedCommitTree, path: string): string {
     throw new TypeError(`Git祖先の最終値に必要なstate fileがありません。対象: ${path}`);
   }
   return new TextDecoder("utf-8", { fatal: true }).decode(file.bytes);
-}
-
-function snapshot(tree: VerifiedCommitTree, configuration: StatePersistenceConfiguration) {
-  const value = source(tree, configuration.snapshotPath);
-  switch (tree.transaction.snapshotSchemaVersion) {
-    case "21":
-      return parseSnapshotV21(value);
-    case "22":
-      return parseSnapshotV22(value);
-    case "23":
-      return parseSnapshotV23(value);
-  }
 }
 
 /** settlementのexact値から最終snapshot、report、markerを再導出して照合する。 */
@@ -54,18 +40,20 @@ export function assertFinalizationTransition(
   const ledger = parseRunTransactionNotificationLedger(
     source(settled, configuration.notificationLedgerPath),
   ).ledger;
-  const parentSnapshot = snapshot(settled, configuration);
-  const actualSnapshot = snapshot(finalized, configuration);
+  const parentSnapshot = runTransactionSnapshot(settled.transaction);
+  const actualSnapshot = runTransactionSnapshot(finalized.transaction);
   const expected = deriveFinalRunValues(record, parentSnapshot, ledger, report.finishedAt);
   const expectedSnapshot = { ...parentSnapshot, trackingStartAt: expected.trackingStartAt };
+  if (!canonicalJsonEquals(actualSnapshot, expectedSnapshot)) {
+    throw new TypeError("run finalizationのsnapshotがsettlementから導出した値と一致しません");
+  }
   const expectedMarker = advanceFinalizationMarker(
     settled.transaction.marker,
-    expectedSnapshot,
+    finalized.transaction.snapshotDigest,
     expected.report,
     finalized.transaction.marker.expectedParentStateRevision,
   );
   if (
-    serializeCanonicalJson(actualSnapshot) !== serializeCanonicalJson(expectedSnapshot) ||
     reportSource !== serializeStateRunReport(expected.report) ||
     serializeCanonicalJson(report) !== serializeCanonicalJson(expected.report) ||
     serializeCanonicalJson(finalized.transaction.marker) !== serializeCanonicalJson(expectedMarker)

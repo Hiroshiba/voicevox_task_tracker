@@ -30,6 +30,10 @@ import {
   serializeStateRunReport,
 } from "../../persistence/state-run-report.js";
 import { parseDurablePublicationRecord } from "../../publication/durable-record-schema.js";
+import {
+  exactStateValidationOrigin,
+  exactStateValidationSession,
+} from "../../persistence/exact-state-validation-session.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import { verifyInitialStateCommitReceiptAtRevision } from "./initial-pages-source.js";
 import {
@@ -40,10 +44,20 @@ import { commitRunFinalization } from "./run-finalization-commit.js";
 import { assertFinalRunValues } from "./run-finalization-state.js";
 import { observeStateCommitAtRevision } from "./state-receipt-observation.js";
 
+function validationPort(port: FinalizeRunPort): FinalizeRunPort {
+  const session = exactStateValidationSession(
+    exactStateValidationOrigin(port.adapter),
+    port.configuration,
+    port.observePerformanceDetail,
+  );
+  return Object.freeze({ ...port, adapter: session.adapter });
+}
+
 async function settledState(
   input: FinalizeRunInput,
   port: FinalizeRunPort,
 ): Promise<Readonly<{ state: NotificationMessageState; evidence: ReceiptChainEvidence }>> {
+  port = validationPort(port);
   const initial = parseReceipt(input.initialStateReceipt, digest);
   const settlement = parseReceipt(input.settlementReceipt, digest);
   const record = parseDurablePublicationRecord(input.record, digest);
@@ -65,6 +79,7 @@ async function settledState(
     port.configuration,
     initial,
     port.now().toISOString(),
+    port.observePerformanceDetail,
   );
   const observed = await observeStateCommitAtRevision(
     port.adapter,
@@ -81,6 +96,7 @@ async function settledState(
         previousPhaseSequence: settlement.phaseSequence - 1,
       },
     },
+    port.observePerformanceDetail,
   );
   if (
     observed.receipt.receiptType !== "notification_settlement" ||
@@ -113,6 +129,10 @@ async function settledState(
   ) {
     throw new TypeError("run finalizationのsettlement stateがreceiptと一致しません");
   }
+  port.observePerformanceDetail?.({
+    step: "run_finalization_settlement_verified",
+    count: state.files.size,
+  });
   return { state, evidence };
 }
 
@@ -211,6 +231,8 @@ async function finalizationReceipt(
   invocationId: string,
   executed: boolean,
 ): Promise<Extract<FinalizeRunOutcome, { kind: "finalized" }>> {
+  port = validationPort(port);
+  port.observePerformanceDetail?.({ step: "run_finalization_receipt_started" });
   assertFinalizationManifest(
     await port.adapter.readCommit(revision),
     port.configuration,
@@ -234,6 +256,7 @@ async function finalizationReceipt(
         previousPhaseSequence: input.settlementReceipt.phaseSequence,
       },
     },
+    port.observePerformanceDetail,
   );
   if (
     observed.receipt.receiptType !== "run_finalization" ||
@@ -280,6 +303,11 @@ async function finalizationReceipt(
     ],
     digest,
   );
+  port.observePerformanceDetail?.({
+    step: "run_finalization_receipt_completed",
+    count: final.files.size,
+  });
+  port.observePerformanceDetail?.({ step: "run_finalization_completed" });
   return Object.freeze({
     kind: "finalized",
     receipt,
@@ -294,7 +322,9 @@ export async function finalizeRun(
   input: FinalizeRunInput,
   port: FinalizeRunPort,
 ): Promise<FinalizeRunOutcome> {
+  port.observePerformanceDetail?.({ step: "run_finalization_started" });
   const { state: settled, evidence } = await settledState(input, port);
+  port = validationPort(port);
   const head = await port.adapter.resolveHead(port.configuration.branch);
   if (head.status !== "present") {
     throw new TypeError("run finalizationのstate branchがありません");
@@ -304,6 +334,10 @@ export async function finalizeRun(
     port.configuration,
     head.revision,
   );
+  port.observePerformanceDetail?.({
+    step: "run_finalization_current_tree_verified",
+    count: current.files.size,
+  });
   if (
     current.transaction.record.recordDigest !== input.record.recordDigest ||
     current.transaction.marker.runId !== input.record.runIdentity.runId

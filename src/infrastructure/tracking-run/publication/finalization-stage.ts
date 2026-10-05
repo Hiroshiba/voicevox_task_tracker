@@ -13,6 +13,7 @@ type FinalizationAdapters = Pick<
   | "now"
   | "sleep"
   | "random"
+  | "observePerformanceDetail"
 >;
 
 /** settlementのexact stateから完了reportを一つのCASへ確定する。 */

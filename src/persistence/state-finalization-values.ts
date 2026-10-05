@@ -72,10 +72,10 @@ export function deriveFinalRunValues(
   return Object.freeze({ report, trackingStartAt, notificationCount });
 }
 
-/** settlement markerと最終値からfinalization markerを作る。 */
+/** settlement markerと最終snapshot digest、reportからfinalization markerを作る。 */
 export function advanceFinalizationMarker(
   previous: RunTransactionMarker,
-  snapshot: unknown,
+  snapshotDigest: string,
   report: StateRunReport,
   parentRevision: string,
 ): RunTransactionMarker {
@@ -87,7 +87,7 @@ export function advanceFinalizationMarker(
     phase: "run_finalized",
     phaseSequence: previous.phaseSequence + 1,
     expectedParentStateRevision: parentRevision,
-    snapshotDigest: hashCanonicalJson(snapshot),
+    snapshotDigest,
     finalRunReportDigest: hashCanonicalJson(report),
   });
 }

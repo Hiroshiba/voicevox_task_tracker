@@ -1,8 +1,4 @@
-import {
-  DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
-  INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1,
-  RUN_TRANSACTION_MARKER_STATE_PATH_V1,
-} from "../application/tracking-run/contracts/recovery-paths.js";
+import { RUN_TRANSACTION_MARKER_STATE_PATH_V1 } from "../application/tracking-run/contracts/recovery-paths.js";
 import { stateCommitReceiptOperationId } from "../application/tracking-run/observed-state-commit.js";
 import { assertRunTransactionMarkerTransition } from "../application/tracking-run/run-transaction-marker.js";
 import { serializeCanonicalJson } from "../canonical-json/value.js";
@@ -14,6 +10,10 @@ import {
   type StateFileReadResult,
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
+import {
+  exactStateValidationSession,
+  type ExactStateValidationSession,
+} from "./exact-state-validation-session.js";
 import { assertInitialStateWriteManifest } from "./initial-state-write-manifest.js";
 import {
   isVerifiedStateCasCandidateTree,
@@ -23,8 +23,6 @@ import {
   createStateChangedPathManifest,
   isOrthogonalStateCommitScope,
 } from "./state-commit-metadata.js";
-import { OPERATIONS_ALERT_LEDGER_STATE_PATH_V1 } from "./state-documents.js";
-import { parseRunTransactionNotificationLedger } from "./state-documents.js";
 import { initialNotificationLedger } from "./state-initial-notification-transition.js";
 import { loadStateNotificationLedgers } from "./state-ledger-files.js";
 import { normalNotificationLedgerValue } from "../publication/publication-order.js";
@@ -45,8 +43,19 @@ import {
 } from "./state-orthogonal-advance.js";
 import {
   verifyRunTransactionFiles,
+  runTransactionNotificationLedger,
   type VerifiedRunTransactionFiles,
 } from "./state-transaction-files.js";
+
+/** 同じ祖先走査で確定した先頭commitと追跡親。 */
+export type StateCommitChainResult = Readonly<{
+  latestTrackingRevision: string;
+  initialStateRevision: string;
+  expectedTrackingStateRevision: string;
+  interveningOperationsAlertCommits: readonly string[];
+}>;
+
+const chainProofs = new WeakMap<ExactStateValidationSession, Map<string, StateCommitChainResult>>();
 
 async function readFullTree(
   adapter: StateBranchAdapter,
@@ -130,28 +139,15 @@ async function readVerifiedAt(
   revision: string,
 ): Promise<VerifiedTree> {
   const paths = await adapter.listFiles(revision, "state");
-  const fixedPaths = new Set([
-    configuration.snapshotPath,
-    configuration.notificationLedgerPath,
-    OPERATIONS_ALERT_LEDGER_STATE_PATH_V1,
-    DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
-    RUN_TRANSACTION_MARKER_STATE_PATH_V1,
-    INITIAL_PAGES_PUBLICATION_EVIDENCE_STATE_PATH_V1,
-  ]);
-  const selected = paths.filter(
-    (path) =>
-      fixedPaths.has(path) ||
-      path.startsWith(`${configuration.historyDirectory}/`) ||
-      path.startsWith(`${configuration.runReportsDirectory}/`),
-  );
-  const files = await adapter.readFiles(revision, selected);
-  if (
-    files.size !== selected.length ||
-    selected.some((path) => files.get(path)?.status !== "present")
-  ) {
+  const files = await adapter.readFiles(revision, paths);
+  if (files.size !== paths.length || paths.some((path) => files.get(path)?.status !== "present")) {
     throw new TypeError("Git祖先のexact state treeが不足しています");
   }
-  const transaction = verifyRunTransactionFiles(files, configuration);
+  const transaction = verifyRunTransactionFiles(
+    files,
+    configuration,
+    exactStateValidationSession(adapter, configuration).validation,
+  );
   if (transaction == null) {
     throw new TypeError("Git祖先にrun transactionがありません");
   }
@@ -224,14 +220,23 @@ function assertCommitOperation(
 }
 
 /** headから初回commitまでの全Git祖先とtransaction遷移を検証する。 */
-export async function assertStateCommitChain(
+export async function verifyStateCommitChain(
   adapter: StateBranchAdapter,
   configuration: StatePersistenceConfiguration,
   headRevision: string,
   verified: VerifiedRunTransactionFiles,
   initialStateRevision: string,
   latestTree?: VerifiedTree & Readonly<{ revision: string }>,
-): Promise<string> {
+): Promise<StateCommitChainResult> {
+  const session = exactStateValidationSession(adapter, configuration);
+  adapter = session.adapter;
+  const proofKey = serializeCanonicalJson([
+    session.readGeneration,
+    headRevision,
+    initialStateRevision,
+    verified.marker,
+    verified.record.recordDigest,
+  ]);
   const latestRevision = await previousTrackingRevision(adapter, configuration, headRevision);
   if (
     latestTree != null &&
@@ -250,13 +255,19 @@ export async function assertStateCommitChain(
   ) {
     throw new TypeError("headの検証済みtransactionとGit祖先の先頭が一致しません");
   }
+  const retained = chainProofs.get(session)?.get(proofKey);
+  if (retained != null) return retained;
   let revision = latestRevision;
+  let current = latest;
+  let targetParent:
+    | Readonly<{
+        expectedTrackingStateRevision: string;
+        interveningOperationsAlertCommits: readonly string[];
+      }>
+    | undefined;
   let settled: VerifiedTree | undefined;
   for (let count = 0; count < MAX_INTERVENING_COMMITS; count += 1) {
-    const [commit, current] = await Promise.all([
-      adapter.readCommit(revision),
-      count === 0 ? latest : readVerifiedAt(adapter, configuration, revision),
-    ]);
+    const commit = await adapter.readCommit(revision);
     const parentRevision = commit.parent.status === "present" ? commit.parent.revision : "unborn";
     if (
       (commit.metadata.commitScope !== "tracking_run" &&
@@ -295,13 +306,7 @@ export async function assertStateCommitChain(
         commit.parent,
       );
       const expectedLedger = initialNotificationLedger(parentLedger, current.transaction.record);
-      const actualFile = current.files.get(configuration.notificationLedgerPath);
-      if (actualFile?.status !== "present") {
-        throw new TypeError("初回state commitの通常ledgerがありません");
-      }
-      const actualLedger = parseRunTransactionNotificationLedger(
-        new TextDecoder("utf-8", { fatal: true }).decode(actualFile.bytes),
-      ).ledger;
+      const actualLedger = runTransactionNotificationLedger(current.transaction);
       if (
         serializeCanonicalJson(normalNotificationLedgerValue(actualLedger)) !==
         serializeCanonicalJson(normalNotificationLedgerValue(expectedLedger))
@@ -321,13 +326,27 @@ export async function assertStateCommitChain(
       if (settled != null) {
         assertSettledOutboxLedger(current, settled, configuration);
       }
-      await authorizeAdvanceAfterOrthogonalCommits(
+      const advance = await authorizeAdvanceAfterOrthogonalCommits(
         adapter,
         configuration,
         current.transaction.marker.baseStateRevision,
         parentRevision,
       );
-      return latestRevision;
+      const result = Object.freeze({
+        latestTrackingRevision: latestRevision,
+        initialStateRevision,
+        ...(targetParent ?? {
+          expectedTrackingStateRevision: current.transaction.marker.baseStateRevision,
+          interveningOperationsAlertCommits: advance.interveningOperationsAlertCommits,
+        }),
+      });
+      let byKey = chainProofs.get(session);
+      if (byKey == null) {
+        byKey = new Map();
+        chainProofs.set(session, byKey);
+      }
+      byKey.set(proofKey, result);
+      return result;
     }
     if (commit.parent.status !== "present") {
       throw new TypeError("Git祖先が初回state commitに到達しません");
@@ -337,12 +356,16 @@ export async function assertStateCommitChain(
       configuration,
       commit.parent.revision,
     );
-    await authorizeAdvanceAfterOrthogonalCommits(
+    const advance = await authorizeAdvanceAfterOrthogonalCommits(
       adapter,
       configuration,
       previousRevision,
       commit.parent.revision,
     );
+    targetParent ??= {
+      expectedTrackingStateRevision: previousRevision,
+      interveningOperationsAlertCommits: advance.interveningOperationsAlertCommits,
+    };
     const previous = await readVerifiedAt(adapter, configuration, previousRevision);
     if (
       current.transaction.marker.phase === "initial_state_committed" ||
@@ -380,7 +403,12 @@ export async function assertStateCommitChain(
       ) {
         throw new TypeError("通知settlementのmarkerが親stateから導出した値と一致しません");
       }
-      settled = current;
+      settled = {
+        transaction: current.transaction,
+        files: new Map(
+          [...current.files].filter(([path]) => path === configuration.notificationLedgerPath),
+        ),
+      };
     }
     if (current.transaction.marker.phase === "run_finalized") {
       assertFinalizationTransition(previous, current, configuration);
@@ -394,6 +422,27 @@ export async function assertStateCommitChain(
     );
     await assertTrackingCommitPaths(adapter, configuration, commit, current, previous);
     revision = previousRevision;
+    current = previous;
   }
   throw new TypeError("state commitのGit祖先探索が上限を超えています");
+}
+
+/** headから初回commitまでの全Git祖先とtransaction遷移を検証する。 */
+export async function assertStateCommitChain(
+  adapter: StateBranchAdapter,
+  configuration: StatePersistenceConfiguration,
+  headRevision: string,
+  verified: VerifiedRunTransactionFiles,
+  initialStateRevision: string,
+  latestTree?: VerifiedTree & Readonly<{ revision: string }>,
+): Promise<string> {
+  const result = await verifyStateCommitChain(
+    adapter,
+    configuration,
+    headRevision,
+    verified,
+    initialStateRevision,
+    latestTree,
+  );
+  return result.latestTrackingRevision;
 }

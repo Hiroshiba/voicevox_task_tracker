@@ -11,6 +11,10 @@ import type {
 import type { PreparedDiscordDigestMessage } from "../../discord/payload-contracts.js";
 import { isOrthogonalStateCommitScope } from "../../persistence/state-commit-metadata.js";
 import {
+  exactStateValidationOrigin,
+  exactStateValidationSession,
+} from "../../persistence/exact-state-validation-session.js";
+import {
   MAX_INTERVENING_COMMITS,
   authorizeAdvanceAfterOrthogonalCommits,
 } from "../../persistence/state-orthogonal-advance.js";
@@ -111,6 +115,12 @@ export async function receiptForSettlement(
   invocationId: string,
   executed: boolean,
 ): Promise<Extract<NotificationSettlementOutcome, { kind: "settled" }>> {
+  const session = exactStateValidationSession(
+    exactStateValidationOrigin(port.adapter),
+    port.configuration,
+    port.observePerformanceDetail,
+  );
+  port = Object.freeze({ ...port, adapter: session.adapter });
   const observed = await observeStateCommitAtRevision(
     port.adapter,
     port.configuration,

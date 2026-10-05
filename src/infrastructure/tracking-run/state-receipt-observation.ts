@@ -11,21 +11,23 @@ import type {
   NotificationSettlementReceipt,
   RunFinalizationReceipt,
 } from "../../application/tracking-run/receipt-schema.js";
-import { assertRunTransactionMarkerTransition } from "../../application/tracking-run/run-transaction-marker.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import {
   type StateBranchAdapter,
-  type StateBranchCommitInspection,
   type StateFileReadResult,
   type StatePersistenceConfiguration,
 } from "../../persistence/branch-adapter.js";
 import {
-  authorizeAdvanceAfterOrthogonalCommits,
-  MAX_INTERVENING_COMMITS,
-} from "../../persistence/state-orthogonal-advance.js";
-import { assertStateCommitChain } from "../../persistence/state-commit-chain-verification.js";
+  verifyStateCommitChain,
+  type StateCommitChainResult,
+} from "../../persistence/state-commit-chain-verification.js";
+import {
+  beginExactStateValidationRun,
+  endExactStateValidationRun,
+  exactStateValidationSession,
+  exactStateValidationOrigin,
+} from "../../persistence/exact-state-validation-session.js";
 import { assertPublishedStateCommit } from "../../persistence/state-cas-observation.js";
-import { isOrthogonalStateCommitScope } from "../../persistence/state-commit-metadata.js";
 import {
   finalizedHistoryDigest,
   finalizedRunReportDigest,
@@ -34,29 +36,28 @@ import {
   verifyRunTransactionFiles,
   type VerifiedRunTransactionFiles,
 } from "../../persistence/state-transaction-files.js";
-import type { StateSnapshot } from "../../persistence/snapshot-v23.js";
 import { nodeContentDigestPort } from "./content-digest.js";
 import {
   assertPostSaveExactReadDependencies,
   assertPostSaveExactReadTree,
-  assertPostSaveExactSnapshotBytes,
-  recordPostSaveExactReads,
   type PostSaveExactReadFootprint,
-} from "./post-save-exact-reads.js";
+} from "../../persistence/exact-state-read-footprint.js";
 
 const postSaveExactProofBrand: unique symbol = Symbol("postSaveExactProof");
 
 /** 公開済みrevisionの完全検証と読込元だけを保持する短命証明。 */
 type PostSaveExactProof = Readonly<{
   [postSaveExactProofBrand]: true;
-  transaction: VerifiedRunTransactionFiles;
+  recordDigest: string;
+  markerDigest: string;
+  chain: StateCommitChainResult;
 }>;
 
 type ProofRun = Readonly<{
   runId: string;
   token: symbol;
   adapter: StateBranchAdapter;
-  proof?: PostSaveExactProof;
+  proofs: ReadonlyMap<string, PostSaveExactProof>;
 }>;
 type PostSaveExactProofScope = Readonly<{
   createStateBranchAdapter: () => StateBranchAdapter;
@@ -97,17 +98,28 @@ function bindStateBranchAdapter(source: StateBranchAdapter): StateBranchAdapter 
 /** 日次runごとに保存と観測が共有するadapterを固定する。 */
 export function createPostSaveExactProofScope(
   createSource: () => StateBranchAdapter,
+  observePerformanceDetail?: PerformanceDetailObserver,
 ): PostSaveExactProofScope {
   const scope: PostSaveExactProofScope = Object.freeze({
     createStateBranchAdapter: (): StateBranchAdapter =>
       scopeRuns.get(scope)?.adapter ?? bindStateBranchAdapter(createSource()),
     beginRun: (runId: string): void => {
+      const previous = scopeRuns.get(scope);
+      if (previous != null) endExactStateValidationRun(previous.adapter, previous.runId);
       const adapter = bindStateBranchAdapter(createSource());
       adapterScopes.set(adapter, scope);
-      scopeRuns.set(scope, { runId, token: Symbol("postSaveExactProofRun"), adapter });
+      beginExactStateValidationRun(adapter, runId, observePerformanceDetail);
+      scopeRuns.set(scope, {
+        runId,
+        token: Symbol("postSaveExactProofRun"),
+        adapter,
+        proofs: new Map(),
+      });
     },
     endRun: (runId: string): void => {
-      if (scopeRuns.get(scope)?.runId === runId) {
+      const run = scopeRuns.get(scope);
+      if (run?.runId === runId) {
+        endExactStateValidationRun(run.adapter, runId);
         scopeRuns.delete(scope);
       }
     },
@@ -120,7 +132,7 @@ function activePostSaveExactProofDetails(proof: PostSaveExactProof): ProofDetail
   const run = details == null ? undefined : scopeRuns.get(details.scope);
   if (
     details == null ||
-    run?.proof !== proof ||
+    run?.proofs.get(details.revision) !== proof ||
     run.token !== details.runToken ||
     run.adapter !== details.adapter
   ) {
@@ -135,8 +147,9 @@ export function postSaveExactProof(
   configuration: StatePersistenceConfiguration,
   revision: string,
 ): PostSaveExactProof | undefined {
+  adapter = exactStateValidationOrigin(adapter);
   const scope = adapterScopes.get(adapter);
-  const proof = scope == null ? undefined : scopeRuns.get(scope)?.proof;
+  const proof = scope == null ? undefined : scopeRuns.get(scope)?.proofs.get(revision);
   if (proof == null) {
     return undefined;
   }
@@ -148,18 +161,6 @@ export function postSaveExactProof(
     : undefined;
 }
 
-function freezeTransaction(value: unknown): void {
-  if (typeof value !== "object" || value == null) {
-    return;
-  }
-  for (const nested of Object.values(value)) {
-    freezeTransaction(nested);
-  }
-  if (!Object.isFrozen(value)) {
-    Object.freeze(value);
-  }
-}
-
 function issueAndRetainPostSaveExactProof(
   scope: PostSaveExactProofScope,
   runToken: symbol,
@@ -167,20 +168,21 @@ function issueAndRetainPostSaveExactProof(
   revision: string,
   transaction: VerifiedRunTransactionFiles,
   footprint: PostSaveExactReadFootprint,
+  chain: StateCommitChainResult,
 ): void {
   const run = scopeRuns.get(scope);
   if (
     run?.token !== runToken ||
     transaction.marker.runId !== run.runId ||
-    transaction.snapshotSchemaVersion !== "23" ||
-    transaction.marker.phase !== "initial_state_committed"
+    transaction.snapshotSchemaVersion !== "23"
   ) {
-    throw new TypeError("初回公開済みexact revisionの証明入力が現在のrunに一致しません");
+    throw new TypeError("公開済みexact revisionの証明入力が現在のrunに一致しません");
   }
-  freezeTransaction(transaction);
   const proof = Object.freeze({
     [postSaveExactProofBrand]: true,
-    transaction,
+    recordDigest: transaction.record.recordDigest,
+    markerDigest: nodeContentDigestPort.sha256Utf8(serializeCanonicalJson(transaction.marker)),
+    chain,
   } satisfies PostSaveExactProof);
   issuedProofDetails.set(
     proof,
@@ -193,7 +195,7 @@ function issueAndRetainPostSaveExactProof(
       footprint,
     }),
   );
-  scopeRuns.set(scope, { ...run, proof });
+  scopeRuns.set(scope, { ...run, proofs: new Map([...run.proofs, [revision, proof]]) });
 }
 
 /** freshなpath、byte列を完全検証時の同じexact treeへ照合する。 */
@@ -204,50 +206,6 @@ export function assertPostSaveExactTree(
 ): void {
   const details = activePostSaveExactProofDetails(proof);
   assertPostSaveExactReadTree(details.footprint, details.revision, paths, files);
-}
-
-/** chain検証に使用した全revisionの読込値をfreshなadapter応答と照合する。 */
-export async function assertPostSaveExactDependencies(
-  adapter: StateBranchAdapter,
-  proof: PostSaveExactProof,
-  currentFiles: ReadonlyMap<string, StateFileReadResult>,
-  currentCommit: StateBranchCommitInspection,
-): Promise<void> {
-  const details = activePostSaveExactProofDetails(proof);
-  if (adapterScopes.get(adapter) !== details.scope || adapter !== details.adapter) {
-    throw new TypeError("公開済みexact revisionの読込adapterが証明と一致しません");
-  }
-  await assertPostSaveExactReadDependencies(
-    adapter,
-    details.footprint,
-    details.revision,
-    currentFiles,
-    currentCommit,
-  );
-  activePostSaveExactProofDetails(proof);
-}
-
-/** 証明済みsnapshot byteだけを同じ論理値として復元する。 */
-export function parseProvenStateSnapshot(
-  proof: PostSaveExactProof,
-  configuration: StatePersistenceConfiguration,
-  bytes: Uint8Array,
-): StateSnapshot {
-  const details = activePostSaveExactProofDetails(proof);
-  if (details.configuration !== serializeCanonicalJson(configuration)) {
-    throw new TypeError("snapshotの設定が公開済みexact revisionの証明と一致しません");
-  }
-  assertPostSaveExactSnapshotBytes(
-    details.footprint,
-    details.revision,
-    configuration.snapshotPath,
-    bytes,
-  );
-  const source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
-  const parse: (value: string) => StateSnapshot = JSON.parse;
-  const snapshot = parse(source);
-  freezeTransaction(snapshot);
-  return snapshot;
 }
 
 type ObservedCommit<T> = Readonly<{
@@ -280,93 +238,15 @@ async function readVerifiedTree(
   if (proof != null) {
     assertPostSaveExactTree(proof, paths, files);
   }
-  const transaction = proof?.transaction ?? verifyRunTransactionFiles(files, configuration);
+  const transaction = verifyRunTransactionFiles(
+    files,
+    configuration,
+    exactStateValidationSession(adapter, configuration).validation,
+  );
   if (transaction == null) {
     throw new TypeError("観測対象のexact stateにrun transactionがありません");
   }
   return { files, transaction };
-}
-
-async function previousTrackingRevision(
-  adapter: StateBranchAdapter,
-  parentRevision: string,
-): Promise<string> {
-  let revision = parentRevision;
-  for (let count = 0; count < MAX_INTERVENING_COMMITS; count += 1) {
-    const commit = await adapter.readCommit(revision);
-    if (!isOrthogonalStateCommitScope(commit.metadata.commitScope)) {
-      return revision;
-    }
-    if (commit.parent.status !== "present") {
-      throw new TypeError("追跡commitの前に運用通知commitの祖先がありません");
-    }
-    revision = commit.parent.revision;
-  }
-  throw new TypeError("追跡commitの祖先探索が上限を超えています");
-}
-
-async function assertCommitAncestry(
-  adapter: StateBranchAdapter,
-  configuration: StatePersistenceConfiguration,
-  revision: string,
-  initialStateRevision: string,
-  recordDigest: string,
-): Promise<Readonly<{ expectedTrackingRevision: string; intervening: readonly string[] }>> {
-  let currentRevision = revision;
-  let targetParent:
-    Readonly<{ expectedTrackingRevision: string; intervening: readonly string[] }> | undefined;
-  for (let count = 0; count < MAX_INTERVENING_COMMITS; count += 1) {
-    if (currentRevision === initialStateRevision) {
-      if (targetParent == null) {
-        throw new TypeError("後続state commitの祖先がありません");
-      }
-      return targetParent;
-    }
-    const [currentCommit, currentTree] = await Promise.all([
-      adapter.readCommit(currentRevision),
-      readVerifiedTree(adapter, configuration, currentRevision),
-    ]);
-    if (
-      currentCommit.parent.status !== "present" ||
-      (currentCommit.metadata.commitScope !== "tracking_run" &&
-        currentCommit.metadata.commitScope !== "manual_resolution") ||
-      currentCommit.metadata.runId !== currentTree.transaction.marker.runId ||
-      currentTree.transaction.record.recordDigest !== recordDigest ||
-      !currentCommit.changedPathManifest.entries.some(
-        (entry) => entry.path === RUN_TRANSACTION_MARKER_STATE_PATH_V1,
-      )
-    ) {
-      throw new TypeError("後続state commitのmetadataとmarkerが一致しません");
-    }
-    const previousRevision = await previousTrackingRevision(adapter, currentCommit.parent.revision);
-    const advance = await authorizeAdvanceAfterOrthogonalCommits(
-      adapter,
-      configuration,
-      previousRevision,
-      currentCommit.parent.revision,
-    );
-    const previousTree = await readVerifiedTree(adapter, configuration, previousRevision);
-    if (
-      previousTree.transaction.marker.runId !== currentTree.transaction.marker.runId ||
-      previousTree.transaction.record.recordDigest !== recordDigest ||
-      (currentTree.transaction.marker.phase !== "initial_state_committed" &&
-        currentTree.transaction.marker.initialStateRevision !== initialStateRevision)
-    ) {
-      throw new TypeError("後続state commitのrunまたは初回revisionが一致しません");
-    }
-    assertRunTransactionMarkerTransition(
-      previousTree.transaction.marker,
-      currentTree.transaction.marker,
-      currentCommit.parent.revision,
-      currentTree.transaction.initialPagesEvidence,
-    );
-    targetParent ??= {
-      expectedTrackingRevision: previousRevision,
-      intervening: advance.interveningOperationsAlertCommits,
-    };
-    currentRevision = previousRevision;
-  }
-  throw new TypeError("後続state commitの祖先探索が上限を超えています");
 }
 
 async function observePublishedStateCommitAtRevision(
@@ -377,36 +257,34 @@ async function observePublishedStateCommitAtRevision(
   receiptType: StateCommitReceiptEvidence["receiptType"],
   observation: StateCommitObservation,
   observePerformanceDetail: PerformanceDetailObserver | undefined,
-  observationKind: "initial_publication" | "receipt_reobservation",
 ): Promise<
   ObservedCommit<InitialStateCommitReceipt | NotificationSettlementReceipt | RunFinalizationReceipt>
 > {
   const configuration = Object.freeze({ ...currentConfiguration });
   const configurationIdentity = serializeCanonicalJson(configuration);
   const proof = postSaveExactProof(adapter, configuration, revision);
-  const scope = adapterScopes.get(adapter);
+  const originAdapter = exactStateValidationOrigin(adapter);
+  const scope = adapterScopes.get(originAdapter);
   const proofRun = scope == null ? undefined : scopeRuns.get(scope);
-  if (proofRun != null && proofRun.adapter !== adapter) {
+  if (proofRun != null && proofRun.adapter !== originAdapter) {
     throw new TypeError("公開stateの読込adapterが現在のrunに属していません");
   }
   const source = scope == null ? bindStateBranchAdapter(adapter) : adapter;
+  const session = exactStateValidationSession(source, configuration, observePerformanceDetail);
+  const readingAdapter = session.adapter;
   const recording =
-    observationKind === "initial_publication" && proof == null && scope != null && proofRun != null
-      ? Object.freeze({
-          ...recordPostSaveExactReads(source),
-          scope,
-          runToken: proofRun.token,
-        })
+    proof == null && scope != null && proofRun != null
+      ? { scope, runToken: proofRun.token, footprint: session.footprint }
       : undefined;
-  const readingAdapter = recording?.adapter ?? source;
   const [tree, commit] = await Promise.all([
     readVerifiedTree(readingAdapter, configuration, revision),
     readingAdapter.readCommit(revision),
   ]);
   observePerformanceDetail?.({ step: "receipt_tree_read", count: tree.files.size });
   const { marker, record } = tree.transaction;
+  let chain: StateCommitChainResult;
   if (proof == null) {
-    await assertStateCommitChain(
+    chain = await verifyStateCommitChain(
       readingAdapter,
       configuration,
       revision,
@@ -415,7 +293,23 @@ async function observePublishedStateCommitAtRevision(
       { revision, files: tree.files, transaction: tree.transaction },
     );
   } else {
-    await assertPostSaveExactDependencies(adapter, proof, tree.files, commit);
+    if (
+      proof.chain.initialStateRevision !== initialStateRevision ||
+      proof.recordDigest !== tree.transaction.record.recordDigest ||
+      proof.markerDigest !==
+        nodeContentDigestPort.sha256Utf8(serializeCanonicalJson(tree.transaction.marker))
+    )
+      throw new TypeError("公開済みchain証明のtransaction結合が一致しません");
+    const details = activePostSaveExactProofDetails(proof);
+    await assertPostSaveExactReadDependencies(
+      readingAdapter,
+      details.footprint,
+      revision,
+      tree.files,
+      commit,
+    );
+    activePostSaveExactProofDetails(proof);
+    chain = proof.chain;
   }
   observePerformanceDetail?.({ step: "receipt_commit_chain_verified" });
   if (
@@ -430,31 +324,13 @@ async function observePublishedStateCommitAtRevision(
     throw new TypeError("state commitのmetadataまたは再観測試行が不正です");
   }
   const parentRevision = commit.parent.status === "present" ? commit.parent.revision : "unborn";
-  let expectedTrackingStateRevision: string;
-  let interveningOperationsAlertCommits: readonly string[];
-  if (receiptType === "initial_state_commit") {
-    if (revision !== initialStateRevision || marker.phase !== "initial_state_committed") {
-      throw new TypeError("初回state commitのrevisionまたはphaseが一致しません");
-    }
-    expectedTrackingStateRevision = marker.baseStateRevision;
-    const advance = await authorizeAdvanceAfterOrthogonalCommits(
-      readingAdapter,
-      configuration,
-      expectedTrackingStateRevision,
-      parentRevision,
-    );
-    interveningOperationsAlertCommits = advance.interveningOperationsAlertCommits;
-  } else {
-    const ancestry = await assertCommitAncestry(
-      readingAdapter,
-      configuration,
-      revision,
-      initialStateRevision,
-      record.recordDigest,
-    );
-    expectedTrackingStateRevision = ancestry.expectedTrackingRevision;
-    interveningOperationsAlertCommits = ancestry.intervening;
+  if (
+    receiptType === "initial_state_commit" &&
+    (revision !== initialStateRevision || marker.phase !== "initial_state_committed")
+  ) {
+    throw new TypeError("初回state commitのrevisionまたはphaseが一致しません");
   }
+  const { expectedTrackingStateRevision, interveningOperationsAlertCommits } = chain;
   const common = {
     marker,
     record: {
@@ -487,7 +363,13 @@ async function observePublishedStateCommitAtRevision(
     evidence = {
       ...common,
       receiptType,
-      notificationHistoryDigest: finalizedHistoryDigest(tree.files, configuration, marker, record),
+      notificationHistoryDigest: finalizedHistoryDigest(
+        tree.files,
+        configuration,
+        marker,
+        record,
+        session.validation,
+      ),
     };
   } else {
     evidence = {
@@ -501,9 +383,9 @@ async function observePublishedStateCommitAtRevision(
     [{ receipt, evidence: { kind: "state_commit", state: evidence } }],
     nodeContentDigestPort,
   );
-  await assertPublishedStateCommit(source, configuration, commit);
+  await assertPublishedStateCommit(readingAdapter, configuration, commit);
   if (
-    adapterScopes.get(adapter) !== scope ||
+    adapterScopes.get(originAdapter) !== scope ||
     (scope != null && scopeRuns.get(scope)?.token !== proofRun?.token) ||
     serializeCanonicalJson(currentConfiguration) !== configurationIdentity ||
     (recording != null && marker.runId !== proofRun?.runId)
@@ -518,6 +400,7 @@ async function observePublishedStateCommitAtRevision(
       revision,
       tree.transaction,
       recording.footprint,
+      chain,
     );
   }
   observePerformanceDetail?.({ step: "receipt_created" });
@@ -540,7 +423,6 @@ export async function observeInitialPublishedStateCommit(
     "initial_state_commit",
     observation,
     observePerformanceDetail,
-    "initial_publication",
   );
   if (observed.receipt.receiptType !== "initial_state_commit") {
     throw new TypeError("初回公開stateのreceipt種別が不正です");
@@ -568,6 +450,5 @@ export async function observeStateCommitAtRevision(
     receiptType,
     observation,
     observePerformanceDetail,
-    "receipt_reobservation",
   );
 }

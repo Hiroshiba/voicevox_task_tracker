@@ -8,6 +8,7 @@ import {
   type StateFileReadResult,
   type StatePersistenceConfiguration,
 } from "./branch-adapter.js";
+import { exactStateValidationSession } from "./exact-state-validation-session.js";
 import { StateBranchConflictError } from "./errors.js";
 import { assertStateCommitChain } from "./state-commit-chain-verification.js";
 import {
@@ -71,6 +72,8 @@ export async function writeStateCas(
   observePerformanceDetail?: PerformanceDetailObserver,
 ): Promise<StateCasWriteResult> {
   validateStatePersistenceConfiguration(configuration);
+  const session = exactStateValidationSession(adapter, configuration, observePerformanceDetail);
+  adapter = session.adapter;
   const observedHead = await adapter.resolveHead(configuration.branch);
   if (
     observedHead.status === "present" &&
@@ -127,7 +130,11 @@ export async function writeStateCas(
           await adapter.listFiles(observedHead.revision, "state"),
         )
       : new Map<string, StateFileReadResult>();
-  const previousVerified = verifyRunTransactionFiles(previousFiles, configuration);
+  const previousVerified = verifyRunTransactionFiles(
+    previousFiles,
+    configuration,
+    session.validation,
+  );
   observePerformanceDetail?.({
     step: "cas_previous_transaction_verified",
     count: previousFiles.size,
@@ -152,9 +159,10 @@ export async function writeStateCas(
             previousVerified.marker.runId,
           )
         : previousVerified.marker.initialStateRevision,
+      { revision: observedHead.revision, files: previousFiles, transaction: previousVerified },
     );
   }
-  const request = await materializeCommitRequest(requestInput, observedHead, advance);
+  const request = await materializeCommitRequest(requestInput, observedHead, advance, adapter);
   let commit: StateBranchCommitResult;
   try {
     commit = await adapter.commit({
@@ -198,6 +206,7 @@ export async function writeStateCas(
     candidate,
     configuration,
     !isOrthogonalStateCommitScope(commit.metadata.commitScope),
+    session.validation,
   );
   if ("build" in requestInput && requestInput.verifyCandidate != null) {
     const inspectionFiles = copyStateCasCandidateFiles(candidate);
