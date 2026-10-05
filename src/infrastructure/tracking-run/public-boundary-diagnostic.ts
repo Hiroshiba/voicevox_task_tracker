@@ -45,18 +45,24 @@ const diagnosticSchema = z.discriminatedUnion("reason", [
       "scanner_candidate_characters_limit",
       "scanner_candidate_count_limit",
       "scanner_decode_depth_limit",
+      "scanner_markdown_boundary",
     ]),
   }),
   diagnosticBaseSchema.extend({
     reason: z.literal("scanner_invalid_encoding"),
-    encoding: z.strictObject({
-      candidateHash: hashSchema,
-      originalCandidateHash: hashSchema,
-      decodeDepth: z.number().int().nonnegative().max(4),
-      originalEncoding: encodingStateSchema,
-      failedEncoding: encodingStateSchema.exclude(["valid"]),
-      originalContainsEncodedPercent: z.boolean(),
-    }),
+    encoding: z
+      .strictObject({
+        candidateHash: hashSchema,
+        originalCandidateHash: hashSchema,
+        decodeDepth: z.number().int().nonnegative().max(4),
+        originalEncoding: encodingStateSchema,
+        failedEncoding: encodingStateSchema,
+        originalContainsEncodedPercent: z.boolean(),
+      })
+      .refine(
+        (encoding) => encoding.originalEncoding !== "valid" || encoding.failedEncoding !== "valid",
+        { message: "符号化の停止診断には原文または候補の不正な状態が必要です" },
+      ),
   }),
 ]);
 type PublicBoundaryDiagnostic = z.output<typeof diagnosticSchema>;
