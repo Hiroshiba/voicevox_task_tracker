@@ -1,10 +1,17 @@
-const URL_LIKE_START_PATTERN =
-  /[A-Za-z][A-Za-z0-9+.-]*:\/\/|(?<![A-Za-z0-9+.-])(?:mailto|javascript|data|urn|tel|blob|about):|(?<![:/])\/\/|(?<![A-Za-z0-9_.@/:%-])(?:[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?=[/?#]|\b))/giu;
+const NON_SCHEME_URL_LIKE_START_PATTERN =
+  /(?<![A-Za-z0-9+.-])(?:mailto|javascript|data|urn|tel|blob|about):|(?<![:/])\/\/|(?<![A-Za-z0-9_.@/:%-])(?:[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?=[/?#]|\b))/iu;
+const URL_LIKE_START_PATTERN = new RegExp(
+  `[A-Za-z][A-Za-z0-9+.-]*:\\/\\/|${NON_SCHEME_URL_LIKE_START_PATTERN.source}`,
+  "giu",
+);
 const URL_LIKE_TEXT_PATTERN = new RegExp(
   `(?:${URL_LIKE_START_PATTERN.source})[^\\s<>"'\\x60]*`,
   "giu",
 );
-const TRAILING_PUNCTUATION_PATTERN = /[.,;:!?、。！？)\]}）］｝」』]+$/u;
+const SCHEME_FIRST_CHARACTER_PATTERN = /[A-Za-z]/iu;
+const SCHEME_CHARACTER_PATTERN = /[A-Za-z0-9+.-]/iu;
+const URL_LIKE_DELIMITER_PATTERN = /[\s<>"'`]/u;
+const TRAILING_PUNCTUATION_CHARACTER_PATTERN = /[.,;:!?、。！？)\]}）］｝」』]/u;
 const PERCENT_ENCODED_UTF8_CHARACTER_PATTERN = new RegExp(
   [
     "%[0-7][0-9a-f]",
@@ -37,6 +44,57 @@ type UrlLikeTextScan =
         | "decode_depth_limit";
     }>;
 
+function* urlLikeStartIndices(value: string): Generator<number> {
+  const nonSchemeStart = new RegExp(NON_SCHEME_URL_LIKE_START_PATTERN.source, "iyu");
+  let schemeEnd = 0;
+  for (let index = 0; index < value.length;) {
+    if (SCHEME_FIRST_CHARACTER_PATTERN.test(value.charAt(index))) {
+      if (index >= schemeEnd) {
+        schemeEnd = index + 1;
+        while (schemeEnd < value.length && SCHEME_CHARACTER_PATTERN.test(value.charAt(schemeEnd))) {
+          schemeEnd += 1;
+        }
+      }
+      if (value.startsWith("://", schemeEnd)) {
+        yield index;
+        index = schemeEnd + 3;
+        continue;
+      }
+    }
+    nonSchemeStart.lastIndex = index;
+    const match = nonSchemeStart.exec(value);
+    if (match != null) {
+      yield index;
+      index = nonSchemeStart.lastIndex;
+      continue;
+    }
+    index += 1;
+  }
+}
+
+function* urlLikeCandidates(value: string): Generator<string> {
+  let token:
+    | Readonly<{ status: "unscanned" }>
+    | Readonly<{ status: "scanned"; end: number; candidateEnd: number }> = { status: "unscanned" };
+  for (const index of urlLikeStartIndices(value)) {
+    if (token.status === "unscanned" || index >= token.end) {
+      let end = index;
+      while (end < value.length && !URL_LIKE_DELIMITER_PATTERN.test(value.charAt(end))) {
+        end += 1;
+      }
+      let candidateEnd = end;
+      while (
+        candidateEnd > index &&
+        TRAILING_PUNCTUATION_CHARACTER_PATTERN.test(value.charAt(candidateEnd - 1))
+      ) {
+        candidateEnd -= 1;
+      }
+      token = { status: "scanned", end, candidateEnd };
+    }
+    yield value.slice(index, token.candidateEnd);
+  }
+}
+
 /** URLの全開始位置と有界な復号段階を検査し、候補内の曖昧な符号化を拒否する。 */
 export function scanUrlLikeText(value: string): UrlLikeTextScan {
   const candidates = new Set<string>();
@@ -47,13 +105,7 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
     if (current.length > 1_000_000)
       return Object.freeze({ status: "invalid", reason: "text_limit" });
     decodedTexts.push(current);
-    for (const match of current.matchAll(URL_LIKE_START_PATTERN)) {
-      const suffix = current.slice(match.index);
-      const end = suffix.search(/[\s<>"'`]/u);
-      const candidate = (end < 0 ? suffix : suffix.slice(0, end)).replace(
-        TRAILING_PUNCTUATION_PATTERN,
-        "",
-      );
+    for (const candidate of urlLikeCandidates(current)) {
       try {
         decodeURIComponent(candidate);
       } catch (error: unknown) {
