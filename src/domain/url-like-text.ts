@@ -15,8 +15,8 @@ import {
   appendHtmlBoundarySpan,
   decodeHtmlCharacterReference,
   HTML_CHARACTER_REFERENCE_PATTERN,
-  htmlAnchorTag,
   htmlDisplayTag,
+  htmlTextFields,
   isHtmlReferenceFragment,
 } from "./url-like-html.js";
 
@@ -330,6 +330,16 @@ function appendRenderedText(
   const raw = text.value.slice(span.start, span.end);
   if (raw === expected) {
     appendTextSlice(builder, text, span);
+    return true;
+  }
+  if (context === "html" && expected === "\n" && htmlDisplayTag(raw).kind === "break") {
+    appendSourceText(builder, expected, {
+      kind: "replacement",
+      original: originalTextSpans(text, span),
+      literalPercent: false,
+      hardBoundary: true,
+      percentDecoded: false,
+    });
     return true;
   }
   const chunkStart = builder.chunks.length;
@@ -690,20 +700,19 @@ function markdownLayout(text: MappedText): MarkdownLayout {
     fields.push({ text: mappedText(builder), context: field.field === "url" ? "url" : "text" });
   }
   for (const node of htmlNodes) {
-    const anchor = htmlAnchorTag(node.value);
-    if (anchor.kind === "invalid") return { status: "invalid" };
-    if (anchor.kind === "other") continue;
     const literal = textWithoutMarkdownPrefixes(text, nodeTextSpan(node), prefixes);
     if (literal.value !== node.value) return { status: "invalid" };
-    if (anchor.kind === "close") continue;
-    for (const attribute of anchor.attributes) {
+    const html = htmlTextFields(literal.value);
+    if (html.status === "invalid") return { status: "invalid" };
+    for (const field of html.fields) {
       const builder = textBuilder();
-      if (!appendRenderedText(builder, literal, attribute.span, attribute.value, "html"))
+      if (
+        !field.parts.every((part) =>
+          appendRenderedText(builder, literal, part.span, part.value, "html"),
+        )
+      )
         return { status: "invalid" };
-      fields.push({
-        text: mappedText(builder),
-        context: attribute.name === "href" ? "url" : "text",
-      });
+      fields.push({ text: mappedText(builder), context: field.context });
     }
   }
   for (const image of images) {
@@ -736,13 +745,11 @@ function markdownLayout(text: MappedText): MarkdownLayout {
   }
   appendTextSlice(display, text, { start, end: value.length });
   const result = mappedText(display);
-  if (result.value === value)
-    return { status: "valid", text, offsets: boundaries, display: { status: "unchanged" }, fields };
   return {
     status: "valid",
     text,
     offsets: boundaries,
-    display: { status: "changed", text: result },
+    display: result.value === value ? { status: "unchanged" } : { status: "changed", text: result },
     fields,
   };
 }

@@ -19,6 +19,9 @@ type HtmlAnchorTag =
       }>[];
     }>;
 
+type HtmlTextPart = Readonly<{ span: Readonly<{ start: number; end: number }>; value: string }>;
+type HtmlTextField = Readonly<{ context: "url" | "text"; parts: readonly HtmlTextPart[] }>;
+
 /** HTML文字参照をMarkdownのparserと同じ規則で復号する。 */
 export function decodeHtmlCharacterReference(value: string): string {
   const paragraph = fromMarkdown(value).children[0];
@@ -32,14 +35,23 @@ export function decodeHtmlCharacterReference(value: string): string {
   return child.value;
 }
 
-function decodedHtmlAttribute(
+function decodedHtmlValue(
   value: string,
+  context: "attribute" | "text",
 ): Readonly<{ status: "valid"; value: string }> | Readonly<{ status: "invalid" }> {
   const completeReference = /^&(?:#[xX][0-9a-f]{1,6}|#[0-9]{1,7}|[A-Za-z][A-Za-z0-9]{1,31});$/iu;
   for (const match of value.matchAll(/&(?:#[^&;\t\r\n "'<>]*;?|[A-Za-z][A-Za-z0-9]*;?)/gu)) {
     const reference = match[0];
     if (reference.startsWith("&#")) {
       if (!completeReference.test(reference)) return { status: "invalid" };
+    } else if (context === "text") {
+      if (reference.endsWith(";") && decodeHtmlCharacterReference(reference) !== reference)
+        continue;
+      const name = reference.slice(1).replace(/;$/u, "");
+      for (let length = 1; length <= Math.min(name.length, 32); length += 1) {
+        const prefix = `&${name.slice(0, length)};`;
+        if (decodeHtmlCharacterReference(prefix) !== prefix) return { status: "invalid" };
+      }
     } else if (
       !reference.endsWith(";") &&
       !/[A-Za-z0-9=]/u.test(value.charAt(match.index + reference.length)) &&
@@ -59,7 +71,7 @@ function decodedAnchorAttributes(
 ): Extract<HtmlAnchorTag, { kind: "open" | "invalid" }> {
   const interpreted: Extract<HtmlAnchorTag, { kind: "open" }>["attributes"][number][] = [];
   for (const attribute of attributes) {
-    const decoded = decodedHtmlAttribute(attribute.value);
+    const decoded = decodedHtmlValue(attribute.value, "attribute");
     if (decoded.status === "invalid") return { kind: "invalid" };
     interpreted.push({ ...attribute, value: decoded.value });
   }
@@ -67,7 +79,7 @@ function decodedAnchorAttributes(
 }
 
 /** 完全なHTML anchor tagから属性値と原文範囲を取得する。 */
-export function htmlAnchorTag(value: string): HtmlAnchorTag {
+function htmlAnchorTag(value: string): HtmlAnchorTag {
   if (/^<\/a[ \t\r\n]*>$/iu.test(value)) return { kind: "close" };
   if (!/^<a(?=[ \t\r\n/>])/iu.test(value)) return { kind: "other" };
   const spacing = /[ \t\r\n]+/uy;
@@ -121,6 +133,100 @@ export function htmlDisplayTag(
   const name = tag[2];
   assertNonNullable(name, "MarkdownラベルのHTML tagを取得できません");
   return { kind: "decoration", name: name.toLowerCase(), closing: tag[1] === "/" };
+}
+
+function htmlTagEnd(value: string, start: number): number | "invalid" {
+  if (value.startsWith("<!--", start) || value.startsWith("<![CDATA[", start)) {
+    const terminator = value.startsWith("<!--", start) ? "-->" : "]]>";
+    const end = value.indexOf(terminator, start + 1);
+    return end < 0 ? "invalid" : end + terminator.length;
+  }
+  let quote: "unquoted" | '"' | "'" = "unquoted";
+  for (let index = start + 1; index < value.length; index += 1) {
+    const character = value.charAt(index);
+    if (quote !== "unquoted") {
+      if (character === quote) quote = "unquoted";
+    } else if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === ">") {
+      return index + 1;
+    } else if (character === "<") {
+      return "invalid";
+    }
+  }
+  return "invalid";
+}
+
+/** HTML blockとinline tagから属性値と表示textの原文範囲を取得する。 */
+export function htmlTextFields(
+  value: string,
+):
+  | Readonly<{ status: "invalid" }>
+  | Readonly<{ status: "valid"; fields: readonly HtmlTextField[] }> {
+  const fields: HtmlTextField[] = [];
+  const display: HtmlTextPart[] = [];
+  const boundaries: Readonly<{ start: number; end: number }>[] = [];
+  let displayLength = 0;
+  function appendText(start: number, end: number): boolean {
+    if (start === end) return true;
+    const decoded = decodedHtmlValue(value.slice(start, end), "text");
+    if (decoded.status === "invalid") return false;
+    display.push({ span: { start, end }, value: decoded.value });
+    displayLength += decoded.value.length;
+    return true;
+  }
+  let start = 0;
+  for (const match of value.matchAll(/<(?=\/?[A-Za-z]|!|\?)/gu)) {
+    if (match.index < start) continue;
+    if (!appendText(start, match.index)) return { status: "invalid" };
+    const end = htmlTagEnd(value, match.index);
+    if (end === "invalid") return { status: "invalid" };
+    const raw = value.slice(match.index, end);
+    const anchor = htmlAnchorTag(raw);
+    if (
+      anchor.kind === "invalid" ||
+      (anchor.kind === "other" && /^<\/?a(?=[ \t\r\n/>])/iu.test(raw))
+    )
+      return { status: "invalid" };
+    if (anchor.kind === "open") {
+      for (const attribute of anchor.attributes) {
+        fields.push({
+          context: attribute.name === "href" ? "url" : "text",
+          parts: [
+            {
+              span: {
+                start: match.index + attribute.span.start,
+                end: match.index + attribute.span.end,
+              },
+              value: attribute.value,
+            },
+          ],
+        });
+      }
+    }
+    const tag = htmlDisplayTag(raw);
+    if (tag.kind === "invalid") return { status: "invalid" };
+    if (tag.kind === "break" || tag.kind === "other") {
+      const displayed = tag.kind === "break" ? "\n" : raw;
+      display.push({ span: { start: match.index, end }, value: displayed });
+      if (tag.kind === "other")
+        appendHtmlBoundarySpan(boundaries, displayLength, displayLength + displayed.length);
+      displayLength += displayed.length;
+    }
+    start = end;
+  }
+  if (!appendText(start, value.length)) return { status: "invalid" };
+  const displayed = display.map((part) => part.value).join("");
+  if (
+    boundaries.some(
+      (span) =>
+        isHtmlReferenceFragment(displayed.charAt(span.start - 1)) &&
+        isHtmlReferenceFragment(displayed.charAt(span.end)),
+    )
+  )
+    return { status: "invalid" };
+  if (displayed.length > 0 && displayed !== value) fields.push({ context: "text", parts: display });
+  return { status: "valid", fields };
 }
 
 /** 連続するHTMLの表示範囲を一つの境界へまとめる。 */
