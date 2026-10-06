@@ -5,6 +5,7 @@ import { assertNonNullable } from "../util/index.js";
 import {
   mayHaveGitHubAuthority,
   PERCENT_ENCODED_UTF8_CHARACTER_PATTERN,
+  type UrlLikeCandidate,
   urlInputProjection,
   urlInputText,
   urlLikeCandidates,
@@ -29,7 +30,11 @@ export const NO_URL_LIKE_TEXT_PATTERN = new RegExp(
 );
 
 type UrlLikeTextScan =
-  | Readonly<{ status: "valid"; candidates: readonly string[]; decodedTexts: readonly string[] }>
+  | Readonly<{
+      status: "valid";
+      candidates: readonly string[];
+      views: readonly Readonly<{ value: string; candidates: readonly UrlLikeCandidate[] }>[];
+    }>
   | Readonly<{
       status: "invalid";
       reason: "invalid_encoding";
@@ -680,11 +685,12 @@ function sameSourceSegments(
 /** URLの全開始位置と有界な復号段階を検査し、GitHub候補の曖昧な符号化を拒否する。 */
 export function scanUrlLikeText(value: string): UrlLikeTextScan {
   const candidates = new Set<string>();
-  const decodedTexts = new Set<string>();
+  const views: { value: string; candidates: UrlLikeCandidate[] }[] = [];
   const pending: TextView[] = [];
   const seen = new Map<string, Map<string, readonly (readonly SourceTextSegment[])[]>>();
   let textCharacters = 0;
   let candidateCharacters = 0;
+  let candidateCount = 0;
   function enqueue(view: TextView): boolean {
     const key = `${view.context}:${String(view.decodeDepth)}`;
     const texts = seen.get(key) ?? new Map<string, readonly (readonly SourceTextSegment[])[]>();
@@ -708,13 +714,16 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
         : { status: "valid", offsets: [], display: { status: "unchanged" }, fields: [] };
     if (layout.status === "invalid")
       return Object.freeze({ status: "invalid", reason: "markdown_boundary" });
-    decodedTexts.add(view.text.value);
+    const viewCandidates: UrlLikeCandidate[] = [];
     for (const candidate of urlLikeCandidates(
       view.text.value,
       layout.offsets,
       view.context === "url",
       (index) => isHardUrlBoundary(view.text, index),
     )) {
+      candidateCount += 1;
+      if (candidateCount > 4096)
+        return Object.freeze({ status: "invalid", reason: "candidate_count_limit" });
       candidateCharacters += candidate.value.length;
       if (candidateCharacters > 1_000_000)
         return Object.freeze({ status: "invalid", reason: "candidate_characters_limit" });
@@ -773,9 +782,9 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
         }
       }
       candidates.add(candidate.value);
-      if (candidates.size > 4096)
-        return Object.freeze({ status: "invalid", reason: "candidate_count_limit" });
+      viewCandidates.push(candidate);
     }
+    views.push({ value: view.text.value, candidates: viewCandidates });
     const decoded = percentDecodedText(view.text);
     if (decoded.status === "changed") {
       if (view.decodeDepth === 4)
@@ -798,7 +807,7 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
   return Object.freeze({
     status: "valid",
     candidates: Object.freeze([...candidates]),
-    decodedTexts: Object.freeze([...decodedTexts]),
+    views: Object.freeze(views),
   });
 }
 

@@ -2,7 +2,9 @@ import type { Repository } from "../domain/index.js";
 import {
   isGitHubHost,
   mayHaveGitHubAuthority,
-  PERCENT_ENCODED_UTF8_CHARACTER_PATTERN,
+  type UrlInputProjection,
+  type UrlLikeCandidate,
+  urlInputProjection,
   urlInputText,
 } from "../domain/url-like-candidates.js";
 import { scanUrlLikeText } from "../domain/url-like-text.js";
@@ -15,6 +17,11 @@ import { assertNonNullable } from "../util/index.js";
 
 type RepositoryReference = Pick<Repository, "id" | "owner" | "name" | "visibility">;
 type InvalidUrlLikeTextScan = Extract<ReturnType<typeof scanUrlLikeText>, { status: "invalid" }>;
+type UrlLikeTextView = Extract<
+  ReturnType<typeof scanUrlLikeText>,
+  { status: "valid" }
+>["views"][number];
+type UrlTextPart = Readonly<{ start: number; end: number; kind: "path" | "query" | "fragment" }>;
 type RepositoryTextReferenceFinding =
   | Readonly<{
       reason:
@@ -49,16 +56,6 @@ function containsRepositoryNameInUrl(value: string, repository: RepositoryRefere
   );
 }
 
-function containsRepositoryNameInUrlComponent(
-  value: string,
-  repository: RepositoryReference,
-): boolean {
-  const decoded = value.replaceAll(PERCENT_ENCODED_UTF8_CHARACTER_PATTERN, (encoded) =>
-    decodeURIComponent(encoded),
-  );
-  return containsRepositoryNameInUrl(decoded, repository);
-}
-
 function absoluteUrl(candidate: string): string {
   const input = urlInputText(candidate);
   if (input.startsWith("//")) {
@@ -70,38 +67,169 @@ function absoluteUrl(candidate: string): string {
   return `https://${input}`;
 }
 
-function urlContainsRepositoryName(candidate: string, repository: RepositoryReference): boolean {
-  const input = urlInputText(candidate);
+function urlTextPart(
+  candidate: UrlLikeCandidate,
+  projection: UrlInputProjection,
+  start: number,
+  end: number,
+  kind: UrlTextPart["kind"],
+): UrlTextPart | undefined {
+  if (start === end) return undefined;
+  const sourceStart = projection.sourceIndices?.[start] ?? start;
+  const sourceEnd = projection.sourceIndices?.[end - 1] ?? end - 1;
+  return { start: candidate.start + sourceStart, end: candidate.start + sourceEnd + 1, kind };
+}
+
+function urlTextParts(candidate: UrlLikeCandidate): readonly UrlTextPart[] {
+  const projection = urlInputProjection(candidate.value, () => false);
+  const input = projection.value;
   const nonHierarchicalScheme = NON_HIERARCHICAL_SCHEME_PATTERN.exec(input);
-  const value = nonHierarchicalScheme == null ? absoluteUrl(candidate) : input;
-  if (URL.canParse(value)) {
-    const url = new URL(value);
-    return (
-      containsRepositoryNameInUrlComponent(url.pathname, repository) ||
-      containsRepositoryNameInUrlComponent(url.search, repository)
-    );
-  }
   const scheme = URL_SCHEME_PATTERN.exec(input);
   const authorityStart = input.startsWith("//") ? 2 : (scheme?.[0].length ?? 0);
-  const source =
+  const componentStart =
+    nonHierarchicalScheme == null ? input.slice(authorityStart).search(/[/?#\\]/u) : 0;
+  if (componentStart < 0) return [];
+  const pathStart =
     nonHierarchicalScheme == null
-      ? input.slice(authorityStart)
-      : input.slice(nonHierarchicalScheme[0].length);
-  const componentStart = nonHierarchicalScheme == null ? source.search(/[/?#\\]/u) : 0;
-  if (componentStart < 0) {
-    return false;
-  }
-  const fragmentStart = source.indexOf("#", componentStart);
-  const components = source.slice(
-    componentStart,
-    fragmentStart < 0 ? source.length : fragmentStart,
+      ? authorityStart + componentStart
+      : nonHierarchicalScheme[0].length;
+  const fragmentStart = input.indexOf("#", pathStart);
+  const beforeFragment = fragmentStart < 0 ? input.length : fragmentStart;
+  const queryStart = input.indexOf("?", pathStart);
+  const hasQuery = queryStart >= 0 && queryStart < beforeFragment;
+  const parts: UrlTextPart[] = [];
+  const path = urlTextPart(
+    candidate,
+    projection,
+    pathStart,
+    hasQuery ? queryStart : beforeFragment,
+    "path",
   );
-  const queryStart = components.indexOf("?");
-  const path = queryStart < 0 ? components : components.slice(0, queryStart);
-  const query = queryStart < 0 ? "" : components.slice(queryStart);
+  if (path != null) parts.push(path);
+  if (hasQuery) {
+    let fieldStart = queryStart + 1;
+    while (fieldStart < beforeFragment) {
+      const separator = input.indexOf("&", fieldStart);
+      const fieldEnd = separator < 0 || separator >= beforeFragment ? beforeFragment : separator;
+      const equals = input.indexOf("=", fieldStart);
+      if (equals < 0 || equals >= fieldEnd) {
+        const field = urlTextPart(candidate, projection, fieldStart, fieldEnd, "query");
+        if (field != null) parts.push(field);
+      } else {
+        const key = urlTextPart(candidate, projection, fieldStart, equals, "query");
+        const value = urlTextPart(candidate, projection, equals + 1, fieldEnd, "query");
+        if (key != null) parts.push(key);
+        if (value != null) parts.push(value);
+      }
+      fieldStart = fieldEnd + 1;
+    }
+  }
+  if (fragmentStart >= 0) {
+    const fragment = urlTextPart(
+      candidate,
+      projection,
+      fragmentStart + 1,
+      input.length,
+      "fragment",
+    );
+    if (fragment != null) parts.push(fragment);
+  }
+  return parts;
+}
+
+function firstCandidateAfter(candidates: readonly UrlLikeCandidate[], start: number): number {
+  let left = 0;
+  let right = candidates.length;
+  while (left < right) {
+    const middle = Math.floor((left + right) / 2);
+    const candidate = candidates[middle];
+    assertNonNullable(candidate, "URL候補の位置を取得できません");
+    if (candidate.start <= start) left = middle + 1;
+    else right = middle;
+  }
+  return left;
+}
+
+function containsRepositoryNameInUrlPart(
+  value: string,
+  part: UrlTextPart,
+  repository: RepositoryReference,
+  specialPath: boolean,
+): boolean {
+  const input = urlInputText(value.slice(part.start, part.end));
+  return containsRepositoryNameInUrl(
+    part.kind === "path" && specialPath ? input.replaceAll("\\", "/") : input,
+    repository,
+  );
+}
+
+function urlContainsRepositoryName(
+  view: UrlLikeTextView,
+  candidate: UrlLikeCandidate,
+  repository: RepositoryReference,
+): boolean {
+  const input = urlInputText(candidate.value);
+  const scheme = URL_SCHEME_PATTERN.exec(input);
+  const specialPath =
+    NON_HIERARCHICAL_SCHEME_PATTERN.exec(input) == null &&
+    (scheme == null || /^(?:https?|ftp|file|ws|wss):\/\//iu.test(input));
+  for (const part of urlTextParts(candidate)) {
+    let remainingStart = part.start;
+    for (
+      let index = firstCandidateAfter(view.candidates, candidate.start);
+      index < view.candidates.length;
+      index += 1
+    ) {
+      const nested = view.candidates[index];
+      assertNonNullable(nested, "入れ子のURL候補を取得できません");
+      if (nested.start >= part.end) break;
+      if (nested.end <= part.start) continue;
+      if (
+        nested.start > remainingStart &&
+        containsRepositoryNameInUrlPart(
+          view.value,
+          { ...part, start: remainingStart, end: nested.start },
+          repository,
+          specialPath,
+        )
+      ) {
+        return true;
+      }
+      remainingStart = Math.max(remainingStart, Math.min(part.end, nested.end));
+    }
+    if (
+      remainingStart < part.end &&
+      containsRepositoryNameInUrlPart(
+        view.value,
+        { ...part, start: remainingStart },
+        repository,
+        specialPath,
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function textOutsideUrlsContainsRepositoryName(
+  view: UrlLikeTextView,
+  repository: RepositoryReference,
+): boolean {
+  let remainingStart = 0;
+  for (const candidate of view.candidates) {
+    const outside = view.value.slice(remainingStart, candidate.start);
+    if (
+      containsRepositoryName(outside, repository) ||
+      containsRepositoryNameInUrl(outside, repository)
+    ) {
+      return true;
+    }
+    remainingStart = Math.max(remainingStart, candidate.end);
+  }
+  const outside = view.value.slice(remainingStart);
   return (
-    containsRepositoryNameInUrlComponent(path, repository) ||
-    containsRepositoryNameInUrlComponent(query, repository)
+    containsRepositoryName(outside, repository) || containsRepositoryNameInUrl(outside, repository)
   );
 }
 
@@ -118,40 +246,31 @@ function decodedPathComponent(value: string): string | undefined {
 }
 
 function repositoryTextReferenceFinding(
-  value: string,
+  scan: ReturnType<typeof scanUrlLikeText>,
   repository: RepositoryReference,
 ): RepositoryTextReferenceFinding | undefined {
-  const scan = scanUrlLikeText(value);
   if (scan.status === "invalid") {
     return scan.reason === "invalid_encoding"
       ? { reason: "scanner_invalid_encoding", scanFailure: scan.failure }
       : { reason: `scanner_${scan.reason}` };
   }
-  const urls = scan.candidates;
   if (
-    urls.some((url) => {
-      const referenced = githubRepositoryFromUrl(url);
-      return (
-        (referenced != null &&
-          referenced !== "invalid" &&
-          referenced.owner === repository.owner.toLowerCase() &&
-          referenced.name === repository.name.toLowerCase()) ||
-        urlContainsRepositoryName(url, repository)
-      );
-    })
+    scan.views.some((view) =>
+      view.candidates.some((candidate) => {
+        const referenced = githubRepositoryFromUrl(candidate.value);
+        return (
+          (referenced != null &&
+            referenced !== "invalid" &&
+            referenced.owner === repository.owner.toLowerCase() &&
+            referenced.name === repository.name.toLowerCase()) ||
+          urlContainsRepositoryName(view, candidate, repository)
+        );
+      }),
+    )
   ) {
     return { reason: "private_repository_url" };
   }
-  return scan.decodedTexts.some((text) => {
-    let remaining = text;
-    for (const url of urls) {
-      remaining = remaining.replaceAll(url, " ");
-    }
-    return (
-      containsRepositoryName(remaining, repository) ||
-      containsRepositoryNameInUrl(remaining, repository)
-    );
-  })
+  return scan.views.some((view) => textOutsideUrlsContainsRepositoryName(view, repository))
     ? { reason: "private_repository_name" }
     : undefined;
 }
@@ -391,8 +510,9 @@ export function findPrivateRepositoryReference(
     assertNonNullable(entry, "非公開repository参照の検査対象がありません");
     const { value, path } = entry;
     if (typeof value === "string") {
+      const scan = scanUrlLikeText(value);
       for (const repository of privateRepositories) {
-        const finding = repositoryTextReferenceFinding(value, repository);
+        const finding = repositoryTextReferenceFinding(scan, repository);
         if (finding != null) {
           return Object.freeze({ ...finding, path, value });
         }
