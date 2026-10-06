@@ -1,5 +1,5 @@
 import type { Repository } from "../domain/index.js";
-import { scanUrlLikeText } from "../domain/url-like-text.js";
+import { isGitHubHost, mayHaveGitHubAuthority, scanUrlLikeText } from "../domain/url-like-text.js";
 import {
   verifiedExternalUrls,
   type VerifiedExternalReference,
@@ -22,10 +22,6 @@ type RepositoryTextReferenceFinding =
     }>;
 
 const URL_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//u;
-
-function isGitHubHost(hostname: string): boolean {
-  return hostname === "github.com" || hostname === "github.com.";
-}
 
 function escapePattern(value: string): string {
   return value.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -106,20 +102,12 @@ function repositoryTextReferenceFinding(
     : undefined;
 }
 
-function hasGitHubAuthority(candidate: string): boolean {
-  const source = candidate.replace(URL_SCHEME_PATTERN, "").replace(/^\/\//u, "");
-  const [authority] = source.split(/[/?#]/u);
-  const rawHostname = authority?.split("@").at(-1)?.split(":")[0];
-  const hostname = rawHostname == null ? undefined : decodedPathComponent(rawHostname);
-  return hostname != null && isGitHubHost(hostname.toLowerCase());
-}
-
 function githubRepositoryFromUrl(
   candidate: string,
 ): Readonly<{ owner: string; name: string }> | "invalid" | undefined {
   const value = absoluteUrl(candidate);
   if (!URL.canParse(value)) {
-    return hasGitHubAuthority(candidate) ? "invalid" : undefined;
+    return mayHaveGitHubAuthority(candidate) ? "invalid" : undefined;
   }
   const url = new URL(value);
   if (!isGitHubHost(url.hostname)) {

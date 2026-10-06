@@ -4,7 +4,7 @@ import { type CompileContext, fromMarkdown, type Token } from "mdast-util-from-m
 import { assertNonNullable } from "../util/index.js";
 
 const NON_SCHEME_URL_LIKE_START_PATTERN =
-  /(?<![A-Za-z0-9+.-])(?:mailto|javascript|data|urn|tel|blob|about):|(?<![:/])\/\/|(?<![A-Za-z0-9_.@/:%-])(?:[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?![\p{L}\p{N}_]))/iu;
+  /(?<![A-Za-z0-9+.-])(?:mailto|javascript|data|urn|tel|blob|about):|(?<![:/])\/\/|(?<![\p{L}\p{N}_.．。｡@/:%-])(?:[\p{L}\p{N}-]+(?:[.．。｡][\p{L}\p{N}-]+)*[.．。｡][\p{L}]{2,}(?![\p{L}\p{N}_]))/iu;
 const URL_LIKE_START_PATTERN = new RegExp(
   `[A-Za-z][A-Za-z0-9+.-]*:\\/\\/|${NON_SCHEME_URL_LIKE_START_PATTERN.source}`,
   "giu",
@@ -15,6 +15,7 @@ const URL_LIKE_TEXT_PATTERN = new RegExp(
 );
 const SCHEME_FIRST_CHARACTER_PATTERN = /[A-Za-z]/iu;
 const SCHEME_CHARACTER_PATTERN = /[A-Za-z0-9+.-]/iu;
+const URL_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//u;
 const URL_LIKE_DELIMITER_PATTERN = /[\s<>"'`]/u;
 const TRAILING_PUNCTUATION_CHARACTER_PATTERN = /[.,;:!?、。！？)\]}）］｝」』]/u;
 const PERCENT_ENCODED_BYTE_SEQUENCE_PATTERN = /(?:%[0-9a-f]{2})+/giu;
@@ -695,11 +696,35 @@ function* urlLikeCandidates(
   }
 }
 
-function hasGitHubAuthority(candidate: string): boolean {
-  const source = candidate.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//u, "").replace(/^\/\//u, "");
+/** 正規化済みのhostがGitHubか判定する。 */
+export function isGitHubHost(hostname: string): boolean {
+  return hostname === "github.com" || hostname === "github.com.";
+}
+
+/** URL候補のauthorityがGitHubか、解析不能でもGitHubになり得るか判定する。 */
+export function mayHaveGitHubAuthority(candidate: string): boolean {
+  let absoluteUrl = candidate;
+  if (candidate.startsWith("//")) absoluteUrl = `https:${candidate}`;
+  else if (!URL_SCHEME_PATTERN.test(candidate)) absoluteUrl = `https://${candidate}`;
+  if (URL.canParse(absoluteUrl)) {
+    return isGitHubHost(new URL(absoluteUrl).hostname);
+  }
+  const source = candidate.replace(URL_SCHEME_PATTERN, "").replace(/^\/\//u, "");
   const [authority] = source.split(/[/?#]/u);
-  const hostname = authority?.split("@").at(-1);
-  return hostname != null && /^github\.com\.?(?=$|[:%])/iu.test(hostname);
+  const rawHostname = authority?.split("@").at(-1)?.split(":")[0];
+  if (rawHostname == null) return false;
+  const invalidPercent = /%(?![0-9a-f]{2})/iu.exec(rawHostname);
+  const hostname =
+    invalidPercent == null ? rawHostname : rawHostname.slice(0, invalidPercent.index);
+  const possibleUrl = `https://${hostname}`;
+  if (URL.canParse(possibleUrl)) {
+    return isGitHubHost(new URL(possibleUrl).hostname);
+  }
+  const percentIndex = hostname.indexOf("%");
+  if (percentIndex < 0) return false;
+  const prefixUrl = `https://${hostname.slice(0, percentIndex)}`;
+  if (!URL.canParse(prefixUrl)) return false;
+  return isGitHubHost(new URL(prefixUrl).hostname);
 }
 
 function percentDecodedText(text: MappedText): TextTransformation {
@@ -789,7 +814,7 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
       candidateCharacters += candidate.value.length;
       if (candidateCharacters > 1_000_000)
         return Object.freeze({ status: "invalid", reason: "candidate_characters_limit" });
-      if (hasGitHubAuthority(candidate.value)) {
+      if (mayHaveGitHubAuthority(candidate.value)) {
         const originals = originalTextSpans(view.text, candidate).map((span) =>
           value.slice(span.start, span.end),
         );
