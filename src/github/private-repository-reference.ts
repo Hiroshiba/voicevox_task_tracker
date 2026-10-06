@@ -98,7 +98,10 @@ function repositoryTextReferenceFinding(
     remaining = remaining.replaceAll(url, " ");
   }
   return containsRepositoryName(remaining, repository) ||
-    scan.decodedTexts.some((text) => containsRepositoryName(text, repository))
+    scan.decodedTexts.some(
+      (text) =>
+        containsRepositoryName(text, repository) || containsRepositoryNameInUrl(text, repository),
+    )
     ? { reason: "private_repository_name" }
     : undefined;
 }

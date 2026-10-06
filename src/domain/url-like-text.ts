@@ -4,7 +4,7 @@ import { type CompileContext, fromMarkdown, type Token } from "mdast-util-from-m
 import { assertNonNullable } from "../util/index.js";
 
 const NON_SCHEME_URL_LIKE_START_PATTERN =
-  /(?<![A-Za-z0-9+.-])(?:mailto|javascript|data|urn|tel|blob|about):|(?<![:/])\/\/|(?<![A-Za-z0-9_.@/:%-])(?:[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?=[/?#]|\b))/iu;
+  /(?<![A-Za-z0-9+.-])(?:mailto|javascript|data|urn|tel|blob|about):|(?<![:/])\/\/|(?<![A-Za-z0-9_.@/:%-])(?:[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?![\p{L}\p{N}_]))/iu;
 const URL_LIKE_START_PATTERN = new RegExp(
   `[A-Za-z][A-Za-z0-9+.-]*:\\/\\/|${NON_SCHEME_URL_LIKE_START_PATTERN.source}`,
   "giu",
@@ -695,6 +695,13 @@ function* urlLikeCandidates(
   }
 }
 
+function hasGitHubAuthority(candidate: string): boolean {
+  const source = candidate.replace(/^[A-Za-z][A-Za-z0-9+.-]*:\/\//u, "").replace(/^\/\//u, "");
+  const [authority] = source.split(/[/?#]/u);
+  const hostname = authority?.split("@").at(-1);
+  return hostname != null && /^github\.com\.?(?=$|[:%])/iu.test(hostname);
+}
+
 function percentDecodedText(text: MappedText): TextTransformation {
   const builder = textBuilder();
   let start = 0;
@@ -742,7 +749,7 @@ function sameSourceSegments(
   });
 }
 
-/** URLの全開始位置と有界な復号段階を検査し、候補内の曖昧な符号化を拒否する。 */
+/** URLの全開始位置と有界な復号段階を検査し、GitHub候補の曖昧な符号化を拒否する。 */
 export function scanUrlLikeText(value: string): UrlLikeTextScan {
   const candidates = new Set<string>();
   const decodedTexts = new Set<string>();
@@ -782,28 +789,45 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
       candidateCharacters += candidate.value.length;
       if (candidateCharacters > 1_000_000)
         return Object.freeze({ status: "invalid", reason: "candidate_characters_limit" });
-      const originals = originalTextSpans(view.text, candidate).map((span) =>
-        value.slice(span.start, span.end),
-      );
-      for (const original of originals) {
+      if (hasGitHubAuthority(candidate.value)) {
+        const originals = originalTextSpans(view.text, candidate).map((span) =>
+          value.slice(span.start, span.end),
+        );
+        for (const original of originals) {
+          try {
+            decodeURIComponent(original);
+          } catch (error: unknown) {
+            if (!(error instanceof URIError)) throw error;
+            return Object.freeze({
+              status: "invalid",
+              reason: "invalid_encoding",
+              failure: Object.freeze({
+                candidate: candidate.value,
+                originalCandidate: original,
+                decodeDepth: view.decodeDepth,
+              }),
+            });
+          }
+        }
+        const originalCandidate = originals.join("");
+        for (const match of candidate.value.matchAll(/%(?![0-9a-f]{2})/giu)) {
+          if (!isDecodedLiteralPercent(view.text, candidate.start + match.index)) {
+            return Object.freeze({
+              status: "invalid",
+              reason: "invalid_encoding",
+              failure: Object.freeze({
+                candidate: candidate.value,
+                originalCandidate,
+                decodeDepth: view.decodeDepth,
+              }),
+            });
+          }
+        }
         try {
-          decodeURIComponent(original);
+          for (const match of candidate.value.matchAll(PERCENT_ENCODED_BYTE_SEQUENCE_PATTERN))
+            decodeURIComponent(match[0]);
         } catch (error: unknown) {
           if (!(error instanceof URIError)) throw error;
-          return Object.freeze({
-            status: "invalid",
-            reason: "invalid_encoding",
-            failure: Object.freeze({
-              candidate: candidate.value,
-              originalCandidate: original,
-              decodeDepth: view.decodeDepth,
-            }),
-          });
-        }
-      }
-      const originalCandidate = originals.join("");
-      for (const match of candidate.value.matchAll(/%(?![0-9a-f]{2})/giu)) {
-        if (!isDecodedLiteralPercent(view.text, candidate.start + match.index)) {
           return Object.freeze({
             status: "invalid",
             reason: "invalid_encoding",
@@ -814,21 +838,6 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
             }),
           });
         }
-      }
-      try {
-        for (const match of candidate.value.matchAll(PERCENT_ENCODED_BYTE_SEQUENCE_PATTERN))
-          decodeURIComponent(match[0]);
-      } catch (error: unknown) {
-        if (!(error instanceof URIError)) throw error;
-        return Object.freeze({
-          status: "invalid",
-          reason: "invalid_encoding",
-          failure: Object.freeze({
-            candidate: candidate.value,
-            originalCandidate,
-            decodeDepth: view.decodeDepth,
-          }),
-        });
       }
       candidates.add(candidate.value);
       if (candidates.size > 4096)
