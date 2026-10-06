@@ -643,6 +643,7 @@ function isBareUrlLikeAuthority(authority: string): boolean {
 function* urlLikeStartIndices(value: string): Generator<number> {
   let authorityStart = 0;
   let schemeEnd = 0;
+  let coveredSchemeRelativeStart: number | undefined;
   for (let index = 0; index < value.length; index += 1) {
     const character = value.charAt(index);
     if (AUTHORITY_SEPARATOR_PATTERN.test(character)) authorityStart = index + 1;
@@ -665,15 +666,17 @@ function* urlLikeStartIndices(value: string): Generator<number> {
       while (schemeEnd < value.length && SCHEME_CHARACTER_PATTERN.test(value.charAt(schemeEnd))) {
         schemeEnd += 1;
       }
+      const startsSlashScheme = value.startsWith("://", schemeEnd);
+      if (startsSlashScheme) coveredSchemeRelativeStart = schemeEnd + 1;
       startsScheme =
-        value.startsWith("://", schemeEnd) ||
+        startsSlashScheme ||
         (value.charAt(schemeEnd) === ":" &&
           NON_SLASH_SCHEME_NAME_PATTERN.test(value.slice(index, schemeEnd)));
     }
     const startsSchemeRelative =
       character === "/" &&
       value.startsWith("//", index) &&
-      value.charAt(index - 1) !== ":" &&
+      index !== coveredSchemeRelativeStart &&
       value.charAt(index - 1) !== "/";
     if (startsBareAuthority || startsScheme || startsSchemeRelative) yield index;
   }
