@@ -40,24 +40,22 @@ function decodedHtmlValue(
   context: "attribute" | "text",
 ): Readonly<{ status: "valid"; value: string }> | Readonly<{ status: "invalid" }> {
   const completeReference = /^&(?:#[xX][0-9a-f]{1,6}|#[0-9]{1,7}|[A-Za-z][A-Za-z0-9]{1,31});$/iu;
+  const optionalSemicolonReference =
+    /^&(?:AElig|AMP|Aacute|Acirc|Agrave|Aring|Atilde|Auml|COPY|Ccedil|ETH|Eacute|Ecirc|Egrave|Euml|GT|Iacute|Icirc|Igrave|Iuml|LT|Ntilde|Oacute|Ocirc|Ograve|Oslash|Otilde|Ouml|QUOT|REG|THORN|Uacute|Ucirc|Ugrave|Uuml|Yacute|aacute|acirc|acute|aelig|agrave|amp|aring|atilde|auml|brvbar|ccedil|cedil|cent|copy|curren|deg|divide|eacute|ecirc|egrave|eth|euml|frac12|frac14|frac34|gt|iacute|icirc|iexcl|igrave|iquest|iuml|laquo|lt|macr|micro|middot|nbsp|not|ntilde|oacute|ocirc|ograve|ordf|ordm|oslash|otilde|ouml|para|plusmn|pound|quot|raquo|reg|sect|shy|sup1|sup2|sup3|szlig|thorn|times|uacute|ucirc|ugrave|uml|uuml|yacute|yen|yuml)/u;
   for (const match of value.matchAll(/&(?:#[^&;\t\r\n "'<>]*;?|[A-Za-z][A-Za-z0-9]*;?)/gu)) {
     const reference = match[0];
     if (reference.startsWith("&#")) {
       if (!completeReference.test(reference)) return { status: "invalid" };
-    } else if (context === "text") {
-      if (reference.endsWith(";") && decodeHtmlCharacterReference(reference) !== reference)
-        continue;
-      const name = reference.slice(1).replace(/;$/u, "");
-      for (let length = 1; length <= Math.min(name.length, 32); length += 1) {
-        const prefix = `&${name.slice(0, length)};`;
-        if (decodeHtmlCharacterReference(prefix) !== prefix) return { status: "invalid" };
+    } else if (reference.endsWith(";") && decodeHtmlCharacterReference(reference) !== reference) {
+      continue;
+    } else {
+      const prefix = optionalSemicolonReference.exec(reference)?.[0];
+      if (
+        prefix != null &&
+        (context === "text" || !/[A-Za-z0-9=]/u.test(value.charAt(match.index + prefix.length)))
+      ) {
+        return { status: "invalid" };
       }
-    } else if (
-      !reference.endsWith(";") &&
-      !/[A-Za-z0-9=]/u.test(value.charAt(match.index + reference.length)) &&
-      decodeHtmlCharacterReference(`${reference};`) !== `${reference};`
-    ) {
-      return { status: "invalid" };
     }
   }
   return {
