@@ -39,19 +39,39 @@ function escapePattern(value: string): string {
   return value.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
-function containsRepositoryName(value: string, repository: RepositoryReference): boolean {
+function repositoryNamePattern(repository: RepositoryReference, context: "text" | "url"): RegExp {
   const fullName = `${escapePattern(repository.owner)}/${escapePattern(repository.name)}`;
   return new RegExp(
-    `(?<![A-Za-z0-9_.%/?=&-])${fullName}(?:\\.git)?(?![A-Za-z0-9_./%-]|\\.[A-Za-z0-9_-])`,
+    context === "text"
+      ? `(?<![A-Za-z0-9_.%/?=&-])${fullName}(?:\\.git)?(?![A-Za-z0-9_/%-]|\\.[A-Za-z0-9_-])`
+      : `(?<![A-Za-z0-9_.%-])${fullName}(?:\\.git)?(?![A-Za-z0-9_%-]|\\.[A-Za-z0-9_-])`,
     "iu",
-  ).test(value);
+  );
+}
+
+function containsRepositoryName(value: string, repository: RepositoryReference): boolean {
+  return repositoryNamePattern(repository, "text").test(value);
 }
 
 function containsRepositoryNameInUrl(value: string, repository: RepositoryReference): boolean {
-  const fullName = `${escapePattern(repository.owner)}/${escapePattern(repository.name)}`;
-  return new RegExp(`(?<![A-Za-z0-9_.%-])${fullName}(?:\\.git)?(?![A-Za-z0-9_.%-])`, "iu").test(
-    value,
-  );
+  return repositoryNamePattern(repository, "url").test(value);
+}
+
+function containsRepositoryNameAcrossUrlStart(
+  value: string,
+  urlStart: number,
+  repository: RepositoryReference,
+  context: "text" | "url" | "special_path",
+): boolean {
+  const input = context === "text" ? value : urlInputText(value);
+  const start = context === "text" ? urlStart : urlInputText(value.slice(0, urlStart)).length;
+  const pattern = repositoryNamePattern(repository, "url");
+  for (const matched of (context === "special_path" ? input.replaceAll("\\", "/") : input).matchAll(
+    new RegExp(pattern.source, "giu"),
+  )) {
+    if (matched.index < start && matched.index + matched[0].length > start) return true;
+  }
+  return false;
 }
 
 function absoluteUrl(candidate: string): string {
@@ -114,12 +134,18 @@ function urlContainsRepositoryName(
       if (nested.end <= part.start) continue;
       if (
         nested.start > remainingStart &&
-        containsRepositoryNameInUrlPart(
+        (containsRepositoryNameInUrlPart(
           view.value,
           { ...part, start: remainingStart, end: nested.start },
           repository,
           specialPath,
-        )
+        ) ||
+          containsRepositoryNameAcrossUrlStart(
+            view.value.slice(remainingStart, Math.min(part.end, nested.end)),
+            nested.start - remainingStart,
+            repository,
+            part.kind === "path" && specialPath ? "special_path" : "url",
+          ))
       ) {
         return true;
       }
@@ -149,7 +175,14 @@ function textOutsideUrlsContainsRepositoryName(
     const outside = view.value.slice(remainingStart, candidate.start);
     if (
       containsRepositoryName(outside, repository) ||
-      containsRepositoryNameInUrl(outside, repository)
+      containsRepositoryNameInUrl(outside, repository) ||
+      (candidate.start > remainingStart &&
+        containsRepositoryNameAcrossUrlStart(
+          view.value.slice(remainingStart, candidate.end),
+          candidate.start - remainingStart,
+          repository,
+          "text",
+        ))
     ) {
       return true;
     }

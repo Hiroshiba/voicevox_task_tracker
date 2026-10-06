@@ -11,6 +11,14 @@ import {
   urlInputText,
   urlLikeCandidates,
 } from "./url-like-candidates.js";
+import {
+  appendHtmlBoundarySpan,
+  decodeHtmlCharacterReference,
+  HTML_CHARACTER_REFERENCE_PATTERN,
+  htmlAnchorTag,
+  htmlDisplayTag,
+  isHtmlReferenceFragment,
+} from "./url-like-html.js";
 
 const NON_SCHEME_URL_LIKE_START_PATTERN =
   /(?<![A-Za-z0-9+.-])(?:mailto|javascript|data|urn|tel|blob|about):|(?<![:/])\/\/|(?<![\p{L}\p{N}_.．。｡@/:%-])(?:[\p{L}\p{N}-]+(?:[.．。｡][\p{L}\p{N}-]+)*[.．。｡][\p{L}]{2,}(?![\p{L}\p{N}_]))/iu;
@@ -317,6 +325,7 @@ function appendRenderedText(
   text: MappedText,
   span: TextSpan,
   expected: string,
+  context: "markdown" | "html",
 ): boolean {
   const raw = text.value.slice(span.start, span.end);
   if (raw === expected) {
@@ -326,7 +335,9 @@ function appendRenderedText(
   const chunkStart = builder.chunks.length;
   let start = span.start;
   const replacements =
-    /\\[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]|&(?:#[xX][0-9a-f]{1,6}|#[0-9]{1,7}|[A-Za-z][A-Za-z0-9]{1,31});/giu;
+    context === "html"
+      ? HTML_CHARACTER_REFERENCE_PATTERN
+      : /\\[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]|&(?:#[xX][0-9a-f]{1,6}|#[0-9]{1,7}|[A-Za-z][A-Za-z0-9]{1,31});/giu;
   for (const match of raw.matchAll(replacements)) {
     const replacementStart = span.start + match.index;
     const replacementEnd = replacementStart + match[0].length;
@@ -336,15 +347,7 @@ function appendRenderedText(
       start = replacementEnd;
       continue;
     }
-    const paragraph = fromMarkdown(match[0]).children[0];
-    assertNonNullable(paragraph, "文字参照の表示値を取得できません");
-    if (paragraph.type !== "paragraph" || paragraph.children.length !== 1) {
-      throw new TypeError("文字参照の表示値を解釈できません");
-    }
-    const child = paragraph.children[0];
-    assertNonNullable(child, "文字参照の表示値を取得できません");
-    if (child.type !== "text") throw new TypeError("文字参照の表示値を解釈できません");
-    appendSourceText(builder, child.value, {
+    appendSourceText(builder, decodeHtmlCharacterReference(match[0]), {
       kind: "replacement",
       original: originalTextSpans(text, { start: replacementStart, end: replacementEnd }),
       literalPercent: false,
@@ -379,31 +382,6 @@ function appendInlineCode(
   return true;
 }
 
-function appendHtmlBoundary(
-  builder: TextBuilder,
-  text: MappedText,
-  node: Extract<Nodes, { type: "html" }>,
-  boundaries: TextSpan[],
-  displayStart: number,
-): void {
-  const start = builder.length - displayStart;
-  appendTextSlice(builder, text, nodeTextSpan(node));
-  const previous = boundaries.at(-1);
-  const end = builder.length - displayStart;
-  if (previous?.end === start) {
-    boundaries[boundaries.length - 1] = { start: previous.start, end };
-  } else {
-    boundaries.push({ start, end });
-  }
-}
-
-function isReferenceFragment(character: string): boolean {
-  return (
-    /[A-Za-z0-9_.:/%+-]/u.test(character.normalize("NFKC")) ||
-    /[\p{Mark}\p{Format}]/u.test(character)
-  );
-}
-
 function appendInlineDisplayText(
   builder: TextBuilder,
   text: MappedText,
@@ -431,7 +409,13 @@ function appendInlineDisplayText(
     if (node.type === "text") {
       const literal = textWithoutMarkdownPrefixes(text, nodeTextSpan(node), prefixes);
       if (
-        !appendRenderedText(builder, literal, { start: 0, end: literal.value.length }, node.value)
+        !appendRenderedText(
+          builder,
+          literal,
+          { start: 0, end: literal.value.length },
+          node.value,
+          "markdown",
+        )
       )
         return false;
     } else if (node.type === "inlineCode") {
@@ -469,7 +453,13 @@ function appendInlineDisplayText(
         appendTextSlice(builder, text, nodeTextSpan(node));
         continue;
       }
-      if (/^<(?:br\s*\/?|\/?p)>$/iu.test(node.value)) {
+      const tag = htmlDisplayTag(node.value);
+      if (tag.kind === "invalid") return false;
+      if (tag.kind === "anchor") {
+        if (entry.mode === "link") return false;
+        continue;
+      }
+      if (tag.kind === "break") {
         appendSourceText(builder, "\n", {
           kind: "replacement",
           original: originalTextSpans(text, nodeTextSpan(node)),
@@ -479,22 +469,19 @@ function appendInlineDisplayText(
         });
         continue;
       }
-      const tag = /^<(\/?)(code|kbd|samp|span|strong|em|b|i|s|del|sub|sup|mark)>$/iu.exec(
-        node.value,
-      );
-      if (tag == null) {
+      if (tag.kind === "other") {
         if (entry.mode === "link") return false;
-        appendHtmlBoundary(builder, text, node, htmlBoundaries, displayStart);
+        const start = builder.length - displayStart;
+        appendTextSlice(builder, text, nodeTextSpan(node));
+        appendHtmlBoundarySpan(htmlBoundaries, start, builder.length - displayStart);
         continue;
       }
-      const name = tag[2];
-      assertNonNullable(name, "MarkdownラベルのHTML tagを取得できません");
       if (entry.mode === "link") {
-        if (tag[1] === "/") {
-          if (htmlTags.at(-1) !== name.toLowerCase()) return false;
+        if (tag.closing) {
+          if (htmlTags.at(-1) !== tag.name) return false;
           htmlTags.pop();
         } else {
-          htmlTags.push(name.toLowerCase());
+          htmlTags.push(tag.name);
         }
       }
     } else if ("children" in node) {
@@ -515,8 +502,8 @@ function appendInlineDisplayText(
   if (
     htmlBoundaries.some(
       (span) =>
-        isReferenceFragment(display.charAt(span.start - 1)) &&
-        isReferenceFragment(display.charAt(span.end)),
+        isHtmlReferenceFragment(display.charAt(span.start - 1)) &&
+        isHtmlReferenceFragment(display.charAt(span.end)),
     )
   )
     return false;
@@ -617,6 +604,7 @@ function markdownLayout(text: MappedText): MarkdownLayout {
   }
   const displayedNodes: Extract<Nodes, { type: "paragraph" | "heading" }>[] = [];
   const images: Extract<MarkdownReferenceNode, { type: "image" | "imageReference" }>[] = [];
+  const htmlNodes: Extract<Nodes, { type: "html" }>[] = [];
   const root = fromMarkdown(value, {
     mdastExtensions: [
       {
@@ -656,6 +644,7 @@ function markdownLayout(text: MappedText): MarkdownLayout {
       displayedNodes.push(node);
     }
     if (node.type === "image" || node.type === "imageReference") images.push(node);
+    if (node.type === "html") htmlNodes.push(node);
     if ("children" in node) pending.push(...node.children);
   }
   const prefixes: TextSpan[] = [];
@@ -688,9 +677,34 @@ function markdownLayout(text: MappedText): MarkdownLayout {
     assertNonNullable(expected, "Markdown fieldの表示値を取得できません");
     const builder = textBuilder();
     const literal = textWithoutMarkdownPrefixes(text, field.span, prefixes);
-    if (!appendRenderedText(builder, literal, { start: 0, end: literal.value.length }, expected))
+    if (
+      !appendRenderedText(
+        builder,
+        literal,
+        { start: 0, end: literal.value.length },
+        expected,
+        "markdown",
+      )
+    )
       return { status: "invalid" };
     fields.push({ text: mappedText(builder), context: field.field === "url" ? "url" : "text" });
+  }
+  for (const node of htmlNodes) {
+    const anchor = htmlAnchorTag(node.value);
+    if (anchor.kind === "invalid") return { status: "invalid" };
+    if (anchor.kind === "other") continue;
+    const literal = textWithoutMarkdownPrefixes(text, nodeTextSpan(node), prefixes);
+    if (literal.value !== node.value) return { status: "invalid" };
+    if (anchor.kind === "close") continue;
+    for (const attribute of anchor.attributes) {
+      const builder = textBuilder();
+      if (!appendRenderedText(builder, literal, attribute.span, attribute.value, "html"))
+        return { status: "invalid" };
+      fields.push({
+        text: mappedText(builder),
+        context: attribute.name === "href" ? "url" : "text",
+      });
+    }
   }
   for (const image of images) {
     const children = labels.get(image);
