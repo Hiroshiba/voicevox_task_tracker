@@ -13,8 +13,12 @@ const URL_LIKE_TEXT_PATTERN = new RegExp(
   `(?:${URL_LIKE_START_PATTERN.source})[^\\s<>"'\\x60]*`,
   "giu",
 );
-const SCHEME_FIRST_CHARACTER_PATTERN = /[A-Za-z]/iu;
-const SCHEME_CHARACTER_PATTERN = /[A-Za-z0-9+.-]/iu;
+const SCHEME_FIRST_CHARACTER_PATTERN = /[A-Za-z]/u;
+const SCHEME_CHARACTER_PATTERN = /[A-Za-z0-9+.-]/u;
+const NON_SLASH_SCHEME_NAME_PATTERN = /^(?:mailto|javascript|data|urn|tel|blob|about)$/iu;
+const AUTHORITY_SEPARATOR_PATTERN = /[\s<>"'`/?#&=;:,()[\]{}、！？）］｝「」『』]/u;
+const AUTHORITY_DOT_OR_ESCAPE_PATTERN = /[.．。｡%]/u;
+const DOMAIN_SUFFIX_PATTERN = /^(?:[a-z]{2,}|xn--[a-z0-9-]+)$/u;
 const URL_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//u;
 const URL_LIKE_DELIMITER_PATTERN = /[\s<>"'`]/u;
 const TRAILING_PUNCTUATION_CHARACTER_PATTERN = /[.,;:!?、。！？)\]}）］｝」』]/u;
@@ -620,31 +624,58 @@ function markdownLayout(text: MappedText): MarkdownLayout {
   };
 }
 
+function isBareUrlLikeAuthority(authority: string): boolean {
+  if (!AUTHORITY_DOT_OR_ESCAPE_PATTERN.test(authority)) return false;
+  let hostname = authority;
+  let absoluteUrl = `https://${hostname}`;
+  if (!URL.canParse(absoluteUrl)) {
+    const percentIndex = hostname.indexOf("%");
+    if (percentIndex < 0) return false;
+    hostname = hostname.slice(0, percentIndex);
+    absoluteUrl = `https://${hostname}`;
+    if (!URL.canParse(absoluteUrl)) return false;
+  }
+  const labels = new URL(absoluteUrl).hostname.replace(/\.$/u, "").split(".");
+  const suffix = labels.at(-1);
+  return labels.length > 1 && suffix != null && DOMAIN_SUFFIX_PATTERN.test(suffix);
+}
+
 function* urlLikeStartIndices(value: string): Generator<number> {
-  const nonSchemeStart = new RegExp(NON_SCHEME_URL_LIKE_START_PATTERN.source, "iyu");
+  let authorityStart = 0;
   let schemeEnd = 0;
-  for (let index = 0; index < value.length;) {
-    if (SCHEME_FIRST_CHARACTER_PATTERN.test(value.charAt(index))) {
-      if (index >= schemeEnd) {
-        schemeEnd = index + 1;
-        while (schemeEnd < value.length && SCHEME_CHARACTER_PATTERN.test(value.charAt(schemeEnd))) {
-          schemeEnd += 1;
-        }
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value.charAt(index);
+    if (AUTHORITY_SEPARATOR_PATTERN.test(character)) authorityStart = index + 1;
+    let startsBareAuthority = false;
+    if (index === authorityStart) {
+      let authorityEnd = index;
+      while (
+        authorityEnd < value.length &&
+        !AUTHORITY_SEPARATOR_PATTERN.test(value.charAt(authorityEnd))
+      ) {
+        authorityEnd += 1;
       }
-      if (value.startsWith("://", schemeEnd)) {
-        yield index;
-        index = schemeEnd + 3;
-        continue;
+      startsBareAuthority =
+        !value.slice(Math.max(0, index - 2), index).endsWith("//") &&
+        isBareUrlLikeAuthority(value.slice(index, authorityEnd));
+    }
+    let startsScheme = false;
+    if (index >= schemeEnd && SCHEME_FIRST_CHARACTER_PATTERN.test(character)) {
+      schemeEnd = index + 1;
+      while (schemeEnd < value.length && SCHEME_CHARACTER_PATTERN.test(value.charAt(schemeEnd))) {
+        schemeEnd += 1;
       }
+      startsScheme =
+        value.startsWith("://", schemeEnd) ||
+        (value.charAt(schemeEnd) === ":" &&
+          NON_SLASH_SCHEME_NAME_PATTERN.test(value.slice(index, schemeEnd)));
     }
-    nonSchemeStart.lastIndex = index;
-    const match = nonSchemeStart.exec(value);
-    if (match != null) {
-      yield index;
-      index = nonSchemeStart.lastIndex;
-      continue;
-    }
-    index += 1;
+    const startsSchemeRelative =
+      character === "/" &&
+      value.startsWith("//", index) &&
+      value.charAt(index - 1) !== ":" &&
+      value.charAt(index - 1) !== "/";
+    if (startsBareAuthority || startsScheme || startsSchemeRelative) yield index;
   }
 }
 
