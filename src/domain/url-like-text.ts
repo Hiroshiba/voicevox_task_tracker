@@ -66,10 +66,15 @@ type TextOrigin =
       percentDecoded: boolean;
     }>;
 type SourceTextSegment = TextSpan & TextOrigin;
-type MappedText = Readonly<{ value: string; segments: readonly SourceTextSegment[] }>;
+type MappedText = Readonly<{
+  value: string;
+  segments: readonly SourceTextSegment[];
+  hardBoundaries: readonly number[];
+}>;
 interface TextBuilder {
   chunks: string[];
   segments: SourceTextSegment[];
+  hardBoundaries: number[];
   length: number;
 }
 type MappedTextView = Readonly<{ text: MappedText; context: "markdown" | "url" | "text" }>;
@@ -84,6 +89,7 @@ type MarkdownLayout =
   | Readonly<{ status: "invalid" }>
   | Readonly<{
       status: "valid";
+      text: MappedText;
       offsets: readonly number[];
       display: TextTransformation;
       fields: readonly MappedTextView[];
@@ -98,11 +104,38 @@ function nodeTextSpan(node: Nodes): TextSpan {
 }
 
 function textBuilder(): TextBuilder {
-  return { chunks: [], segments: [], length: 0 };
+  return { chunks: [], segments: [], hardBoundaries: [], length: 0 };
 }
 
 function mappedText(builder: TextBuilder): MappedText {
-  return { value: builder.chunks.join(""), segments: builder.segments };
+  return {
+    value: builder.chunks.join(""),
+    segments: builder.segments,
+    hardBoundaries: builder.hardBoundaries,
+  };
+}
+
+function firstHardBoundary(boundaries: readonly number[], start: number): number {
+  let left = 0;
+  let right = boundaries.length;
+  while (left < right) {
+    const middle = Math.floor((left + right) / 2);
+    const boundary = boundaries[middle];
+    assertNonNullable(boundary, "Markdown境界の位置を取得できません");
+    if (boundary < start) left = middle + 1;
+    else right = middle;
+  }
+  return left;
+}
+
+function withHardBoundaries(text: MappedText, boundaries: readonly number[]): MappedText {
+  if (boundaries.length === 0) return text;
+  return {
+    ...text,
+    hardBoundaries: [...new Set([...text.hardBoundaries, ...boundaries])].sort(
+      (left, right) => left - right,
+    ),
+  };
 }
 
 function appendSourceText(builder: TextBuilder, value: string, origin: TextOrigin): void {
@@ -171,7 +204,18 @@ function appendTextSlice(builder: TextBuilder, text: MappedText, span: TextSpan)
     if (segment.start >= span.end) break;
     const start = Math.max(span.start, segment.start);
     const end = Math.min(span.end, segment.end);
+    const destinationStart = builder.length;
     appendSourceText(builder, text.value.slice(start, end), slicedOrigin(segment, start, end));
+    for (
+      let boundaryIndex = firstHardBoundary(text.hardBoundaries, start);
+      boundaryIndex < text.hardBoundaries.length;
+      boundaryIndex += 1
+    ) {
+      const boundary = text.hardBoundaries[boundaryIndex];
+      assertNonNullable(boundary, "Markdown境界の位置を取得できません");
+      if (boundary >= end) break;
+      builder.hardBoundaries.push(destinationStart + boundary - start);
+    }
     covered = end;
   }
   if (covered !== span.end) throw new TypeError("原文位置の対応に欠落があります");
@@ -211,6 +255,7 @@ function isDecodedLiteralPercent(text: MappedText, index: number): boolean {
 }
 
 function isHardUrlBoundary(text: MappedText, index: number): boolean {
+  if (text.hardBoundaries[firstHardBoundary(text.hardBoundaries, index)] === index) return true;
   if (text.value.charAt(index) !== "\n") return false;
   const segment = text.segments[firstSourceSegment(text, index)];
   assertNonNullable(segment, "表示上の改行位置を取得できません");
@@ -478,6 +523,37 @@ function appendInlineDisplayText(
   return htmlTags.length === 0;
 }
 
+function markdownBlockBoundaries(value: string, root: Nodes): readonly number[] {
+  const boundaries = new Set<number>();
+  const containers: Nodes[] = [root];
+  while (containers.length > 0) {
+    const container = containers.pop();
+    assertNonNullable(container, "Markdown blockを取得できません");
+    if (
+      container.type !== "root" &&
+      container.type !== "blockquote" &&
+      container.type !== "list" &&
+      container.type !== "listItem"
+    )
+      continue;
+    for (const child of container.children) {
+      const span = nodeTextSpan(child);
+      if (span.end < value.length) boundaries.add(span.end);
+      if (
+        child.type === "code" &&
+        /^[ \t]*(?:`{3,}|~{3,})/u.test(value.slice(span.start, span.end))
+      ) {
+        for (let index = span.start; index < span.end; index += 1) {
+          if (value.charAt(index) === "\n" || value.charAt(index) === "\r") boundaries.add(index);
+        }
+      }
+      if (child.type === "blockquote" || child.type === "list" || child.type === "listItem")
+        containers.push(child);
+    }
+  }
+  return [...boundaries].sort((left, right) => left - right);
+}
+
 function markdownLayout(text: MappedText): MarkdownLayout {
   const value = text.value;
   const offsets = new Set<number>();
@@ -491,9 +567,11 @@ function markdownLayout(text: MappedText): MarkdownLayout {
     !value.includes("\\") &&
     !value.includes("*") &&
     !value.includes("_") &&
-    !value.includes("`")
+    !value.includes("`") &&
+    !value.includes("\n") &&
+    !value.includes("\r")
   ) {
-    return { status: "valid", offsets: [], display: { status: "unchanged" }, fields: [] };
+    return { status: "valid", text, offsets: [], display: { status: "unchanged" }, fields: [] };
   }
   function tokenBoundaries(token: Token): void {
     offsets.add(token.start.offset);
@@ -539,27 +617,27 @@ function markdownLayout(text: MappedText): MarkdownLayout {
   }
   const displayedNodes: Extract<Nodes, { type: "paragraph" | "heading" }>[] = [];
   const images: Extract<MarkdownReferenceNode, { type: "image" | "imageReference" }>[] = [];
-  const pending: Nodes[] = [
-    fromMarkdown(value, {
-      mdastExtensions: [
-        {
-          enter: {
-            linePrefix: prefixSpan,
-            lineSuffix: prefixSpan,
-            blockQuotePrefix: prefixSpan,
-            listItemPrefix: prefixSpan,
-            listItemIndent: prefixSpan,
-            labelText: labelBoundaries,
-            resourceDestinationString: bufferBoundaries,
-            resourceTitleString: bufferBoundaries,
-            definitionDestinationString: bufferBoundaries,
-            definitionLabelString: bufferBoundaries,
-            definitionTitleString: bufferBoundaries,
-          },
+  const root = fromMarkdown(value, {
+    mdastExtensions: [
+      {
+        enter: {
+          linePrefix: prefixSpan,
+          lineSuffix: prefixSpan,
+          blockQuotePrefix: prefixSpan,
+          listItemPrefix: prefixSpan,
+          listItemIndent: prefixSpan,
+          labelText: labelBoundaries,
+          resourceDestinationString: bufferBoundaries,
+          resourceTitleString: bufferBoundaries,
+          definitionDestinationString: bufferBoundaries,
+          definitionLabelString: bufferBoundaries,
+          definitionTitleString: bufferBoundaries,
         },
-      ],
-    }),
-  ];
+      },
+    ],
+  });
+  text = withHardBoundaries(text, markdownBlockBoundaries(value, root));
+  const pending: Nodes[] = [root];
   while (pending.length > 0) {
     const node = pending.pop();
     assertNonNullable(node, "Markdown境界のnodeを取得できません");
@@ -626,7 +704,7 @@ function markdownLayout(text: MappedText): MarkdownLayout {
   }
   const boundaries = [...offsets].sort((left, right) => left - right);
   if (displayedNodes.length === 0)
-    return { status: "valid", offsets: boundaries, display: { status: "unchanged" }, fields };
+    return { status: "valid", text, offsets: boundaries, display: { status: "unchanged" }, fields };
   const display = textBuilder();
   let start = 0;
   for (const node of displayedNodes.sort(
@@ -645,9 +723,10 @@ function markdownLayout(text: MappedText): MarkdownLayout {
   appendTextSlice(display, text, { start, end: value.length });
   const result = mappedText(display);
   if (result.value === value)
-    return { status: "valid", offsets: boundaries, display: { status: "unchanged" }, fields };
+    return { status: "valid", text, offsets: boundaries, display: { status: "unchanged" }, fields };
   return {
     status: "valid",
+    text,
     offsets: boundaries,
     display: { status: "changed", text: result },
     fields,
@@ -719,18 +798,28 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
   const candidates = new Set<string>();
   const views: { value: string; candidates: UrlLikeCandidate[] }[] = [];
   const pending: TextView[] = [];
-  const seen = new Map<string, Map<string, readonly (readonly SourceTextSegment[])[]>>();
+  const seen = new Map<string, Map<string, readonly MappedText[]>>();
   let textCharacters = 0;
   let candidateCharacters = 0;
   let candidateCount = 0;
   function enqueue(view: TextView): boolean {
     const key = `${view.context}:${String(view.decodeDepth)}`;
-    const texts = seen.get(key) ?? new Map<string, readonly (readonly SourceTextSegment[])[]>();
+    const texts = seen.get(key) ?? new Map<string, readonly MappedText[]>();
     const origins = texts.get(view.text.value) ?? [];
-    if (origins.some((segments) => sameSourceSegments(segments, view.text.segments))) return true;
+    if (
+      origins.some(
+        (origin) =>
+          sameSourceSegments(origin.segments, view.text.segments) &&
+          origin.hardBoundaries.length === view.text.hardBoundaries.length &&
+          origin.hardBoundaries.every(
+            (boundary, index) => boundary === view.text.hardBoundaries[index],
+          ),
+      )
+    )
+      return true;
     textCharacters += view.text.value.length;
     if (textCharacters > 1_000_000) return false;
-    texts.set(view.text.value, [...origins, view.text.segments]);
+    texts.set(view.text.value, [...origins, view.text]);
     seen.set(key, texts);
     pending.push(view);
     return true;
@@ -743,19 +832,26 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
     const layout: MarkdownLayout =
       view.context === "markdown"
         ? markdownLayout(view.text)
-        : { status: "valid", offsets: [], display: { status: "unchanged" }, fields: [] };
+        : {
+            status: "valid",
+            text: view.text,
+            offsets: [],
+            display: { status: "unchanged" },
+            fields: [],
+          };
     if (layout.status === "invalid")
       return Object.freeze({ status: "invalid", reason: "markdown_boundary" });
+    const text = layout.text;
     const viewCandidates: UrlLikeCandidate[] = [];
     const enclosingCandidates: {
       candidate: UrlLikeCandidate;
       parts: readonly UrlTextPart[];
     }[] = [];
     for (const extracted of urlLikeCandidates(
-      view.text.value,
+      text.value,
       layout.offsets,
       view.context === "url",
-      (index) => isHardUrlBoundary(view.text, index),
+      (index) => isHardUrlBoundary(text, index),
     )) {
       candidateCount += 1;
       if (candidateCount > 4096)
@@ -789,7 +885,7 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
         return Object.freeze({ status: "invalid", reason: "candidate_characters_limit" });
       if (mayHaveGitHubAuthority(candidate.value)) {
         const projection = urlInputProjection(candidate.value, () => false);
-        const originals = originalTextSpans(view.text, candidate).map((span) =>
+        const originals = originalTextSpans(text, candidate).map((span) =>
           value.slice(span.start, span.end),
         );
         for (const original of originals) {
@@ -813,7 +909,7 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
           const sourceIndex =
             projection.sourceIndices == null ? match.index : projection.sourceIndices[match.index];
           assertNonNullable(sourceIndex, "percentの原文位置を取得できません");
-          if (!isDecodedLiteralPercent(view.text, candidate.start + sourceIndex)) {
+          if (!isDecodedLiteralPercent(text, candidate.start + sourceIndex)) {
             return Object.freeze({
               status: "invalid",
               reason: "invalid_encoding",
@@ -845,11 +941,11 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
       viewCandidates.push(candidate);
       enclosingCandidates.push({
         candidate,
-        parts: urlTextParts(candidate, (index) => isStructuralUrlDelimiter(view.text, index)),
+        parts: urlTextParts(candidate, (index) => isStructuralUrlDelimiter(text, index)),
       });
     }
-    views.push({ value: view.text.value, candidates: viewCandidates });
-    const decoded = percentDecodedText(view.text);
+    views.push({ value: text.value, candidates: viewCandidates });
+    const decoded = percentDecodedText(text);
     if (decoded.status === "changed") {
       if (view.decodeDepth === 4)
         return Object.freeze({ status: "invalid", reason: "decode_depth_limit" });
