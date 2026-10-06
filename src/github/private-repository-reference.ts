@@ -2,6 +2,7 @@ import type { Repository } from "../domain/index.js";
 import {
   isGitHubHost,
   mayHaveGitHubAuthority,
+  PERCENT_ENCODED_UTF8_CHARACTER_PATTERN,
   urlInputText,
 } from "../domain/url-like-candidates.js";
 import { scanUrlLikeText } from "../domain/url-like-text.js";
@@ -27,6 +28,7 @@ type RepositoryTextReferenceFinding =
     }>;
 
 const URL_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//u;
+const NON_HIERARCHICAL_SCHEME_PATTERN = /^(?:mailto|javascript|data|urn|tel|blob|about):/iu;
 
 function escapePattern(value: string): string {
   return value.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
@@ -47,6 +49,16 @@ function containsRepositoryNameInUrl(value: string, repository: RepositoryRefere
   );
 }
 
+function containsRepositoryNameInUrlComponent(
+  value: string,
+  repository: RepositoryReference,
+): boolean {
+  const decoded = value.replaceAll(PERCENT_ENCODED_UTF8_CHARACTER_PATTERN, (encoded) =>
+    decodeURIComponent(encoded),
+  );
+  return containsRepositoryNameInUrl(decoded, repository);
+}
+
 function absoluteUrl(candidate: string): string {
   const input = urlInputText(candidate);
   if (input.startsWith("//")) {
@@ -56,6 +68,41 @@ function absoluteUrl(candidate: string): string {
     return input;
   }
   return `https://${input}`;
+}
+
+function urlContainsRepositoryName(candidate: string, repository: RepositoryReference): boolean {
+  const input = urlInputText(candidate);
+  const nonHierarchicalScheme = NON_HIERARCHICAL_SCHEME_PATTERN.exec(input);
+  const value = nonHierarchicalScheme == null ? absoluteUrl(candidate) : input;
+  if (URL.canParse(value)) {
+    const url = new URL(value);
+    return (
+      containsRepositoryNameInUrlComponent(url.pathname, repository) ||
+      containsRepositoryNameInUrlComponent(url.search, repository)
+    );
+  }
+  const scheme = URL_SCHEME_PATTERN.exec(input);
+  const authorityStart = input.startsWith("//") ? 2 : (scheme?.[0].length ?? 0);
+  const source =
+    nonHierarchicalScheme == null
+      ? input.slice(authorityStart)
+      : input.slice(nonHierarchicalScheme[0].length);
+  const componentStart = nonHierarchicalScheme == null ? source.search(/[/?#\\]/u) : 0;
+  if (componentStart < 0) {
+    return false;
+  }
+  const fragmentStart = source.indexOf("#", componentStart);
+  const components = source.slice(
+    componentStart,
+    fragmentStart < 0 ? source.length : fragmentStart,
+  );
+  const queryStart = components.indexOf("?");
+  const path = queryStart < 0 ? components : components.slice(0, queryStart);
+  const query = queryStart < 0 ? "" : components.slice(queryStart);
+  return (
+    containsRepositoryNameInUrlComponent(path, repository) ||
+    containsRepositoryNameInUrlComponent(query, repository)
+  );
 }
 
 function decodedPathComponent(value: string): string | undefined {
@@ -89,21 +136,22 @@ function repositoryTextReferenceFinding(
           referenced !== "invalid" &&
           referenced.owner === repository.owner.toLowerCase() &&
           referenced.name === repository.name.toLowerCase()) ||
-        containsRepositoryNameInUrl(urlInputText(url), repository)
+        urlContainsRepositoryName(url, repository)
       );
     })
   ) {
     return { reason: "private_repository_url" };
   }
-  let remaining = value;
-  for (const url of urls) {
-    remaining = remaining.replaceAll(url, " ");
-  }
-  return containsRepositoryName(remaining, repository) ||
-    scan.decodedTexts.some(
-      (text) =>
-        containsRepositoryName(text, repository) || containsRepositoryNameInUrl(text, repository),
-    )
+  return scan.decodedTexts.some((text) => {
+    let remaining = text;
+    for (const url of urls) {
+      remaining = remaining.replaceAll(url, " ");
+    }
+    return (
+      containsRepositoryName(remaining, repository) ||
+      containsRepositoryNameInUrl(remaining, repository)
+    );
+  })
     ? { reason: "private_repository_name" }
     : undefined;
 }
