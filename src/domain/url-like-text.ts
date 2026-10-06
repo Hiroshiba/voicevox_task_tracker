@@ -2,6 +2,7 @@ import type { Nodes } from "mdast";
 import { type CompileContext, fromMarkdown, type Token } from "mdast-util-from-markdown";
 
 import { assertNonNullable } from "../util/index.js";
+import { type UrlTextPart, urlTextParts } from "./url-like-components.js";
 import {
   mayHaveGitHubAuthority,
   PERCENT_ENCODED_UTF8_CHARACTER_PATTERN,
@@ -62,6 +63,7 @@ type TextOrigin =
       original: readonly TextSpan[];
       literalPercent: boolean;
       hardBoundary: boolean;
+      percentDecoded: boolean;
     }>;
 type SourceTextSegment = TextSpan & TextOrigin;
 type MappedText = Readonly<{ value: string; segments: readonly SourceTextSegment[] }>;
@@ -157,6 +159,7 @@ function slicedOrigin(segment: SourceTextSegment, start: number, end: number): T
         original: segment.original,
         literalPercent: segment.literalPercent,
         hardBoundary: segment.hardBoundary,
+        percentDecoded: segment.percentDecoded,
       };
 }
 
@@ -212,6 +215,29 @@ function isHardUrlBoundary(text: MappedText, index: number): boolean {
   const segment = text.segments[firstSourceSegment(text, index)];
   assertNonNullable(segment, "表示上の改行位置を取得できません");
   return segment.kind === "replacement" && segment.hardBoundary;
+}
+
+function isStructuralUrlDelimiter(text: MappedText, index: number): boolean {
+  const segment = text.segments[firstSourceSegment(text, index)];
+  assertNonNullable(segment, "URL構造区切りの原文位置を取得できません");
+  return segment.kind === "copy" || !segment.percentDecoded;
+}
+
+function containingUrlTextPart(
+  parts: readonly UrlTextPart[],
+  start: number,
+): UrlTextPart | undefined {
+  let left = 0;
+  let right = parts.length;
+  while (left < right) {
+    const middle = Math.floor((left + right) / 2);
+    const part = parts[middle];
+    assertNonNullable(part, "URL成分の位置を取得できません");
+    if (part.end <= start) left = middle + 1;
+    else right = middle;
+  }
+  const part = parts[left];
+  return part != null && part.start <= start ? part : undefined;
 }
 
 function textWithoutMarkdownPrefixes(
@@ -278,6 +304,7 @@ function appendRenderedText(
       original: originalTextSpans(text, { start: replacementStart, end: replacementEnd }),
       literalPercent: false,
       hardBoundary: false,
+      percentDecoded: false,
     });
     start = replacementEnd;
   }
@@ -370,6 +397,7 @@ function appendInlineDisplayText(
         original: originalTextSpans(text, nodeTextSpan(node)),
         literalPercent: false,
         hardBoundary: true,
+        percentDecoded: false,
       });
     } else if (node.type === "image" || node.type === "imageReference") {
       if (entry.mode === "text") {
@@ -378,6 +406,7 @@ function appendInlineDisplayText(
           original: originalTextSpans(text, nodeTextSpan(node)),
           literalPercent: false,
           hardBoundary: false,
+          percentDecoded: false,
         });
         continue;
       }
@@ -401,6 +430,7 @@ function appendInlineDisplayText(
           original: originalTextSpans(text, nodeTextSpan(node)),
           literalPercent: false,
           hardBoundary: true,
+          percentDecoded: false,
         });
         continue;
       }
@@ -645,6 +675,7 @@ function percentDecodedText(text: MappedText): TextTransformation {
       original: originalTextSpans(text, { start: matchedStart, end }),
       literalPercent: character === "%",
       hardBoundary: false,
+      percentDecoded: true,
     });
     start = end;
   }
@@ -672,6 +703,7 @@ function sameSourceSegments(
     return (
       segment.literalPercent === other.literalPercent &&
       segment.hardBoundary === other.hardBoundary &&
+      segment.percentDecoded === other.percentDecoded &&
       segment.original.length === other.original.length &&
       segment.original.every((span, originalIndex) => {
         const otherSpan = other.original[originalIndex];
@@ -715,7 +747,11 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
     if (layout.status === "invalid")
       return Object.freeze({ status: "invalid", reason: "markdown_boundary" });
     const viewCandidates: UrlLikeCandidate[] = [];
-    for (const candidate of urlLikeCandidates(
+    const enclosingCandidates: {
+      candidate: UrlLikeCandidate;
+      parts: readonly UrlTextPart[];
+    }[] = [];
+    for (const extracted of urlLikeCandidates(
       view.text.value,
       layout.offsets,
       view.context === "url",
@@ -724,6 +760,30 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
       candidateCount += 1;
       if (candidateCount > 4096)
         return Object.freeze({ status: "invalid", reason: "candidate_count_limit" });
+      while (enclosingCandidates.at(-1) != null) {
+        const enclosing = enclosingCandidates.at(-1);
+        assertNonNullable(enclosing, "入れ子のURL候補を取得できません");
+        if (enclosing.candidate.end > extracted.start) break;
+        enclosingCandidates.pop();
+      }
+      let end = extracted.end;
+      for (let index = enclosingCandidates.length - 1; index >= 0; index -= 1) {
+        const enclosing = enclosingCandidates[index];
+        assertNonNullable(enclosing, "入れ子のURL候補を取得できません");
+        const part = containingUrlTextPart(enclosing.parts, extracted.start);
+        if (part != null) {
+          end = Math.min(end, part.end);
+          break;
+        }
+      }
+      const candidate =
+        end === extracted.end
+          ? extracted
+          : {
+              value: extracted.value.slice(0, end - extracted.start),
+              start: extracted.start,
+              end,
+            };
       candidateCharacters += candidate.value.length;
       if (candidateCharacters > 1_000_000)
         return Object.freeze({ status: "invalid", reason: "candidate_characters_limit" });
@@ -783,6 +843,10 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
       }
       candidates.add(candidate.value);
       viewCandidates.push(candidate);
+      enclosingCandidates.push({
+        candidate,
+        parts: urlTextParts(candidate, (index) => isStructuralUrlDelimiter(view.text, index)),
+      });
     }
     views.push({ value: view.text.value, candidates: viewCandidates });
     const decoded = percentDecodedText(view.text);

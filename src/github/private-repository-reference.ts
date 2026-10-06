@@ -1,10 +1,9 @@
 import type { Repository } from "../domain/index.js";
+import { type UrlTextPart, urlTextParts } from "../domain/url-like-components.js";
 import {
   isGitHubHost,
   mayHaveGitHubAuthority,
-  type UrlInputProjection,
   type UrlLikeCandidate,
-  urlInputProjection,
   urlInputText,
 } from "../domain/url-like-candidates.js";
 import { scanUrlLikeText } from "../domain/url-like-text.js";
@@ -21,7 +20,6 @@ type UrlLikeTextView = Extract<
   ReturnType<typeof scanUrlLikeText>,
   { status: "valid" }
 >["views"][number];
-type UrlTextPart = Readonly<{ start: number; end: number; kind: "path" | "query" | "fragment" }>;
 type RepositoryTextReferenceFinding =
   | Readonly<{
       reason:
@@ -67,76 +65,6 @@ function absoluteUrl(candidate: string): string {
   return `https://${input}`;
 }
 
-function urlTextPart(
-  candidate: UrlLikeCandidate,
-  projection: UrlInputProjection,
-  start: number,
-  end: number,
-  kind: UrlTextPart["kind"],
-): UrlTextPart | undefined {
-  if (start === end) return undefined;
-  const sourceStart = projection.sourceIndices?.[start] ?? start;
-  const sourceEnd = projection.sourceIndices?.[end - 1] ?? end - 1;
-  return { start: candidate.start + sourceStart, end: candidate.start + sourceEnd + 1, kind };
-}
-
-function urlTextParts(candidate: UrlLikeCandidate): readonly UrlTextPart[] {
-  const projection = urlInputProjection(candidate.value, () => false);
-  const input = projection.value;
-  const nonHierarchicalScheme = NON_HIERARCHICAL_SCHEME_PATTERN.exec(input);
-  const scheme = URL_SCHEME_PATTERN.exec(input);
-  const authorityStart = input.startsWith("//") ? 2 : (scheme?.[0].length ?? 0);
-  const componentStart =
-    nonHierarchicalScheme == null ? input.slice(authorityStart).search(/[/?#\\]/u) : 0;
-  if (componentStart < 0) return [];
-  const pathStart =
-    nonHierarchicalScheme == null
-      ? authorityStart + componentStart
-      : nonHierarchicalScheme[0].length;
-  const fragmentStart = input.indexOf("#", pathStart);
-  const beforeFragment = fragmentStart < 0 ? input.length : fragmentStart;
-  const queryStart = input.indexOf("?", pathStart);
-  const hasQuery = queryStart >= 0 && queryStart < beforeFragment;
-  const parts: UrlTextPart[] = [];
-  const path = urlTextPart(
-    candidate,
-    projection,
-    pathStart,
-    hasQuery ? queryStart : beforeFragment,
-    "path",
-  );
-  if (path != null) parts.push(path);
-  if (hasQuery) {
-    let fieldStart = queryStart + 1;
-    while (fieldStart < beforeFragment) {
-      const separator = input.indexOf("&", fieldStart);
-      const fieldEnd = separator < 0 || separator >= beforeFragment ? beforeFragment : separator;
-      const equals = input.indexOf("=", fieldStart);
-      if (equals < 0 || equals >= fieldEnd) {
-        const field = urlTextPart(candidate, projection, fieldStart, fieldEnd, "query");
-        if (field != null) parts.push(field);
-      } else {
-        const key = urlTextPart(candidate, projection, fieldStart, equals, "query");
-        const value = urlTextPart(candidate, projection, equals + 1, fieldEnd, "query");
-        if (key != null) parts.push(key);
-        if (value != null) parts.push(value);
-      }
-      fieldStart = fieldEnd + 1;
-    }
-  }
-  if (fragmentStart >= 0) {
-    const fragment = urlTextPart(
-      candidate,
-      projection,
-      fragmentStart + 1,
-      input.length,
-      "fragment",
-    );
-    if (fragment != null) parts.push(fragment);
-  }
-  return parts;
-}
-
 function firstCandidateAfter(candidates: readonly UrlLikeCandidate[], start: number): number {
   let left = 0;
   let right = candidates.length;
@@ -173,7 +101,7 @@ function urlContainsRepositoryName(
   const specialPath =
     NON_HIERARCHICAL_SCHEME_PATTERN.exec(input) == null &&
     (scheme == null || /^(?:https?|ftp|file|ws|wss):\/\//iu.test(input));
-  for (const part of urlTextParts(candidate)) {
+  for (const part of urlTextParts(candidate, () => true)) {
     let remainingStart = part.start;
     for (
       let index = firstCandidateAfter(view.candidates, candidate.start);
