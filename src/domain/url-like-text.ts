@@ -211,6 +211,33 @@ function isDecodedLiteralPercent(text: MappedText, index: number): boolean {
   return segment.kind === "replacement" && segment.literalPercent;
 }
 
+function textWithoutMarkdownPrefixes(
+  text: MappedText,
+  span: TextSpan,
+  prefixes: readonly TextSpan[],
+): MappedText {
+  const builder = textBuilder();
+  let left = 0;
+  let right = prefixes.length;
+  while (left < right) {
+    const middle = Math.floor((left + right) / 2);
+    const prefix = prefixes[middle];
+    assertNonNullable(prefix, "Markdown prefixの位置を取得できません");
+    if (prefix.end <= span.start) left = middle + 1;
+    else right = middle;
+  }
+  let start = span.start;
+  for (let index = left; index < prefixes.length; index += 1) {
+    const prefix = prefixes[index];
+    assertNonNullable(prefix, "Markdown prefixの位置を取得できません");
+    if (prefix.start >= span.end) break;
+    appendTextSlice(builder, text, { start, end: Math.max(start, prefix.start) });
+    start = Math.min(span.end, prefix.end);
+  }
+  appendTextSlice(builder, text, { start, end: span.end });
+  return mappedText(builder);
+}
+
 function appendRenderedText(
   builder: TextBuilder,
   text: MappedText,
@@ -225,28 +252,25 @@ function appendRenderedText(
   const chunkStart = builder.chunks.length;
   let start = span.start;
   const replacements =
-    /\\[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]|&(?:#[xX][0-9a-f]{1,6}|#[0-9]{1,7}|[A-Za-z][A-Za-z0-9]{1,31});|\r\n?/giu;
+    /\\[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]|&(?:#[xX][0-9a-f]{1,6}|#[0-9]{1,7}|[A-Za-z][A-Za-z0-9]{1,31});/giu;
   for (const match of raw.matchAll(replacements)) {
     const replacementStart = span.start + match.index;
     const replacementEnd = replacementStart + match[0].length;
     appendTextSlice(builder, text, { start, end: replacementStart });
-    let rendered: string;
     if (match[0].startsWith("\\")) {
-      rendered = match[0].slice(1);
-    } else if (match[0].startsWith("\r")) {
-      rendered = "\n";
-    } else {
-      const paragraph = fromMarkdown(match[0]).children[0];
-      assertNonNullable(paragraph, "文字参照の表示値を取得できません");
-      if (paragraph.type !== "paragraph" || paragraph.children.length !== 1) {
-        throw new TypeError("文字参照の表示値を解釈できません");
-      }
-      const child = paragraph.children[0];
-      assertNonNullable(child, "文字参照の表示値を取得できません");
-      if (child.type !== "text") throw new TypeError("文字参照の表示値を解釈できません");
-      rendered = child.value;
+      appendTextSlice(builder, text, { start: replacementStart + 1, end: replacementEnd });
+      start = replacementEnd;
+      continue;
     }
-    appendSourceText(builder, rendered, {
+    const paragraph = fromMarkdown(match[0]).children[0];
+    assertNonNullable(paragraph, "文字参照の表示値を取得できません");
+    if (paragraph.type !== "paragraph" || paragraph.children.length !== 1) {
+      throw new TypeError("文字参照の表示値を解釈できません");
+    }
+    const child = paragraph.children[0];
+    assertNonNullable(child, "文字参照の表示値を取得できません");
+    if (child.type !== "text") throw new TypeError("文字参照の表示値を解釈できません");
+    appendSourceText(builder, child.value, {
       kind: "replacement",
       original: originalTextSpans(text, { start: replacementStart, end: replacementEnd }),
       literalPercent: false,
@@ -259,28 +283,18 @@ function appendRenderedText(
 
 function appendInlineCode(
   builder: TextBuilder,
-  text: MappedText,
+  source: MappedText,
   node: Extract<Nodes, { type: "inlineCode" }>,
+  prefixes: readonly TextSpan[],
 ): boolean {
-  const span = nodeTextSpan(node);
-  const raw = text.value.slice(span.start, span.end);
+  const text = textWithoutMarkdownPrefixes(source, nodeTextSpan(node), prefixes);
+  const span = { start: 0, end: text.value.length };
+  const raw = text.value;
   const fence = /^`+/u.exec(raw)?.[0];
   if (fence == null || !raw.endsWith(fence)) return false;
   const inner = { start: span.start + fence.length, end: span.end - fence.length };
   const content = textBuilder();
-  let start = inner.start;
-  for (const match of text.value.slice(inner.start, inner.end).matchAll(/\r\n?|\n/gu)) {
-    const replacementStart = inner.start + match.index;
-    const replacementEnd = replacementStart + match[0].length;
-    appendTextSlice(content, text, { start, end: replacementStart });
-    appendSourceText(content, " ", {
-      kind: "replacement",
-      original: originalTextSpans(text, { start: replacementStart, end: replacementEnd }),
-      literalPercent: false,
-    });
-    start = replacementEnd;
-  }
-  appendTextSlice(content, text, { start, end: inner.end });
+  appendTextSlice(content, text, inner);
   const code = mappedText(content);
   const trim = code.value.startsWith(" ") && code.value.endsWith(" ") && /[^ ]/u.test(code.value);
   const displayed = { start: trim ? 1 : 0, end: code.value.length - Number(trim) };
@@ -289,18 +303,47 @@ function appendInlineCode(
   return true;
 }
 
-function appendLinkLabel(
+function appendHtmlBoundary(
+  builder: TextBuilder,
+  text: MappedText,
+  node: Extract<Nodes, { type: "html" }>,
+  boundaries: TextSpan[],
+  displayStart: number,
+): void {
+  const start = builder.length - displayStart;
+  appendTextSlice(builder, text, nodeTextSpan(node));
+  const previous = boundaries.at(-1);
+  const end = builder.length - displayStart;
+  if (previous?.end === start) {
+    boundaries[boundaries.length - 1] = { start: previous.start, end };
+  } else {
+    boundaries.push({ start, end });
+  }
+}
+
+function isReferenceFragment(character: string): boolean {
+  return (
+    /[A-Za-z0-9_.:/%+-]/u.test(character.normalize("NFKC")) ||
+    /[\p{Mark}\p{Format}]/u.test(character)
+  );
+}
+
+function appendInlineDisplayText(
   builder: TextBuilder,
   text: MappedText,
   nodes: readonly Nodes[],
   labels: ReadonlyMap<MarkdownReferenceNode, readonly Nodes[]>,
-  mode: "link" | "alt",
+  prefixes: readonly TextSpan[],
+  mode: "text" | "link" | "alt",
 ): boolean {
   type Entry =
-    | Readonly<{ kind: "node"; node: Nodes; mode: "link" | "alt" }>
+    | Readonly<{ kind: "node"; node: Nodes; mode: "text" | "link" | "alt" }>
     | Readonly<{ kind: "verify"; chunkStart: number; expected: string }>;
   const pending: Entry[] = nodes.toReversed().map((node) => ({ kind: "node", node, mode }));
   const htmlTags: string[] = [];
+  const htmlBoundaries: TextSpan[] = [];
+  const chunkStart = builder.chunks.length;
+  const displayStart = builder.length;
   while (pending.length > 0) {
     const entry = pending.pop();
     assertNonNullable(entry, "Markdownラベルのnodeを取得できません");
@@ -310,9 +353,13 @@ function appendLinkLabel(
     }
     const node = entry.node;
     if (node.type === "text") {
-      if (!appendRenderedText(builder, text, nodeTextSpan(node), node.value)) return false;
+      const literal = textWithoutMarkdownPrefixes(text, nodeTextSpan(node), prefixes);
+      if (
+        !appendRenderedText(builder, literal, { start: 0, end: literal.value.length }, node.value)
+      )
+        return false;
     } else if (node.type === "inlineCode") {
-      if (!appendInlineCode(builder, text, node)) return false;
+      if (!appendInlineCode(builder, text, node, prefixes)) return false;
     } else if (node.type === "break") {
       appendSourceText(builder, "\n", {
         kind: "replacement",
@@ -320,6 +367,14 @@ function appendLinkLabel(
         literalPercent: false,
       });
     } else if (node.type === "image" || node.type === "imageReference") {
+      if (entry.mode === "text") {
+        appendSourceText(builder, " ", {
+          kind: "replacement",
+          original: originalTextSpans(text, nodeTextSpan(node)),
+          literalPercent: false,
+        });
+        continue;
+      }
       const children = labels.get(node);
       if (children == null) return false;
       assertNonNullable(node.alt, "Markdown画像のaltを取得できません");
@@ -334,27 +389,57 @@ function appendLinkLabel(
         appendTextSlice(builder, text, nodeTextSpan(node));
         continue;
       }
+      if (/^<(?:br\s*\/?|\/?p)>$/iu.test(node.value)) {
+        appendSourceText(builder, "\n", {
+          kind: "replacement",
+          original: originalTextSpans(text, nodeTextSpan(node)),
+          literalPercent: false,
+        });
+        continue;
+      }
       const tag = /^<(\/?)(code|kbd|samp|span|strong|em|b|i|s|del|sub|sup|mark)>$/iu.exec(
         node.value,
       );
-      if (tag == null) return false;
+      if (tag == null) {
+        if (entry.mode === "link") return false;
+        appendHtmlBoundary(builder, text, node, htmlBoundaries, displayStart);
+        continue;
+      }
       const name = tag[2];
       assertNonNullable(name, "MarkdownラベルのHTML tagを取得できません");
       if (tag[1] === "/") {
-        if (htmlTags.pop() !== name.toLowerCase()) return false;
+        if (htmlTags.at(-1) !== name.toLowerCase()) {
+          if (entry.mode === "link") return false;
+          appendHtmlBoundary(builder, text, node, htmlBoundaries, displayStart);
+          continue;
+        }
+        htmlTags.pop();
       } else {
         htmlTags.push(name.toLowerCase());
       }
     } else if ("children" in node) {
+      const childMode =
+        entry.mode !== "alt" && (node.type === "link" || node.type === "linkReference")
+          ? "link"
+          : entry.mode;
       pending.push(
         ...node.children
           .toReversed()
-          .map((child): Entry => ({ kind: "node", node: child, mode: entry.mode })),
+          .map((child): Entry => ({ kind: "node", node: child, mode: childMode })),
       );
     } else {
       return false;
     }
   }
+  const display = builder.chunks.slice(chunkStart).join("");
+  if (
+    htmlBoundaries.some(
+      (span) =>
+        isReferenceFragment(display.charAt(span.start - 1)) &&
+        isReferenceFragment(display.charAt(span.end)),
+    )
+  )
+    return false;
   return htmlTags.length === 0;
 }
 
@@ -363,12 +448,24 @@ function markdownLayout(text: MappedText): MarkdownLayout {
   const offsets = new Set<number>();
   const labels = new Map<MarkdownReferenceNode, readonly Nodes[]>();
   const sourceFields: MarkdownField[] = [];
-  if (!value.includes("[") && !value.includes("<")) {
+  const sourcePrefixes: TextSpan[] = [];
+  if (
+    !value.includes("[") &&
+    !value.includes("<") &&
+    !value.includes("&") &&
+    !value.includes("\\") &&
+    !value.includes("*") &&
+    !value.includes("_") &&
+    !value.includes("`")
+  ) {
     return { status: "valid", offsets: [], display: { status: "unchanged" }, fields: [] };
   }
   function tokenBoundaries(token: Token): void {
     offsets.add(token.start.offset);
     offsets.add(token.end.offset);
+  }
+  function prefixSpan(token: Token): void {
+    sourcePrefixes.push({ start: token.start.offset, end: token.end.offset });
   }
   function bufferBoundaries(this: CompileContext, token: Token): void {
     tokenBoundaries(token);
@@ -405,13 +502,18 @@ function markdownLayout(text: MappedText): MarkdownLayout {
     if (!("children" in fragment)) throw new TypeError("Markdownラベルのfragmentを解釈できません");
     labels.set(node, fragment.children);
   }
-  const links: Extract<MarkdownReferenceNode, { type: "link" | "linkReference" }>[] = [];
+  const displayedNodes: Extract<Nodes, { type: "paragraph" | "heading" }>[] = [];
   const images: Extract<MarkdownReferenceNode, { type: "image" | "imageReference" }>[] = [];
   const pending: Nodes[] = [
     fromMarkdown(value, {
       mdastExtensions: [
         {
           enter: {
+            linePrefix: prefixSpan,
+            lineSuffix: prefixSpan,
+            blockQuotePrefix: prefixSpan,
+            listItemPrefix: prefixSpan,
+            listItemIndent: prefixSpan,
             labelText: labelBoundaries,
             resourceDestinationString: bufferBoundaries,
             resourceTitleString: bufferBoundaries,
@@ -437,11 +539,28 @@ function markdownLayout(text: MappedText): MarkdownLayout {
       offsets.add(span.start);
       offsets.add(span.end);
     }
-    if (node.type === "link" || node.type === "linkReference") links.push(node);
+    if (node.type === "paragraph" || node.type === "heading") {
+      displayedNodes.push(node);
+    }
     if (node.type === "image" || node.type === "imageReference") images.push(node);
     if ("children" in node) pending.push(...node.children);
   }
-  const labelNodes = [...labels.values()].flat();
+  const prefixes: TextSpan[] = [];
+  for (const prefix of sourcePrefixes.sort((left, right) => left.start - right.start)) {
+    const previous = prefixes.at(-1);
+    if (previous != null && prefix.start <= previous.end) {
+      prefixes[prefixes.length - 1] = {
+        start: previous.start,
+        end: Math.max(previous.end, prefix.end),
+      };
+    } else {
+      prefixes.push(prefix);
+    }
+  }
+  const labelNodes: Nodes[] = [
+    ...[...labels.values()].flat(),
+    ...displayedNodes.flatMap((node) => node.children),
+  ];
   while (labelNodes.length > 0) {
     const node = labelNodes.pop();
     assertNonNullable(node, "Markdownラベルの境界を取得できません");
@@ -455,39 +574,43 @@ function markdownLayout(text: MappedText): MarkdownLayout {
     const expected = field.field === "label" ? field.node.label : field.node[field.field];
     assertNonNullable(expected, "Markdown fieldの表示値を取得できません");
     const builder = textBuilder();
-    if (!appendRenderedText(builder, text, field.span, expected)) return { status: "invalid" };
+    const literal = textWithoutMarkdownPrefixes(text, field.span, prefixes);
+    if (!appendRenderedText(builder, literal, { start: 0, end: literal.value.length }, expected))
+      return { status: "invalid" };
     fields.push({ text: mappedText(builder), context: field.field === "url" ? "url" : "text" });
   }
   for (const image of images) {
     const children = labels.get(image);
     if (children == null) return { status: "invalid" };
     const builder = textBuilder();
-    if (!appendLinkLabel(builder, text, children, labels, "alt")) return { status: "invalid" };
+    if (!appendInlineDisplayText(builder, text, children, labels, prefixes, "alt"))
+      return { status: "invalid" };
     const alt = mappedText(builder);
     if (alt.value !== image.alt) return { status: "invalid" };
     fields.push({ text: alt, context: "text" });
   }
   const boundaries = [...offsets].sort((left, right) => left - right);
-  if (links.length === 0)
+  if (displayedNodes.length === 0)
     return { status: "valid", offsets: boundaries, display: { status: "unchanged" }, fields };
   const display = textBuilder();
   let start = 0;
-  for (const link of links.sort(
+  for (const node of displayedNodes.sort(
     (left, right) => nodeTextSpan(left).start - nodeTextSpan(right).start,
   )) {
-    const span = nodeTextSpan(link);
+    const span = nodeTextSpan(node);
     if (span.start < start) {
       if (span.end <= start) continue;
       return { status: "invalid" };
     }
     appendTextSlice(display, text, { start, end: span.start });
-    if (!appendLinkLabel(display, text, link.children, labels, "link"))
+    if (!appendInlineDisplayText(display, text, node.children, labels, prefixes, "text"))
       return { status: "invalid" };
     start = span.end;
   }
   appendTextSlice(display, text, { start, end: value.length });
   const result = mappedText(display);
-  if (result.value.length >= value.length) return { status: "invalid" };
+  if (result.value === value)
+    return { status: "valid", offsets: boundaries, display: { status: "unchanged" }, fields };
   return {
     status: "valid",
     offsets: boundaries,
@@ -722,7 +845,7 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
     }
     if (
       layout.display.status === "changed" &&
-      !enqueue({ text: layout.display.text, context: "markdown", decodeDepth: view.decodeDepth })
+      !enqueue({ text: layout.display.text, context: "text", decodeDepth: view.decodeDepth })
     )
       return Object.freeze({ status: "invalid", reason: "text_limit" });
     for (const field of layout.fields) {
