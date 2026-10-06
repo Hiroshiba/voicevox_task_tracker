@@ -89,7 +89,7 @@ function repositoryTextReferenceFinding(
           referenced !== "invalid" &&
           referenced.owner === repository.owner.toLowerCase() &&
           referenced.name === repository.name.toLowerCase()) ||
-        containsRepositoryNameInUrl(url, repository)
+        containsRepositoryNameInUrl(urlInputText(url), repository)
       );
     })
   ) {

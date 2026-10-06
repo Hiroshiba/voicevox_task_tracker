@@ -4,6 +4,7 @@ import { type CompileContext, fromMarkdown, type Token } from "mdast-util-from-m
 import { assertNonNullable } from "../util/index.js";
 import {
   mayHaveGitHubAuthority,
+  PERCENT_ENCODED_UTF8_CHARACTER_PATTERN,
   urlInputProjection,
   urlInputText,
   urlLikeCandidates,
@@ -20,19 +21,6 @@ const URL_LIKE_TEXT_PATTERN = new RegExp(
   "giu",
 );
 const PERCENT_ENCODED_BYTE_SEQUENCE_PATTERN = /(?:%[0-9a-f]{2})+/giu;
-const PERCENT_ENCODED_UTF8_CHARACTER_PATTERN = new RegExp(
-  [
-    "%[0-7][0-9a-f]",
-    "%(?:c[2-9a-f]|d[0-9a-f])%[89ab][0-9a-f]",
-    "%e0%[ab][0-9a-f]%[89ab][0-9a-f]",
-    "%e[1-9a-cef](?:%[89ab][0-9a-f]){2}",
-    "%ed%[89][0-9a-f]%[89ab][0-9a-f]",
-    "%f0%[9ab][0-9a-f](?:%[89ab][0-9a-f]){2}",
-    "%f[1-3](?:%[89ab][0-9a-f]){3}",
-    "%f4%8[0-9a-f](?:%[89ab][0-9a-f]){2}",
-  ].join("|"),
-  "giu",
-);
 
 /** 理由要約にURL形式を含めないschema制約。 */
 export const NO_URL_LIKE_TEXT_PATTERN = new RegExp(
@@ -421,15 +409,13 @@ function appendInlineDisplayText(
       }
       const name = tag[2];
       assertNonNullable(name, "MarkdownラベルのHTML tagを取得できません");
-      if (tag[1] === "/") {
-        if (htmlTags.at(-1) !== name.toLowerCase()) {
-          if (entry.mode === "link") return false;
-          appendHtmlBoundary(builder, text, node, htmlBoundaries, displayStart);
-          continue;
+      if (entry.mode === "link") {
+        if (tag[1] === "/") {
+          if (htmlTags.at(-1) !== name.toLowerCase()) return false;
+          htmlTags.pop();
+        } else {
+          htmlTags.push(name.toLowerCase());
         }
-        htmlTags.pop();
-      } else {
-        htmlTags.push(name.toLowerCase());
       }
     } else if ("children" in node) {
       const childMode =
