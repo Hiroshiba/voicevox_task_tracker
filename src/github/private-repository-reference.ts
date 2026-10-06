@@ -1,5 +1,10 @@
 import type { Repository } from "../domain/index.js";
-import { isGitHubHost, mayHaveGitHubAuthority, scanUrlLikeText } from "../domain/url-like-text.js";
+import {
+  isGitHubHost,
+  mayHaveGitHubAuthority,
+  urlInputText,
+} from "../domain/url-like-candidates.js";
+import { scanUrlLikeText } from "../domain/url-like-text.js";
 import {
   verifiedExternalUrls,
   type VerifiedExternalReference,
@@ -43,13 +48,14 @@ function containsRepositoryNameInUrl(value: string, repository: RepositoryRefere
 }
 
 function absoluteUrl(candidate: string): string {
-  if (candidate.startsWith("//")) {
-    return `https:${candidate}`;
+  const input = urlInputText(candidate);
+  if (input.startsWith("//")) {
+    return `https:${input}`;
   }
-  if (URL_SCHEME_PATTERN.test(candidate)) {
-    return candidate;
+  if (URL_SCHEME_PATTERN.test(input)) {
+    return input;
   }
-  return `https://${candidate}`;
+  return `https://${input}`;
 }
 
 function decodedPathComponent(value: string): string | undefined {
@@ -182,10 +188,11 @@ export function containsDisallowedAiTextUrl(
     ),
   );
   return candidates.some((candidate) => {
-    if (!candidate.startsWith("https://") || !URL.canParse(candidate)) {
+    const input = urlInputText(candidate);
+    if (!input.startsWith("https://") || !URL.canParse(input)) {
       return true;
     }
-    const url = new URL(candidate);
+    const url = new URL(input);
     if (
       url.protocol !== "https:" ||
       !isGitHubHost(url.hostname) ||

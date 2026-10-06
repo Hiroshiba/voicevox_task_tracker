@@ -2,6 +2,12 @@ import type { Nodes } from "mdast";
 import { type CompileContext, fromMarkdown, type Token } from "mdast-util-from-markdown";
 
 import { assertNonNullable } from "../util/index.js";
+import {
+  mayHaveGitHubAuthority,
+  urlInputProjection,
+  urlInputText,
+  urlLikeCandidates,
+} from "./url-like-candidates.js";
 
 const NON_SCHEME_URL_LIKE_START_PATTERN =
   /(?<![A-Za-z0-9+.-])(?:mailto|javascript|data|urn|tel|blob|about):|(?<![:/])\/\/|(?<![\p{L}\p{N}_.．。｡@/:%-])(?:[\p{L}\p{N}-]+(?:[.．。｡][\p{L}\p{N}-]+)*[.．。｡][\p{L}]{2,}(?![\p{L}\p{N}_]))/iu;
@@ -13,15 +19,6 @@ const URL_LIKE_TEXT_PATTERN = new RegExp(
   `(?:${URL_LIKE_START_PATTERN.source})[^\\s<>"'\\x60]*`,
   "giu",
 );
-const SCHEME_FIRST_CHARACTER_PATTERN = /[A-Za-z]/u;
-const SCHEME_CHARACTER_PATTERN = /[A-Za-z0-9+.-]/u;
-const NON_SLASH_SCHEME_NAME_PATTERN = /^(?:mailto|javascript|data|urn|tel|blob|about)$/iu;
-const AUTHORITY_SEPARATOR_PATTERN = /[\s<>"'`/?#&=;:,()[\]{}、！？）］｝「」『』]/u;
-const AUTHORITY_DOT_OR_ESCAPE_PATTERN = /[.．。｡%]/u;
-const DOMAIN_SUFFIX_PATTERN = /^(?:[a-z]{2,}|xn--[a-z0-9-]+)$/u;
-const URL_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//u;
-const URL_LIKE_DELIMITER_PATTERN = /[\s<>"'`]/u;
-const TRAILING_PUNCTUATION_CHARACTER_PATTERN = /[.,;:!?、。！？)\]}）］｝」』]/u;
 const PERCENT_ENCODED_BYTE_SEQUENCE_PATTERN = /(?:%[0-9a-f]{2})+/giu;
 const PERCENT_ENCODED_UTF8_CHARACTER_PATTERN = new RegExp(
   [
@@ -65,17 +62,13 @@ type MarkdownReferenceNode = Extract<
   Nodes,
   { type: "link" | "image" | "linkReference" | "imageReference" }
 >;
-type UrlLikeCandidate = Readonly<{
-  value: string;
-  start: number;
-  end: number;
-}>;
 type TextOrigin =
   | Readonly<{ kind: "copy"; original: TextSpan }>
   | Readonly<{
       kind: "replacement";
       original: readonly TextSpan[];
       literalPercent: boolean;
+      hardBoundary: boolean;
     }>;
 type SourceTextSegment = TextSpan & TextOrigin;
 type MappedText = Readonly<{ value: string; segments: readonly SourceTextSegment[] }>;
@@ -166,7 +159,12 @@ function slicedOrigin(segment: SourceTextSegment, start: number, end: number): T
           end: segment.original.start + end - segment.start,
         },
       }
-    : { kind: "replacement", original: segment.original, literalPercent: segment.literalPercent };
+    : {
+        kind: "replacement",
+        original: segment.original,
+        literalPercent: segment.literalPercent,
+        hardBoundary: segment.hardBoundary,
+      };
 }
 
 function appendTextSlice(builder: TextBuilder, text: MappedText, span: TextSpan): void {
@@ -214,6 +212,13 @@ function isDecodedLiteralPercent(text: MappedText, index: number): boolean {
   const segment = text.segments[firstSourceSegment(text, index)];
   assertNonNullable(segment, "percentの原文位置を取得できません");
   return segment.kind === "replacement" && segment.literalPercent;
+}
+
+function isHardUrlBoundary(text: MappedText, index: number): boolean {
+  if (text.value.charAt(index) !== "\n") return false;
+  const segment = text.segments[firstSourceSegment(text, index)];
+  assertNonNullable(segment, "表示上の改行位置を取得できません");
+  return segment.kind === "replacement" && segment.hardBoundary;
 }
 
 function textWithoutMarkdownPrefixes(
@@ -279,6 +284,7 @@ function appendRenderedText(
       kind: "replacement",
       original: originalTextSpans(text, { start: replacementStart, end: replacementEnd }),
       literalPercent: false,
+      hardBoundary: false,
     });
     start = replacementEnd;
   }
@@ -370,6 +376,7 @@ function appendInlineDisplayText(
         kind: "replacement",
         original: originalTextSpans(text, nodeTextSpan(node)),
         literalPercent: false,
+        hardBoundary: true,
       });
     } else if (node.type === "image" || node.type === "imageReference") {
       if (entry.mode === "text") {
@@ -377,6 +384,7 @@ function appendInlineDisplayText(
           kind: "replacement",
           original: originalTextSpans(text, nodeTextSpan(node)),
           literalPercent: false,
+          hardBoundary: false,
         });
         continue;
       }
@@ -399,6 +407,7 @@ function appendInlineDisplayText(
           kind: "replacement",
           original: originalTextSpans(text, nodeTextSpan(node)),
           literalPercent: false,
+          hardBoundary: true,
         });
         continue;
       }
@@ -624,154 +633,27 @@ function markdownLayout(text: MappedText): MarkdownLayout {
   };
 }
 
-function isBareUrlLikeAuthority(authority: string): boolean {
-  if (!AUTHORITY_DOT_OR_ESCAPE_PATTERN.test(authority)) return false;
-  let hostname = authority;
-  let absoluteUrl = `https://${hostname}`;
-  if (!URL.canParse(absoluteUrl)) {
-    const percentIndex = hostname.indexOf("%");
-    if (percentIndex < 0) return false;
-    hostname = hostname.slice(0, percentIndex);
-    absoluteUrl = `https://${hostname}`;
-    if (!URL.canParse(absoluteUrl)) return false;
-  }
-  const labels = new URL(absoluteUrl).hostname.replace(/\.$/u, "").split(".");
-  const suffix = labels.at(-1);
-  return labels.length > 1 && suffix != null && DOMAIN_SUFFIX_PATTERN.test(suffix);
-}
-
-function* urlLikeStartIndices(value: string): Generator<number> {
-  let authorityStart = 0;
-  let schemeEnd = 0;
-  let coveredSchemeRelativeStart: number | undefined;
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value.charAt(index);
-    if (AUTHORITY_SEPARATOR_PATTERN.test(character)) authorityStart = index + 1;
-    let startsBareAuthority = false;
-    if (index === authorityStart) {
-      let authorityEnd = index;
-      while (
-        authorityEnd < value.length &&
-        !AUTHORITY_SEPARATOR_PATTERN.test(value.charAt(authorityEnd))
-      ) {
-        authorityEnd += 1;
-      }
-      startsBareAuthority =
-        !value.slice(Math.max(0, index - 2), index).endsWith("//") &&
-        isBareUrlLikeAuthority(value.slice(index, authorityEnd));
-    }
-    let startsScheme = false;
-    if (index >= schemeEnd && SCHEME_FIRST_CHARACTER_PATTERN.test(character)) {
-      schemeEnd = index + 1;
-      while (schemeEnd < value.length && SCHEME_CHARACTER_PATTERN.test(value.charAt(schemeEnd))) {
-        schemeEnd += 1;
-      }
-      const startsSlashScheme = value.startsWith("://", schemeEnd);
-      if (startsSlashScheme) coveredSchemeRelativeStart = schemeEnd + 1;
-      startsScheme =
-        startsSlashScheme ||
-        (value.charAt(schemeEnd) === ":" &&
-          NON_SLASH_SCHEME_NAME_PATTERN.test(value.slice(index, schemeEnd)));
-    }
-    const startsSchemeRelative =
-      character === "/" &&
-      value.startsWith("//", index) &&
-      index !== coveredSchemeRelativeStart &&
-      value.charAt(index - 1) !== "/";
-    if (startsBareAuthority || startsScheme || startsSchemeRelative) yield index;
-  }
-}
-
-function* urlLikeCandidates(
-  value: string,
-  offsets: readonly number[],
-  literalUrl: boolean,
-): Generator<UrlLikeCandidate> {
-  let boundaryIndex = 0;
-  let token:
-    | Readonly<{ status: "unscanned" }>
-    | Readonly<{ status: "scanned"; end: number; candidateEnd: number }> = { status: "unscanned" };
-  for (const index of urlLikeStartIndices(value)) {
-    if (token.status === "unscanned" || index >= token.end) {
-      let end = index;
-      while (
-        end < value.length &&
-        (literalUrl || !URL_LIKE_DELIMITER_PATTERN.test(value.charAt(end)))
-      ) {
-        end += 1;
-      }
-      let candidateEnd = end;
-      while (
-        candidateEnd > index &&
-        !literalUrl &&
-        TRAILING_PUNCTUATION_CHARACTER_PATTERN.test(value.charAt(candidateEnd - 1))
-      ) {
-        candidateEnd -= 1;
-      }
-      token = { status: "scanned", end, candidateEnd };
-    }
-    for (; boundaryIndex < offsets.length; boundaryIndex += 1) {
-      const boundary = offsets[boundaryIndex];
-      assertNonNullable(boundary, "Markdown境界の位置を取得できません");
-      if (boundary > index) break;
-    }
-    const boundary = offsets[boundaryIndex];
-    const crossesBoundary = boundary != null && boundary < token.candidateEnd;
-    let end = crossesBoundary ? boundary : token.candidateEnd;
-    while (
-      end > index &&
-      !literalUrl &&
-      TRAILING_PUNCTUATION_CHARACTER_PATTERN.test(value.charAt(end - 1))
-    ) {
-      end -= 1;
-    }
-    const candidate = value.slice(index, end);
-    yield { value: candidate, start: index, end };
-  }
-}
-
-/** 正規化済みのhostがGitHubか判定する。 */
-export function isGitHubHost(hostname: string): boolean {
-  return hostname === "github.com" || hostname === "github.com.";
-}
-
-/** URL候補のauthorityがGitHubか、解析不能でもGitHubになり得るか判定する。 */
-export function mayHaveGitHubAuthority(candidate: string): boolean {
-  let absoluteUrl = candidate;
-  if (candidate.startsWith("//")) absoluteUrl = `https:${candidate}`;
-  else if (!URL_SCHEME_PATTERN.test(candidate)) absoluteUrl = `https://${candidate}`;
-  if (URL.canParse(absoluteUrl)) {
-    return isGitHubHost(new URL(absoluteUrl).hostname);
-  }
-  const source = candidate.replace(URL_SCHEME_PATTERN, "").replace(/^\/\//u, "");
-  const [authority] = source.split(/[/?#]/u);
-  const rawHostname = authority?.split("@").at(-1)?.split(":")[0];
-  if (rawHostname == null) return false;
-  const invalidPercent = /%(?![0-9a-f]{2})/iu.exec(rawHostname);
-  const hostname =
-    invalidPercent == null ? rawHostname : rawHostname.slice(0, invalidPercent.index);
-  const possibleUrl = `https://${hostname}`;
-  if (URL.canParse(possibleUrl)) {
-    return isGitHubHost(new URL(possibleUrl).hostname);
-  }
-  const percentIndex = hostname.indexOf("%");
-  if (percentIndex < 0) return false;
-  const prefixUrl = `https://${hostname.slice(0, percentIndex)}`;
-  if (!URL.canParse(prefixUrl)) return false;
-  return isGitHubHost(new URL(prefixUrl).hostname);
-}
-
 function percentDecodedText(text: MappedText): TextTransformation {
   const builder = textBuilder();
+  const projection = urlInputProjection(text.value, (index) => isHardUrlBoundary(text, index));
   let start = 0;
-  for (const match of text.value.matchAll(PERCENT_ENCODED_UTF8_CHARACTER_PATTERN)) {
-    const end = match.index + match[0].length;
-    appendTextSlice(builder, text, { start, end: match.index });
+  for (const match of projection.value.matchAll(PERCENT_ENCODED_UTF8_CHARACTER_PATTERN)) {
+    const matchedStart =
+      projection.sourceIndices == null ? match.index : projection.sourceIndices[match.index];
+    const matchedLast =
+      projection.sourceIndices == null
+        ? match.index + match[0].length - 1
+        : projection.sourceIndices[match.index + match[0].length - 1];
+    assertNonNullable(matchedStart, "復号対象の開始位置を取得できません");
+    assertNonNullable(matchedLast, "復号対象の終了位置を取得できません");
+    const end = matchedLast + 1;
+    appendTextSlice(builder, text, { start, end: matchedStart });
     const character = decodeURIComponent(match[0]);
     appendSourceText(builder, character, {
       kind: "replacement",
-      original: originalTextSpans(text, { start: match.index, end }),
+      original: originalTextSpans(text, { start: matchedStart, end }),
       literalPercent: character === "%",
+      hardBoundary: false,
     });
     start = end;
   }
@@ -798,6 +680,7 @@ function sameSourceSegments(
     if (segment.kind !== "replacement" || other.kind !== "replacement") return false;
     return (
       segment.literalPercent === other.literalPercent &&
+      segment.hardBoundary === other.hardBoundary &&
       segment.original.length === other.original.length &&
       segment.original.every((span, originalIndex) => {
         const otherSpan = other.original[originalIndex];
@@ -844,17 +727,19 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
       view.text.value,
       layout.offsets,
       view.context === "url",
+      (index) => isHardUrlBoundary(view.text, index),
     )) {
       candidateCharacters += candidate.value.length;
       if (candidateCharacters > 1_000_000)
         return Object.freeze({ status: "invalid", reason: "candidate_characters_limit" });
       if (mayHaveGitHubAuthority(candidate.value)) {
+        const projection = urlInputProjection(candidate.value, () => false);
         const originals = originalTextSpans(view.text, candidate).map((span) =>
           value.slice(span.start, span.end),
         );
         for (const original of originals) {
           try {
-            decodeURIComponent(original);
+            decodeURIComponent(urlInputText(original));
           } catch (error: unknown) {
             if (!(error instanceof URIError)) throw error;
             return Object.freeze({
@@ -869,8 +754,11 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
           }
         }
         const originalCandidate = originals.join("");
-        for (const match of candidate.value.matchAll(/%(?![0-9a-f]{2})/giu)) {
-          if (!isDecodedLiteralPercent(view.text, candidate.start + match.index)) {
+        for (const match of projection.value.matchAll(/%(?![0-9a-f]{2})/giu)) {
+          const sourceIndex =
+            projection.sourceIndices == null ? match.index : projection.sourceIndices[match.index];
+          assertNonNullable(sourceIndex, "percentの原文位置を取得できません");
+          if (!isDecodedLiteralPercent(view.text, candidate.start + sourceIndex)) {
             return Object.freeze({
               status: "invalid",
               reason: "invalid_encoding",
@@ -883,7 +771,7 @@ export function scanUrlLikeText(value: string): UrlLikeTextScan {
           }
         }
         try {
-          for (const match of candidate.value.matchAll(PERCENT_ENCODED_BYTE_SEQUENCE_PATTERN))
+          for (const match of projection.value.matchAll(PERCENT_ENCODED_BYTE_SEQUENCE_PATTERN))
             decodeURIComponent(match[0]);
         } catch (error: unknown) {
           if (!(error instanceof URIError)) throw error;
