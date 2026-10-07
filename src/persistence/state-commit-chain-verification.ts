@@ -14,7 +14,10 @@ import {
   exactStateValidationSession,
   type ExactStateValidationSession,
 } from "./exact-state-validation-session.js";
-import { assertInitialStateWriteManifest } from "./initial-state-write-manifest.js";
+import {
+  assertInitialStateWriteManifest,
+  reconstructLegacyInitialStateWriteManifest,
+} from "./initial-state-write-manifest.js";
 import {
   isVerifiedStateCasCandidateTree,
   type VerifiedStateCasCandidateTree,
@@ -78,9 +81,15 @@ async function assertInitialWriteSet(
   commit: Awaited<ReturnType<StateBranchAdapter["readCommit"]>>,
   current: VerifiedTree,
   candidate: VerifiedStateCasCandidateTree | undefined,
+  allowLegacyReconstruction: boolean,
 ): Promise<void> {
-  const manifest = current.transaction.record.initialStateWriteManifest;
-  if (manifest == null) {
+  const record = current.transaction.record;
+  if (
+    record.initialStateWriteManifest == null &&
+    (!allowLegacyReconstruction ||
+      (current.transaction.snapshotSchemaVersion !== "21" &&
+        current.transaction.snapshotSchemaVersion !== "22"))
+  ) {
     throw new TypeError("旧初回commitの履歴とAI cacheを元recordから証明できません");
   }
   let before: ReadonlyMap<string, StateFileReadResult>;
@@ -117,14 +126,17 @@ async function assertInitialWriteSet(
   if (serializeCanonicalJson(changed) !== serializeCanonicalJson(commit.changedPathManifest)) {
     throw new TypeError("初回commitの親tree差分とGit変更manifestが一致しません");
   }
-  const record = current.transaction.record;
+  const historyPath = joinStatePath(
+    configuration.historyDirectory,
+    `${record.initialPagesProjection.generatedAt.slice(0, 10)}.jsonl`,
+  );
+  const manifest =
+    record.initialStateWriteManifest ??
+    reconstructLegacyInitialStateWriteManifest(configuration, historyPath, before, after, changed);
   assertInitialStateWriteManifest(
     manifest,
     configuration,
-    joinStatePath(
-      configuration.historyDirectory,
-      `${record.initialPagesProjection.generatedAt.slice(0, 10)}.jsonl`,
-    ),
+    historyPath,
     record.runIdentity.runId,
     before,
     after,
@@ -322,6 +334,8 @@ export async function verifyStateCommitChain(
         commit,
         current,
         isVerifiedStateCasCandidateTree(latest) && revision === latestRevision ? latest : undefined,
+        verified.marker.phase === "run_finalized" &&
+          (verified.snapshotSchemaVersion === "21" || verified.snapshotSchemaVersion === "22"),
       );
       if (settled != null) {
         assertSettledOutboxLedger(current, settled, configuration);

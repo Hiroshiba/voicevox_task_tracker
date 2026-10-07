@@ -82,6 +82,42 @@ export function createInitialStateWriteManifest(
   return initialStateWriteManifestSchema.parse(value);
 }
 
+/** 旧完了runの初回commitで可視の変更だけからwrite manifestを復元する。 */
+export function reconstructLegacyInitialStateWriteManifest(
+  configuration: StatePersistenceConfiguration,
+  historyPath: string,
+  before: ReadonlyMap<string, StateFileReadResult>,
+  after: ReadonlyMap<string, StateFileReadResult>,
+  changed: StateChangedPathManifest,
+): InitialStateWriteManifest {
+  const historyFile = fileAt(after, historyPath);
+  if (historyFile.status !== "present") {
+    throw new TypeError("旧初回commitの履歴fileがありません");
+  }
+  const historyRecord = parseStateHistoryRecords(
+    new TextDecoder("utf-8", { fatal: true }).decode(historyFile.bytes),
+  ).at(-1);
+  assertNonNullable(historyRecord, "旧初回commitの履歴recordがありません");
+  const updates = (directory: string): readonly StateFileUpdate[] =>
+    changed.entries
+      .filter((entry) => entry.kind !== "deleted" && entry.path.startsWith(`${directory}/`))
+      .map((entry) => {
+        const file = fileAt(after, entry.path);
+        if (file.status !== "present") {
+          throw new TypeError(`旧初回commitのcache fileがありません。対象: ${entry.path}`);
+        }
+        return { path: entry.path, bytes: file.bytes };
+      });
+  return createInitialStateWriteManifest(
+    { path: historyPath, bytes: historyFile.bytes },
+    historyRecord,
+    updates(configuration.aiCacheDirectory),
+    updates(configuration.personalReminderAiCacheDirectory),
+    changed.entries.filter((entry) => entry.kind === "deleted").map((entry) => entry.path),
+    before,
+  );
+}
+
 /** 初回manifestの実byteと業務値集合をcheckpointで固定したdigestへ照合する。 */
 export function assertInitialStateBusinessContent(
   manifest: InitialStateWriteManifest,
