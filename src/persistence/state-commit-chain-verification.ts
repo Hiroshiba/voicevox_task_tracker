@@ -15,10 +15,10 @@ import {
   type ExactStateValidationSession,
 } from "./exact-state-validation-session.js";
 import {
-  assertLegacyInitialStateHistory,
   assertInitialStateWriteManifest,
   reconstructLegacyInitialStateWriteManifest,
 } from "./initial-state-write-manifest.js";
+import { assertLegacyInitialStateHistory } from "./legacy-initial-state-history.js";
 import {
   isVerifiedStateCasCandidateTree,
   type VerifiedStateCasCandidateTree,
@@ -135,25 +135,15 @@ async function assertInitialWriteSet(
     `${record.initialPagesProjection.generatedAt.slice(0, 10)}.jsonl`,
   );
   if (legacy) {
-    const parentSnapshotFile = before.get(configuration.snapshotPath);
-    const parentHistoryFile = before.get(historyPath);
-    if (parentSnapshotFile?.status !== "present" && parentHistoryFile?.status === "present") {
-      throw new TypeError("旧初回commitの親履歴に対応するsnapshotがありません");
-    }
-    const parentSnapshot =
-      parentSnapshotFile?.status === "present"
-        ? exactStateValidationSession(adapter, configuration).validation.snapshot(
-            parentSnapshotFile.bytes,
-          ).snapshot
-        : undefined;
-    if (parentSnapshot?.schemaVersion === "23") {
-      throw new TypeError("旧初回commitの親snapshotの版が不正です");
-    }
     assertLegacyInitialStateHistory(
+      configuration,
       historyPath,
-      record.initialStateContentDigests.historyInputEvents,
-      parentSnapshot,
-      runTransactionSnapshot(current.transaction),
+      {
+        snapshot: runTransactionSnapshot(current.transaction),
+        inputEventsDigest: record.initialStateContentDigests.historyInputEvents,
+        generatedAt: record.initialPagesProjection.generatedAt,
+        timezone: record.initialPagesProjection.settings.timezone,
+      },
       before,
       after,
     );
