@@ -16,7 +16,8 @@ import { hashCanonicalJson } from "../canonical-json/index.js";
 import { nodeContentDigestPort } from "../infrastructure/tracking-run/content-digest.js";
 import {
   decodeDurablePublicationRecord,
-  type DurablePublicationRecord,
+  decodeLegacyOrCurrentDurablePublicationRecord,
+  type VersionedDurablePublicationRecord,
 } from "../publication/durable-record-schema.js";
 import { normalNotificationLedgerValue } from "../publication/publication-order.js";
 import { type StateFileReadResult, type StatePersistenceConfiguration } from "./branch-adapter.js";
@@ -43,7 +44,7 @@ const verifiedRunTransactionBrand: unique symbol = Symbol("verifiedRunTransactio
 export type VerifiedRunTransactionFiles = Readonly<{
   [verifiedRunTransactionBrand]: true;
   marker: RunTransactionMarker;
-  record: DurablePublicationRecord;
+  record: VersionedDurablePublicationRecord;
   initialPagesEvidence?: InitialPagesPublicationEvidence;
   snapshotDigest: string;
   snapshotSchemaVersion: "21" | "22" | "23";
@@ -109,11 +110,11 @@ function source(bytes: Uint8Array): string {
   return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
 }
 
-/** marker、record、snapshot、通常ledger、Pages証拠を同じtreeで照合する。 */
-export function verifyRunTransactionFiles(
+function verifyRunTransactionFilesWithLegacy(
   files: ReadonlyMap<string, StateFileReadResult>,
   configuration: StatePersistenceConfiguration,
-  fileValidation?: StateFileValidation,
+  fileValidation: StateFileValidation | undefined,
+  allowLegacyAncestor: boolean,
 ): VerifiedRunTransactionFiles | undefined {
   const markerBytes = optionalFile(files, RUN_TRANSACTION_MARKER_STATE_PATH_V1);
   const recordBytes = optionalFile(files, DURABLE_PUBLICATION_RECORD_STATE_PATH_V1);
@@ -132,11 +133,13 @@ export function verifyRunTransactionFiles(
   );
   const snapshotVersion = snapshot.schemaVersion;
   const snapshotRunId = snapshot.run.id;
+  const marker = decodeRunTransactionMarker(markerBytes);
   const record =
     snapshotVersion === "23"
       ? validation.record(recordBytes)
-      : decodeDurablePublicationRecord(recordBytes, nodeContentDigestPort);
-  const marker = decodeRunTransactionMarker(markerBytes);
+      : marker.phase === "run_finalized" || allowLegacyAncestor
+        ? decodeLegacyOrCurrentDurablePublicationRecord(recordBytes, nodeContentDigestPort)
+        : decodeDurablePublicationRecord(recordBytes, nodeContentDigestPort);
   if (
     record.runtimeRecoveryPlan.kind === "not_reproducible" &&
     record.executionPolicy.effectTarget !== "recording"
@@ -238,6 +241,24 @@ export function verifyRunTransactionFiles(
     snapshot,
     ledger,
   );
+}
+
+/** 完了済み旧runの祖先に限り旧record形式を検証する。 */
+export function verifyLegacyCompletedRunTransactionAncestor(
+  files: ReadonlyMap<string, StateFileReadResult>,
+  configuration: StatePersistenceConfiguration,
+  fileValidation: StateFileValidation,
+): VerifiedRunTransactionFiles | undefined {
+  return verifyRunTransactionFilesWithLegacy(files, configuration, fileValidation, true);
+}
+
+/** marker、record、snapshot、通常ledger、Pages証拠を同じtreeで照合する。 */
+export function verifyRunTransactionFiles(
+  files: ReadonlyMap<string, StateFileReadResult>,
+  configuration: StatePersistenceConfiguration,
+  fileValidation?: StateFileValidation,
+): VerifiedRunTransactionFiles | undefined {
+  return verifyRunTransactionFilesWithLegacy(files, configuration, fileValidation, false);
 }
 
 /** 新しいstate候補のsnapshotが現行形式であることを検証する。 */

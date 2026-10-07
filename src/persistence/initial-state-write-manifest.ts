@@ -6,6 +6,7 @@ import {
 } from "../application/tracking-run/contracts/initial-state-write-manifest.js";
 import { createAiCacheEntry } from "../codex/cache.js";
 import { createPersonalReminderAiCacheEntry } from "../codex/personal-reminder-cache.js";
+import { sortByKey } from "../publication/publication-order.js";
 import { cachePath, personalReminderAiCachePath } from "./state-cache-paths.js";
 import type { StateChangedPathManifest } from "./state-commit-metadata.js";
 import type {
@@ -14,8 +15,12 @@ import type {
   StatePersistenceConfiguration,
 } from "./branch-adapter.js";
 import { assertNonNullable } from "../util/assert-non-nullable.js";
-import { parseStateHistoryRecords } from "./history.js";
-import type { StateHistoryRecord } from "./history-contracts.js";
+import {
+  appendStateHistoryRecord,
+  createStateHistoryRecord,
+  parseStateHistoryRecords,
+} from "./history.js";
+import type { StateHistoryRecord, StateHistorySnapshot } from "./history-contracts.js";
 
 type WrittenFile = InitialStateWriteManifest["aiCache"][number];
 
@@ -118,11 +123,53 @@ export function reconstructLegacyInitialStateWriteManifest(
   );
 }
 
+/** 旧初回commitの履歴を保存済みdigest、親snapshot、初回snapshotから再導出する。 */
+export function assertLegacyInitialStateHistory(
+  historyPath: string,
+  expectedInputEventsDigest: string,
+  previousSnapshot: StateHistorySnapshot | undefined,
+  currentSnapshot: StateHistorySnapshot,
+  before: ReadonlyMap<string, StateFileReadResult>,
+  after: ReadonlyMap<string, StateFileReadResult>,
+): void {
+  const prior = fileAt(before, historyPath);
+  const current = fileAt(after, historyPath);
+  if (current.status !== "present") {
+    throw new TypeError("旧初回commitの履歴fileがありません");
+  }
+  const currentSource = new TextDecoder("utf-8", { fatal: true }).decode(current.bytes);
+  const actualRecord = parseStateHistoryRecords(currentSource).at(-1);
+  assertNonNullable(actualRecord, "旧初回commitの履歴recordがありません");
+  const sortedInputEvents = sortByKey(actualRecord.inputEvents, serializeCanonicalJson);
+  if (
+    digest.sha256Utf8(serializeCanonicalJson(sortedInputEvents)) !== expectedInputEventsDigest ||
+    actualRecord.events.some((event) => event.kind === "repository_excluded")
+  ) {
+    throw new TypeError("旧初回commitの履歴入力または除外repositoryを元recordから証明できません");
+  }
+  const expectedRecord = createStateHistoryRecord(
+    previousSnapshot,
+    currentSnapshot,
+    currentSnapshot.generatedAt.slice(0, 10),
+    [],
+    actualRecord.inputEvents,
+  );
+  const expectedSource = appendStateHistoryRecord(
+    prior.status === "present"
+      ? new TextDecoder("utf-8", { fatal: true }).decode(prior.bytes)
+      : undefined,
+    expectedRecord,
+  );
+  if (currentSource !== expectedSource) {
+    throw new TypeError("旧初回commitの履歴byteが親stateとsnapshotから再導出した値と一致しません");
+  }
+}
+
 /** 初回manifestの実byteと業務値集合をcheckpointで固定したdigestへ照合する。 */
 export function assertInitialStateBusinessContent(
   manifest: InitialStateWriteManifest,
   expectedDigests: Readonly<{
-    initialStateWriteManifest: string;
+    initialStateWriteManifest?: string | undefined;
     aiCacheAdditions: string;
     personalReminderAiCacheAdditions: string;
   }>,
@@ -130,8 +177,9 @@ export function assertInitialStateBusinessContent(
   after: ReadonlyMap<string, StateFileReadResult>,
 ): void {
   if (
+    expectedDigests.initialStateWriteManifest != null &&
     digest.sha256Utf8(serializeCanonicalJson(manifest)) !==
-    expectedDigests.initialStateWriteManifest
+      expectedDigests.initialStateWriteManifest
   ) {
     throw new TypeError("初回write manifestがcheckpointの業務digestと一致しません");
   }

@@ -15,6 +15,7 @@ import {
   type ExactStateValidationSession,
 } from "./exact-state-validation-session.js";
 import {
+  assertLegacyInitialStateHistory,
   assertInitialStateWriteManifest,
   reconstructLegacyInitialStateWriteManifest,
 } from "./initial-state-write-manifest.js";
@@ -46,6 +47,8 @@ import {
 } from "./state-orthogonal-advance.js";
 import {
   verifyRunTransactionFiles,
+  verifyLegacyCompletedRunTransactionAncestor,
+  runTransactionSnapshot,
   runTransactionNotificationLedger,
   type VerifiedRunTransactionFiles,
 } from "./state-transaction-files.js";
@@ -84,8 +87,9 @@ async function assertInitialWriteSet(
   allowLegacyReconstruction: boolean,
 ): Promise<void> {
   const record = current.transaction.record;
+  const legacy = !("initialStateWriteManifest" in record);
   if (
-    record.initialStateWriteManifest == null &&
+    legacy &&
     (!allowLegacyReconstruction ||
       (current.transaction.snapshotSchemaVersion !== "21" &&
         current.transaction.snapshotSchemaVersion !== "22"))
@@ -130,6 +134,30 @@ async function assertInitialWriteSet(
     configuration.historyDirectory,
     `${record.initialPagesProjection.generatedAt.slice(0, 10)}.jsonl`,
   );
+  if (legacy) {
+    const parentSnapshotFile = before.get(configuration.snapshotPath);
+    const parentHistoryFile = before.get(historyPath);
+    if (parentSnapshotFile?.status !== "present" && parentHistoryFile?.status === "present") {
+      throw new TypeError("旧初回commitの親履歴に対応するsnapshotがありません");
+    }
+    const parentSnapshot =
+      parentSnapshotFile?.status === "present"
+        ? exactStateValidationSession(adapter, configuration).validation.snapshot(
+            parentSnapshotFile.bytes,
+          ).snapshot
+        : undefined;
+    if (parentSnapshot?.schemaVersion === "23") {
+      throw new TypeError("旧初回commitの親snapshotの版が不正です");
+    }
+    assertLegacyInitialStateHistory(
+      historyPath,
+      record.initialStateContentDigests.historyInputEvents,
+      parentSnapshot,
+      runTransactionSnapshot(current.transaction),
+      before,
+      after,
+    );
+  }
   const manifest =
     record.initialStateWriteManifest ??
     reconstructLegacyInitialStateWriteManifest(configuration, historyPath, before, after, changed);
@@ -149,13 +177,17 @@ async function readVerifiedAt(
   adapter: StateBranchAdapter,
   configuration: StatePersistenceConfiguration,
   revision: string,
+  legacyCompleted: boolean,
 ): Promise<VerifiedTree> {
   const paths = await adapter.listFiles(revision, "state");
   const files = await adapter.readFiles(revision, paths);
   if (files.size !== paths.length || paths.some((path) => files.get(path)?.status !== "present")) {
     throw new TypeError("Git祖先のexact state treeが不足しています");
   }
-  const transaction = verifyRunTransactionFiles(
+  const verify = legacyCompleted
+    ? verifyLegacyCompletedRunTransactionAncestor
+    : verifyRunTransactionFiles;
+  const transaction = verify(
     files,
     configuration,
     exactStateValidationSession(adapter, configuration).validation,
@@ -242,6 +274,14 @@ export async function verifyStateCommitChain(
 ): Promise<StateCommitChainResult> {
   const session = exactStateValidationSession(adapter, configuration);
   adapter = session.adapter;
+  const legacyCompleted = !("initialStateWriteManifest" in verified.record);
+  if (
+    legacyCompleted &&
+    (verified.marker.phase !== "run_finalized" ||
+      (verified.snapshotSchemaVersion !== "21" && verified.snapshotSchemaVersion !== "22"))
+  ) {
+    throw new TypeError("旧永続recordは完了済みv21・v22のrunだけで読み取れます");
+  }
   const proofKey = serializeCanonicalJson([
     session.readGeneration,
     headRevision,
@@ -260,7 +300,7 @@ export async function verifyStateCommitChain(
   const latest =
     latestTree != null && latestRevision === headRevision && latestTree.revision === headRevision
       ? latestTree
-      : await readVerifiedAt(adapter, configuration, latestRevision);
+      : await readVerifiedAt(adapter, configuration, latestRevision, legacyCompleted);
   if (
     serializeCanonicalJson(latest.transaction.marker) !== serializeCanonicalJson(verified.marker) ||
     latest.transaction.record.recordDigest !== verified.record.recordDigest
@@ -334,8 +374,7 @@ export async function verifyStateCommitChain(
         commit,
         current,
         isVerifiedStateCasCandidateTree(latest) && revision === latestRevision ? latest : undefined,
-        verified.marker.phase === "run_finalized" &&
-          (verified.snapshotSchemaVersion === "21" || verified.snapshotSchemaVersion === "22"),
+        legacyCompleted,
       );
       if (settled != null) {
         assertSettledOutboxLedger(current, settled, configuration);
@@ -380,7 +419,12 @@ export async function verifyStateCommitChain(
       expectedTrackingStateRevision: previousRevision,
       interveningOperationsAlertCommits: advance.interveningOperationsAlertCommits,
     };
-    const previous = await readVerifiedAt(adapter, configuration, previousRevision);
+    const previous = await readVerifiedAt(
+      adapter,
+      configuration,
+      previousRevision,
+      legacyCompleted,
+    );
     if (
       current.transaction.marker.phase === "initial_state_committed" ||
       current.transaction.marker.initialStateRevision !== initialStateRevision ||

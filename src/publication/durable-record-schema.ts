@@ -52,6 +52,12 @@ const initialStateContentDigestsSchema = z.strictObject({
   personalReminderAiCacheAdditions: sha256Schema,
   notificationLedger: sha256Schema,
 });
+const legacyInitialStateContentDigestsSchema = initialStateContentDigestsSchema.omit({
+  initialStateWriteManifest: true,
+});
+const versionedInitialStateContentDigestsSchema = legacyInitialStateContentDigestsSchema.extend({
+  initialStateWriteManifest: sha256Schema.optional(),
+});
 
 const initialPagesProjectionSchema = z.strictObject({
   phase: z.literal("initial"),
@@ -162,7 +168,7 @@ const durablePublicationRecordV1Schema = z.strictObject({
   runtimeRecoveryPlan: runtimeRecoveryPlanV1Schema,
   configDigest: sha256Schema,
   baseStateRevision: baseStateRevisionSchema,
-  initialStateContentDigests: initialStateContentDigestsSchema,
+  initialStateContentDigests: versionedInitialStateContentDigestsSchema,
   initialStateWriteManifest: initialStateWriteManifestSchema.optional(),
   initialPagesProjection: initialPagesProjectionSchema,
   notificationOutbox: notificationOutboxSchema,
@@ -181,10 +187,39 @@ const durablePublicationRecordV3Schema = durablePublicationRecordV2Schema.extend
   analysisStageRecord: analysisStageRecordSchema,
 });
 
-export const durablePublicationRecordSchema = z.discriminatedUnion("schemaVersion", [
-  durablePublicationRecordV1Schema,
-  durablePublicationRecordV2Schema,
-  durablePublicationRecordV3Schema,
+export const durablePublicationRecordSchema = z
+  .discriminatedUnion("schemaVersion", [
+    durablePublicationRecordV1Schema,
+    durablePublicationRecordV2Schema,
+    durablePublicationRecordV3Schema,
+  ])
+  .superRefine((record, context) => {
+    if (
+      record.initialStateWriteManifest == null ||
+      record.initialStateContentDigests.initialStateWriteManifest == null
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "現行durable publication recordに初回write manifestがありません",
+      });
+    }
+  });
+
+const legacyDurablePublicationRecordV1Schema = durablePublicationRecordV1Schema
+  .omit({ initialStateWriteManifest: true })
+  .extend({ initialStateContentDigests: legacyInitialStateContentDigestsSchema });
+const legacyDurablePublicationRecordV2Schema = legacyDurablePublicationRecordV1Schema.extend({
+  schemaVersion: z.literal(2),
+  runtimeRecoveryPlan: runtimeRecoveryPlanV2Schema,
+});
+const legacyDurablePublicationRecordV3Schema = legacyDurablePublicationRecordV2Schema.extend({
+  schemaVersion: z.literal(3),
+  analysisStageRecord: analysisStageRecordSchema,
+});
+const legacyDurablePublicationRecordSchema = z.discriminatedUnion("schemaVersion", [
+  legacyDurablePublicationRecordV1Schema,
+  legacyDurablePublicationRecordV2Schema,
+  legacyDurablePublicationRecordV3Schema,
 ]);
 
 /** checkpoint成立前に確定できる業務値だけのrecord template。 */
@@ -194,6 +229,9 @@ export type DurablePublicationRecordTemplate = z.output<
 
 /** 初回state commitで保存する全field確定済みrecord。 */
 export type DurablePublicationRecord = z.output<typeof durablePublicationRecordSchema>;
+
+/** Git state読込時だけ受ける旧形式を含むrecord。 */
+export type VersionedDurablePublicationRecord = DurablePublicationRecord;
 
 /** 永続recordを末尾改行付きcanonical JSONへ変換する。 */
 export function encodeDurablePublicationRecord(
@@ -207,12 +245,10 @@ export function encodeDurablePublicationRecord(
   );
 }
 
-/** full recordの業務field、相互参照、canonical digestを検証する。 */
-export function parseDurablePublicationRecord(
-  value: unknown,
+function assertDurablePublicationRecordContent(
+  record: VersionedDurablePublicationRecord,
   digest: ContentDigestPort,
-): DurablePublicationRecord {
-  const record = durablePublicationRecordSchema.parse(value);
+): void {
   const { recordDigest, ...payload } = record;
   if (digest.sha256Utf8(serializeCanonicalJson(payload)) !== recordDigest) {
     throw new TypeError("durable publication recordのdigestが一致しません");
@@ -303,16 +339,21 @@ export function parseDurablePublicationRecord(
   ) {
     throw new TypeError("永続stateへ回復不能なrecordを保存できません");
   }
+}
+
+/** full recordの業務field、相互参照、canonical digestを検証する。 */
+export function parseDurablePublicationRecord(
+  value: unknown,
+  digest: ContentDigestPort,
+): DurablePublicationRecord {
+  const record = durablePublicationRecordSchema.parse(value);
+  assertDurablePublicationRecordContent(record, digest);
   freezeJsonValue(record);
   validatedRecords.add(record);
   return record;
 }
 
-/** canonical JSONのfull recordを読む。 */
-export function decodeDurablePublicationRecord(
-  bytes: Uint8Array,
-  digest: ContentDigestPort,
-): DurablePublicationRecord {
+function parseCanonicalRecord(bytes: Uint8Array): unknown {
   if (bytes.length > MAX_RECORD_BYTES) {
     throw new TypeError("durable publication recordが許容するbyte数を超えています");
   }
@@ -321,5 +362,28 @@ export function decodeDurablePublicationRecord(
   if (source !== serializeCanonicalJsonLine(raw)) {
     throw new TypeError("durable publication recordがcanonical JSONではありません");
   }
-  return parseDurablePublicationRecord(raw, digest);
+  return raw;
+}
+
+/** 旧record契約を厳密に検証し、現行recordもそのまま読む。 */
+export function decodeLegacyOrCurrentDurablePublicationRecord(
+  bytes: Uint8Array,
+  digest: ContentDigestPort,
+): VersionedDurablePublicationRecord {
+  const raw = parseCanonicalRecord(bytes);
+  const legacy = legacyDurablePublicationRecordSchema.safeParse(raw);
+  if (!legacy.success) {
+    return parseDurablePublicationRecord(raw, digest);
+  }
+  assertDurablePublicationRecordContent(legacy.data, digest);
+  freezeJsonValue(legacy.data);
+  return legacy.data;
+}
+
+/** canonical JSONのfull recordを読む。 */
+export function decodeDurablePublicationRecord(
+  bytes: Uint8Array,
+  digest: ContentDigestPort,
+): DurablePublicationRecord {
+  return parseDurablePublicationRecord(parseCanonicalRecord(bytes), digest);
 }
