@@ -6,12 +6,13 @@ import { assertNonNullable } from "../util/index.js";
 export const HTML_CHARACTER_REFERENCE_PATTERN =
   /&(?:#[xX][0-9a-f]{1,6}|#[0-9]{1,7}|[A-Za-z][A-Za-z0-9]{1,31});/giu;
 
-type HtmlAnchorTag =
+type HtmlTag =
   | Readonly<{ kind: "other" }>
   | Readonly<{ kind: "invalid" }>
-  | Readonly<{ kind: "close" }>
+  | Readonly<{ kind: "close"; name: string }>
   | Readonly<{
       kind: "open";
+      name: string;
       attributes: readonly Readonly<{
         name: string;
         span: Readonly<{ start: number; end: number }>;
@@ -64,27 +65,33 @@ function decodedHtmlValue(
   };
 }
 
-function decodedAnchorAttributes(
-  attributes: Extract<HtmlAnchorTag, { kind: "open" }>["attributes"],
-): Extract<HtmlAnchorTag, { kind: "open" | "invalid" }> {
-  const interpreted: Extract<HtmlAnchorTag, { kind: "open" }>["attributes"][number][] = [];
+function decodedHtmlTagAttributes(
+  name: string,
+  attributes: Extract<HtmlTag, { kind: "open" }>["attributes"],
+): Extract<HtmlTag, { kind: "open" | "invalid" }> {
+  const interpreted: Extract<HtmlTag, { kind: "open" }>["attributes"][number][] = [];
   for (const attribute of attributes) {
     const decoded = decodedHtmlValue(attribute.value, "attribute");
     if (decoded.status === "invalid") return { kind: "invalid" };
     interpreted.push({ ...attribute, value: decoded.value });
   }
-  return { kind: "open", attributes: interpreted };
+  return { kind: "open", name, attributes: interpreted };
 }
 
-/** 完全なHTML anchor tagから属性値と原文範囲を取得する。 */
-function htmlAnchorTag(value: string): HtmlAnchorTag {
-  if (/^<\/a[ \t\r\n]*>$/iu.test(value)) return { kind: "close" };
-  if (!/^<a(?=[ \t\r\n/>])/iu.test(value)) return { kind: "other" };
+/** 完全なHTML tagから属性値と原文範囲を取得する。 */
+function htmlTag(value: string): HtmlTag {
+  const tagName = /^<\/?(a|br|p|h[1-6])(?=[ \t\r\n/>])/iu.exec(value)?.[1]?.toLowerCase();
+  if (tagName == null) return { kind: "other" };
+  if (value.startsWith("</")) {
+    return /^<\/[A-Za-z0-9]+[ \t\r\n]*>$/u.test(value)
+      ? { kind: "close", name: tagName }
+      : { kind: "invalid" };
+  }
   const spacing = /[ \t\r\n]+/uy;
   const attribute =
     /([A-Za-z_:][A-Za-z0-9_.:-]*)(?:[ \t\r\n]*=[ \t\r\n]*(?:"([^"]*)"|'([^']*)'|([^ \t\r\n"'=<>`]+)))?/duy;
-  const attributes: Extract<HtmlAnchorTag, { kind: "open" }>["attributes"][number][] = [];
-  let index = 2;
+  const attributes: Extract<HtmlTag, { kind: "open" }>["attributes"][number][] = [];
+  let index = tagName.length + 1;
   while (index < value.length) {
     spacing.lastIndex = index;
     const space = spacing.exec(value);
@@ -93,12 +100,12 @@ function htmlAnchorTag(value: string): HtmlAnchorTag {
       (value.charAt(index) === ">" && index + 1 === value.length) ||
       (value.charAt(index) === "/" && value.charAt(index + 1) === ">" && index + 2 === value.length)
     ) {
-      return decodedAnchorAttributes(attributes);
+      return decodedHtmlTagAttributes(tagName, attributes);
     }
-    if (space == null) return { kind: "other" };
+    if (space == null) return { kind: "invalid" };
     attribute.lastIndex = index;
     const matched = attribute.exec(value);
-    if (matched == null) return { kind: "other" };
+    if (matched == null) return { kind: "invalid" };
     const name = matched[1];
     assertNonNullable(name, "HTML属性名を取得できません");
     const span = matched.indices?.[2] ?? matched.indices?.[3] ?? matched.indices?.[4];
@@ -111,7 +118,7 @@ function htmlAnchorTag(value: string): HtmlAnchorTag {
     }
     index = attribute.lastIndex;
   }
-  return { kind: "other" };
+  return { kind: "invalid" };
 }
 
 /** 表示textのHTML境界として扱うtagの種別を取得する。 */
@@ -121,11 +128,15 @@ export function htmlDisplayTag(
   | Readonly<{ kind: "other" }>
   | Readonly<{ kind: "invalid" }>
   | Readonly<{ kind: "anchor" }>
-  | Readonly<{ kind: "break" }>
+  | Readonly<{ kind: "break"; labelAllowed: boolean }>
   | Readonly<{ kind: "decoration"; name: string; closing: boolean }> {
-  const anchor = htmlAnchorTag(value);
-  if (anchor.kind !== "other") return { kind: anchor.kind === "invalid" ? "invalid" : "anchor" };
-  if (/^<(?:br\s*\/?|\/?p)>$/iu.test(value)) return { kind: "break" };
+  const html = htmlTag(value);
+  if (html.kind === "invalid") return { kind: "invalid" };
+  if (html.kind !== "other") {
+    return html.name === "a"
+      ? { kind: "anchor" }
+      : { kind: "break", labelAllowed: /^<(?:br\s*\/?|\/?p)>$/iu.test(value) };
+  }
   const tag = /^<(\/?)(code|kbd|samp|span|strong|em|b|i|s|del|sub|sup|mark)>$/iu.exec(value);
   if (tag == null) return { kind: "other" };
   const name = tag[2];
@@ -180,14 +191,10 @@ export function htmlTextFields(
     const end = htmlTagEnd(value, match.index);
     if (end === "invalid") return { status: "invalid" };
     const raw = value.slice(match.index, end);
-    const anchor = htmlAnchorTag(raw);
-    if (
-      anchor.kind === "invalid" ||
-      (anchor.kind === "other" && /^<\/?a(?=[ \t\r\n/>])/iu.test(raw))
-    )
-      return { status: "invalid" };
-    if (anchor.kind === "open") {
-      for (const attribute of anchor.attributes) {
+    const html = htmlTag(raw);
+    if (html.kind === "invalid") return { status: "invalid" };
+    if (html.kind === "open") {
+      for (const attribute of html.attributes) {
         fields.push({
           context: attribute.name === "href" ? "url" : "text",
           parts: [

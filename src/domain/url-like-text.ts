@@ -470,6 +470,7 @@ function appendInlineDisplayText(
         continue;
       }
       if (tag.kind === "break") {
+        if (entry.mode === "link" && !tag.labelAllowed) return false;
         appendSourceText(builder, "\n", {
           kind: "replacement",
           original: originalTextSpans(text, nodeTextSpan(node)),
