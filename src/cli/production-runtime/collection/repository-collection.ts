@@ -25,6 +25,7 @@ import type {
 import type { DailyRunInvocation } from "../../daily-transaction.js";
 import type { CollectionRuntimeAdapters } from "../adapters.js";
 import type { RuntimeConfiguration, RuntimeState } from "../contracts.js";
+import { isExcludedPullRequestItem } from "../excluded-pull-request.js";
 import {
   configuredUrlIdentifiersForRepository,
   missingIdentifiers,
@@ -249,7 +250,9 @@ export async function collectFreshRepositoryItems(
           graphql: authentication.graphql,
         });
   const enumeratedItems = deduplicateByStableId(
-    [...openItems, ...resolvedNodeItems, ...individuallyEnumeratedItems],
+    [...openItems, ...resolvedNodeItems, ...individuallyEnumeratedItems].filter(
+      (item) => !isExcludedPullRequestItem(item, repository),
+    ),
     (item) => item.nodeId,
   );
   const itemCollection = await collectFreshRepositoryItemObservations(

@@ -23,6 +23,7 @@ import {
   createAiAnalysisRunIdentity,
 } from "../analysis-identity.js";
 import type { RuntimeConfiguration, RuntimeState } from "../contracts.js";
+import { isExcludedPullRequestIdentifier } from "../excluded-pull-request.js";
 import {
   previousCollectionItemsByNodeId,
   previousItemCollection,
@@ -151,6 +152,7 @@ export function missingIdentifiers(
   return Object.freeze(
     [...new Set(identifiers.map(normalizeTrackingIdentifier))].filter(
       (identifier) =>
+        !isExcludedPullRequestIdentifier(identifier) &&
         !currentItems.some((item) => item.nodeId === identifier || item.url === identifier),
     ),
   );
@@ -197,7 +199,11 @@ export function requiredTrackingDetailNodeIds(
 
 /** 設定されたnode識別子を返す。 */
 export function configuredNodeIdentifiers(config: Config): readonly string[] {
-  return Object.freeze(config.tracking.include.filter((identifier) => !identifier.includes("://")));
+  return Object.freeze(
+    config.tracking.include.filter(
+      (identifier) => !identifier.includes("://") && !isExcludedPullRequestIdentifier(identifier),
+    ),
+  );
 }
 
 /** 個人催促の詳細取得対象を返す。 */

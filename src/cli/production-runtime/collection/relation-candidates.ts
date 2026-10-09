@@ -19,6 +19,10 @@ import { relationNodes } from "../../../graph/relation-candidate-endpoints.js";
 import type { SnapshotCollectionRepository } from "../../../persistence/index.js";
 import { assertNonNullable } from "../../../util/index.js";
 import type { RuntimeState } from "../contracts.js";
+import {
+  isExcludedPullRequestRelationItem,
+  isExcludedPullRequestRelationNode,
+} from "../excluded-pull-request.js";
 import { previousSnapshot } from "../previous-state/snapshot.js";
 import type { FreshRepositoryRuntimeCollection } from "./repository-collection.js";
 
@@ -56,9 +60,9 @@ export function extractRelationCandidatesOnce(
   items: readonly EnumeratedGitHubItem[],
   details: readonly GitHubItemDetail[],
 ): readonly RelationCandidate[] {
-  const knownItems = items.map((item) =>
-    createPublicRelationItem(item, allowlist.require(item.repositoryId)),
-  );
+  const knownItems = items
+    .map((item) => createPublicRelationItem(item, allowlist.require(item.repositoryId)))
+    .filter((item) => !isExcludedPullRequestRelationItem(item));
   const itemByNodeId = new Map(knownItems.map((item) => [item.nodeId, item]));
   const extractionItems = details.map((detail) => {
     const item = itemByNodeId.get(detail.nodeId);
@@ -73,27 +77,40 @@ export function extractRelationCandidatesOnce(
         sourceId: comment.sourceId,
         markdown: comment.body,
       })),
-      crossReferences: detail.inboundCrossReferences.map((reference) => ({
-        sourceId: reference.eventSourceId,
-        sourceItem: reference.sourceItem,
-        willCloseTarget: reference.willCloseTarget,
-      })),
+      crossReferences: detail.inboundCrossReferences
+        .filter((reference) => !isExcludedPullRequestRelationItem(reference.sourceItem))
+        .map((reference) => ({
+          sourceId: reference.eventSourceId,
+          sourceItem: reference.sourceItem,
+          willCloseTarget: reference.willCloseTarget,
+        })),
       nativeDependencies:
         detail.type === "issue" && detail.nativeDependencies.availability === "available"
-          ? detail.nativeDependencies.relations
+          ? detail.nativeDependencies.relations.filter(
+              (relation) => !isExcludedPullRequestRelationItem(relation.relatedItem),
+            )
           : [],
       nativeHierarchy:
         detail.type === "issue" && detail.nativeHierarchy.availability === "available"
-          ? detail.nativeHierarchy.relations
+          ? detail.nativeHierarchy.relations.filter(
+              (relation) => !isExcludedPullRequestRelationItem(relation.relatedItem),
+            )
           : [],
-      nativeClosingIssues: detail.type === "pull_request" ? detail.nativeClosingIssues : [],
+      nativeClosingIssues:
+        detail.type === "pull_request"
+          ? detail.nativeClosingIssues.filter(
+              (relation) => !isExcludedPullRequestRelationItem(relation.relatedItem),
+            )
+          : [],
     }) satisfies RelationExtractionItem;
   });
   return extractRelationCandidatesForItems({
     organization: config.organization,
     items: extractionItems,
     knownItems,
-  });
+  }).filter(
+    (candidate) => !relationNodes(candidate.relation).some(isExcludedPullRequestRelationNode),
+  );
 }
 
 /** 端点を収集できた関係候補を選ぶ。 */
