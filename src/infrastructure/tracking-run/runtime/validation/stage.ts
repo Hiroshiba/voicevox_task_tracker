@@ -11,6 +11,7 @@ import { nodeContentDigestPort } from "../../content-digest.js";
 import type { GitHubRunSessions } from "../../github-port.js";
 import type { AnalysisProgress, AnalysisRuntimeContext } from "../analysis-contracts.js";
 import { createEvidenceClosureAdditions } from "./evidence-additions.js";
+import { assertExcludedPullRequestSavedSnapshot } from "./excluded-pull-request.js";
 import { stateHistoryInputEvents } from "./history-events.js";
 import {
   mergeSelectedNotificationLedger,
@@ -61,6 +62,7 @@ export async function validateRunCompleteness(
     ...candidate,
     run: Object.freeze({ ...candidate.run, complete: true }),
   });
+  assertExcludedPullRequestSavedSnapshot(state, collection, completeSnapshot);
   const publicationInputs = projectPublicationInputs(
     configuration,
     await state.session.initialPublicationBaseState(

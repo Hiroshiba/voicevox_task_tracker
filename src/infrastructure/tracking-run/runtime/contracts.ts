@@ -38,6 +38,7 @@ export type RuntimeConfiguration = Readonly<{
 
 export type RuntimeState = Readonly<{
   session: StatePersistenceSession;
+  rawSnapshot: StateSnapshotReadResult;
   snapshot: StateSnapshotReadResult;
   history: readonly StateHistoryRecord[];
   aiCache: readonly AiCacheEntry[];

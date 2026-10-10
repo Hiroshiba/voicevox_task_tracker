@@ -15,18 +15,23 @@ import {
 import { normalizeObservedGitHubItems } from "../../github/item-normalization.js";
 import { findPrivateRepositoryReference } from "../../github/private-repository-reference.js";
 import { createPublicRepositoryAllowlist } from "../../github/public-repository-allowlist.js";
+import { assertStatePublicSafety } from "../../persistence/public-safety.js";
+import type { StateSnapshotReadResult } from "../../persistence/state-persistence-session.js";
 import {
   collectRepositoryMetadata,
   type discoverRepositoryInventory,
 } from "../../github/repository-inventory.js";
 
 import { createPublicBoundaryDiagnosticError } from "./public-boundary-diagnostic.js";
+import { assertExcludedPullRequestReturns404 } from "./excluded-pull-request-404.js";
 
 type GitHubInventoryDependencies = Readonly<{
   credentials: GitHubAppCredentials;
   createClient: (options: CreateGitHubClientOptions) => Promise<GitHubClient>;
   discoverInventory: typeof discoverRepositoryInventory;
   sessions: GitHubRunSessions;
+  rawSnapshot: StateSnapshotReadResult;
+  knownSecrets: readonly string[];
 }>;
 
 type GitHubReadDependencies = Readonly<{
@@ -101,9 +106,10 @@ export class GitHubRunSessions {
 function assertStoredPrivateRepositoryBoundary(
   inventory: Awaited<ReturnType<typeof discoverRepositoryInventory>>,
   prepared: Parameters<RepositoryInventoryPort["collect"]>[0],
+  rawSnapshot: StateSnapshotReadResult,
 ): void {
   const storedValues: unknown[] = [
-    prepared.core.baseState.snapshot,
+    rawSnapshot,
     prepared.core.baseState.history,
     prepared.core.baseState.aiCache,
     prepared.core.baseState.personalReminderAiCache,
@@ -131,8 +137,18 @@ export function createGitHubRepositoryInventoryPort(
         observedAt: prepared.core.identity.startedAt,
         request: client.request,
       });
-      assertStoredPrivateRepositoryBoundary(inventory, prepared);
       const allowlist = createPublicRepositoryAllowlist(inventory);
+      assertStoredPrivateRepositoryBoundary(inventory, prepared, dependencies.rawSnapshot);
+      if (dependencies.rawSnapshot.status === "available") {
+        assertStatePublicSafety({
+          snapshot: dependencies.rawSnapshot.snapshot,
+          repositoryInventory: inventory,
+          repositoryAllowlist: allowlist.repositories,
+          additionalValues: [],
+          knownSecrets: dependencies.knownSecrets,
+        });
+      }
+      await assertExcludedPullRequestReturns404(client.request);
       dependencies.sessions.register(prepared.core.identity.runId, client, inventory);
       return Object.freeze({
         allowlist,

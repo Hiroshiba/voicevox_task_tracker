@@ -6,10 +6,14 @@ import {
   type AiCacheStore,
 } from "../../../../codex/cache.js";
 import { GENERIC_AI_ELEMENT_DEFINITIONS } from "../../../../codex/generic-ai-definition.js";
+import { affectedIssueNodeId } from "../../../../application/tracking-run/excluded-pull-request.js";
 
 /** 要素別cacheを現行入力と実行条件で照合する。 */
 export function createGenericAiCacheLookup(cache: AiCacheStore): GenericAiCacheLookupPort {
-  return async (identity, planning, element) => {
+  return async (identity, planning, element, candidateId) => {
+    if (candidateId === affectedIssueNodeId) {
+      return Object.freeze({ status: "miss" });
+    }
     const candidate = planning.candidates[element];
     const cacheIdentity = Object.freeze({
       ...identity,

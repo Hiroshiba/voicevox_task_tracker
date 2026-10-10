@@ -27,6 +27,7 @@ export type GenericAiCacheLookupPort = (
   identity: AiAnalysisRunIdentity,
   planning: AnalysisElementPlanning,
   element: AiAnalysisElement,
+  candidateId: string,
 ) => Promise<GenericAiCacheLookup>;
 
 type GenericAiElementDecision =
@@ -66,12 +67,13 @@ async function selectedElementDecision(
   lookupCache: GenericAiCacheLookupPort,
   planning: AnalysisElementPlanning,
   element: AiAnalysisElement,
+  candidateId: string,
   forced: boolean,
 ): Promise<GenericAiElementDecision> {
   if (forced) {
     return Object.freeze({ choice: "execute", reason: "forced_target" });
   }
-  const cached = await lookupCache(identity, planning, element);
+  const cached = await lookupCache(identity, planning, element, candidateId);
   switch (cached.status) {
     case "hit":
       return Object.freeze({
@@ -124,6 +126,7 @@ export async function planGenericAiCachedElements(
             lookupCache,
             planning,
             element,
+            candidateId,
             target?.nodeId === candidateId,
           )
         : Object.freeze({ choice: "ai_disabled", reason: "ai_disabled" });

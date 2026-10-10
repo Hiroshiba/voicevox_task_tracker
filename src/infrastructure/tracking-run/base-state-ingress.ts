@@ -37,7 +37,10 @@ export type BaseStateIngress = Readonly<{
   previousState: AnalysisPreviousState;
 }>;
 
-function projectPreviousSnapshot(snapshot: StateSnapshotReadResult): PreviousSnapshotProjection {
+/** 前回snapshotから解析に必要な値だけを投影する。 */
+export function projectPreviousSnapshot(
+  snapshot: StateSnapshotReadResult,
+): PreviousSnapshotProjection {
   if (snapshot.status !== "available") {
     return Object.freeze({ status: snapshot.status });
   }

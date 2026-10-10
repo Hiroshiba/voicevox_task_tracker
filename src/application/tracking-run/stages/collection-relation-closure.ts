@@ -8,6 +8,7 @@ import {
   type FreshRepositoryRuntimeCollection,
 } from "./collection-repositories.js";
 import type { CollectionPlanningContext } from "./collection-incremental-plan.js";
+import { isExcludedPullRequestNodeId } from "../excluded-pull-request.js";
 import type { CollectionGitHubReadPort, DelayPort } from "../ports.js";
 import type { EnumeratedGitHubItem } from "../../../github/item-enumeration.js";
 import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
@@ -297,7 +298,9 @@ export async function collectRelationExpandedItems(
         }),
       );
     }
-    const nextRequests = [...requestsByNodeId.values()];
+    const nextRequests = [...requestsByNodeId.values()].filter(
+      (request) => !isExcludedPullRequestNodeId(request.nodeId),
+    );
     if (nextRequests.length === 0) {
       const evaluatedAt = captureEvaluationTime();
       const finalTracking = collectTrackingCandidates(

@@ -11,7 +11,7 @@ export function createCollectInventoryStage(
   sessions: GitHubRunSessions,
   context: AnalysisRuntimeContext,
 ): AnalysisStages["inventoryCollected"] {
-  const { configuration } = context;
+  const { configuration, state } = context;
   return (prepared) =>
     collectRepositoryInventory(
       prepared,
@@ -20,6 +20,8 @@ export function createCollectInventoryStage(
         createClient: adapters.createGitHubClient,
         discoverInventory: adapters.discoverRepositoryInventory,
         sessions,
+        rawSnapshot: state.rawSnapshot,
+        knownSecrets: configuration.credentials.knownSecrets,
       }),
       nodeContentDigestPort,
     );
