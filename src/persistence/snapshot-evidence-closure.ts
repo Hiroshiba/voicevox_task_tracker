@@ -3,6 +3,14 @@ import { type Evidence, type SourceId } from "../domain/index.js";
 import { StateSnapshotSemanticError } from "./errors.js";
 import type { StateSnapshot } from "./snapshot-contracts.js";
 
+type PersonalReminderEvidenceSnapshot = Readonly<{
+  items: readonly Pick<
+    StateSnapshot["items"][number],
+    "nodeId" | "evidence" | "personalReminderCauses"
+  >[];
+  relations: readonly Pick<StateSnapshot["relations"][number], "evidence">[];
+}>;
+
 /** personal reminderのEvidence recordをsource IDごとに完全一致で索引化する。 */
 export function createPersonalReminderEvidenceSourceIndex(
   evidenceGroups: readonly (readonly Evidence[])[],
@@ -43,7 +51,7 @@ export function createPersonalReminderEvidenceSourceIndex(
 
 /** personal reminderが参照するEvidence recordを所有itemへ閉じていることを検証する。 */
 export function assertPersonalReminderEvidenceRecordsClosure(
-  snapshot: StateSnapshot,
+  snapshot: PersonalReminderEvidenceSnapshot,
   expectedEvidenceBySourceId: ReadonlyMap<SourceId, readonly Evidence[]>,
 ): void {
   for (const item of snapshot.items) {
@@ -79,7 +87,9 @@ export function assertPersonalReminderEvidenceRecordsClosure(
 }
 
 /** personal reminderの根拠参照がsnapshot内で閉じていることを検証する。 */
-export function assertPersonalReminderEvidenceClosure(snapshot: StateSnapshot): void {
+export function assertPersonalReminderEvidenceClosure(
+  snapshot: PersonalReminderEvidenceSnapshot,
+): void {
   const evidenceBySourceId = createPersonalReminderEvidenceSourceIndex([
     ...snapshot.items.map((item) => item.evidence),
     ...snapshot.relations.map((relation) => relation.evidence),

@@ -1,8 +1,6 @@
-import {
-  assertPersonalReminderEvidenceClosure,
-  createStateSnapshot,
-  type StateSnapshot,
-} from "../../persistence/index.js";
+import { createStateSnapshot, type StateSnapshot } from "../../persistence/index.js";
+import { assertPersonalReminderEvidenceClosure } from "../../persistence/snapshot-evidence-closure.js";
+import { projectSnapshotFinalGraph } from "../../persistence/snapshot-final-graph-projection.js";
 import {
   affectedIssueNodeId,
   excludedPullRequest,
@@ -14,7 +12,7 @@ export function projectExcludedPullRequestSnapshot(snapshot: StateSnapshot): Sta
     return snapshot;
   }
   const removedNodeIds = new Set([excludedPullRequest.nodeId, affectedIssueNodeId]);
-  const projected = createStateSnapshot({
+  const values = {
     ...snapshot,
     collection: {
       repositories: snapshot.collection.repositories.map((repository) => ({
@@ -30,6 +28,10 @@ export function projectExcludedPullRequestSnapshot(snapshot: StateSnapshot): Sta
       (relation) =>
         !removedNodeIds.has(relation.fromNodeId) && !removedNodeIds.has(relation.toNodeId),
     ),
+  };
+  const projected = createStateSnapshot({
+    ...values,
+    ...projectSnapshotFinalGraph(values, snapshot.finalGraphProjection.timezone),
   });
   assertPersonalReminderEvidenceClosure(projected);
   return projected;
