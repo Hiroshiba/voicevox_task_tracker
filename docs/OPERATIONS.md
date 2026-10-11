@@ -173,7 +173,9 @@ receipt消失時は同じ入力の解決操作を再実行し、実Gitの親子s
 
 `sandbox.yml`は`Hiroshiba/voicevox_task_tracker`の`codex/daily-transaction-refactor`から起動し、source_refも同じbranchにします。
 実行code revisionを固定し、reusable workflowの定義が一致することを確認します。
-create/resetは公開seedから新しいenvironmentと`sandbox-state/env-<run ID>-<attempt>`を作り、`preparing` manifestを保存します。
+createは既定でVOICEVOXの`tracker-state` HEADをseedにします。fork内のclean seedを使う場合は、state snapshot、通常通知ledger、運用通知ledgerの現行形式の3ファイルだけを持つbranchを`seed_ref`に、その期待commit SHAを`seed_revision`に指定します。
+custom seedはbranch headと期待SHA、stateのschema・semantic・ingress・公開安全性を照合してから新しいenvironmentを作ります。採用したcommit SHAをmanifestの`seedRevision`へ記録します。reset_sourceが`seed`のresetはこのSHAを再利用し、`latest`はVOICEVOXの`tracker-state` HEADを使います。
+create/resetは新しい`sandbox-state/env-<run ID>-<attempt>`を作り、`preparing` manifestを保存します。
 新環境はstate、receipt、必要なcoverageの検証が終わると`ready`になります。`preparing`の環境では通常のcontinueとdisposeを実行できません。旧形式のmanifestはreadyとして読み、次のcontinueが完了したときに現行形式へ保存します。
 workflowの排他groupはenvironment ID単位です。resetは旧環境のgroupで読込から新環境のready確定まで実行し、旧branchを上書きしません。異なるenvironmentの操作は並行できます。continueは同じenvironmentの前回stateを読み、disposeは取得したheadから変更されていない場合だけ削除します。待機中のrunがActionsによって新しい待機runへ置換された場合は、取り消されたrunのjobが始まっていないこととstate revisionが変わっていないことを確認し、無効果として扱います。必要な操作は改めて起動します。
 新branch作成後にresetが失敗した場合、そのbranchは`preparing`のまま残ります。確定したresult、receipt、coverage artifactがそろっていれば`recover-reset`に旧environment IDと新environment IDを指定します。確定結果を持つrunが元resetと異なる場合は、そのActions run IDとattemptも指定します。復旧はmanifestに記録した元reset runのID、attempt、code revision、終了状態、旧環境headと、新環境のstate、receipt、coverageを照合します。検証CLIは元のcode revisionから組み立て、追跡や通知を再実行せずmanifestだけをreadyへ進めます。source branchのheadが進んでも復旧できます。証拠が欠ける場合や新旧環境のheadが変わった場合は停止します。
@@ -196,7 +198,7 @@ preflightだけのAI実試行を、対象項目の推論成功として数えま
 | ambiguous-retry       | send / recorded_ambiguous、その後retry / recorded_success       | 曖昧な開始記録を保持し、同じ固定予約の手動解決と再開だけが送る |
 | ambiguous-acknowledge | send / recorded_ambiguous、その後acknowledge / recorded_success | 確認済みへ進み、自動再送と送信履歴の追加をしない               |
 
-各scenarioのfirstはreset_sourceをseedにしたresetを使います。
+各scenarioのfirstはreset_sourceをseedにしたresetを使い、最初のcreateで確定したseed revisionから始めます。
 曖昧なfirstは`preparing`のまま停止します。resolutionは`resume-preparing`で元のpending revision、delivery operation、Actions run IDとattempt、tracking run IDを渡します。元reset runと子effectの終了、旧環境head、新旧環境の進行中runを確認し、元runのcode revisionと現在のreusable workflow定義を照合してから、既存の手動解決と同じrunの再開を実行します。source branchが進んでいても元runのcode revisionとruntimeを使います。workflow定義が一致しなければ効果を加えず停止します。finalized receiptが確定した後に新環境をreadyへ進めます。
 notification controlのpriorへ先行scenarioの実行ID、environment、最終revision、coverage digestを順番どおり指定し、機械検証を通します。
 通知matrixは各scenarioの元reset run、manifest、永続record、runtime bundle、coverage、完了resultを個別に照合します。scenario間でsource branchのcommitが異なっていても、各runのcode revisionと証拠が一致すれば集約できます。

@@ -151,6 +151,7 @@ validate_operation_inputs() {
       if [[ -n "$environment_id" ]]; then
         die "createではenvironment IDを指定できません"
       fi
+      [[ -n "${SANDBOX_SEED_REF-}" || -z "${SANDBOX_SEED_REVISION-}" ]] || die "seed_revisionにはseed_refが必要です"
       if [[ -z "$source_ref" ]]; then
         source_ref=main
       fi
@@ -484,7 +485,14 @@ prepare_create_or_reset() {
   local seed_revision
   local reset_source_head=""
   if [[ "$operation" == create ]]; then
-    seed_revision="$(upstream_state_head)"
+    if [[ -n "${SANDBOX_SEED_REF-}" ]]; then
+      [[ "${SANDBOX_SEED_REVISION-}" == "${SANDBOX_VERIFIED_SEED_REVISION-}" ]] || die "custom seedの検証結果がありません"
+      seed_revision="$(remote_branch_head "$SANDBOX_SEED_REF")"
+      [[ "$seed_revision" == "$SANDBOX_SEED_REVISION" ]] || die "seed branchのheadが期待commit SHAと一致しません"
+      git cat-file -e "${seed_revision}^{commit}" || die "検証済みseed commitを取得できません"
+    else
+      seed_revision="$(upstream_state_head)"
+    fi
   else
     local source_branch="${STATE_BRANCH_PREFIX}/${target_environment_id}"
     local source_remote_head

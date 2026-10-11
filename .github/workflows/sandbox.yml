@@ -20,12 +20,20 @@ on:
         description: 推論対象にするHiroshiba forkの作業branch
         required: false
         type: string
+      seed_ref:
+        description: createで使うHiroshiba forkのclean seed branch
+        required: false
+        type: string
+      seed_revision:
+        description: seed_refの期待commit SHA
+        required: false
+        type: string
       environment_id:
         description: continue、reset、dispose、recover-resetの対象environment ID
         required: false
         type: string
       reset_source:
-        description: resetで使うVOICEVOX tracker-stateのseed
+        description: resetで使うstateの選び方
         required: false
         default: seed
         type: choice
@@ -279,6 +287,32 @@ jobs:
         run: |
           corepack enable
           pnpm install --frozen-lockfile
+      - name: custom seedを検証
+        id: seed
+        if: inputs.seed_ref != '' || inputs.seed_revision != ''
+        env:
+          SANDBOX_OPERATION: ${{ inputs.operation }}
+          SANDBOX_SEED_REF: ${{ inputs.seed_ref }}
+          SANDBOX_SEED_REVISION: ${{ inputs.seed_revision }}
+        run: |
+          if [[ "$SANDBOX_OPERATION" != create || -z "$SANDBOX_SEED_REF" || ! "$SANDBOX_SEED_REVISION" =~ ^[0-9a-f]{40}$ ]] || ! git check-ref-format --branch "$SANDBOX_SEED_REF" >/dev/null; then echo 'custom seedにはcreate、forkのbranch名、40桁の期待commit SHAを指定してください' >&2; exit 1; fi
+          git fetch --no-tags origin "refs/heads/$SANDBOX_SEED_REF"
+          [[ "$(git rev-parse 'FETCH_HEAD^{commit}')" == "$SANDBOX_SEED_REVISION" ]] || { echo 'seed branchのheadが期待commit SHAと一致しません' >&2; exit 1; }
+          git worktree add --quiet --detach "$RUNNER_TEMP/sandbox-seed" "$SANDBOX_SEED_REVISION"
+          [[ "$(git -C "$RUNNER_TEMP/sandbox-seed" ls-tree -r HEAD | awk '{print $1, $2, $4}')" == $'100644 blob state/notification-ledger.json\n100644 blob state/operations-alert-ledger-v1.json\n100644 blob state/snapshot.json' ]] || { echo 'clean seedには現行stateの3ファイルだけを指定してください' >&2; exit 1; }
+          pnpm build
+          node dist/cli/tracker-run.js verify-state --state-directory "$RUNNER_TEMP/sandbox-seed/state" --state-revision "$SANDBOX_SEED_REVISION" > "$RUNNER_TEMP/sandbox-seed-verification.txt"
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          import { parseStateSnapshot, serializeStateSnapshot, parseStateNotificationLedger, serializeStateNotificationLedger, parseStateOperationsAlertLedger, serializeStateOperationsAlertLedger, assertExistingStatePublicSafety } from './dist/persistence/index.js';
+          const root = `${process.env.RUNNER_TEMP}/sandbox-seed/state/`;
+          const readCurrent = (path, parse, serialize) => { const source = readFileSync(root + path, 'utf8'); const value = parse(source); if (serialize(value) !== source) throw new TypeError(`${path}が現行canonical形式ではありません`); return value; };
+          const snapshot = readCurrent('snapshot.json', parseStateSnapshot, serializeStateSnapshot);
+          const ledger = readCurrent('notification-ledger.json', parseStateNotificationLedger, serializeStateNotificationLedger);
+          const operations = readCurrent('operations-alert-ledger-v1.json', parseStateOperationsAlertLedger, serializeStateOperationsAlertLedger);
+          assertExistingStatePublicSafety(snapshot, [], ledger, [operations], []);
+          NODE
+          echo "seed_revision=$SANDBOX_SEED_REVISION" >> "$GITHUB_OUTPUT"
       - name: sandbox通知portの入力を検証
         id: recording_control
         if: inputs.operation != 'dispose'
@@ -332,6 +366,9 @@ jobs:
         env:
           SANDBOX_OPERATION: ${{ inputs.operation }}
           SANDBOX_SOURCE_REF: ${{ inputs.source_ref }}
+          SANDBOX_SEED_REF: ${{ inputs.seed_ref }}
+          SANDBOX_SEED_REVISION: ${{ inputs.seed_revision }}
+          SANDBOX_VERIFIED_SEED_REVISION: ${{ steps.seed.outputs.seed_revision }}
           SANDBOX_ENVIRONMENT_ID: ${{ inputs.environment_id }}
           SANDBOX_RESET_SOURCE: ${{ inputs.reset_source }}
           SANDBOX_ANALYSIS_MODE: ${{ inputs.analysis_mode }}
