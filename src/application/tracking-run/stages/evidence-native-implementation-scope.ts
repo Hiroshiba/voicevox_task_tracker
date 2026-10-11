@@ -1,10 +1,12 @@
 import type { Relation } from "../../../domain/relation.js";
 import type { GitHubRepositoryId } from "../../../domain/types.js";
+import { parseSourceId } from "../../../domain/source-id.js";
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type {
   HistoricalAiSnapshotInput,
   HistoricalNativeImplementation,
 } from "../contracts/evidence-closure.js";
+import { RunCompletenessError } from "./run-completeness-error.js";
 
 type NativeImplementationScopeRelation = Pick<
   Relation,
@@ -38,6 +40,29 @@ export function nativeImplementationOwnerNodeIds(
   ownersByIssue: ReadonlyMap<string, readonly string[]>,
 ): readonly string[] {
   return Object.freeze([itemNodeId, ...(ownersByIssue.get(itemNodeId) ?? [])].sort());
+}
+
+/** 関係の端点を実装するPRの本文だけを、その根拠の所有範囲へ加える。 */
+export function relationEvidenceOwnerNodeIds(
+  sourceId: string,
+  relation: Readonly<{ fromNodeId: string; toNodeId: string }>,
+  ownersByIssue: ReadonlyMap<string, readonly string[]>,
+  path: readonly (string | number)[],
+): readonly string[] {
+  const nodeIds = [relation.fromNodeId, relation.toNodeId];
+  let source;
+  try {
+    source = parseSourceId(sourceId);
+  } catch (error: unknown) {
+    throw new RunCompletenessError("invalid_reference", sourceId, path, undefined, error);
+  }
+  if (
+    source.kind === "github_item_body" &&
+    nodeIds.some((nodeId) => ownersByIssue.get(nodeId)?.includes(source.originalId) === true)
+  ) {
+    nodeIds.push(source.originalId);
+  }
+  return Object.freeze([...new Set(nodeIds)].sort());
 }
 
 /** 前回の有効なnative実装関係を根拠とPRのrepository所属付きで抽出する。 */

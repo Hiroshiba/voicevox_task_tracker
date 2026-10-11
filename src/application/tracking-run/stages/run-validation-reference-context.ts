@@ -4,7 +4,10 @@ import type {
   MaterializedReferenceValues,
 } from "./run-validation-reference-contracts.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
-import { nativeImplementationOwnerNodeIds } from "./evidence-native-implementation-scope.js";
+import {
+  nativeImplementationOwnerNodeIds,
+  relationEvidenceOwnerNodeIds,
+} from "./evidence-native-implementation-scope.js";
 import {
   causeScope,
   isRecord,
@@ -155,7 +158,12 @@ export function referenceContext(
     return {
       purpose: evidencePurpose(reference, values),
       currentness: "historical_allowed",
-      ownerNodeIds: [from, to],
+      ownerNodeIds: relationEvidenceOwnerNodeIds(
+        reference.sourceId,
+        { fromNodeId: from, toNodeId: to },
+        ownersByIssue,
+        path,
+      ),
       relationIds: [reference.owner.id],
     };
   }

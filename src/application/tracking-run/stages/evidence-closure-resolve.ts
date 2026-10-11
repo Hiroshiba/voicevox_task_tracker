@@ -31,11 +31,10 @@ function historyEventKinds(kind: string): readonly string[] {
   return ["github_timeline_event"];
 }
 
-function assertCurrentFact(
+function assertCurrentFactIdentity(
   use: EvidenceUse,
   fact: CurrentSourceFact,
   context: EvidenceResolutionContext,
-  allowedOwnerNodeIds: readonly string[],
 ): void {
   const repositoryIds = new Set<string>(
     context.approvedRepositories.map((repository) => repository.id),
@@ -55,9 +54,13 @@ function assertCurrentFact(
   ) {
     throw new RunCompletenessError("wrong_owner", use.sourceId, use.path, use);
   }
-  if (fact.scope === "item" && !allowedOwnerNodeIds.includes(fact.itemNodeId)) {
-    throw new RunCompletenessError("wrong_owner", use.sourceId, use.path, use);
-  }
+}
+
+function assertCurrentFactTimeAndPurpose(
+  use: EvidenceUse,
+  fact: CurrentSourceFact,
+  context: EvidenceResolutionContext,
+): void {
   for (const occurredAt of [fact.immutable.occurredAt, fact.immutable.committedAt]) {
     if (occurredAt != null && occurredAt > context.evaluatedAt) {
       throw new RunCompletenessError("future_source", use.sourceId, use.path, use);
@@ -69,6 +72,19 @@ function assertCurrentFact(
       throw new RunCompletenessError("kind_mismatch", use.sourceId, use.path, use);
     }
   }
+}
+
+function assertCurrentFact(
+  use: EvidenceUse,
+  fact: CurrentSourceFact,
+  context: EvidenceResolutionContext,
+  allowedOwnerNodeIds: readonly string[],
+): void {
+  assertCurrentFactIdentity(use, fact, context);
+  if (fact.scope === "item" && !allowedOwnerNodeIds.includes(fact.itemNodeId)) {
+    throw new RunCompletenessError("wrong_owner", use.sourceId, use.path, use);
+  }
+  assertCurrentFactTimeAndPurpose(use, fact, context);
 }
 
 function historicalOwnerMatches(
@@ -174,6 +190,49 @@ function assertKnownItemSourceOwner(
   }
 }
 
+function retainedRelationBodyEvidence(
+  use: EvidenceUse,
+  sourceKind: string,
+  historicalById: ReadonlyMap<string, readonly OwnedHistoricalEvidence[]>,
+  context: EvidenceResolutionContext,
+  annotation: Readonly<{ supports: string; summary: string }> | undefined,
+): readonly OwnedHistoricalEvidence[] | undefined {
+  if (sourceKind !== "github_item_body" || use.destination.kind !== "relation") return undefined;
+  const relationEvidencePath =
+    (use.path[0] === "relations" && use.path[2] === "evidence") ||
+    (use.path[0] === "snapshot" && use.path[1] === "relations" && use.path[3] === "evidence");
+  if (!relationEvidencePath) return undefined;
+  const sourceOwner = parseSourceId(use.sourceId).originalId;
+  if (use.allowedOwnerNodeIds.includes(sourceOwner)) return undefined;
+  if (annotation == null) {
+    throw new RunCompletenessError("invalid_reference", use.sourceId, use.path, use);
+  }
+  const relationId = use.destination.relationId;
+  const approved = new Set<string>(context.approvedRepositories.map((repository) => repository.id));
+  const previousNative = context.historicalNativeImplementations.some(
+    (relation) =>
+      relation.implementationNodeId === sourceOwner &&
+      use.allowedOwnerNodeIds.includes(relation.issueNodeId) &&
+      approved.has(relation.repositoryId) &&
+      relation.evidence.some((evidence) => evidence.supports === "relation"),
+  );
+  if (!previousNative) {
+    throw new RunCompletenessError("wrong_owner", use.sourceId, use.path, use);
+  }
+  const matched = (historicalById.get(use.sourceId) ?? []).filter(
+    (value) =>
+      value.owner.kind === "relation" &&
+      value.owner.relationId === relationId &&
+      historicalOwnerMatches(use, value, use.allowedOwnerNodeIds) &&
+      value.record.evidence.supports === annotation.supports &&
+      value.record.evidence.summary === annotation.summary,
+  );
+  if (matched.length === 0) {
+    throw new RunCompletenessError("wrong_owner", use.sourceId, use.path, use);
+  }
+  return matched;
+}
+
 /** 一つの利用を現行事実か所有位置を証明できる履歴recordへ解決する。 */
 export function resolveEvidenceUse(
   use: EvidenceUse,
@@ -228,6 +287,32 @@ export function resolveEvidenceUse(
         historical: Object.freeze([]),
       });
     }
+  }
+  const retainedRelationEvidence = retainedRelationBodyEvidence(
+    use,
+    sourceKind,
+    historicalById,
+    context,
+    annotation,
+  );
+  if (retainedRelationEvidence != null) {
+    for (const fact of currentById.get(use.sourceId) ?? []) {
+      if (fact.sourceKind !== sourceKind) {
+        throw new RunCompletenessError("kind_mismatch", use.sourceId, use.path, use);
+      }
+      assertCurrentFactIdentity(use, fact, context);
+      assertCurrentFactTimeAndPurpose(use, fact, context);
+    }
+    return Object.freeze({
+      resolved: Object.freeze({
+        use,
+        resolution: "historical",
+        recordDigest: digest.sha256Utf8(
+          serializeCanonicalJson({ matched: retainedRelationEvidence, annotation }),
+        ),
+      }),
+      historical: Object.freeze(retainedRelationEvidence),
+    });
   }
   const previousNotification = use.purpose === "previous_notification_pending";
   const facts = previousNotification ? [] : (currentById.get(use.sourceId) ?? []);

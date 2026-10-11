@@ -83,18 +83,25 @@ function historicalById(
   return new Map([...byId].map(([id, records]) => [id, canonicalSort(records)]));
 }
 
-function itemEvidenceAnnotation(
+function evidenceAnnotation(
   outward: EvidenceClosureOutward,
   use: EvidenceUse,
 ): Readonly<{ supports: string; summary: string }> | undefined {
-  if (use.path[0] !== "items" || typeof use.path[1] !== "number") return undefined;
-  const entry = outward.items[use.path[1]];
-  if (entry == null) return undefined;
   let evidence: Evidence | undefined;
-  if (use.path[2] === "item" && use.path[3] === "evidence" && typeof use.path[4] === "number") {
-    evidence = entry.item.evidence[use.path[4]];
-  } else if (use.path[2] === "evidence" && typeof use.path[3] === "number") {
-    evidence = entry.evidence[use.path[3]];
+  if (use.path[0] === "items" && typeof use.path[1] === "number") {
+    const entry = outward.items[use.path[1]];
+    if (use.path[2] === "item" && use.path[3] === "evidence" && typeof use.path[4] === "number") {
+      evidence = entry?.item.evidence[use.path[4]];
+    } else if (use.path[2] === "evidence" && typeof use.path[3] === "number") {
+      evidence = entry?.evidence[use.path[3]];
+    }
+  } else if (
+    use.path[0] === "relations" &&
+    typeof use.path[1] === "number" &&
+    use.path[2] === "evidence" &&
+    typeof use.path[3] === "number"
+  ) {
+    evidence = outward.relations[use.path[1]]?.evidence[use.path[3]];
   }
   return evidence == null ? undefined : { supports: evidence.supports, summary: evidence.summary };
 }
@@ -338,7 +345,7 @@ export function closeEvidenceReferences(
         previousById,
         resolutionContext,
         digest,
-        itemEvidenceAnnotation(outward, use),
+        evidenceAnnotation(outward, use),
         slot == null || origin == null ? undefined : { slot, origin },
       );
       resolved.push(match.resolved);
