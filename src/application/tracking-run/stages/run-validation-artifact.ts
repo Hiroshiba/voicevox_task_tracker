@@ -72,6 +72,15 @@ function assertLedgerTransition(run: SerializedValidatedRun): void {
     "previousNotificationLedger",
     "entries",
   ]);
+  runValuesById(run.sentSuppressedCandidateKeys, (key) => key, ["sentSuppressedCandidateKeys"]);
+  if (run.sentSuppressedCandidateKeys.some((key) => previousByKey.get(key)?.status !== "sent")) {
+    throw new RunCompletenessError(
+      "ledger_mismatch",
+      "sentSuppressedCandidateKeys",
+      ["sentSuppressedCandidateKeys"],
+      undefined,
+    );
+  }
   const currentByKey = runValuesById(current.entries, (entry) => entry.notificationKey, [
     "notificationLedger",
     "entries",

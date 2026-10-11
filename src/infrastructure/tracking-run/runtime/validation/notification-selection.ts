@@ -2,6 +2,7 @@ import type { GraphReconciledRun } from "../../../../application/tracking-run/st
 import type { PersonalReminderFinalizedRun } from "../../../../application/tracking-run/stages/personal-reminder-finalization.js";
 import {
   createAcknowledgedNotificationLedgerEntries,
+  currentSentSuppressedNotificationKeys,
   selectDiscordNotifications,
   type DiscordNotificationItem,
   type DiscordNotificationSelection,
@@ -17,6 +18,7 @@ type ValidationNotificationSelection = Readonly<{
   notificationItems: readonly DiscordNotificationItem[];
   notificationSelection: DiscordNotificationSelection;
   notificationPreview: DiscordNotificationSelection;
+  sentSuppressedCandidateKeys: readonly string[];
   ledgerEntriesToMerge: readonly NotificationLedgerEntry[];
   pendingNotifications: readonly PendingNotification[];
 }>;
@@ -93,6 +95,7 @@ export function selectValidationNotifications(
     notificationItems: items,
     notificationSelection,
     notificationPreview: recalculatedSelection,
+    sentSuppressedCandidateKeys: currentSentSuppressedNotificationKeys(notificationInput),
     ledgerEntriesToMerge: notificationLedgerEntriesToMerge,
     pendingNotifications: notificationPendingToMerge,
   });

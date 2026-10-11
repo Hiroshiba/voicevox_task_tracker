@@ -61,6 +61,7 @@ export function createCollectAnalyzePayload(
       notificationLedger: input.validated.notificationLedger,
       notificationSelection: input.validated.notificationSelection,
       notificationPreview: input.validated.notificationPreview,
+      sentSuppressedCandidateKeys: input.validated.sentSuppressedCandidateKeys,
       runMetadata,
       aiCacheEntries: input.validated.aiCacheAdditions,
       personalReminderAiCacheEntries: input.validated.personalReminderAiCacheAdditions,

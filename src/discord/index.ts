@@ -55,6 +55,7 @@ export { assertDiscordPersonalReminderSelectionMatchesSnapshot } from "./notific
 export {
   calculateDiscordNotificationCandidateSeverity,
   createAcknowledgedNotificationLedgerEntries,
+  currentSentSuppressedNotificationKeys,
   selectDiscordNotifications,
 } from "./notification-selection.js";
 export type {

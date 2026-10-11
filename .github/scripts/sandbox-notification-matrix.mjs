@@ -278,7 +278,114 @@ export async function assertScenario(coverage, result, scenarioId, proofRoot, is
     default:
       throw new TypeError("通知matrixのscenario IDが不正です");
   }
-  return record.runtimeRecoveryPlan.bundleSha256;
+  return { manifest, runtimeBundleDigest: record.runtimeRecoveryPlan.bundleSha256 };
+}
+
+function assertScenarioSource(manifest, proofRoot, previous) {
+  const creation = manifest.lifecycle.creation;
+  const sourceRevision = revisionSchema.parse(
+    readFileSync(join(proofRoot, "source-head-revision.txt"), "utf8").trim(),
+  );
+  same(creation.sourceHeadRevision, sourceRevision, "通知matrixのreset元HEAD");
+  const sourceManifest = parseSandboxEnvironmentManifest(
+    readFileSync(join(proofRoot, "source-environment.json"), "utf8"),
+  );
+  if (sourceManifest.schemaVersion !== 2 || sourceManifest.lifecycle.status !== "ready") {
+    throw new TypeError("通知matrixのreset元manifestがreadyではありません");
+  }
+  same(
+    sourceManifest.environmentId,
+    creation.sourceEnvironmentId,
+    "通知matrixのreset元environment ID",
+  );
+  same(sourceManifest.seedRevision, manifest.seedRevision, "通知matrixのreset元seed revision");
+  same(sourceManifest.sourceRef, manifest.sourceRef, "通知matrixのreset元source branch");
+  same(sourceManifest.sourceRepository, manifest.sourceRepository, "通知matrixのreset元repository");
+  if (previous == null) {
+    same(sourceManifest.lifecycle.creation.kind, "create", "通知matrixの起点create");
+    same(
+      sourceManifest.environmentId,
+      `env-${sourceManifest.lifecycle.owner.actionsRunId}-${sourceManifest.lifecycle.owner.actionsRunAttempt}`,
+      "通知matrixの起点environment ID",
+    );
+    same(
+      sourceManifest.lifecycle.completion.actionsRunId,
+      sourceManifest.lifecycle.owner.actionsRunId,
+      "通知matrixの起点完了Actions run ID",
+    );
+    same(
+      sourceManifest.lifecycle.completion.actionsRunAttempt,
+      sourceManifest.lifecycle.owner.actionsRunAttempt,
+      "通知matrixの起点完了Actions attempt",
+    );
+  } else {
+    same(sourceManifest.lifecycle.creation.kind, "reset", "通知matrixの先行reset");
+    same(sourceManifest.environmentId, previous.manifest.environmentId, "通知matrixの先行環境");
+    same(
+      sourceManifest.seedRevision,
+      previous.manifest.seedRevision,
+      "通知matrixの先行seed revision",
+    );
+    same(
+      sourceManifest.lifecycle.owner.actionsRunId,
+      previous.manifest.lifecycle.owner.actionsRunId,
+      "通知matrixの先行owner run ID",
+    );
+    same(
+      sourceManifest.lifecycle.owner.actionsRunAttempt,
+      previous.manifest.lifecycle.owner.actionsRunAttempt,
+      "通知matrixの先行owner attempt",
+    );
+    same(
+      sourceManifest.lifecycle.owner.codeRevision,
+      previous.manifest.lifecycle.owner.codeRevision,
+      "通知matrixの先行owner code revision",
+    );
+    same(
+      sourceManifest.lifecycle.creation.sourceEnvironmentId,
+      previous.manifest.lifecycle.creation.sourceEnvironmentId,
+      "通知matrixの先行reset元環境",
+    );
+    same(
+      sourceManifest.lifecycle.creation.sourceHeadRevision,
+      previous.manifest.lifecycle.creation.sourceHeadRevision,
+      "通知matrixの先行reset元HEAD",
+    );
+    same(
+      sourceManifest.lifecycle.completion.finalStateRevision,
+      previous.result.finalStateRevision,
+      "通知matrixの先行final revision",
+    );
+    same(
+      sourceManifest.lifecycle.completion.trackingRunId,
+      previous.result.trackingRunId,
+      "通知matrixの先行tracking run ID",
+    );
+    same(
+      sourceManifest.lifecycle.completion.actionsRunId,
+      previous.result.actionsRunId,
+      "通知matrixの先行完了Actions run ID",
+    );
+    same(
+      sourceManifest.lifecycle.completion.actionsRunAttempt,
+      previous.result.actionsRunAttempt,
+      "通知matrixの先行完了Actions attempt",
+    );
+    if (sourceManifest.lifecycle.completion.coverage.kind !== "verified") {
+      throw new TypeError("通知matrixの先行ready manifestにcoverageがありません");
+    }
+    same(
+      sourceManifest.lifecycle.completion.coverage.digest,
+      previous.result.coverageDigest,
+      "通知matrixの先行coverage digest",
+    );
+    same(
+      sourceManifest.lifecycle.completion.resultDigest,
+      sha256(readFileSync(join(previous.proofRoot, "sandbox-result.json"))),
+      "通知matrixの先行result digest",
+    );
+  }
+  return sourceManifest;
 }
 
 async function main() {
@@ -298,36 +405,54 @@ async function main() {
     same(result.actionsRunAttempt, reference.actionsRunAttempt, "通知matrixの先行Actions attempt");
     same(result.environmentId, reference.environmentId, "通知matrixの先行environment ID");
     same(result.finalStateRevision, reference.finalStateRevision, "通知matrixの先行final revision");
-    const runtimeBundleDigest = await assertScenario(
+    const { manifest, runtimeBundleDigest } = await assertScenario(
       coverage,
       result,
       reference.scenarioId,
       directory,
       false,
     );
-    entries.push({ reference, coverage, runtimeBundleDigest });
+    entries.push({ coverage, result, manifest, runtimeBundleDigest });
   }
   const currentBytes = readFileSync(required("SANDBOX_CURRENT_COVERAGE_PATH"));
   const current = JSON.parse(currentBytes.toString("utf8"));
   const currentResult = readJson(required("SANDBOX_CURRENT_RESULT_PATH"));
-  const currentRuntimeBundleDigest = await assertScenario(
-    current,
-    currentResult,
-    "ambiguous-acknowledge",
-    required("SANDBOX_CURRENT_PROOF_ROOT"),
-    true,
-  );
+  const { manifest: currentManifest, runtimeBundleDigest: currentRuntimeBundleDigest } =
+    await assertScenario(
+      current,
+      currentResult,
+      "ambiguous-acknowledge",
+      required("SANDBOX_CURRENT_PROOF_ROOT"),
+      true,
+    );
   same(currentResult.coverageDigest, sha256(currentBytes), "通知matrixの最終coverage digest");
   same(currentResult.actionsRunId, required("GITHUB_RUN_ID"), "通知matrixの最終Actions run ID");
   const environmentIds = [...prior.map((entry) => entry.environmentId), current.run.environmentId];
   if (new Set(environmentIds).size !== 5) {
     throw new TypeError("通知matrixのsandbox branchがscenarioごとに分離されていません");
   }
-  const validated = [
-    ...entries.map(({ coverage, runtimeBundleDigest }) => ({ coverage, runtimeBundleDigest })),
-    { coverage: current, runtimeBundleDigest: currentRuntimeBundleDigest },
+  const scenarios = [
+    ...entries.map(({ coverage, result, manifest, runtimeBundleDigest }) => ({
+      coverage,
+      result,
+      manifest,
+      runtimeBundleDigest,
+      proofRoot: join(priorRoot, coverage.scenarioId),
+    })),
+    {
+      coverage: current,
+      result: currentResult,
+      manifest: currentManifest,
+      runtimeBundleDigest: currentRuntimeBundleDigest,
+      proofRoot: required("SANDBOX_CURRENT_PROOF_ROOT"),
+    },
   ];
-  const coverages = validated.map(({ coverage }) => coverage);
+  const origin = assertScenarioSource(scenarios[0].manifest, scenarios[0].proofRoot, null);
+  for (const [index, scenario] of scenarios.slice(1).entries()) {
+    assertScenarioSource(scenario.manifest, scenario.proofRoot, scenarios[index]);
+    same(scenario.manifest.seedRevision, origin.seedRevision, "通知matrixの共通seed revision");
+  }
+  const coverages = scenarios.map(({ coverage }) => coverage);
   const branchCounts = {
     recordedSuccess: 0,
     recordedClearRejection: 0,
@@ -345,8 +470,12 @@ async function main() {
   const matrix = {
     schemaVersion: 2,
     scenarioIds,
-    results: validated.map(({ coverage, runtimeBundleDigest }) => ({
+    seedRevision: origin.seedRevision,
+    originEnvironmentId: origin.environmentId,
+    results: scenarios.map(({ coverage, manifest, runtimeBundleDigest }) => ({
       scenarioId: coverage.scenarioId,
+      sourceEnvironmentId: manifest.lifecycle.creation.sourceEnvironmentId,
+      sourceHeadRevision: manifest.lifecycle.creation.sourceHeadRevision,
       actionsRunId: coverage.run.actionsRunId,
       actionsRunAttempt: coverage.run.actionsRunAttempt,
       environmentId: coverage.run.environmentId,

@@ -942,8 +942,7 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$source_run_id" > "$destination/source-run.json"
           gh run download "$source_run_id" --repo "$GITHUB_REPOSITORY" \
             --name workflow-cli-runtime --dir "$destination/runtime"
-          cp "$RUNNER_TEMP/sandbox-state/state/sandbox-environment.json" "$destination/sandbox-environment.json"
-          cp "$RUNNER_TEMP/sandbox-state/state/durable-publication-record-v1.json" "$destination/durable-publication-record-v1.json"
+          bash .github/scripts/sandbox-matrix-source-proofs.sh
       - name: 通知matrixの現行検証codeを準備
         if: inputs.scenario_id == 'ambiguous-acknowledge' && needs.prepare.outputs.notification_phase == 'resolution'
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0

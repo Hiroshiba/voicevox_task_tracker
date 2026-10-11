@@ -198,6 +198,10 @@ function createCoverage() {
   const historyPages = receipt("pages_deployment", "notification_history");
   const settlement = receipt("notification_settlement");
   const messageReceipts = receipts.filter((entry) => entry.receiptType === "notification_message");
+  const recordedSendKeyDigests = messageReceipts
+    .filter((entry) => entry.status === "sent")
+    .flatMap((entry) => entry.result.notificationKeys.map((key) => sha256(key)))
+    .sort();
   const sentKeys = ledger.entries
     .filter((entry) => entry.status === "sent")
     .map((entry) => entry.notificationKey);
@@ -207,30 +211,62 @@ function createCoverage() {
   const continuityPhase = required("SANDBOX_CONTINUITY_PHASE");
   const first = continuityPhase === "second" ? readVerifiedFirstResult() : null;
   const firstCoverage = first == null ? null : readJson(required("SANDBOX_FIRST_COVERAGE_PATH"));
+  const suppressedKeyDigests =
+    evidence.kind === "artifact_cross_checked"
+      ? evidence.validatedPayload.sentSuppressedCandidateKeys.map((key) => sha256(key)).sort()
+      : [];
+  let sameKeySuppressionConsistent = false;
   if (continuityPhase !== "first" && continuityPhase !== "second") {
     throw new TypeError("coverageにはcontinuity phaseが必要です");
   }
   if (continuityPhase === "first") {
     if (
+      z.number().int().nonnegative().parse(applications.executed) < 1 ||
       messageReceipts.filter((entry) => entry.status === "sent").length < 1 ||
+      recordedSendKeyDigests.some((key) => !sentLedgerKeyDigests.includes(key)) ||
       historyPages.status !== "deployed"
     ) {
-      throw new TypeError("first runにrecorded sentと通知履歴Pagesがありません");
+      throw new TypeError("first runに採用済み実AI、recorded sentまたは通知履歴Pagesがありません");
     }
   } else {
     assertCompleteSandboxStageCoverage(firstCoverage);
     assertEqual(baseStateRevision, first.finalStateRevision, "second baseとfirst final revision");
+    const firstSentKeyDigests = z
+      .array(digest)
+      .min(1)
+      .parse(firstCoverage.state.sentLedgerKeyDigests);
+    const firstRecordedSendKeyDigests = z
+      .array(digest)
+      .min(1)
+      .parse(firstCoverage.receiptChain.recordedSendKeyDigests);
+    const firstExecutedCount = z
+      .number()
+      .int()
+      .nonnegative()
+      .parse(firstCoverage.analysis.genericAi.applications.executed);
+    const reusedResultCount =
+      z.number().int().nonnegative().parse(applications.cache) +
+      z.number().int().nonnegative().parse(applications.reused);
+    const matchedSuppressedKeyDigests = suppressedKeyDigests.filter((key) =>
+      firstRecordedSendKeyDigests.includes(key),
+    );
+    sameKeySuppressionConsistent =
+      matchedSuppressedKeyDigests.length > 0 &&
+      firstSentKeyDigests.every((key) => sentLedgerKeyDigests.includes(key)) &&
+      messageReceipts.length === 0;
     if (
       trackingRunId === first.trackingRunId ||
+      evidence.kind !== "artifact_cross_checked" ||
+      firstExecutedCount < 1 ||
+      reusedResultCount < 1 ||
       record.notificationOutbox.delivery !== "no_candidates" ||
+      record.notificationOutbox.selectedContext.action !== "skip_digest" ||
       messageReceipts.length !== 0 ||
       historyPages.status !== "not_required" ||
       sentKeys.length < 1 ||
-      !Array.isArray(firstCoverage.state.sentLedgerKeyDigests) ||
-      firstCoverage.state.sentLedgerKeyDigests.length < 1 ||
-      firstCoverage.state.sentLedgerKeyDigests.some((key) => !sentLedgerKeyDigests.includes(key))
+      !sameKeySuppressionConsistent
     ) {
-      throw new TypeError("second runのsame-key suppressionとsend 0件を確認できません");
+      throw new TypeError("second runのAI再利用と同一key候補の送信抑止を確認できません");
     }
   }
   if (
@@ -296,6 +332,7 @@ function createCoverage() {
       count: receipts.length,
       receiptDigests: receipts.map((entry) => entry.receiptDigest),
       notificationCommitRevisions: stateCommits(messageReceipts),
+      recordedSendKeyDigests,
     },
     analysis: {
       incrementalCollection: {
@@ -327,12 +364,8 @@ function createCoverage() {
       recordedSendCount: messageReceipts.filter((entry) => entry.status === "sent").length,
       messageSendCount: messageReceipts.length,
       settlementRevision: settlement.result.resultingStateRevision,
-      sameKeySuppressionConsistent:
-        continuityPhase === "second" &&
-        firstCoverage.state.sentLedgerKeyDigests.every((key) =>
-          sentLedgerKeyDigests.includes(key),
-        ) &&
-        messageReceipts.length === 0,
+      sentSuppressedCandidateKeyDigests: suppressedKeyDigests,
+      sameKeySuppressionConsistent,
       branchCounts: {
         recordedSuccess: messageReceipts.filter((entry) => entry.status === "sent").length,
         recordedClearRejection: 0,

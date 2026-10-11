@@ -111,6 +111,7 @@ export async function validateRunCompleteness(
     notificationLedger,
     notificationSelection: notification.notificationSelection,
     notificationPreview: notification.notificationPreview,
+    sentSuppressedCandidateKeys: notification.sentSuppressedCandidateKeys,
     publicationInputs,
     ledgerEntriesToMerge: notification.ledgerEntriesToMerge,
     repositoryAllowlist: graphReconciled.data.approvedRepositories,

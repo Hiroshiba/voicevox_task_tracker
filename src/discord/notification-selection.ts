@@ -15,7 +15,11 @@ import type {
   SelectDiscordNotificationsInput,
   SelectedDiscordNotificationReason,
 } from "./notification-selection-contracts.js";
-import { compareEligibleReasons, reservationExpiresAt } from "./notification-selection-ledger.js";
+import {
+  compareEligibleReasons,
+  createCurrentCandidateDrafts,
+  reservationExpiresAt,
+} from "./notification-selection-ledger.js";
 import { createPendingSelectionState } from "./notification-selection-pending.js";
 import { isTimeNotificationReasonCode } from "./notification-selection-reasons.js";
 import { severityRank } from "./notification-selection-signals.js";
@@ -271,6 +275,32 @@ export function selectDiscordNotifications(
     ledgerReservations: nonEmptyLedgerEntries(ledgerReservations),
     pendingNotifications: pendingSelection.pendingNotifications,
   });
+}
+
+/** 送信済み記録だけを除けば現在も候補になる通知keyを返す。 */
+export function currentSentSuppressedNotificationKeys(
+  input: SelectDiscordNotificationsInput,
+): readonly string[] {
+  const evaluatedTimestamp = validateInput(input);
+  const sentKeys = new Set(
+    input.ledger.filter((entry) => entry.status === "sent").map((entry) => entry.notificationKey),
+  );
+  if (sentKeys.size === 0) {
+    return Object.freeze([]);
+  }
+  const ledger = input.ledger.filter((entry) => entry.status !== "sent");
+  const ledgerByKey = new Map(ledger.map((entry) => [entry.notificationKey, entry]));
+  const drafts = createCurrentCandidateDrafts(
+    { ...input, ledger },
+    evaluatedTimestamp,
+    ledgerByKey,
+    ledger,
+  );
+  return Object.freeze(
+    [...new Set(drafts.flatMap((draft) => draft.reasons.map((reason) => reason.notificationKey)))]
+      .filter((key) => sentKeys.has(key))
+      .sort(compareStrings),
+  );
 }
 
 function createAcknowledgedLedgerEntry(

@@ -139,6 +139,7 @@ export const validatedRunPayloadSchema = z.strictObject({
   notificationLedger: z.unknown(),
   notificationSelection: z.unknown(),
   notificationPreview: z.unknown(),
+  sentSuppressedCandidateKeys: z.array(z.string().min(1).max(1000)),
   runMetadata: runMetadataSchema,
   aiCacheEntries: z.array(z.unknown()),
   personalReminderAiCacheEntries: z.array(z.unknown()),
@@ -178,6 +179,7 @@ export type ValidatedRunPayload = Readonly<{
   notificationLedger: StateNotificationLedger;
   notificationSelection: DiscordNotificationSelection;
   notificationPreview: DiscordNotificationSelection;
+  sentSuppressedCandidateKeys: readonly string[];
   runMetadata: WorkflowRunMetadata;
   aiCacheEntries: readonly AiCacheEntry[];
   personalReminderAiCacheEntries: readonly PersonalReminderAiCacheEntry[];
@@ -588,6 +590,7 @@ export function parseValidatedRunPayload(
   const notificationLedger = createStateNotificationLedger(result.data.notificationLedger);
   const notificationSelection = createNotificationSelection(result.data.notificationSelection);
   const notificationPreview = createNotificationSelection(result.data.notificationPreview);
+  const sentSuppressedCandidateKeys = Object.freeze([...result.data.sentSuppressedCandidateKeys]);
   const runMetadata = createWorkflowRunMetadata(result.data.runMetadata);
   const aiCacheEntries = createAiCacheEntries(result.data.aiCacheEntries);
   const personalReminderAiCacheEntries = createPersonalReminderAiCacheEntries(
@@ -607,6 +610,7 @@ export function parseValidatedRunPayload(
     notificationLedger,
     notificationSelection,
     notificationPreview,
+    sentSuppressedCandidateKeys,
     runMetadata,
     aiCacheEntries,
     personalReminderAiCacheEntries,
@@ -653,6 +657,7 @@ export function parseValidatedRunPayload(
     notificationLedger,
     notificationSelection,
     notificationPreview,
+    sentSuppressedCandidateKeys,
     repositoryAllowlist: createPublicRepositoryAllowlist(artifact.repositoryInventory).repositories,
   });
   const validated = revalidateSerializedRun(run, digest, () => {
@@ -667,6 +672,7 @@ export function parseValidatedRunPayload(
     notificationLedger: validated.notificationLedger,
     notificationSelection: validated.notificationSelection,
     notificationPreview: validated.notificationPreview,
+    sentSuppressedCandidateKeys: validated.sentSuppressedCandidateKeys,
     aiCacheEntries: validated.aiCacheAdditions,
     personalReminderAiCacheEntries: validated.personalReminderAiCacheAdditions,
     validation: Object.freeze({
@@ -752,6 +758,7 @@ export function assertValidatedRunPayloadPublicSafety(
       artifact.notificationLedger,
       artifact.notificationSelection,
       artifact.notificationPreview,
+      artifact.sentSuppressedCandidateKeys,
       artifact.runMetadata,
       ...artifact.aiCacheEntries,
       ...artifact.personalReminderAiCacheEntries,

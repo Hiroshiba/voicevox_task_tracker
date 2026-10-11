@@ -96,7 +96,13 @@ export function readSandboxCheckpointEvidence(recordValue, checkpointPath, sidec
   ]) {
     same(metrics[key], record.runFinalizationPolicy.report.metrics[key], `解析件数 ${key}`);
   }
-  return { kind: "artifact_cross_checked", record, analysis, byteLength: bytes.length };
+  return {
+    kind: "artifact_cross_checked",
+    record,
+    analysis,
+    byteLength: bytes.length,
+    validatedPayload: checkpoint.validatedPayload,
+  };
 }
 
 /** 旧V2 runの解析段階が検証不能であることを公開reportへ示す。 */

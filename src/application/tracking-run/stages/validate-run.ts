@@ -98,6 +98,7 @@ export type ValidateRunInput<
   notificationLedger: Ledger;
   notificationSelection: Selection;
   notificationPreview: Selection;
+  sentSuppressedCandidateKeys: readonly string[];
   publicationInputs: PublicationInputs;
   ledgerEntriesToMerge: readonly NotificationLedgerEntry[];
   repositoryAllowlist: readonly PublicRepository[];
@@ -167,6 +168,22 @@ export function validateRun<
     input.digest,
   );
   assertActualOutwardMatches(run, input.closure, input.candidate, input.actualOutwardAdditions);
+  const sentKeys = new Set(
+    input.previousNotificationLedger.entries
+      .filter((entry) => entry.status === "sent")
+      .map((entry) => entry.notificationKey),
+  );
+  if (
+    new Set(input.sentSuppressedCandidateKeys).size !== input.sentSuppressedCandidateKeys.length ||
+    input.sentSuppressedCandidateKeys.some((key) => !sentKeys.has(key))
+  ) {
+    throw new RunCompletenessError(
+      "field_mismatch",
+      "sentSuppressedCandidateKeys",
+      ["sentSuppressedCandidateKeys"],
+      undefined,
+    );
+  }
   assertRunValueMatches(
     input.historyInputEvents,
     input.actualOutwardAdditions.historyInputEvents,
@@ -348,6 +365,7 @@ export function validateRun<
     notificationLedger: input.notificationLedger,
     notificationSelection: input.notificationSelection,
     notificationPreview: input.notificationPreview,
+    sentSuppressedCandidateKeys: input.sentSuppressedCandidateKeys,
     publicationInputs: parsePublicationInputs(input.publicationInputs),
     repositoryAllowlist: [...input.repositoryAllowlist].sort((left, right) =>
       left.id < right.id ? -1 : left.id > right.id ? 1 : 0,

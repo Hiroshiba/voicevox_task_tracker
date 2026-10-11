@@ -113,6 +113,7 @@ const validationSchema = z.strictObject({
     notificationLedger: sha256Schema,
     notificationSelection: sha256Schema,
     notificationPreview: sha256Schema,
+    sentSuppressedCandidateKeys: sha256Schema,
     publicationInputs: sha256Schema,
     repositoryAllowlist: sha256Schema,
     metrics: sha256Schema,

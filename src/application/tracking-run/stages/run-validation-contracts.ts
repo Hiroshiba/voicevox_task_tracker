@@ -85,6 +85,7 @@ export type ValidatedRunPayload<
   notificationLedger: Ledger;
   notificationSelection: Selection;
   notificationPreview: Selection;
+  sentSuppressedCandidateKeys: readonly string[];
   publicationInputs: PublicationInputs;
   repositoryAllowlist: readonly PublicRepository[];
   metrics: Metrics;
