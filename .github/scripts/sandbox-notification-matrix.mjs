@@ -5,8 +5,10 @@ import { pathToFileURL } from "node:url";
 
 import { z } from "zod";
 import { readDurablePublicationRecoveryBootstrapV2 } from "../../dist/application/tracking-run/recovery-bootstrap.js";
+import { verifyReceiptChain } from "../../dist/application/tracking-run/receipt-chain.js";
 import { nodeContentDigestPort } from "../../dist/infrastructure/tracking-run/content-digest.js";
 import { verifyRecoveryBundle } from "../../dist/infrastructure/tracking-run/publication-runtime-manifest.js";
+import { decodeDurablePublicationRecord } from "../../dist/publication/durable-record-schema.js";
 import {
   assertCompleteSandboxStageCoverage,
   assertPendingSandboxStageCoverage,
@@ -14,7 +16,7 @@ import {
 } from "../../dist/infrastructure/tracking-run/sandbox-stage-coverage.js";
 import { parseSandboxEnvironmentManifest } from "../../dist/persistence/sandbox-environment-manifest.js";
 
-import { sha256 } from "./sandbox-continuity-result.mjs";
+import { resultSchema, sha256 } from "./sandbox-continuity-result.mjs";
 
 const scenarioIds = [
   "send-clear-rejection",
@@ -60,6 +62,408 @@ function same(actual, expected, label) {
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
+}
+
+function readRevision(path) {
+  return revisionSchema.parse(readFileSync(path, "utf8").trim());
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  if (value != null && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function assertReadyScenario(scenario) {
+  const { coverage, result, manifest, proofRoot } = scenario;
+  const ready = parseSandboxEnvironmentManifest(
+    readFileSync(join(proofRoot, "ready-environment.json"), "utf8"),
+  );
+  const creation = parseSandboxEnvironmentManifest(
+    readFileSync(join(proofRoot, "creation-environment.json"), "utf8"),
+  );
+  if (
+    ready.schemaVersion !== 2 ||
+    ready.lifecycle.status !== "ready" ||
+    creation.schemaVersion !== 2 ||
+    creation.lifecycle.status !== "preparing"
+  ) {
+    throw new TypeError("通知matrixのscenario作成またはready manifestが不正です");
+  }
+  same(ready.environmentId, manifest.environmentId, "通知matrixのready環境");
+  same(ready.seedRevision, manifest.seedRevision, "通知matrixのready seed");
+  same(
+    canonicalJson(ready.lifecycle.owner),
+    canonicalJson(manifest.lifecycle.owner),
+    "通知matrixのready owner",
+  );
+  same(
+    canonicalJson(ready.lifecycle.creation),
+    canonicalJson(manifest.lifecycle.creation),
+    "通知matrixのready作成元",
+  );
+  same(
+    ready.lifecycle.completion.finalStateRevision,
+    result.finalStateRevision,
+    "通知matrixのready親",
+  );
+  same(ready.lifecycle.completion.trackingRunId, result.trackingRunId, "通知matrixのready run");
+  same(
+    ready.lifecycle.completion.actionsRunId,
+    result.actionsRunId,
+    "通知matrixのready Actions run",
+  );
+  same(
+    ready.lifecycle.completion.actionsRunAttempt,
+    result.actionsRunAttempt,
+    "通知matrixのready attempt",
+  );
+  same(
+    ready.lifecycle.completion.resultDigest,
+    sha256(readFileSync(join(proofRoot, "sandbox-result.json"))),
+    "通知matrixのready result digest",
+  );
+  same(ready.lifecycle.completion.coverage.kind, "verified", "通知matrixのready coverage種別");
+  same(
+    ready.lifecycle.completion.coverage.digest,
+    result.coverageDigest,
+    "通知matrixのready coverage digest",
+  );
+  same(creation.environmentId, manifest.environmentId, "通知matrixの作成環境");
+  same(creation.seedRevision, manifest.seedRevision, "通知matrixの作成seed");
+  same(creation.sourceRepository, manifest.sourceRepository, "通知matrixの作成repository");
+  same(creation.sourceRef, manifest.sourceRef, "通知matrixの作成source branch");
+  same(
+    creation.lifecycle.creation.sourceEnvironmentId,
+    manifest.lifecycle.creation.sourceEnvironmentId,
+    "通知matrixの作成reset元環境",
+  );
+  same(
+    creation.lifecycle.creation.sourceHeadRevision,
+    manifest.lifecycle.creation.sourceHeadRevision,
+    "通知matrixの作成reset元HEAD",
+  );
+  same(
+    creation.lifecycle.owner.actionsRunId,
+    manifest.lifecycle.owner.actionsRunId,
+    "通知matrixの作成owner run",
+  );
+  same(
+    creation.lifecycle.owner.actionsRunAttempt,
+    manifest.lifecycle.owner.actionsRunAttempt,
+    "通知matrixの作成owner attempt",
+  );
+  same(
+    coverage.run.originalBaseStateRevision,
+    readRevision(join(proofRoot, "creation-revision.txt")),
+    "通知matrixの物理seed子",
+  );
+  return readRevision(join(proofRoot, "ready-head-revision.txt"));
+}
+
+function assertContinuityRun(root, phase, result, coverage, run) {
+  resultSchema.parse(result);
+  assertCompleteSandboxStageCoverage(coverage);
+  assertSandboxStageReceiptLineage(coverage, coverage.receiptChain.receiptDigests);
+  same(result.continuityPhase, phase, "通知matrixの連続run段階");
+  same(coverage.continuityPhase, phase, "通知matrixの連続coverage段階");
+  same(
+    sha256(readFileSync(join(root, `continuity-${phase}-coverage/sandbox-coverage.json`))),
+    result.coverageDigest,
+    "通知matrixの連続coverage digest",
+  );
+  same(coverage.run.actionsRunId, result.actionsRunId, "通知matrixの連続coverage Actions run");
+  same(coverage.run.trackingRunId, result.trackingRunId, "通知matrixの連続coverage run");
+  same(coverage.run.baseStateRevision, result.baseStateRevision, "通知matrixの連続coverage base");
+  same(
+    coverage.run.finalStateRevision,
+    result.finalStateRevision,
+    "通知matrixの連続coverage final",
+  );
+  same(
+    coverage.stageLineage.finalReceiptChainDigest,
+    result.receiptChainDigest,
+    "通知matrixの連続coverage receipt chain",
+  );
+  const markerPath = join(root, `continuity-${phase}-marker.json`);
+  const marker = readJson(markerPath);
+  const record = decodeDurablePublicationRecord(
+    readFileSync(join(root, `continuity-${phase}-record.json`)),
+    nodeContentDigestPort,
+  );
+  const receiptPath = join(
+    root,
+    `continuity-${phase}-receipts`,
+    result.trackingRunId.slice("tracker-run:".length),
+    "receipt-chain.json",
+  );
+  const receiptBytes = readFileSync(receiptPath);
+  const receipts = verifyReceiptChain(
+    readJson(receiptPath).entries,
+    nodeContentDigestPort,
+  ).receipts;
+  same(sha256(receiptBytes), result.receiptChainDigest, "通知matrixの連続receipt chain digest");
+  same(
+    canonicalJson(receipts.map((receipt) => receipt.receiptDigest)),
+    canonicalJson(coverage.receiptChain.receiptDigests),
+    "通知matrixの連続coverage receipt列",
+  );
+  same(sha256(readFileSync(markerPath)), result.markerDigest, "通知matrixの連続marker digest");
+  same(record.recordDigest, result.publicationRecordDigest, "通知matrixの連続record digest");
+  same(record.runIdentity.runId, result.trackingRunId, "通知matrixの連続record run");
+  same(
+    record.runtimeRecoveryPlan.workflowRunId,
+    result.actionsRunId,
+    "通知matrixの連続runtime元run",
+  );
+  same(
+    record.runtimeRecoveryPlan.workflowRunAttempt,
+    result.actionsRunAttempt,
+    "通知matrixの連続runtime元attempt",
+  );
+  same(
+    record.runtimeRecoveryPlan.codeRevision,
+    result.codeRevision,
+    "通知matrixの連続runtime code revision",
+  );
+  same(record.baseStateRevision.revision, result.baseStateRevision, "通知matrixの連続record base");
+  same(marker.runId, result.trackingRunId, "通知matrixの連続marker run");
+  same(marker.baseStateRevision, result.baseStateRevision, "通知matrixの連続marker base");
+  same(marker.publicationRecordDigest, record.recordDigest, "通知matrixの連続marker record");
+  same(marker.phase, "run_finalized", "通知matrixの連続marker段階");
+  same(
+    receipts.find((receipt) => receipt.receiptType === "run_finalization")?.result
+      .resultingStateRevision,
+    result.finalStateRevision,
+    "通知matrixの連続finalization receipt",
+  );
+  same(
+    receipts.find((receipt) => receipt.receiptType === "completion")?.result.finalStateRevision,
+    result.finalStateRevision,
+    "通知matrixの連続completion receipt",
+  );
+  same(run.id.toString(), result.actionsRunId, "通知matrixの連続Actions run ID");
+  same(run.run_attempt, result.actionsRunAttempt, "通知matrixの連続Actions attempt");
+  same(run.head_sha, result.codeRevision, "通知matrixの連続code revision");
+  same(run.head_branch, required("GITHUB_REF_NAME"), "通知matrixの連続source branch");
+  same(run.conclusion, "success", "通知matrixの連続Actions結果");
+}
+
+function assertContinuitySource(sourceManifest, proofRoot) {
+  const firstReady = parseSandboxEnvironmentManifest(
+    readFileSync(join(proofRoot, "continuity-first-ready-environment.json"), "utf8"),
+  );
+  const first = readJson(join(proofRoot, "continuity-first-result/sandbox-result.json"));
+  const second = readJson(join(proofRoot, "continuity-second-result/sandbox-result.json"));
+  const firstCoverage = readJson(
+    join(proofRoot, "continuity-first-coverage/sandbox-coverage.json"),
+  );
+  const secondCoverage = readJson(
+    join(proofRoot, "continuity-second-coverage/sandbox-coverage.json"),
+  );
+  const firstRun = workflowRunSchema.parse(readJson(join(proofRoot, "continuity-first-run.json")));
+  const secondRun = workflowRunSchema.parse(
+    readJson(join(proofRoot, "continuity-second-run.json")),
+  );
+  const creation = parseSandboxEnvironmentManifest(
+    readFileSync(join(proofRoot, "continuity-creation-environment.json"), "utf8"),
+  );
+  const firstSnapshot = readJson(join(proofRoot, "continuity-first-snapshot.json"));
+  const secondSnapshot = readJson(join(proofRoot, "continuity-second-snapshot.json"));
+  if (
+    sourceManifest.schemaVersion !== 2 ||
+    sourceManifest.lifecycle.status !== "ready" ||
+    firstReady.schemaVersion !== 2 ||
+    firstReady.lifecycle.status !== "ready" ||
+    creation.schemaVersion !== 2 ||
+    creation.lifecycle.status !== "preparing" ||
+    !["create", "reset"].includes(creation.lifecycle.creation.kind)
+  ) {
+    throw new TypeError("通知matrixの連続run環境が不正です");
+  }
+  assertContinuityRun(proofRoot, "first", first, firstCoverage, firstRun);
+  assertContinuityRun(proofRoot, "second", second, secondCoverage, secondRun);
+  same(first.environmentId, sourceManifest.environmentId, "通知matrixのfirst環境");
+  same(second.environmentId, sourceManifest.environmentId, "通知matrixのsecond環境");
+  same(first.codeRevision, second.codeRevision, "通知matrixの連続run code revision");
+  same(creation.environmentId, sourceManifest.environmentId, "通知matrixの初回作成環境");
+  same(creation.seedRevision, sourceManifest.seedRevision, "通知matrixの初回物理seed");
+  same(
+    canonicalJson(creation.lifecycle.owner),
+    canonicalJson(sourceManifest.lifecycle.owner),
+    "通知matrixの初回owner",
+  );
+  same(
+    canonicalJson(creation.lifecycle.creation),
+    canonicalJson(sourceManifest.lifecycle.creation),
+    "通知matrixの初回作成元",
+  );
+  same(firstReady.seedRevision, sourceManifest.seedRevision, "通知matrixのR1 seed");
+  same(firstReady.sourceRef, sourceManifest.sourceRef, "通知matrixのR1 source branch");
+  same(
+    canonicalJson(sourceManifest),
+    canonicalJson(firstReady),
+    "通知matrixのF2 manifestとR1 manifest",
+  );
+  same(
+    second.finalStateRevision,
+    readRevision(join(proofRoot, "source-head-revision.txt")),
+    "通知matrixのF2 reset元HEAD",
+  );
+  same(firstSnapshot.run.id, first.trackingRunId, "通知matrixのF1 snapshot run");
+  same(secondSnapshot.run.id, second.trackingRunId, "通知matrixのF2 snapshot run");
+  same(
+    secondCoverage.continuity?.firstSnapshotDigest,
+    sha256(readFileSync(join(proofRoot, "continuity-first-snapshot.json"))),
+    "通知matrixのF1 snapshot digest",
+  );
+  same(
+    first.baseStateRevision,
+    readRevision(join(proofRoot, "continuity-creation-revision.txt")),
+    "通知matrixのfirst base",
+  );
+  same(
+    second.baseStateRevision,
+    readRevision(join(proofRoot, "continuity-first-ready-revision.txt")),
+    "通知matrixのsecond ready base",
+  );
+  same(
+    firstReady.lifecycle.completion.finalStateRevision,
+    first.finalStateRevision,
+    "通知matrixのF1とR1",
+  );
+  same(
+    firstReady.lifecycle.completion.trackingRunId,
+    first.trackingRunId,
+    "通知matrixのR1 tracking run",
+  );
+  same(
+    firstReady.lifecycle.completion.resultDigest,
+    sha256(readFileSync(join(proofRoot, "continuity-first-result/sandbox-result.json"))),
+    "通知matrixのfirst result digest",
+  );
+  same(firstReady.lifecycle.completion.coverage.kind, "verified", "通知matrixのfirst coverage種別");
+  same(
+    firstReady.lifecycle.completion.coverage.digest,
+    first.coverageDigest,
+    "通知matrixのfirst coverage digest",
+  );
+  same(sourceManifest.lifecycle.owner.actionsRunId, first.actionsRunId, "通知matrixのfirst owner");
+  same(firstReady.lifecycle.owner.actionsRunId, first.actionsRunId, "通知matrixのR1 owner");
+  same(
+    firstReady.lifecycle.completion.actionsRunId,
+    first.actionsRunId,
+    "通知matrixのR1 completion",
+  );
+  same(
+    firstReady.lifecycle.completion.actionsRunAttempt,
+    first.actionsRunAttempt,
+    "通知matrixのR1 completion attempt",
+  );
+  if (
+    firstCoverage.analysis.genericAi.applications.executed < 1 ||
+    firstCoverage.analysis.genericAi.processAttemptCount < 1 ||
+    firstCoverage.notification.recordedSendCount < 1 ||
+    secondCoverage.notification.sameKeySuppressionConsistent !== true ||
+    secondCoverage.notification.messageSendCount !== 0
+  ) {
+    throw new TypeError("通知matrixの実AI採用または同一key抑止がありません");
+  }
+  same(
+    secondRun.display_title,
+    `sandbox-continue-${sourceManifest.environmentId}`,
+    "通知matrixのsecond操作",
+  );
+  const firstTitle =
+    creation.lifecycle.creation.kind === "create"
+      ? `sandbox-create-${sourceManifest.environmentId}`
+      : `sandbox-reset-${creation.lifecycle.creation.sourceEnvironmentId}`;
+  same(firstRun.display_title, firstTitle, "通知matrixのfirst操作");
+  same(
+    JSON.stringify(secondCoverage.continuity?.firstResult),
+    JSON.stringify(first),
+    "通知matrixのsecond first参照",
+  );
+  if (
+    !Array.isArray(secondCoverage.continuity?.snapshotReuses) ||
+    secondCoverage.continuity.snapshotReuses.length < 1 ||
+    secondCoverage.analysis.genericAi.applications.cache < 1 ||
+    secondCoverage.analysis.genericAi.cacheHitCount < 1
+  ) {
+    throw new TypeError("通知matrixのsecondにsnapshot再利用とAI cache hitがありません");
+  }
+  const firstItems = new Map(firstSnapshot.items.map((item) => [item.nodeId, item]));
+  const secondItems = new Map(secondSnapshot.items.map((item) => [item.nodeId, item]));
+  for (const reuse of secondCoverage.continuity.snapshotReuses) {
+    const firstItem = firstItems.get(reuse.nodeId);
+    const secondItem = secondItems.get(reuse.nodeId);
+    const firstAdopted = firstItem?.aiAnalysis.adoptedElements[reuse.element];
+    const secondAdopted = secondItem?.aiAnalysis.adoptedElements[reuse.element];
+    if (
+      firstItem?.aiAnalysis.applications[reuse.element]?.origin !== "executed" ||
+      secondItem?.aiAnalysis.applications[reuse.element]?.origin !== "verified_reuse" ||
+      firstAdopted?.reuseProof.status !== "verified" ||
+      secondAdopted?.reuseProof.status !== "verified"
+    ) {
+      throw new TypeError("通知matrixのsnapshot再利用対象が一致しません");
+    }
+    same(
+      firstAdopted.reuseProof.inputFingerprint,
+      reuse.inputFingerprint,
+      "通知matrixの再利用入力fingerprint",
+    );
+    same(
+      firstAdopted.generation.metadata.inputFingerprint,
+      reuse.inputFingerprint,
+      "通知matrixの初回生成入力fingerprint",
+    );
+    same(
+      secondAdopted.generation.metadata.inputFingerprint,
+      reuse.inputFingerprint,
+      "通知matrixの再利用生成入力fingerprint",
+    );
+    same(
+      canonicalJson(secondAdopted.reuseProof),
+      canonicalJson(firstAdopted.reuseProof),
+      "通知matrixの再利用proof",
+    );
+    same(
+      canonicalJson(secondAdopted.generation),
+      canonicalJson(firstAdopted.generation),
+      "通知matrixの再利用generation",
+    );
+    same(
+      canonicalJson(secondAdopted.result),
+      canonicalJson(firstAdopted.result),
+      "通知matrixの再利用result",
+    );
+  }
+  const cacheApplications = secondSnapshot.items.flatMap((item) =>
+    Object.values(item.aiAnalysis.applications).filter(
+      (application) => application.status === "current_ai" && application.origin === "cache",
+    ),
+  ).length;
+  same(
+    secondCoverage.analysis.genericAi.applications.cache,
+    cacheApplications,
+    "通知matrixのAI cache採用件数",
+  );
+  const secondRecord = decodeDurablePublicationRecord(
+    readFileSync(join(proofRoot, "continuity-second-record.json")),
+    nodeContentDigestPort,
+  );
+  same(
+    secondCoverage.analysis.genericAi.cacheHitCount,
+    secondRecord.runFinalizationPolicy.report.metrics.aiCacheHitCount,
+    "通知matrixのAI cache hit件数",
+  );
 }
 
 /** 通知scenarioのcoverageと完了情報の結合を検証する。 */
@@ -283,9 +687,7 @@ export async function assertScenario(coverage, result, scenarioId, proofRoot, is
 
 function assertScenarioSource(manifest, proofRoot, previous) {
   const creation = manifest.lifecycle.creation;
-  const sourceRevision = revisionSchema.parse(
-    readFileSync(join(proofRoot, "source-head-revision.txt"), "utf8").trim(),
-  );
+  const sourceRevision = readRevision(join(proofRoot, "source-head-revision.txt"));
   same(creation.sourceHeadRevision, sourceRevision, "通知matrixのreset元HEAD");
   const sourceManifest = parseSandboxEnvironmentManifest(
     readFileSync(join(proofRoot, "source-environment.json"), "utf8"),
@@ -302,23 +704,13 @@ function assertScenarioSource(manifest, proofRoot, previous) {
   same(sourceManifest.sourceRef, manifest.sourceRef, "通知matrixのreset元source branch");
   same(sourceManifest.sourceRepository, manifest.sourceRepository, "通知matrixのreset元repository");
   if (previous == null) {
-    same(sourceManifest.lifecycle.creation.kind, "create", "通知matrixの起点create");
-    same(
-      sourceManifest.environmentId,
-      `env-${sourceManifest.lifecycle.owner.actionsRunId}-${sourceManifest.lifecycle.owner.actionsRunAttempt}`,
-      "通知matrixの起点environment ID",
-    );
-    same(
-      sourceManifest.lifecycle.completion.actionsRunId,
-      sourceManifest.lifecycle.owner.actionsRunId,
-      "通知matrixの起点完了Actions run ID",
-    );
-    same(
-      sourceManifest.lifecycle.completion.actionsRunAttempt,
-      sourceManifest.lifecycle.owner.actionsRunAttempt,
-      "通知matrixの起点完了Actions attempt",
-    );
+    assertContinuitySource(sourceManifest, proofRoot);
   } else {
+    same(
+      sourceRevision,
+      readRevision(join(previous.proofRoot, "ready-head-revision.txt")),
+      "通知matrixの先行ready HEAD",
+    );
     same(sourceManifest.lifecycle.creation.kind, "reset", "通知matrixの先行reset");
     same(sourceManifest.environmentId, previous.manifest.environmentId, "通知matrixの先行環境");
     same(
@@ -448,6 +840,9 @@ async function main() {
     },
   ];
   const origin = assertScenarioSource(scenarios[0].manifest, scenarios[0].proofRoot, null);
+  for (const scenario of scenarios) {
+    scenario.readyHeadRevision = assertReadyScenario(scenario);
+  }
   for (const [index, scenario] of scenarios.slice(1).entries()) {
     assertScenarioSource(scenario.manifest, scenario.proofRoot, scenarios[index]);
     same(scenario.manifest.seedRevision, origin.seedRevision, "通知matrixの共通seed revision");

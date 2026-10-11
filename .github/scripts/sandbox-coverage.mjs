@@ -66,6 +66,50 @@ function countApplications(items) {
   return counts;
 }
 
+function verifiedSnapshotReuses(firstItems, secondItems) {
+  const firstByNodeId = new Map(firstItems.map((item) => [item.nodeId, item]));
+  const matches = [];
+  for (const secondItem of secondItems) {
+    const firstItem = firstByNodeId.get(secondItem.nodeId);
+    if (firstItem == null) {
+      continue;
+    }
+    for (const [element, secondApplication] of Object.entries(secondItem.aiAnalysis.applications)) {
+      if (
+        secondApplication.status !== "current_ai" ||
+        secondApplication.origin !== "verified_reuse" ||
+        firstItem.aiAnalysis.applications[element]?.status !== "current_ai" ||
+        firstItem.aiAnalysis.applications[element].origin !== "executed"
+      ) {
+        continue;
+      }
+      const firstAdopted = firstItem.aiAnalysis.adoptedElements[element];
+      const secondAdopted = secondItem.aiAnalysis.adoptedElements[element];
+      if (
+        firstAdopted?.origin !== "current" ||
+        secondAdopted?.origin !== "current" ||
+        firstAdopted.reuseProof.status !== "verified" ||
+        secondAdopted.reuseProof.status !== "verified" ||
+        firstAdopted.generation.metadata.inputFingerprint !==
+          secondAdopted.generation.metadata.inputFingerprint ||
+        firstAdopted.reuseProof.inputFingerprint !==
+          firstAdopted.generation.metadata.inputFingerprint ||
+        canonicalJson(firstAdopted.reuseProof) !== canonicalJson(secondAdopted.reuseProof) ||
+        canonicalJson(firstAdopted.generation) !== canonicalJson(secondAdopted.generation) ||
+        canonicalJson(firstAdopted.result) !== canonicalJson(secondAdopted.result)
+      ) {
+        throw new TypeError("second runのsnapshot再利用証拠がfirstの採用結果と一致しません");
+      }
+      matches.push({
+        nodeId: secondItem.nodeId,
+        element,
+        inputFingerprint: firstAdopted.reuseProof.inputFingerprint,
+      });
+    }
+  }
+  return matches;
+}
+
 function countPersonal(items) {
   const counts = { planned: 0, failed: 0, deferred: 0, unknown: 0 };
   for (const item of items) {
@@ -211,17 +255,20 @@ function createCoverage() {
   const continuityPhase = required("SANDBOX_CONTINUITY_PHASE");
   const first = continuityPhase === "second" ? readVerifiedFirstResult() : null;
   const firstCoverage = first == null ? null : readJson(required("SANDBOX_FIRST_COVERAGE_PATH"));
+  const firstSnapshot = first == null ? null : readJson(required("SANDBOX_FIRST_SNAPSHOT_PATH"));
   const suppressedKeyDigests =
     evidence.kind === "artifact_cross_checked"
       ? evidence.validatedPayload.sentSuppressedCandidateKeys.map((key) => sha256(key)).sort()
       : [];
   let sameKeySuppressionConsistent = false;
+  let snapshotReuses = [];
   if (continuityPhase !== "first" && continuityPhase !== "second") {
     throw new TypeError("coverageにはcontinuity phaseが必要です");
   }
   if (continuityPhase === "first") {
     if (
       z.number().int().nonnegative().parse(applications.executed) < 1 ||
+      z.number().int().nonnegative().parse(metrics.aiProcessAttemptCount) < 1 ||
       messageReceipts.filter((entry) => entry.status === "sent").length < 1 ||
       recordedSendKeyDigests.some((key) => !sentLedgerKeyDigests.includes(key)) ||
       historyPages.status !== "deployed"
@@ -230,7 +277,11 @@ function createCoverage() {
     }
   } else {
     assertCompleteSandboxStageCoverage(firstCoverage);
-    assertEqual(baseStateRevision, first.finalStateRevision, "second baseとfirst final revision");
+    if (baseStateRevision === first.finalStateRevision) {
+      throw new TypeError("second baseにはfirst ready revisionが必要です");
+    }
+    assertEqual(firstSnapshot.run.id, first.trackingRunId, "first snapshot run ID");
+    snapshotReuses = verifiedSnapshotReuses(firstSnapshot.items, snapshot.items);
     const firstSentKeyDigests = z
       .array(digest)
       .min(1)
@@ -244,9 +295,8 @@ function createCoverage() {
       .int()
       .nonnegative()
       .parse(firstCoverage.analysis.genericAi.applications.executed);
-    const reusedResultCount =
-      z.number().int().nonnegative().parse(applications.cache) +
-      z.number().int().nonnegative().parse(applications.reused);
+    const cacheApplicationCount = z.number().int().nonnegative().parse(applications.cache);
+    const cacheHitCount = z.number().int().nonnegative().parse(metrics.aiCacheHitCount);
     const matchedSuppressedKeyDigests = suppressedKeyDigests.filter((key) =>
       firstRecordedSendKeyDigests.includes(key),
     );
@@ -258,7 +308,9 @@ function createCoverage() {
       trackingRunId === first.trackingRunId ||
       evidence.kind !== "artifact_cross_checked" ||
       firstExecutedCount < 1 ||
-      reusedResultCount < 1 ||
+      snapshotReuses.length < 1 ||
+      cacheApplicationCount < 1 ||
+      cacheHitCount < 1 ||
       record.notificationOutbox.delivery !== "no_candidates" ||
       record.notificationOutbox.selectedContext.action !== "skip_digest" ||
       messageReceipts.length !== 0 ||
@@ -266,7 +318,9 @@ function createCoverage() {
       sentKeys.length < 1 ||
       !sameKeySuppressionConsistent
     ) {
-      throw new TypeError("second runのAI再利用と同一key候補の送信抑止を確認できません");
+      throw new TypeError(
+        "second runのsnapshot再利用、AI cache hitと同一key候補の送信抑止を確認できません",
+      );
     }
   }
   if (
@@ -385,7 +439,15 @@ function createCoverage() {
         externalReference: historyPages.result?.externalReference ?? null,
       },
     },
-    continuity: first == null ? null : { firstResult: first, remoteBaseReloaded: true },
+    continuity:
+      first == null
+        ? null
+        : {
+            firstResult: first,
+            firstSnapshotDigest: sha256(readFileSync(required("SANDBOX_FIRST_SNAPSHOT_PATH"))),
+            snapshotReuses,
+            remoteBaseReloaded: true,
+          },
     productionAdapters: { pagesDeployExecuted: false, discordSendExecuted: false },
     unexecutedBranches: [
       { branch: "production_pages_deploy", reason: "sandbox recording port" },

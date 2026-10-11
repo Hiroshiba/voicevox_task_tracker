@@ -549,9 +549,6 @@ prepare_continue() {
   local branch="${STATE_BRANCH_PREFIX}/${environment_id}"
   local remote_revision
   remote_revision="$(remote_branch_head "$branch")"
-  if [[ -n "${SANDBOX_EXPECTED_BASE_REVISION-}" && "$remote_revision" != "$SANDBOX_EXPECTED_BASE_REVISION" ]]; then
-    die "continuity secondのremote base revisionがfirstのfinal revisionと一致しません"
-  fi
   fetch_remote_branch "$branch"
   local manifest
   manifest="$(manifest_source "$remote_revision")"
@@ -559,6 +556,7 @@ prepare_continue() {
     die "continue対象のmanifest environment IDが一致しません"
   fi
   require_ready_manifest "$manifest"
+  [[ -z "${SANDBOX_EXPECTED_BASE_REVISION-}" ]] || bash .github/scripts/sandbox-continuity-source-proofs.sh verify-ready "$remote_revision"
   local manifest_source_ref
   manifest_source_ref="$(manifest_source_ref_value "$manifest")"
   if [[ "$manifest_source_ref" != "$source_ref" ]]; then

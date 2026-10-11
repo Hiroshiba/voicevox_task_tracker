@@ -185,7 +185,8 @@ Discordと本番Pagesへは書き込まず、実GitHub収集・実AI・sandbox s
 連続2 runではscenario_idをcontinuity、notification_actionをsend、outcomeをrecorded_success、messageIndexを0にします。
 firstはcreateまたはresetで実AIの成功を含むrunを完了させます。
 secondはcontinueで、firstのActions run ID/attempt、tracking run ID、final state revision、code revisionをrecording_controlのcontinuityへ渡します。
-firstのresult/coverage artifactと実Gitの親子revisionを照合し、同じenvironmentのstate読込、cache再利用、通知重複抑制を確認します。
+firstの最終revisionをF1、manifestだけをreadyへ進めたrevisionをR1とすると、secondはR1をbaseに実行してF2で確定します。firstのresultにはF1を記録します。
+firstのresult/coverage artifactと実GitのF1→R1→F2を照合し、同じenvironmentのstate読込を確認します。firstで実AIが採用された項目・要素について、secondの同じ入力fingerprintとproofによるsnapshot再利用を確認します。secondのAI cache採用と`aiCacheHitCount`が1件以上であることは別に確認します。初回に送った実候補keyの再送抑止も確認します。
 preflightだけのAI実試行を、対象項目の推論成功として数えません。
 
 通知actionは次の順に独立scenarioで確認します。
@@ -198,10 +199,10 @@ preflightだけのAI実試行を、対象項目の推論成功として数えま
 | ambiguous-retry       | send / recorded_ambiguous、その後retry / recorded_success       | 曖昧な開始記録を保持し、同じ固定予約の手動解決と再開だけが送る |
 | ambiguous-acknowledge | send / recorded_ambiguous、その後acknowledge / recorded_success | 確認済みへ進み、自動再送と送信履歴の追加をしない               |
 
-各scenarioのfirstはreset_sourceをseedにしたresetを使い、最初のcreateで確定したseed revisionから始めます。
+各scenarioのfirstはreset_sourceをseedにしたresetを使い、連続runの初回環境で確定したseed revisionから始めます。最初のreset元は連続runのF2 finalizationです。後続のreset元は直前scenarioをreadyへ進めた環境です。各scenarioの作成commitは同じseed revisionを親に持ちます。
 曖昧なfirstは`preparing`のまま停止します。resolutionは`resume-preparing`で元のpending revision、delivery operation、Actions run IDとattempt、tracking run IDを渡します。元reset runと子effectの終了、旧環境head、新旧環境の進行中runを確認し、元runのcode revisionと現在のreusable workflow定義を照合してから、既存の手動解決と同じrunの再開を実行します。source branchが進んでいても元runのcode revisionとruntimeを使います。workflow定義が一致しなければ効果を加えず停止します。finalized receiptが確定した後に新環境をreadyへ進めます。
 notification controlのpriorへ先行scenarioの実行ID、environment、最終revision、coverage digestを順番どおり指定し、機械検証を通します。
-通知matrixは各scenarioの元reset run、manifest、永続record、runtime bundle、coverage、完了resultを個別に照合します。scenario間でsource branchのcommitが異なっていても、各runのcode revisionと証拠が一致すれば集約できます。
+通知matrixは各scenarioの元reset run、manifest、永続record、runtime bundle、coverage、完了resultを個別に照合します。最初のreset元ではF2のmarker、record、receipt、resultとF1→R1の証拠を照合します。後続のreset元ではready commitが直前のfinalizationを親に持ち、manifestだけを変更し、完了run、result、coverageのdigestが一致することも確認します。scenario間でsource branchのcommitが異なっていても、各runのcode revisionと証拠が一致すれば集約できます。
 曖昧なfirstではpendingを示す失敗結果も必要な証拠です。すべてのfirstを通常完了として扱いません。
 入力schemaは`.github/scripts/parse-sandbox-recording-control.mjs`を正本とします。
 
