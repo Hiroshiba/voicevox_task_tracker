@@ -3,6 +3,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import process from "node:process";
 
 import { z } from "zod";
+import { hashCanonicalJson } from "../../dist/canonical-json/index.js";
 import {
   assertCompleteSandboxStageCoverage,
   createSandboxStageCoverage,
@@ -267,6 +268,7 @@ function createCoverage() {
   }
   if (continuityPhase === "first") {
     if (
+      context.analysisMode.kind !== "normal" ||
       z.number().int().nonnegative().parse(applications.executed) < 1 ||
       z.number().int().nonnegative().parse(metrics.aiProcessAttemptCount) < 1 ||
       messageReceipts.filter((entry) => entry.status === "sent").length < 1 ||
@@ -276,12 +278,70 @@ function createCoverage() {
       throw new TypeError("first runに採用済み実AI、recorded sentまたは通知履歴Pagesがありません");
     }
   } else {
+    if (context.analysisMode.kind !== "cache_probe") {
+      throw new TypeError("second runにcache probeの実行contextがありません");
+    }
     assertCompleteSandboxStageCoverage(firstCoverage);
     if (baseStateRevision === first.finalStateRevision) {
       throw new TypeError("second baseにはfirst ready revisionが必要です");
     }
     assertEqual(firstSnapshot.run.id, first.trackingRunId, "first snapshot run ID");
     snapshotReuses = verifiedSnapshotReuses(firstSnapshot.items, snapshot.items);
+    const probe = context.analysisMode.probe;
+    const firstCacheItem = firstSnapshot.items.find((item) => item.nodeId === probe.nodeId);
+    const secondCacheItem = snapshot.items.find((item) => item.nodeId === probe.nodeId);
+    const firstReuseItem = firstSnapshot.items.find(
+      (item) => item.nodeId === probe.snapshotReuse.nodeId,
+    );
+    const secondReuseItem = snapshot.items.find(
+      (item) => item.nodeId === probe.snapshotReuse.nodeId,
+    );
+    const firstReuse = firstReuseItem?.aiAnalysis.adoptedElements[probe.snapshotReuse.element];
+    const secondReuse = secondReuseItem?.aiAnalysis.adoptedElements[probe.snapshotReuse.element];
+    if (
+      firstCacheItem == null ||
+      secondCacheItem == null ||
+      firstReuseItem?.aiAnalysis.applications[probe.snapshotReuse.element]?.origin !== "executed" ||
+      secondReuseItem?.aiAnalysis.applications[probe.snapshotReuse.element]?.origin !==
+        "verified_reuse" ||
+      firstReuse?.origin !== "current" ||
+      secondReuse?.origin !== "current" ||
+      firstReuse.generation.metadata.inputFingerprint !== probe.snapshotReuse.inputFingerprint ||
+      hashCanonicalJson(firstReuse.generation) !== probe.snapshotReuse.generationDigest ||
+      canonicalJson(firstReuse.generation) !== canonicalJson(secondReuse.generation) ||
+      !snapshotReuses.some(
+        (reuse) =>
+          reuse.nodeId === probe.snapshotReuse.nodeId &&
+          reuse.element === probe.snapshotReuse.element,
+      )
+    ) {
+      throw new TypeError("second runの別nodeでfirstのsnapshot再利用を確認できません");
+    }
+    let adoptedCacheCount = 0;
+    for (const expected of probe.elements) {
+      const firstEvaluated = firstCacheItem.aiAnalysis.elements[expected.element];
+      const secondEvaluated = secondCacheItem.aiAnalysis.elements[expected.element];
+      const firstApplication = firstCacheItem.aiAnalysis.applications[expected.element];
+      const secondApplication = secondCacheItem.aiAnalysis.applications[expected.element];
+      if (
+        firstEvaluated == null ||
+        secondEvaluated == null ||
+        firstEvaluated.generation.metadata.inputFingerprint !== expected.inputFingerprint ||
+        hashCanonicalJson(firstEvaluated.generation) !== expected.generationDigest ||
+        canonicalJson(firstEvaluated.generation) !== canonicalJson(secondEvaluated.generation)
+      ) {
+        throw new TypeError("second runのcache結果がfirstの生成値と一致しません");
+      }
+      if (firstApplication?.status === "current_ai" && firstApplication.origin === "executed") {
+        if (secondApplication?.status !== "current_ai" || secondApplication.origin !== "cache") {
+          throw new TypeError("second runでfirstの実AI結果をcache採用できません");
+        }
+        adoptedCacheCount += 1;
+      }
+    }
+    if (adoptedCacheCount < 1) {
+      throw new TypeError("second runにfirstの実file cache採用がありません");
+    }
     const firstSentKeyDigests = z
       .array(digest)
       .min(1)
@@ -446,6 +506,8 @@ function createCoverage() {
             firstResult: first,
             firstSnapshotDigest: sha256(readFileSync(required("SANDBOX_FIRST_SNAPSHOT_PATH"))),
             snapshotReuses,
+            cacheProbe:
+              context.analysisMode.kind === "cache_probe" ? context.analysisMode.probe : null,
             remoteBaseReloaded: true,
           },
     productionAdapters: { pagesDeployExecuted: false, discordSendExecuted: false },

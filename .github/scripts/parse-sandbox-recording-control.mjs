@@ -12,6 +12,38 @@ const priorNotificationScenarioSchema = z.strictObject({
   coverageDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
 });
 
+const hashSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
+const analysisElementSchema = z.enum([
+  "status",
+  "waitingOn",
+  "nextAction",
+  "relations",
+  "progress",
+  "importance",
+  "deadline",
+  "notification",
+  "selfCommitment",
+]);
+const cacheProbeSchema = z.strictObject({
+  nodeId: z.string().min(1).regex(/^\S+$/u),
+  elements: z
+    .array(
+      z.strictObject({
+        element: analysisElementSchema,
+        inputFingerprint: hashSchema,
+        cacheKey: hashSchema,
+        generationDigest: hashSchema,
+      }),
+    )
+    .min(1),
+  snapshotReuse: z.strictObject({
+    nodeId: z.string().min(1).regex(/^\S+$/u),
+    element: analysisElementSchema,
+    inputFingerprint: hashSchema,
+    generationDigest: hashSchema,
+  }),
+});
+
 const recordingControlSchema = z
   .strictObject({
     outcome: z.enum(["recorded_success", "recorded_clear_rejection", "recorded_ambiguous"]),
@@ -26,6 +58,7 @@ const recordingControlSchema = z
           firstTrackingRunId: z.string().regex(/^tracker-run:[0-9a-f]{64}$/u),
           firstFinalStateRevision: z.string().regex(/^[0-9a-f]{40}$/u),
           firstCodeRevision: z.string().regex(/^[0-9a-f]{40}$/u),
+          cacheProbe: cacheProbeSchema,
         }),
       ])
       .optional(),
@@ -65,6 +98,7 @@ const action = process.env["SANDBOX_NOTIFICATION_ACTION"];
 const scenarioId = process.env["SANDBOX_SCENARIO_ID"];
 const environmentId = process.env["SANDBOX_ENVIRONMENT_ID"];
 const resetSource = process.env["SANDBOX_RESET_SOURCE"];
+const analysisMode = process.env["SANDBOX_ANALYSIS_MODE"];
 if ((scenarioId === "continuity") !== (control.continuity != null)) {
   throw new TypeError("continuity scenarioにはcontinuity controlが必要です");
 }
@@ -139,9 +173,12 @@ if (control.continuity != null) {
   if (control.continuity.phase === "first" && operation !== "create" && operation !== "reset") {
     throw new TypeError("continuity firstにはcreateまたはresetを指定してください");
   }
+  if (control.continuity.phase === "first" && analysisMode !== "normal") {
+    throw new TypeError("continuity firstのAI分析はnormalにしてください");
+  }
   if (control.continuity.phase === "second") {
-    if (operation !== "continue") {
-      throw new TypeError("continuity secondにはcontinueを指定してください");
+    if (operation !== "continue" || analysisMode !== "cache_probe") {
+      throw new TypeError("continuity secondにはcontinueとcache probeを指定してください");
     }
     if (
       environmentId !== `env-${control.continuity.firstRunId}-${control.continuity.firstRunAttempt}`
@@ -149,6 +186,9 @@ if (control.continuity != null) {
       throw new TypeError("continuity secondのenvironment IDがfirstと一致しません");
     }
   }
+}
+if (analysisMode === "cache_probe" && control.continuity?.phase !== "second") {
+  throw new TypeError("cache probeはcontinuity secondだけで使用できます");
 }
 
 const outputPath = process.env["GITHUB_OUTPUT"];
@@ -166,6 +206,7 @@ appendFileSync(
     `first_tracking_run_id=${control.continuity?.phase === "second" ? control.continuity.firstTrackingRunId : ""}`,
     `first_final_state_revision=${control.continuity?.phase === "second" ? control.continuity.firstFinalStateRevision : ""}`,
     `first_code_revision=${control.continuity?.phase === "second" ? control.continuity.firstCodeRevision : ""}`,
+    `cache_probe_json=${control.continuity?.phase === "second" ? JSON.stringify(control.continuity.cacheProbe) : ""}`,
     `notification_phase=${control.notification?.phase ?? "none"}`,
     `notification_source_run_id=${control.notification?.phase === "resolution" ? control.notification.firstRunId : ""}`,
     `notification_source_run_attempt=${control.notification?.phase === "resolution" ? control.notification.firstRunAttempt : ""}`,

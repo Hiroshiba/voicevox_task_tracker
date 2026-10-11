@@ -19,6 +19,8 @@ die() {
   exit 1
 }
 
+source "$(dirname "${BASH_SOURCE[0]}")/sandbox-analysis-mode.sh"
+
 require_environment() {
   local name="$1"
   local value="${!name-}"
@@ -343,48 +345,6 @@ manifest_seed_revision() {
 
 manifest_source_ref_value() {
   jq -er '.sourceRef' <<< "$1"
-}
-
-validated_analysis_mode_json() {
-  local analysis_mode="${SANDBOX_ANALYSIS_MODE-}"
-  local forced_node_id="${SANDBOX_FORCED_NODE_ID-}"
-  local forced_elements="${SANDBOX_FORCED_ELEMENTS-}"
-  case "$analysis_mode" in
-    normal)
-      if [[ -n "$forced_node_id" || -n "$forced_elements" ]]; then
-        die "normal modeではforced対象を指定できません"
-      fi
-      printf '%s\n' '{"kind":"normal"}'
-      ;;
-    forced)
-      if [[ -z "$forced_node_id" || "$forced_node_id" =~ [[:space:]] ]]; then
-        die "forced modeにはnode IDが必要です"
-      fi
-      if [[ -z "$forced_elements" ]]; then
-        die "forced modeにはelementsが必要です"
-      fi
-      local elements_json
-      elements_json="$(jq -ce \
-        --arg value "$forced_elements" \
-        --argjson allowed_elements "$ANALYSIS_ELEMENTS_JSON" \
-        '
-          ($value | split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; ""))) as $elements |
-          if ($elements | length) == 0 or
-            any($elements[]; length == 0) or
-            (($elements | unique | length) != ($elements | length)) or
-            ((($elements - $allowed_elements) | length) != 0) then
-            error("elementsが不正です")
-          else
-            $elements
-          end
-        ' <<< '{}')" || die "forced modeのelementsが不正です"
-      jq -cn --arg node_id "$forced_node_id" --argjson elements "$elements_json" \
-        '{kind: "forced", target: {nodeId: $node_id, elements: $elements}}'
-      ;;
-    *)
-      die "SANDBOX_ANALYSIS_MODEが不正です"
-      ;;
-  esac
 }
 
 create_context_file() {

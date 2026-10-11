@@ -62,6 +62,7 @@ import type { DeterministicallyAnalyzedRun } from "./deterministic.js";
 import type { DeterministicItemAnalysis } from "./deterministic-item.js";
 import {
   planGenericAiCachedElements,
+  type GenericAiCacheProbe,
   type GenericAiCacheLookupPort,
 } from "./generic-ai-cache-plan.js";
 import type { GenericAiBudgetPlan } from "./generic-ai-budget-plan.js";
@@ -97,6 +98,7 @@ export type GenericAiPlanningPort = Readonly<{
   lookupCache: GenericAiCacheLookupPort;
   reserveBudget: (candidates: readonly PreparedAiAnalysisCandidate[]) => GenericAiBudgetPlan;
   target: AiAnalysisTarget | undefined;
+  cacheProbe: GenericAiCacheProbe | undefined;
   prepareItem: (
     run: DeterministicallyAnalyzedRun,
     analysis: DeterministicItemAnalysis,
@@ -187,8 +189,15 @@ export async function planGenericAi(
     }),
   );
   const target = port.target;
+  const cacheProbe = port.cacheProbe;
+  if (target != null && cacheProbe != null) {
+    throw new TypeError("AI分析の強制対象とcache probeは同時に指定できません");
+  }
   if (target != null && !analyzed.core.config.ai.enabled) {
     throw new TypeError("forced sandbox実行にはAIを有効にしてください");
+  }
+  if (cacheProbe != null && !analyzed.core.config.ai.enabled) {
+    throw new TypeError("cache probeにはAIを有効にしてください");
   }
   const items: GenericAiItemPlan[] = [];
   const failures: GenericAiPlan["failures"][number][] = [];
@@ -241,12 +250,24 @@ export async function planGenericAi(
       savedReuses: candidatePrevious.reuses,
     });
     const targetForItem = target?.nodeId === nodeId ? target : undefined;
-    const executionTarget =
-      targetForItem == null
+    const probeForItem = cacheProbe?.nodeId === nodeId ? cacheProbe : undefined;
+    const requestedTarget =
+      targetForItem ??
+      (probeForItem == null
         ? undefined
-        : targetWithRequiredStateCompanion(targetForItem, candidateInput, preliminaryPlanning);
+        : Object.freeze({
+            nodeId,
+            elements: Object.freeze(probeForItem.elements.map((element) => element.element)),
+          }));
+    const executionTarget =
+      requestedTarget == null
+        ? undefined
+        : targetWithRequiredStateCompanion(requestedTarget, candidateInput, preliminaryPlanning);
+    if (probeForItem != null && executionTarget?.elements.length !== probeForItem.elements.length) {
+      throw new TypeError("cache probeの状態要素選択がfirstと一致しません");
+    }
     const preliminaryExecutionPlanning =
-      target == null
+      target == null && probeForItem == null
         ? preliminaryPlanning
         : executionTarget != null
           ? Object.freeze({
@@ -285,7 +306,7 @@ export async function planGenericAi(
       savedReuses: previous.reuses,
     });
     const executionPlanning =
-      target == null
+      target == null && probeForItem == null
         ? planning
         : executionTarget != null
           ? Object.freeze({
@@ -317,15 +338,49 @@ export async function planGenericAi(
         );
       }
     }
+    if (probeForItem != null) {
+      for (const expected of probeForItem.elements) {
+        if (exactInputs[expected.element].fingerprint !== expected.inputFingerprint) {
+          throw new TypeError("cache probeの厳密入力がfirstと一致しません");
+        }
+      }
+    }
     const elements = await planGenericAiCachedElements(
       exactInputs,
       executionPlanning,
-      executionTarget ?? target,
+      target == null ? undefined : (executionTarget ?? target),
       nodeId,
       analyzed.core.config.ai.enabled,
       identity,
       port.lookupCache,
     );
+    if (probeForItem != null) {
+      for (const expected of probeForItem.elements) {
+        const actual = elements.find((element) => element.element === expected.element);
+        if (
+          actual?.choice !== "cache_hit" ||
+          actual.entry.cacheKey !== expected.cacheKey ||
+          port.digest.sha256Utf8(serializeCanonicalJson(actual.entry.generation)) !==
+            expected.generationDigest
+        ) {
+          throw new TypeError("cache probeでfirstの実file cacheを採用できません");
+        }
+      }
+    }
+    if (cacheProbe?.snapshotReuse.nodeId === nodeId) {
+      const expected = cacheProbe.snapshotReuse;
+      const actual = elements.find((element) => element.element === expected.element);
+      const previousAdopted = previous.adopted[expected.element];
+      if (
+        actual?.choice !== "snapshot_reuse" ||
+        actual.inputFingerprint !== expected.inputFingerprint ||
+        previousAdopted?.origin !== "current" ||
+        port.digest.sha256Utf8(serializeCanonicalJson(previousAdopted.generation)) !==
+          expected.generationDigest
+      ) {
+        throw new TypeError("cache probeの別nodeでfirstのsnapshotを再利用できません");
+      }
+    }
     const candidate = prepareAiAnalysisCandidate(
       Object.freeze({
         id: nodeId,
@@ -397,6 +452,13 @@ export async function planGenericAi(
         ...(executionCandidate == null ? {} : { executionCandidate }),
       }),
     );
+  }
+  if (
+    cacheProbe != null &&
+    (!items.some((item) => item.nodeId === cacheProbe.nodeId) ||
+      !items.some((item) => item.nodeId === cacheProbe.snapshotReuse.nodeId))
+  ) {
+    throw new TypeError("cache probeの対象nodeを今回のAI計画で確認できません");
   }
   const budget = port.reserveBudget(
     items.flatMap((item) => (item.executionCandidate == null ? [] : [item.executionCandidate])),

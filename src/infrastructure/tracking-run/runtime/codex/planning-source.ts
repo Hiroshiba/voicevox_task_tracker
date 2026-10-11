@@ -139,6 +139,11 @@ export function createGenericAiPlanningPort(
         preflightCharge,
       ),
     target: forcedAiAnalysisTarget(configuration),
+    cacheProbe:
+      configuration.target.kind === "sandbox" &&
+      configuration.target.context.analysisMode.kind === "cache_probe"
+        ? configuration.target.context.analysisMode.probe
+        : undefined,
     prepareItem: (
       run: DeterministicallyAnalyzedRun,
       analysis: DeterministicItemAnalysis,

@@ -60,6 +60,7 @@ on:
         options:
           - normal
           - forced
+          - cache_probe
       forced_node_id:
         description: forced modeで実推論するGitHub node ID
         required: false
@@ -257,6 +258,7 @@ jobs:
       first_tracking_run_id: ${{ steps.recording_control.outputs.first_tracking_run_id }}
       first_final_state_revision: ${{ steps.recording_control.outputs.first_final_state_revision }}
       first_code_revision: ${{ steps.recording_control.outputs.first_code_revision }}
+      cache_probe_json: ${{ steps.recording_control.outputs.cache_probe_json }}
       notification_phase: ${{ steps.recording_control.outputs.notification_phase }}
       notification_source_run_id: ${{ steps.recording_control.outputs.notification_source_run_id }}
       notification_source_run_attempt: ${{ steps.recording_control.outputs.notification_source_run_attempt }}
@@ -323,6 +325,7 @@ jobs:
           SANDBOX_SCENARIO_ID: ${{ inputs.scenario_id }}
           SANDBOX_ENVIRONMENT_ID: ${{ inputs.environment_id }}
           SANDBOX_RESET_SOURCE: ${{ inputs.reset_source }}
+          SANDBOX_ANALYSIS_MODE: ${{ inputs.analysis_mode }}
         run: node .github/scripts/parse-sandbox-recording-control.mjs
       - name: continuity firstの段階記録検証を準備
         if: steps.recording_control.outputs.continuity_phase == 'second'
@@ -370,12 +373,21 @@ jobs:
           SANDBOX_ANALYSIS_MODE: ${{ inputs.analysis_mode }}
           SANDBOX_FORCED_NODE_ID: ${{ inputs.forced_node_id }}
           SANDBOX_FORCED_ELEMENTS: ${{ inputs.forced_elements }}
+          SANDBOX_CACHE_PROBE_JSON: ${{ steps.recording_control.outputs.cache_probe_json }}
           SANDBOX_CONTEXT_PATH: ${{ runner.temp }}/sandbox-context.json
           SANDBOX_EXPECTED_BASE_REVISION: ${{ steps.recording_control.outputs.first_final_state_revision || steps.recording_control.outputs.notification_first_pending_revision }}
           SANDBOX_FIRST_RESULT_PATH: ${{ runner.temp }}/first-result/sandbox-result.json
           SANDBOX_FIRST_COVERAGE_PATH: ${{ runner.temp }}/first-coverage/sandbox-coverage.json
           GH_TOKEN: ${{ github.token }}
         run: .github/scripts/sandbox-lifecycle.sh prepare
+      - name: continuity secondのcache probe元を照合
+        if: steps.recording_control.outputs.continuity_phase == 'second'
+        env:
+          SANDBOX_STATE_REPOSITORY_PATH: ${{ github.workspace }}
+          SANDBOX_FIRST_FINAL_REVISION: ${{ steps.recording_control.outputs.first_final_state_revision }}
+          SANDBOX_FIRST_TRACKING_RUN_ID: ${{ steps.recording_control.outputs.first_tracking_run_id }}
+          SANDBOX_CONTEXT_PATH: ${{ runner.temp }}/sandbox-context.json
+        run: node .github/scripts/sandbox-cache-probe.mjs verify
       - name: sandbox制御入力を保存
         if: inputs.operation != 'dispose'
         env:
@@ -980,19 +992,8 @@ jobs:
           SANDBOX_TRACKING_RUN_ID: ${{ needs.tracking.outputs.tracking_run_id }}
           SANDBOX_FINAL_REVISION: ${{ steps.final_state.outputs.state_revision }}
           SANDBOX_CODE_REVISION: ${{ needs.prepare.outputs.code_revision }}
-        run: |
-          control="$(jq -cn \
-            --arg firstRunId "$GITHUB_RUN_ID" \
-            --argjson firstRunAttempt "$GITHUB_RUN_ATTEMPT" \
-            --arg firstTrackingRunId "$SANDBOX_TRACKING_RUN_ID" \
-            --arg firstFinalStateRevision "$SANDBOX_FINAL_REVISION" \
-            --arg firstCodeRevision "$SANDBOX_CODE_REVISION" \
-            '{outcome: "recorded_success", messageIndex: 0, continuity: {phase: "second", firstRunId: $firstRunId, firstRunAttempt: $firstRunAttempt, firstTrackingRunId: $firstTrackingRunId, firstFinalStateRevision: $firstFinalStateRevision, firstCodeRevision: $firstCodeRevision}}')"
-          gh workflow run sandbox.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
-            -f operation=continue \
-            -f source_ref="$SANDBOX_SOURCE_REF" \
-            -f environment_id="$SANDBOX_ENVIRONMENT_ID" \
-            -f analysis_mode=normal \
-            -f notification_action=send \
-            -f scenario_id=continuity \
-            -f recording_control="$control"
+          SANDBOX_STATE_REPOSITORY_PATH: ${{ runner.temp }}/sandbox-state
+          SANDBOX_FIRST_FINAL_REVISION: ${{ steps.final_state.outputs.state_revision }}
+          SANDBOX_FIRST_TRACKING_RUN_ID: ${{ needs.tracking.outputs.tracking_run_id }}
+          SANDBOX_CACHE_PROBE_OUTPUT_PATH: ${{ runner.temp }}/cache-probe.json
+        run: bash .github/scripts/sandbox-start-continuity-second.sh
