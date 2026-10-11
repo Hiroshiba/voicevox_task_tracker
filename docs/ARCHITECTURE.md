@@ -53,7 +53,8 @@ CLIがinfraのadapterを組み立て、applicationがportを通して副作用�
 | 20   | `notification_history_pages_published` | 通知履歴Pagesの公開結果、または公開不要という結果                            |
 | 21   | `completed`                            | 検証したreceipt chainとrun全体の完了結果                                     |
 
-公開repositoryはinventoryで一度だけ選定します。
+公開repositoryはinventoryで一度だけ選定し、allowlistをrepository IDの昇順で固定します。
+digestはこの順序のallowlistから求め、checkpointの公開inventoryと縮約allowlistもID、owner、nameを同順で照合します。
 前回stateにあるrepositoryが今回非公開なら、選定前に停止します。
 GitHub clientとtokenはinfra内に保持し、stage出力へ含めません。
 汎用AIの選択外要素は生成・採用し直さず、採用値と生成元を下流まで保ちます。

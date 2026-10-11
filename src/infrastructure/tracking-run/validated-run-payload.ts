@@ -718,6 +718,14 @@ function assertRepositoryAllowlistConsistency(
     }
   }
   if (
+    serializeCanonicalJson(artifact.repositoryAllowlist) !==
+      serializeCanonicalJson(
+        artifact.repositoryInventory.map((repository) => ({
+          id: repository.id,
+          owner: repository.owner,
+          name: repository.name,
+        })),
+      ) ||
     digest.sha256Utf8(
       serializeCanonicalJson(
         artifact.repositoryInventory.map((repository) => ({
