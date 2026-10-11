@@ -82,7 +82,7 @@ export async function readPublicationCheckpointHeader(path: string): Promise<
   }
 }
 
-/** v24 artifactとsidecarを検証し、exact baseへ結合して返す。 */
+/** v25 artifactとsidecarを検証し、exact baseへ結合して返す。 */
 export async function readPublicationCheckpointFile(
   path: string,
   expected: PublicationCheckpointFileExpectation,

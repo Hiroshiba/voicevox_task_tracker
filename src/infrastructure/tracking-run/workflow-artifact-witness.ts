@@ -99,6 +99,19 @@ const currentSourceSchema = z.discriminatedUnion("scope", [
     itemNodeId: nodeIdSchema,
   }),
 ]);
+const evidenceRecordSchema = z.strictObject({
+  sourceId: sourceIdSchema,
+  supports: z.enum([
+    "status",
+    "waiting_on",
+    "relation",
+    "progress",
+    "notification",
+    "uncertainty",
+    "self_commitment",
+  ]),
+  summary: z.string(),
+});
 const historicalEvidenceSchema = z.strictObject({
   record: z.strictObject({
     status: z.literal("historical"),
@@ -106,19 +119,7 @@ const historicalEvidenceSchema = z.strictObject({
       container: z.enum(["previous_snapshot", "retained_value", "migration"]),
       path: z.array(z.union([z.string(), z.number().int().nonnegative()])),
     }),
-    evidence: z.strictObject({
-      sourceId: sourceIdSchema,
-      supports: z.enum([
-        "status",
-        "waiting_on",
-        "relation",
-        "progress",
-        "notification",
-        "uncertainty",
-        "self_commitment",
-      ]),
-      summary: z.string(),
-    }),
+    evidence: evidenceRecordSchema,
   }),
   owner: z.discriminatedUnion("kind", [
     z.strictObject({
@@ -165,6 +166,15 @@ const witnessSchema = z.strictObject({
   currentSources: z.array(currentSourceSchema),
   historicalEvidence: z.array(historicalEvidenceSchema),
   historicalAiResults: z.array(historicalAiResultSchema),
+  historicalNativeImplementations: z.array(
+    z.strictObject({
+      relationId: z.string().min(1),
+      implementationNodeId: nodeIdSchema,
+      issueNodeId: nodeIdSchema,
+      repositoryId: repositoryIdSchema,
+      evidence: z.array(evidenceRecordSchema).min(1),
+    }),
+  ),
   previousPendingCauses: z.array(
     z.strictObject({
       pendingIndex: z.number().int().nonnegative(),

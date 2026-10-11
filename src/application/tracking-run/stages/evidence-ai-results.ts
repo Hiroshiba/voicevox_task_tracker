@@ -148,6 +148,33 @@ export function aiResultSourceIds(
   return Object.freeze([...new Set(sourceIds)]);
 }
 
+/** 現在の採用値へ含まれない保持AIのsourceを項目ごとに列挙する。 */
+export function retainedAiSourceIdsByItem(
+  items: readonly Readonly<{ nodeId: string; aiAnalysis: TrackedItemAiAnalysis }>[],
+): ReadonlyMap<string, ReadonlySet<string>> {
+  const sourcesByIssue = new Map<string, ReadonlySet<string>>();
+  for (const item of items) {
+    const retained = new Set<string>();
+    const adopted = new Set<string>();
+    for (const element of AI_ANALYSIS_ELEMENTS) {
+      const retainedResult = item.aiAnalysis.retainedElements[element]?.result;
+      if (retainedResult != null) {
+        for (const sourceId of aiResultSourceIds(element, retainedResult)) retained.add(sourceId);
+      }
+      const adoptedResult = item.aiAnalysis.adoptedElements[element]?.result;
+      if (adoptedResult != null) {
+        for (const sourceId of aiResultSourceIds(element, adoptedResult)) adopted.add(sourceId);
+      }
+    }
+    for (const sourceId of adopted) retained.delete(sourceId);
+    if (sourcesByIssue.has(item.nodeId)) {
+      throw new TypeError(`保持AIの項目が重複しています。対象: ${item.nodeId}`);
+    }
+    sourcesByIssue.set(item.nodeId, retained);
+  }
+  return sourcesByIssue;
+}
+
 /** 前回の同owner、同要素、同resultだけを保持AIの根拠と認める。 */
 export function matchingHistoricalAiResults(
   slot: AiResultSlot,

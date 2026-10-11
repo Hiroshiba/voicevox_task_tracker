@@ -7,12 +7,17 @@ import type {
   EvidenceClosureContext,
   EvidenceClosureOutward,
   EvidenceClosureResult,
+  EvidenceResolutionContext,
   EvidenceUse,
   OwnedHistoricalEvidence,
   ResolvedEvidenceUse,
 } from "../contracts/evidence-closure.js";
 import { EvidenceCatalog } from "./evidence-catalog.js";
-import { createAiResultSlotLookup, collectAiResultSlots } from "./evidence-ai-results.js";
+import {
+  createAiResultSlotLookup,
+  collectAiResultSlots,
+  retainedAiSourceIdsByItem,
+} from "./evidence-ai-results.js";
 import { collectAdoptionAiResultSlots, createAiResultOrigins } from "./evidence-ai-provenance.js";
 import { collectCurrentSourceFacts } from "./evidence-catalog-source-facts.js";
 import { resolveEvidenceUse } from "./evidence-closure-resolve.js";
@@ -76,6 +81,22 @@ function historicalById(
     byId.set(sourceId, records);
   }
   return new Map([...byId].map(([id, records]) => [id, canonicalSort(records)]));
+}
+
+function itemEvidenceAnnotation(
+  outward: EvidenceClosureOutward,
+  use: EvidenceUse,
+): Readonly<{ supports: string; summary: string }> | undefined {
+  if (use.path[0] !== "items" || typeof use.path[1] !== "number") return undefined;
+  const entry = outward.items[use.path[1]];
+  if (entry == null) return undefined;
+  let evidence: Evidence | undefined;
+  if (use.path[2] === "item" && use.path[3] === "evidence" && typeof use.path[4] === "number") {
+    evidence = entry.item.evidence[use.path[4]];
+  } else if (use.path[2] === "evidence" && typeof use.path[3] === "number") {
+    evidence = entry.evidence[use.path[3]];
+  }
+  return evidence == null ? undefined : { supports: evidence.supports, summary: evidence.summary };
 }
 
 function appendEvidence(
@@ -235,6 +256,10 @@ export function closeEvidenceReferences(
   const currentById = sourceFactsById(catalog.snapshot().currentSources);
   assertEvidenceClosureInput(context, outward, currentById);
   const previousById = historicalById(context.historicalEvidence);
+  const resolutionContext: EvidenceResolutionContext = Object.freeze({
+    ...context,
+    retainedAiSourceIdsByItem: retainedAiSourceIdsByItem(outward.items.map((entry) => entry.item)),
+  });
   const tracked = outward.items.map((entry, index) => ({
     item: entry.item,
     path: ["items", index, "item"],
@@ -311,9 +336,9 @@ export function closeEvidenceReferences(
         use,
         currentById,
         previousById,
-        context,
+        resolutionContext,
         digest,
-        undefined,
+        itemEvidenceAnnotation(outward, use),
         slot == null || origin == null ? undefined : { slot, origin },
       );
       resolved.push(match.resolved);
@@ -376,6 +401,7 @@ export function closeFinalizedRunEvidence(
     approvedRepositories: run.data.approvedRepositories,
     historicalEvidence: run.data.historicalEvidence,
     historicalAiResults: run.data.historicalAiResults,
+    historicalNativeImplementations: run.data.historicalNativeImplementations,
   });
   const outward: EvidenceClosureOutward = Object.freeze({
     items: run.data.items,

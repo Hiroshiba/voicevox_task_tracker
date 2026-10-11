@@ -10,6 +10,7 @@ import { runtimeRecoveryPlanSchema } from "../../application/tracking-run/recove
 import {
   assertHistoricalAiWitnessMatchesBaseSnapshot,
   assertHistoricalEvidenceWitnessMatchesBaseSnapshot,
+  assertHistoricalNativeImplementationWitnessMatchesBaseSnapshot,
 } from "../../application/tracking-run/stages/run-validation-artifact-witness.js";
 import { assertRetainedItemAiAnalysisMatchesBase } from "../../application/tracking-run/stages/run-validation-ai-lineage.js";
 import { assertPreviousPendingCausesMatchBase } from "../../application/tracking-run/stages/run-validation-previous-ledger-history.js";
@@ -163,6 +164,16 @@ export function bindPublicationCheckpoint(
     evidenceSnapshot == null
       ? undefined
       : { items: evidenceSnapshot.items, relations: evidenceSnapshot.relations },
+  );
+  assertHistoricalNativeImplementationWitnessMatchesBaseSnapshot(
+    decoded.validated.evidenceClosureWitness,
+    evidenceSnapshot == null
+      ? undefined
+      : {
+          trackedItems: evidenceSnapshot.items,
+          collectionRepositories: evidenceSnapshot.collection.repositories,
+          relations: evidenceSnapshot.relations,
+        },
   );
   assertPreviousPendingCausesMatchBase(
     decoded.validated.evidenceClosureWitness.previousPendingCauses,

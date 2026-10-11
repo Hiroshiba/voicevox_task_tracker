@@ -45,6 +45,15 @@ export type OwnedHistoricalAiResult = Readonly<{
   result: AiAnalysisElementMigrationResult | AiAnalysisElementResult;
 }>;
 
+/** 前回snapshotで有効だったGitHub native実装関係の所有証明。 */
+export type HistoricalNativeImplementation = Readonly<{
+  relationId: string;
+  implementationNodeId: string;
+  issueNodeId: string;
+  repositoryId: GitHubRepositoryId;
+  evidence: readonly Evidence[];
+}>;
+
 /** 前回snapshotからAI履歴だけを取り出す入力。 */
 export type HistoricalAiSnapshotInput = Readonly<{
   trackedItems: readonly Readonly<{
@@ -148,7 +157,12 @@ export type EvidenceClosureContext = Readonly<{
   approvedRepositories: readonly PublicRepository[];
   historicalEvidence: readonly OwnedHistoricalEvidence[];
   historicalAiResults: readonly OwnedHistoricalAiResult[];
+  historicalNativeImplementations: readonly HistoricalNativeImplementation[];
 }>;
+
+/** 保持AIと前回根拠を現在値から区別して解決する文脈。 */
+export type EvidenceResolutionContext = EvidenceClosureContext &
+  Readonly<{ retainedAiSourceIdsByItem: ReadonlyMap<string, ReadonlySet<string>> }>;
 
 /** 最終outward値を再走査して照合できる決定論的な閉包成果。 */
 export type EvidenceClosureResult = Readonly<{

@@ -18,6 +18,7 @@ import { assertNonNullable } from "../../../util/index.js";
 import { createPersonalReminderFinalizedStageProof } from "../contracts/proofs.js";
 import type { StageState } from "../contracts/run-core.js";
 import type {
+  HistoricalNativeImplementation,
   OwnedHistoricalAiResult,
   OwnedHistoricalEvidence,
 } from "../contracts/evidence-closure.js";
@@ -45,6 +46,7 @@ import { reconcileRetainedPersonalReminderCause } from "./personal-reminder-reta
 import { normalizeLabelRules } from "./collection-label-rules.js";
 import { collectOwnedHistoricalEvidence } from "./evidence-closure-historical.js";
 import { collectOwnedHistoricalAiResults } from "./evidence-closure-historical-ai.js";
+import { collectHistoricalNativeImplementations } from "./evidence-native-implementation-scope.js";
 
 /** 個人催促の採用、時計、根拠、停滞を確定したrun。 */
 export type PersonalReminderFinalizedRun = StageState<
@@ -57,6 +59,7 @@ export type PersonalReminderFinalizedRun = StageState<
       items: readonly PersonalReminderFinalizedItem[];
       historicalEvidence: readonly OwnedHistoricalEvidence[];
       historicalAiResults: readonly OwnedHistoricalAiResult[];
+      historicalNativeImplementations: readonly HistoricalNativeImplementation[];
       personalReminderStatus: "success" | "fallback";
     }>
 >;
@@ -447,6 +450,10 @@ export function finalizePersonalReminders(
         run.core.personalReminderInput.previousBaseSnapshot.relations,
       ),
       historicalAiResults: collectOwnedHistoricalAiResults(
+        run.core.personalReminderInput.previousAiSnapshot,
+      ),
+      historicalNativeImplementations: collectHistoricalNativeImplementations(
+        run.core.personalReminderInput.previousRelations,
         run.core.personalReminderInput.previousAiSnapshot,
       ),
     }),

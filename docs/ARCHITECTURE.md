@@ -70,7 +70,7 @@ productionのPages deployはActionsのaction境界で行います。
 
 ## checkpoint、receipt、markerで公開順序を検証する
 
-公開計画からschema version 24の`validated-run.cpk`とsidecarを作り、論理checkpoint digest、file digest、runtime identity、base revisionを照合して結合します。
+公開計画からschema version 25の`validated-run.cpk`とsidecarを作り、論理checkpoint digest、file digest、runtime identity、base revisionを照合して結合します。
 snapshot本文は`validatedPayload.snapshot`だけへ保存し、公開計画の初回state write setはそのdigestを参照します。
 復元時は同じsnapshot objectをwrite setへ渡し、保存するstateのcanonical digestまで照合します。
 `.cpk`は1MiB以下のcanonical manifestと順序付きgzip frameで構成します。manifestはframeの順序、件数、非圧縮byte数とSHA-256を固定します。
@@ -612,7 +612,7 @@ freshなopen項目の列挙が完了すれば原因0件でも`completed`にし�
 
 要素ごとの生成結果と正常に完了した評価を`aiAnalysis.elements`へ保存します。現在入力で検証済みのAI採用値だけを`aiAnalysis.adoptedElements`へ、現在使わない採用履歴を`aiAnalysis.retainedElements`へ保存します。各要素の最終適用元は`aiAnalysis.applications`へ保存し、`current_ai`以外の要素に現在採用値を持たせません。graph、Pages、通知、個人催促は採用履歴を現在値として読みません。
 `current_ai`の再利用証明は、汎用AIの要素定義と同じrevisionと入力投影versionを必須とします。旧snapshotは保存時のschemaと生成記録を検証してから入口で移行します。旧21・22の証明は書き換えずに採用値を履歴へ移し、依存する項目・関係・個人原因を未検証にして、最終graph投影も更新します。Git commitの遷移検証では、移行前のsnapshotを保存時の形式で読み書きし、digestを保ちます。
-汎用AIの採用記録は今回解析した項目だけに作り、失敗・延期も含めて解析対象と一対一で照合します。今回解析しなかった追跡項目は、前回snapshotの同じ項目と`aiAnalysis`全体が一致する場合に保持します。保存前とcheckpointの結合時にこの一致を検証します。保持した`adoptedElements`の適用元が`current_ai`でも、このrunのAI生成元としては扱いません。各AI結果は前回snapshotの所有項目、repository、要素、resultと照合します。
+汎用AIの採用記録は今回解析した項目だけに作り、失敗・延期も含めて解析対象と一対一で照合します。今回解析しなかった追跡項目は、前回snapshotの同じ項目と`aiAnalysis`全体が一致する場合に保持します。保存前とcheckpointの結合時にこの一致を検証します。保持した`adoptedElements`の適用元が`current_ai`でも、このrunのAI生成元としては扱いません。各AI結果は前回snapshotの所有項目、repository、要素、resultと照合します。保持AIが参照する実装PRのsourceは、前回snapshotで有効だったGitHub nativeのimplements関係とその根拠、PRの公開repository所属を固定base revisionで照合した場合だけ履歴として許可します。現在の採用値と実質担当のsourceには、今回も有効な関係だけを使います。
 追跡項目の`aiDependencies`は、状態、待ち相手、期限、重要度、要対応度、blocker、関係集合などの最終値ごとに、AI非依存、現在入力で検証済み、未検証、proof不明を区別します。producerを識別できる依存は寄与したproducerを保持し、旧形式から識別できない依存はproducerを推測せずproof不明として保持します。関係と個人原因もそれぞれのAI依存を保存します。
 AI依存の`unknown`は、空でない`reasons`配列に理由を保存します。理由とproducerは合成時に和集合を取り、理由は重複を除いて`migration`、`not_recorded`、`proof_unknown`、`stale_repository`の順で保存します。この順序は直列化のためのもので、理由の優先度を表しません。`proof_unknown`を含む依存にはproducerが必須です。AI要素の適用元を表す`applications`は単一の`reason`を使います。
 保存時はproducerから依存を再計算し、要素ごとに許可した移行・未記録・staleの理由だけを加えた結果と照合します。`proof_unknown`を含む場合は関係候補を未判定として照合し、理由の合成によって検証済みへ変わることを防ぎます。producerのない移行値の特例は、理由が`migration`だけの場合に限ります。blocker、関係集合、下流影響、severity、attentionの依存が必要なproducerと状態を含むことも検証します。

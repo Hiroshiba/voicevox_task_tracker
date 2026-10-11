@@ -11,6 +11,7 @@ import type { CurrentSourceFact } from "../contracts/evidence-catalog.js";
 import type {
   EvidenceClosureResult,
   HistoricalAiSnapshotInput,
+  HistoricalNativeImplementation,
   OwnedHistoricalAiResult,
   OwnedHistoricalEvidence,
   ResolvedEvidenceUse,
@@ -18,10 +19,13 @@ import type {
 import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import { EvidenceCatalog } from "./evidence-catalog.js";
 import { collectOwnedHistoricalAiResults } from "./evidence-closure-historical-ai.js";
+import { collectHistoricalNativeImplementations } from "./evidence-native-implementation-scope.js";
+import type { Relation } from "../../../domain/relation.js";
 import {
   createAiResultSlotLookup,
   collectAiResultSlots,
   matchingHistoricalAiResults,
+  retainedAiSourceIdsByItem,
   type AiResultOrigin,
   type AiResultSlot,
 } from "./evidence-ai-results.js";
@@ -59,6 +63,7 @@ export type EvidenceClosureWitness = Readonly<{
   currentSources: readonly CurrentSourceFact[];
   historicalEvidence: readonly OwnedHistoricalEvidence[];
   historicalAiResults: readonly OwnedHistoricalAiResult[];
+  historicalNativeImplementations: readonly HistoricalNativeImplementation[];
   previousPendingCauses: readonly PreviousPendingCauseContext[];
   aiResultOrigins: readonly AiResultOrigin[];
   resolvedUses: readonly ResolvedEvidenceUse[];
@@ -172,6 +177,23 @@ export function assertHistoricalEvidenceWitnessMatchesBaseSnapshot(
   }
 }
 
+/** 固定base revisionのnative実装関係と公開witnessの履歴scopeを照合する。 */
+export function assertHistoricalNativeImplementationWitnessMatchesBaseSnapshot(
+  witness: EvidenceClosureWitness,
+  snapshot: (HistoricalAiSnapshotInput & Readonly<{ relations: readonly Relation[] }>) | undefined,
+): void {
+  const actual =
+    snapshot == null
+      ? Object.freeze([])
+      : collectHistoricalNativeImplementations(snapshot.relations, snapshot);
+  assertRunValueMatches(
+    actual,
+    witness.historicalNativeImplementations,
+    ["evidenceClosureWitness", "historicalNativeImplementations"],
+    "closure",
+  );
+}
+
 function resolvedAiSlot(
   path: readonly (string | number)[],
   findSlot: (path: readonly (string | number)[]) => AiResultSlot | undefined,
@@ -227,6 +249,7 @@ export function createEvidenceClosureWitness(
   closure: EvidenceClosureResult,
   historicalEvidence: readonly OwnedHistoricalEvidence[],
   historicalAiResults: readonly OwnedHistoricalAiResult[],
+  historicalNativeImplementations: readonly HistoricalNativeImplementation[],
   previousInput: PersonalReminderPlanningInput["previousBaseSnapshot"],
   aiItems: readonly GenericAiItemAdoption[],
   evaluatedAt: UtcIsoDateTime,
@@ -276,11 +299,13 @@ export function createEvidenceClosureWitness(
     approvedRepositories,
     historicalEvidence,
     historicalAiResults: selectedAi,
+    historicalNativeImplementations,
+    retainedAiSourceIdsByItem: retainedAiSourceIdsByItem(values.snapshot.items),
   });
   const candidateCurrentById = indexedValues(candidateCurrentSources);
   const fullHistoricalById = indexedHistorical(historicalEvidence);
   const selectedHistorical = new Map<string, OwnedHistoricalEvidence>();
-  const selectedCurrentIds = new Set<string>();
+  const usedCurrentFactIds = new Set<string>();
   for (const { use, annotation } of sourceUses) {
     const aiSlot = resolvedAiSlot(use.path, findAiResultSlot, originsByPath);
     const actual = resolveEvidenceUse(
@@ -292,13 +317,15 @@ export function createEvidenceClosureWitness(
       annotation,
       aiSlot,
     );
-    if (actual.resolved.resolution === "current") selectedCurrentIds.add(use.sourceId);
+    if (use.purpose !== "previous_notification_pending" && candidateCurrentById.has(use.sourceId)) {
+      usedCurrentFactIds.add(use.sourceId);
+    }
     for (const value of actual.historical) {
       selectedHistorical.set(serializeCanonicalJson(value), value);
     }
   }
   const currentSources = canonicalSort(
-    candidateCurrentSources.filter((fact) => selectedCurrentIds.has(fact.sourceId)),
+    candidateCurrentSources.filter((fact) => usedCurrentFactIds.has(fact.sourceId)),
   );
   const currentById = indexedValues(currentSources);
   const usedHistoricalEvidence = canonicalSort([...selectedHistorical.values()]);
@@ -308,6 +335,8 @@ export function createEvidenceClosureWitness(
     approvedRepositories,
     historicalEvidence: usedHistoricalEvidence,
     historicalAiResults: selectedAi,
+    historicalNativeImplementations,
+    retainedAiSourceIdsByItem: retainedAiSourceIdsByItem(values.snapshot.items),
   });
   const resolvedUses = Object.freeze(
     sourceUses.map(
@@ -328,6 +357,7 @@ export function createEvidenceClosureWitness(
     currentSources,
     historicalEvidence: usedHistoricalEvidence,
     historicalAiResults: selectedAi,
+    historicalNativeImplementations,
     previousPendingCauses,
     aiResultOrigins,
     resolvedUses,
@@ -565,6 +595,12 @@ export function assertEvidenceClosureWitness(
     ["evidenceClosureWitness", "historicalAiResults"],
     "closure",
   );
+  assertRunValueMatches(
+    canonicalSort(witness.historicalNativeImplementations),
+    witness.historicalNativeImplementations,
+    ["evidenceClosureWitness", "historicalNativeImplementations"],
+    "closure",
+  );
   assertPreviousPendingCauseContexts(
     witness.previousPendingCauses,
     values.previousNotificationLedger,
@@ -605,11 +641,7 @@ export function assertEvidenceClosureWitness(
   const sourceIds = Object.freeze(
     [...new Set(witness.resolvedUses.map((resolved) => resolved.use.sourceId))].sort(),
   );
-  const currentIds = new Set(
-    witness.resolvedUses
-      .filter((resolved) => resolved.resolution === "current")
-      .map((resolved) => resolved.use.sourceId),
-  );
+  const currentIds = new Set<string>();
   assertRunValueMatches(
     { referenceCount: witness.resolvedUses.length, sourceIds },
     summary,
@@ -631,6 +663,8 @@ export function assertEvidenceClosureWitness(
     approvedRepositories,
     historicalEvidence: witness.historicalEvidence,
     historicalAiResults: witness.historicalAiResults,
+    historicalNativeImplementations: witness.historicalNativeImplementations,
+    retainedAiSourceIdsByItem: retainedAiSourceIdsByItem(values.snapshot.items),
   });
   const selectedHistorical = new Map<string, OwnedHistoricalEvidence>();
   for (const [index, resolved] of witness.resolvedUses.entries()) {
@@ -670,6 +704,12 @@ export function assertEvidenceClosureWitness(
       ["evidenceClosureWitness", "resolvedUses", resolved.use.sourceId],
       resolved.use.sourceId,
     );
+    if (
+      sourceUse.use.purpose !== "previous_notification_pending" &&
+      currentById.has(sourceUse.use.sourceId)
+    ) {
+      currentIds.add(sourceUse.use.sourceId);
+    }
     for (const value of actual.historical) {
       selectedHistorical.set(serializeCanonicalJson(value), value);
     }
