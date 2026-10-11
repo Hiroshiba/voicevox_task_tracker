@@ -1,12 +1,13 @@
 import type { EvidenceUse } from "../contracts/evidence-closure.js";
+import type { CurrentSourceFact } from "../contracts/evidence-catalog.js";
 import type {
   MaterializedEvidenceReference,
   MaterializedReferenceValues,
 } from "./run-validation-reference-contracts.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 import {
+  nativeImplementationEvidenceOwnerNodeIds,
   nativeImplementationOwnerNodeIds,
-  relationEvidenceOwnerNodeIds,
 } from "./evidence-native-implementation-scope.js";
 import {
   causeScope,
@@ -61,16 +62,13 @@ export function referenceContext(
   values: MaterializedReferenceValues,
   previousPendingCauses: readonly PreviousPendingCauseContext[],
   ownersByIssue: ReadonlyMap<string, readonly string[]>,
+  currentById: ReadonlyMap<string, readonly CurrentSourceFact[]>,
 ): ReferenceContext {
   const path = reference.path;
   const ownerNodeIds = [reference.owner.id];
   if (path[0] === "snapshot" && path[1] === "items") {
     if (path[3] === "evidence") {
-      const scope = itemEvidenceScope(
-        reference,
-        values,
-        nativeImplementationOwnerNodeIds(reference.owner.id, ownersByIssue),
-      );
+      const scope = itemEvidenceScope(reference, values, ownersByIssue, currentById);
       return {
         purpose: evidencePurpose(reference, values),
         currentness: "historical_allowed",
@@ -158,11 +156,11 @@ export function referenceContext(
     return {
       purpose: evidencePurpose(reference, values),
       currentness: "historical_allowed",
-      ownerNodeIds: relationEvidenceOwnerNodeIds(
+      ownerNodeIds: nativeImplementationEvidenceOwnerNodeIds(
         reference.sourceId,
-        { fromNodeId: from, toNodeId: to },
+        [from, to],
         ownersByIssue,
-        path,
+        currentById,
       ),
       relationIds: [reference.owner.id],
     };

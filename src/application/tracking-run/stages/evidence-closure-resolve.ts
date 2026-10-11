@@ -332,10 +332,18 @@ export function resolveEvidenceUse(
         value.record.evidence.summary === annotation.summary,
     );
     if (matched.length > 0) {
-      const allowedOwnerNodeIds = [
-        ...use.allowedOwnerNodeIds,
-        ...historicalImplementationOwnerNodeIds(use, context),
-      ];
+      const historicalImplementationOwners = historicalImplementationOwnerNodeIds(use, context);
+      if (
+        facts.some(
+          (fact) =>
+            fact.scope === "item" &&
+            fact.itemNodeId !== itemNodeId &&
+            !historicalImplementationOwners.includes(fact.itemNodeId),
+        )
+      ) {
+        throw new RunCompletenessError("wrong_owner", use.sourceId, use.path, use);
+      }
+      const allowedOwnerNodeIds = [...use.allowedOwnerNodeIds, ...historicalImplementationOwners];
       assertKnownItemSourceOwner(use, sourceKind, allowedOwnerNodeIds);
       for (const fact of facts) {
         if (fact.sourceKind !== sourceKind) {
@@ -378,6 +386,15 @@ export function resolveEvidenceUse(
   const historical = historicalById.get(use.sourceId) ?? [];
   if (use.requiredCurrentness === "current" || historical.length === 0) {
     throw new RunCompletenessError("missing_source", use.sourceId, use.path, use);
+  }
+  if (sourceKind === "github_item_body" && use.destination.kind === "item") {
+    const sourceOwner = parseSourceId(use.sourceId).originalId;
+    if (
+      !use.allowedOwnerNodeIds.includes(sourceOwner) &&
+      !historicalImplementationOwnerNodeIds(use, context).includes(sourceOwner)
+    ) {
+      throw new RunCompletenessError("wrong_owner", use.sourceId, use.path, use);
+    }
   }
   const owned = historical.filter((value) =>
     historicalOwnerMatches(use, value, use.allowedOwnerNodeIds),

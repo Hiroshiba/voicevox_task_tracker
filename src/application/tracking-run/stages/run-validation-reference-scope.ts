@@ -2,6 +2,8 @@ import type {
   MaterializedEvidenceReference,
   MaterializedReferenceValues,
 } from "./run-validation-reference-contracts.js";
+import type { CurrentSourceFact } from "../contracts/evidence-catalog.js";
+import { nativeImplementationEvidenceOwnerNodeIds } from "./evidence-native-implementation-scope.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 
 type Path = readonly (string | number)[];
@@ -94,7 +96,8 @@ function causeClockReferencesSource(cause: unknown, sourceId: string): boolean {
 export function itemEvidenceScope(
   reference: MaterializedEvidenceReference,
   values: MaterializedReferenceValues,
-  implementationOwnerNodeIds: readonly string[],
+  ownersByIssue: ReadonlyMap<string, readonly string[]>,
+  currentById: ReadonlyMap<string, readonly CurrentSourceFact[]>,
 ): Readonly<{ nodeIds: readonly string[]; relationIds: readonly string[] }> {
   const ownerNodeId = reference.owner.id;
   const itemIndex = reference.path[2];
@@ -103,21 +106,14 @@ export function itemEvidenceScope(
     throw new RunCompletenessError("missing_value", ownerNodeId, reference.path, undefined);
   }
   const relationIds = new Set<string>();
-  const ownerNodeIds = new Set([ownerNodeId]);
-  const assigneeWaitingOn = valueAtPath(item, ["waitingOn"]);
-  if (
-    Array.isArray(assigneeWaitingOn) &&
-    assigneeWaitingOn.some(
-      (waiting: unknown) =>
-        isRecord(waiting) &&
-        waiting["kind"] === "user" &&
-        waiting["role"] === "assignee" &&
-        Array.isArray(waiting["sourceIds"]) &&
-        waiting["sourceIds"].includes(reference.sourceId),
-    )
-  ) {
-    for (const nodeId of implementationOwnerNodeIds) ownerNodeIds.add(nodeId);
-  }
+  const ownerNodeIds = new Set(
+    nativeImplementationEvidenceOwnerNodeIds(
+      reference.sourceId,
+      [ownerNodeId],
+      ownersByIssue,
+      currentById,
+    ),
+  );
   for (const cause of item.personalReminderCauses) {
     const sourceIds = valueAtPath(cause, ["evidenceSourceIds"]);
     const assessmentSourceIds = valueAtPath(cause, [

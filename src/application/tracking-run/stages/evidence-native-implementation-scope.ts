@@ -1,12 +1,11 @@
 import type { Relation } from "../../../domain/relation.js";
 import type { GitHubRepositoryId } from "../../../domain/types.js";
-import { parseSourceId } from "../../../domain/source-id.js";
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import type {
   HistoricalAiSnapshotInput,
   HistoricalNativeImplementation,
 } from "../contracts/evidence-closure.js";
-import { RunCompletenessError } from "./run-completeness-error.js";
+import type { CurrentSourceFact } from "../contracts/evidence-catalog.js";
 
 type NativeImplementationScopeRelation = Pick<
   Relation,
@@ -42,27 +41,23 @@ export function nativeImplementationOwnerNodeIds(
   return Object.freeze([itemNodeId, ...(ownersByIssue.get(itemNodeId) ?? [])].sort());
 }
 
-/** 関係の端点を実装するPRの本文だけを、その根拠の所有範囲へ加える。 */
-export function relationEvidenceOwnerNodeIds(
+/** 現行sourceの所有PRが端点Issueをnativeに実装する場合だけEvidenceの所有範囲へ加える。 */
+export function nativeImplementationEvidenceOwnerNodeIds(
   sourceId: string,
-  relation: Readonly<{ fromNodeId: string; toNodeId: string }>,
+  nodeIds: readonly string[],
   ownersByIssue: ReadonlyMap<string, readonly string[]>,
-  path: readonly (string | number)[],
+  currentById: ReadonlyMap<string, readonly CurrentSourceFact[]>,
 ): readonly string[] {
-  const nodeIds = [relation.fromNodeId, relation.toNodeId];
-  let source;
-  try {
-    source = parseSourceId(sourceId);
-  } catch (error: unknown) {
-    throw new RunCompletenessError("invalid_reference", sourceId, path, undefined, error);
+  const allowed = new Set(nodeIds);
+  for (const fact of currentById.get(sourceId) ?? []) {
+    if (
+      fact.scope === "item" &&
+      nodeIds.some((nodeId) => ownersByIssue.get(nodeId)?.includes(fact.itemNodeId) === true)
+    ) {
+      allowed.add(fact.itemNodeId);
+    }
   }
-  if (
-    source.kind === "github_item_body" &&
-    nodeIds.some((nodeId) => ownersByIssue.get(nodeId)?.includes(source.originalId) === true)
-  ) {
-    nodeIds.push(source.originalId);
-  }
-  return Object.freeze([...new Set(nodeIds)].sort());
+  return Object.freeze([...allowed].sort());
 }
 
 /** 前回の有効なnative実装関係を根拠とPRのrepository所属付きで抽出する。 */

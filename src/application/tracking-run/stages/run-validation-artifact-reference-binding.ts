@@ -1,6 +1,7 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import { createGitHubNodeId } from "../../../domain/types.js";
 import type { EvidenceUse, ResolvedEvidenceUse } from "../contracts/evidence-closure.js";
+import type { CurrentSourceFact } from "../contracts/evidence-catalog.js";
 import { collectEvidenceUses } from "./evidence-closure-walk-common.js";
 import type {
   MaterializedEvidenceReference,
@@ -37,10 +38,11 @@ export function collectMaterializedSourceUses(
   references: readonly MaterializedEvidenceReference[],
   values: MaterializedReferenceValues,
   previousPendingCauses: readonly PreviousPendingCauseContext[],
+  currentById: ReadonlyMap<string, readonly CurrentSourceFact[]>,
 ): readonly MaterializedSourceUse[] {
   const ownersByIssue = createNativeImplementationOwnerScopes(values.snapshot.relations);
   const contexts = references.map((reference) =>
-    referenceContext(reference, values, previousPendingCauses, ownersByIssue),
+    referenceContext(reference, values, previousPendingCauses, ownersByIssue, currentById),
   );
   for (const reference of references) assertEventBasisReference(reference, values);
   const uses = collectEvidenceUses((emit) => {

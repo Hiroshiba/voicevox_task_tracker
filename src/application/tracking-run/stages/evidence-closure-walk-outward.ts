@@ -7,6 +7,7 @@ import { createGitHubNodeId, type Evidence } from "../../../domain/types.js";
 import { type PendingNotification } from "../../../domain/pending-notification.js";
 import type { ReconciledGraphEdge } from "../../../graph/reconcile-graph-types.js";
 import type { EvidenceClosureOutward, EvidenceUse } from "../contracts/evidence-closure.js";
+import type { CurrentSourceFact } from "../contracts/evidence-catalog.js";
 import {
   walkAiCacheResult,
   walkGenericAiAdoptions,
@@ -15,8 +16,8 @@ import {
 import { collectEvidenceUses, type EvidenceUseSink } from "./evidence-closure-walk-common.js";
 import {
   createNativeImplementationOwnerScopes,
+  nativeImplementationEvidenceOwnerNodeIds,
   nativeImplementationOwnerNodeIds,
-  relationEvidenceOwnerNodeIds,
 } from "./evidence-native-implementation-scope.js";
 import { personalReminderCauseEvidenceSourceIds } from "./personal-reminder-cause-references.js";
 import { personalReminderCauseScope, relatedScope } from "./personal-reminder-related-scope.js";
@@ -74,6 +75,7 @@ function walkRelation(
   relation: ReconciledGraphEdge,
   path: readonly (string | number)[],
   ownersByIssue: ReadonlyMap<string, readonly string[]>,
+  currentById: ReadonlyMap<string, readonly CurrentSourceFact[]>,
 ): void {
   const destination: EvidenceUse["destination"] = Object.freeze({
     kind: "relation",
@@ -85,8 +87,8 @@ function walkRelation(
     relation.evidence,
     [...path, "evidence"],
     destination,
-    (sourceId, sourcePath) =>
-      relationEvidenceOwnerNodeIds(sourceId, relation, ownersByIssue, sourcePath),
+    (sourceId) =>
+      nativeImplementationEvidenceOwnerNodeIds(sourceId, nodeIds, ownersByIssue, currentById),
     [relation.id],
   );
   for (const [index, contradiction] of relation.contradictions.entries()) {
@@ -95,7 +97,8 @@ function walkRelation(
       contradiction.evidence,
       [...path, "contradictions", index, "evidence"],
       destination,
-      () => nodeIds,
+      (sourceId) =>
+        nativeImplementationEvidenceOwnerNodeIds(sourceId, nodeIds, ownersByIssue, currentById),
       [relation.id],
     );
   }
@@ -114,20 +117,19 @@ function itemEvidenceScope(
   entry: EvidenceClosureOutward["items"][number],
   sourceId: SourceId,
   relationsById: ReadonlyMap<string, ReconciledGraphEdge>,
-  implementationOwnerNodeIds: readonly string[],
+  ownersByIssue: ReadonlyMap<string, readonly string[]>,
+  currentById: ReadonlyMap<string, readonly CurrentSourceFact[]>,
 ): Readonly<{ nodeIds: readonly string[]; relationIds: readonly string[] }> {
   const itemNodeId = entry.item.nodeId;
   const relationIds = new Set<string>();
   const ownerNodeIds = new Set<string>([itemNodeId]);
-  if (
-    entry.item.waitingOn.some(
-      (waiting) =>
-        waiting.kind === "user" &&
-        waiting.role === "assignee" &&
-        waiting.sourceIds.includes(sourceId),
-    )
-  ) {
-    for (const nodeId of implementationOwnerNodeIds) ownerNodeIds.add(nodeId);
+  for (const nodeId of nativeImplementationEvidenceOwnerNodeIds(
+    sourceId,
+    [itemNodeId],
+    ownersByIssue,
+    currentById,
+  )) {
+    ownerNodeIds.add(nodeId);
   }
   for (const result of entry.causeResults) {
     const references =
@@ -179,7 +181,8 @@ function walkItemEvidence(
   path: readonly (string | number)[],
   evidence: readonly Evidence[],
   relationsById: ReadonlyMap<string, ReconciledGraphEdge>,
-  implementationOwnerNodeIds: readonly string[],
+  ownersByIssue: ReadonlyMap<string, readonly string[]>,
+  currentById: ReadonlyMap<string, readonly CurrentSourceFact[]>,
 ): void {
   const destination: EvidenceUse["destination"] = Object.freeze({
     kind: "item",
@@ -190,7 +193,8 @@ function walkItemEvidence(
       entry,
       record.sourceId,
       relationsById,
-      implementationOwnerNodeIds,
+      ownersByIssue,
+      currentById,
     );
     emit(
       record.sourceId,
@@ -209,6 +213,7 @@ function walkItems(
   outward: EvidenceClosureOutward,
   relationsById: ReadonlyMap<string, ReconciledGraphEdge>,
   ownersByIssue: ReadonlyMap<string, readonly string[]>,
+  currentById: ReadonlyMap<string, readonly CurrentSourceFact[]>,
 ): void {
   for (const [itemIndex, entry] of outward.items.entries()) {
     const item = entry.item;
@@ -224,7 +229,8 @@ function walkItems(
       [...base, "item", "evidence"],
       item.evidence,
       relationsById,
-      implementationOwnerNodeIds,
+      ownersByIssue,
+      currentById,
     );
     walkItemEvidence(
       emit,
@@ -232,7 +238,8 @@ function walkItems(
       [...base, "evidence"],
       entry.evidence,
       relationsById,
-      implementationOwnerNodeIds,
+      ownersByIssue,
+      currentById,
     );
     for (const [index, waiting] of item.waitingOn.entries()) {
       const related =
@@ -447,14 +454,17 @@ function walkPendingNotification(
 }
 
 /** 現存するoutward型のsource参照を用途と所有範囲付きで列挙する。 */
-export function walkOutwardEvidenceUses(outward: EvidenceClosureOutward): readonly EvidenceUse[] {
+export function walkOutwardEvidenceUses(
+  outward: EvidenceClosureOutward,
+  currentById: ReadonlyMap<string, readonly CurrentSourceFact[]>,
+): readonly EvidenceUse[] {
   return collectEvidenceUses((emit) => {
     const relationsById = new Map(outward.relations.map((relation) => [relation.id, relation]));
     if (relationsById.size !== outward.relations.length) {
       throw new RunCompletenessError("source_id_conflict", "relation", ["relations"], undefined);
     }
     const ownersByIssue = createNativeImplementationOwnerScopes(outward.relations);
-    walkItems(emit, outward, relationsById, ownersByIssue);
+    walkItems(emit, outward, relationsById, ownersByIssue, currentById);
     for (const [index, item] of outward.collectionAiItems.entries()) {
       walkTrackedItemAiAnalysis(
         emit,
@@ -465,7 +475,7 @@ export function walkOutwardEvidenceUses(outward: EvidenceClosureOutward): readon
       );
     }
     for (const [index, relation] of outward.relations.entries()) {
-      walkRelation(emit, relation, ["relations", index], ownersByIssue);
+      walkRelation(emit, relation, ["relations", index], ownersByIssue, currentById);
     }
     walkGenericAiAdoptions(emit, outward.aiItems, ownersByIssue);
     for (const [index, event] of outward.historyInputEvents.entries()) {

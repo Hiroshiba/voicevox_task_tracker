@@ -266,10 +266,16 @@ export function createEvidenceClosureWitness(
     previousInput.items,
     previousInput.relations,
   );
+  const usedIds = new Set(materializedReferences.map((reference) => reference.sourceId));
+  const candidateCurrentSources = canonicalSort(
+    closure.catalog.currentSources.filter((fact) => usedIds.has(fact.sourceId)),
+  );
+  const candidateCurrentById = indexedValues(candidateCurrentSources);
   const sourceUses = collectMaterializedSourceUses(
     materializedReferences,
     values,
     previousPendingCauses,
+    candidateCurrentById,
   );
   const tracked = values.snapshot.items.map((item, index) => ({
     item,
@@ -290,10 +296,6 @@ export function createEvidenceClosureWitness(
     aiResultOrigins.map((origin) => [serializeCanonicalJson(origin.path), origin]),
   );
   const selectedAi = selectedHistoricalAiResults(aiSlots, aiResultOrigins, historicalAiResults);
-  const usedIds = new Set(sourceUses.map(({ use }) => use.sourceId));
-  const candidateCurrentSources = canonicalSort(
-    closure.catalog.currentSources.filter((fact) => usedIds.has(fact.sourceId)),
-  );
   const fullContext = Object.freeze({
     evaluatedAt,
     approvedRepositories,
@@ -302,7 +304,6 @@ export function createEvidenceClosureWitness(
     historicalNativeImplementations,
     retainedAiSourceIdsByItem: retainedAiSourceIdsByItem(values.snapshot.items),
   });
-  const candidateCurrentById = indexedValues(candidateCurrentSources);
   const fullHistoricalById = indexedHistorical(historicalEvidence);
   const selectedHistorical = new Map<string, OwnedHistoricalEvidence>();
   const usedCurrentFactIds = new Set<string>();
@@ -615,6 +616,7 @@ export function assertEvidenceClosureWitness(
     witness.materializedReferences,
     values,
     witness.previousPendingCauses,
+    indexedValues(witness.currentSources),
   );
   const aiSlots = collectSavedAiResultSlots(values);
   const findAiResultSlot = createAiResultSlotLookup(aiSlots);

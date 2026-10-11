@@ -327,7 +327,7 @@ export function closeEvidenceReferences(
     for (const relation of outward.relations) {
       if (!relations.has(relation.id)) relations.set(relation.id, relation);
     }
-    uses = walkOutwardEvidenceUses(outward);
+    uses = walkOutwardEvidenceUses(outward, currentById);
     const resolved: ResolvedEvidenceUse[] = [];
     const additions = new Map<
       string,
@@ -427,7 +427,10 @@ export function assertEvidenceClosureMatches(
   closure: EvidenceClosureResult,
   outward: EvidenceClosureOutward,
 ): void {
-  const actual = walkOutwardEvidenceUses(canonicalOutward(outward));
+  const actual = walkOutwardEvidenceUses(
+    canonicalOutward(outward),
+    sourceFactsById(closure.catalog.currentSources),
+  );
   if (serializeCanonicalJson(actual) !== serializeCanonicalJson(closure.uses)) {
     const differing =
       actual.find(
