@@ -7,6 +7,7 @@ import type {
   MaterializedReferenceValues,
 } from "./run-validation-reference-contracts.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
+import { createNativeImplementationOwnerScopes } from "./evidence-native-implementation-scope.js";
 import { assertEventBasisReference, referenceContext } from "./run-validation-reference-context.js";
 import { isRecord, valueAtPath } from "./run-validation-reference-scope.js";
 import type { PreviousPendingCauseContext } from "./run-validation-previous-ledger-history.js";
@@ -37,8 +38,9 @@ export function collectMaterializedSourceUses(
   values: MaterializedReferenceValues,
   previousPendingCauses: readonly PreviousPendingCauseContext[],
 ): readonly MaterializedSourceUse[] {
+  const ownersByIssue = createNativeImplementationOwnerScopes(values.snapshot.relations);
   const contexts = references.map((reference) =>
-    referenceContext(reference, values, previousPendingCauses),
+    referenceContext(reference, values, previousPendingCauses, ownersByIssue),
   );
   for (const reference of references) assertEventBasisReference(reference, values);
   const uses = collectEvidenceUses((emit) => {

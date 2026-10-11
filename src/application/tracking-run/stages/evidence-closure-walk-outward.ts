@@ -13,6 +13,10 @@ import {
   walkTrackedItemAiAnalysis,
 } from "./evidence-closure-walk-ai.js";
 import { collectEvidenceUses, type EvidenceUseSink } from "./evidence-closure-walk-common.js";
+import {
+  createNativeImplementationOwnerScopes,
+  nativeImplementationOwnerNodeIds,
+} from "./evidence-native-implementation-scope.js";
 import { personalReminderCauseEvidenceSourceIds } from "./personal-reminder-cause-references.js";
 import { personalReminderCauseScope, relatedScope } from "./personal-reminder-related-scope.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
@@ -96,10 +100,21 @@ function itemEvidenceScope(
   entry: EvidenceClosureOutward["items"][number],
   sourceId: SourceId,
   relationsById: ReadonlyMap<string, ReconciledGraphEdge>,
+  implementationOwnerNodeIds: readonly string[],
 ): Readonly<{ nodeIds: readonly string[]; relationIds: readonly string[] }> {
   const itemNodeId = entry.item.nodeId;
   const relationIds = new Set<string>();
   const ownerNodeIds = new Set<string>([itemNodeId]);
+  if (
+    entry.item.waitingOn.some(
+      (waiting) =>
+        waiting.kind === "user" &&
+        waiting.role === "assignee" &&
+        waiting.sourceIds.includes(sourceId),
+    )
+  ) {
+    for (const nodeId of implementationOwnerNodeIds) ownerNodeIds.add(nodeId);
+  }
   for (const result of entry.causeResults) {
     const references =
       result.cause.adoptedAssessment.status === "available"
@@ -150,13 +165,19 @@ function walkItemEvidence(
   path: readonly (string | number)[],
   evidence: readonly Evidence[],
   relationsById: ReadonlyMap<string, ReconciledGraphEdge>,
+  implementationOwnerNodeIds: readonly string[],
 ): void {
   const destination: EvidenceUse["destination"] = Object.freeze({
     kind: "item",
     itemNodeId: entry.item.nodeId,
   });
   for (const [index, record] of evidence.entries()) {
-    const scope = itemEvidenceScope(entry, record.sourceId, relationsById);
+    const scope = itemEvidenceScope(
+      entry,
+      record.sourceId,
+      relationsById,
+      implementationOwnerNodeIds,
+    );
     emit(
       record.sourceId,
       [...path, index, "sourceId"],
@@ -173,16 +194,32 @@ function walkItems(
   emit: EvidenceUseSink,
   outward: EvidenceClosureOutward,
   relationsById: ReadonlyMap<string, ReconciledGraphEdge>,
+  ownersByIssue: ReadonlyMap<string, readonly string[]>,
 ): void {
   for (const [itemIndex, entry] of outward.items.entries()) {
     const item = entry.item;
+    const implementationOwnerNodeIds = nativeImplementationOwnerNodeIds(item.nodeId, ownersByIssue);
     const destination: EvidenceUse["destination"] = Object.freeze({
       kind: "item",
       itemNodeId: item.nodeId,
     });
     const base = ["items", itemIndex];
-    walkItemEvidence(emit, entry, [...base, "item", "evidence"], item.evidence, relationsById);
-    walkItemEvidence(emit, entry, [...base, "evidence"], entry.evidence, relationsById);
+    walkItemEvidence(
+      emit,
+      entry,
+      [...base, "item", "evidence"],
+      item.evidence,
+      relationsById,
+      implementationOwnerNodeIds,
+    );
+    walkItemEvidence(
+      emit,
+      entry,
+      [...base, "evidence"],
+      entry.evidence,
+      relationsById,
+      implementationOwnerNodeIds,
+    );
     for (const [index, waiting] of item.waitingOn.entries()) {
       const related =
         waiting.kind === "item" &&
@@ -191,6 +228,12 @@ function walkItems(
             (relation.fromNodeId === item.nodeId && relation.toNodeId === waiting.candidateId) ||
             (relation.toNodeId === item.nodeId && relation.fromNodeId === waiting.candidateId),
         );
+      let allowedOwnerNodeIds: readonly string[] = [item.nodeId];
+      if (waiting.kind === "user" && waiting.role === "assignee") {
+        allowedOwnerNodeIds = implementationOwnerNodeIds;
+      } else if (related) {
+        allowedOwnerNodeIds = [item.nodeId, waiting.candidateId];
+      }
       for (const [sourceIndex, sourceId] of waiting.sourceIds.entries()) {
         emit(
           sourceId,
@@ -198,7 +241,7 @@ function walkItems(
           destination,
           "waiting_on",
           "historical_allowed",
-          related ? [item.nodeId, waiting.candidateId] : [item.nodeId],
+          allowedOwnerNodeIds,
           [],
         );
       }
@@ -219,7 +262,7 @@ function walkItems(
       item.aiAnalysis,
       [...base, "item", "aiAnalysis"],
       destination,
-      item.nodeId,
+      implementationOwnerNodeIds,
     );
     for (const [causeIndex, result] of entry.causeResults.entries()) {
       const cause = result.cause;
@@ -396,20 +439,21 @@ export function walkOutwardEvidenceUses(outward: EvidenceClosureOutward): readon
     if (relationsById.size !== outward.relations.length) {
       throw new RunCompletenessError("source_id_conflict", "relation", ["relations"], undefined);
     }
-    walkItems(emit, outward, relationsById);
+    const ownersByIssue = createNativeImplementationOwnerScopes(outward.relations);
+    walkItems(emit, outward, relationsById, ownersByIssue);
     for (const [index, item] of outward.collectionAiItems.entries()) {
       walkTrackedItemAiAnalysis(
         emit,
         item.aiAnalysis,
         ["collectionAiItems", index, "aiAnalysis"],
         Object.freeze({ kind: "item", itemNodeId: item.nodeId }),
-        item.nodeId,
+        nativeImplementationOwnerNodeIds(item.nodeId, ownersByIssue),
       );
     }
     for (const [index, relation] of outward.relations.entries()) {
       walkRelation(emit, relation, ["relations", index]);
     }
-    walkGenericAiAdoptions(emit, outward.aiItems);
+    walkGenericAiAdoptions(emit, outward.aiItems, ownersByIssue);
     for (const [index, event] of outward.historyInputEvents.entries()) {
       emit(
         event.sourceId,
@@ -428,6 +472,7 @@ export function walkOutwardEvidenceUses(outward: EvidenceClosureOutward): readon
         addition.result,
         ["aiCacheAdditions", index, "result"],
         addition.itemNodeId,
+        nativeImplementationOwnerNodeIds(addition.itemNodeId, ownersByIssue),
       );
     }
     for (const [index, addition] of outward.personalReminderAiCacheAdditions.entries()) {

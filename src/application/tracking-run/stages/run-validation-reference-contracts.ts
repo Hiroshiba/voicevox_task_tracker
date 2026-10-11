@@ -1,5 +1,6 @@
 import type { GitHubNodeId, GitHubRepositoryId, UtcIsoDateTime } from "../../../domain/index.js";
 import type { TrackedItemAiAnalysis } from "../../../domain/tracked-item-ai-analysis.js";
+import type { Relation } from "../../../domain/relation.js";
 import type {
   RunAiCacheAddition,
   RunPersonalCacheAddition,
@@ -27,7 +28,10 @@ export type MaterializedReferenceValues = Readonly<{
       aiAnalysis: TrackedItemAiAnalysis;
       personalReminderCauses: readonly Readonly<{ causeId: string }>[];
     }>[];
-    relations: readonly Readonly<{ id: string }>[];
+    relations: readonly Pick<
+      Relation,
+      "active" | "fromNodeId" | "id" | "provenance" | "toNodeId" | "type"
+    >[];
     collection: Readonly<{
       repositories: readonly Readonly<{
         repositoryId: GitHubRepositoryId;

@@ -10,6 +10,7 @@ import type { TrackedItemAiAnalysis } from "../../../domain/tracked-item-ai-anal
 import type { GenericAiItemAdoption } from "./generic-ai-adoption-contracts.js";
 import type { EvidenceUse } from "../contracts/evidence-closure.js";
 import type { EvidenceUseSink } from "./evidence-closure-walk-common.js";
+import { nativeImplementationOwnerNodeIds } from "./evidence-native-implementation-scope.js";
 
 function emitResult(
   emit: EvidenceUseSink,
@@ -98,7 +99,7 @@ export function walkTrackedItemAiAnalysis(
   analysis: TrackedItemAiAnalysis,
   path: readonly (string | number)[],
   destination: EvidenceUse["destination"],
-  itemNodeId: string,
+  allowedOwnerNodeIds: readonly string[],
 ): void {
   for (const element of AI_ANALYSIS_ELEMENTS) {
     const current = analysis.elements[element];
@@ -110,7 +111,7 @@ export function walkTrackedItemAiAnalysis(
         [...path, "elements", element, "result"],
         destination,
         "historical_allowed",
-        [itemNodeId],
+        allowedOwnerNodeIds,
         [],
       );
       emitResult(
@@ -120,7 +121,7 @@ export function walkTrackedItemAiAnalysis(
         [...path, "elements", element, "generation", "result"],
         destination,
         "historical_allowed",
-        [itemNodeId],
+        allowedOwnerNodeIds,
         [],
       );
     }
@@ -133,7 +134,7 @@ export function walkTrackedItemAiAnalysis(
         [...path, "adoptedElements", element, "result"],
         destination,
         "historical_allowed",
-        [itemNodeId],
+        allowedOwnerNodeIds,
         [],
       );
       emitResult(
@@ -143,7 +144,7 @@ export function walkTrackedItemAiAnalysis(
         [...path, "adoptedElements", element, "generation", "result"],
         destination,
         "historical_allowed",
-        [itemNodeId],
+        allowedOwnerNodeIds,
         [],
       );
     }
@@ -156,7 +157,7 @@ export function walkTrackedItemAiAnalysis(
         [...path, "retainedElements", element, "result"],
         destination,
         "historical_allowed",
-        [itemNodeId],
+        allowedOwnerNodeIds,
         [],
       );
       if (retained.origin === "current") {
@@ -167,7 +168,7 @@ export function walkTrackedItemAiAnalysis(
           [...path, "retainedElements", element, "generation", "result"],
           destination,
           "historical_allowed",
-          [itemNodeId],
+          allowedOwnerNodeIds,
           [],
         );
       }
@@ -179,8 +180,10 @@ export function walkTrackedItemAiAnalysis(
 export function walkGenericAiAdoptions(
   emit: EvidenceUseSink,
   items: readonly GenericAiItemAdoption[],
+  ownersByIssue: ReadonlyMap<string, readonly string[]>,
 ): void {
   for (const [itemIndex, item] of items.entries()) {
+    const allowedOwnerNodeIds = nativeImplementationOwnerNodeIds(item.nodeId, ownersByIssue);
     const destination: EvidenceUse["destination"] = Object.freeze({
       kind: "item",
       itemNodeId: item.nodeId,
@@ -196,7 +199,7 @@ export function walkGenericAiAdoptions(
           [...base, "adopted", "result"],
           destination,
           "historical_allowed",
-          [item.nodeId],
+          allowedOwnerNodeIds,
           [],
         );
       }
@@ -208,7 +211,7 @@ export function walkGenericAiAdoptions(
           [...base, "retained", "result"],
           destination,
           "historical_allowed",
-          [item.nodeId],
+          allowedOwnerNodeIds,
           [],
         );
       }
@@ -220,7 +223,7 @@ export function walkGenericAiAdoptions(
           [...base, "evaluated", "result"],
           destination,
           record.evaluated.origin === "executed" ? "current" : "historical_allowed",
-          [item.nodeId],
+          allowedOwnerNodeIds,
           [],
         );
       }
@@ -235,6 +238,7 @@ export function walkAiCacheResult(
   result: AiAnalysisElementMigrationResult,
   path: readonly (string | number)[],
   itemNodeId: GitHubNodeId,
+  allowedOwnerNodeIds: readonly string[],
 ): void {
   emitResult(
     emit,
@@ -243,7 +247,7 @@ export function walkAiCacheResult(
     path,
     Object.freeze({ kind: "item", itemNodeId }),
     "current",
-    [itemNodeId],
+    allowedOwnerNodeIds,
     [],
   );
 }

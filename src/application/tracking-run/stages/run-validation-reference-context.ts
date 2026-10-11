@@ -4,6 +4,7 @@ import type {
   MaterializedReferenceValues,
 } from "./run-validation-reference-contracts.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
+import { nativeImplementationOwnerNodeIds } from "./evidence-native-implementation-scope.js";
 import {
   causeScope,
   isRecord,
@@ -56,12 +57,17 @@ export function referenceContext(
   reference: MaterializedEvidenceReference,
   values: MaterializedReferenceValues,
   previousPendingCauses: readonly PreviousPendingCauseContext[],
+  ownersByIssue: ReadonlyMap<string, readonly string[]>,
 ): ReferenceContext {
   const path = reference.path;
   const ownerNodeIds = [reference.owner.id];
   if (path[0] === "snapshot" && path[1] === "items") {
     if (path[3] === "evidence") {
-      const scope = itemEvidenceScope(reference, values);
+      const scope = itemEvidenceScope(
+        reference,
+        values,
+        nativeImplementationOwnerNodeIds(reference.owner.id, ownersByIssue),
+      );
       return {
         purpose: evidencePurpose(reference, values),
         currentness: "historical_allowed",
@@ -82,13 +88,16 @@ export function referenceContext(
           (to === reference.owner.id && from === candidateId)
         );
       });
+      let scopedOwnerNodeIds: readonly string[] = ownerNodeIds;
+      if (waiting["kind"] === "user" && waiting["role"] === "assignee") {
+        scopedOwnerNodeIds = nativeImplementationOwnerNodeIds(reference.owner.id, ownersByIssue);
+      } else if (waiting["kind"] === "item" && related && typeof candidateId === "string") {
+        scopedOwnerNodeIds = [reference.owner.id, candidateId];
+      }
       return {
         purpose: "waiting_on",
         currentness: "historical_allowed",
-        ownerNodeIds:
-          waiting["kind"] === "item" && related && typeof candidateId === "string"
-            ? [reference.owner.id, candidateId]
-            : ownerNodeIds,
+        ownerNodeIds: scopedOwnerNodeIds,
         relationIds: [],
       };
     }
@@ -103,7 +112,12 @@ export function referenceContext(
       const element = path[5];
       const purpose = typeof element === "string" ? aiPurpose(path.slice(6), element) : undefined;
       if (purpose != null)
-        return { purpose, currentness: "historical_allowed", ownerNodeIds, relationIds: [] };
+        return {
+          purpose,
+          currentness: "historical_allowed",
+          ownerNodeIds: nativeImplementationOwnerNodeIds(reference.owner.id, ownersByIssue),
+          relationIds: [],
+        };
     }
     if (path[3] === "personalReminderCauses") {
       const scope = causeScope(reference, values);
@@ -155,7 +169,12 @@ export function referenceContext(
     const element = path[8];
     const purpose = typeof element === "string" ? aiPurpose(path.slice(9), element) : undefined;
     if (purpose != null)
-      return { purpose, currentness: "historical_allowed", ownerNodeIds, relationIds: [] };
+      return {
+        purpose,
+        currentness: "historical_allowed",
+        ownerNodeIds: nativeImplementationOwnerNodeIds(reference.owner.id, ownersByIssue),
+        relationIds: [],
+      };
   }
   if (path[0] === "historyInputEvents") {
     const event = valueAtPath(values, path.slice(0, 2));
@@ -166,7 +185,13 @@ export function referenceContext(
   if (path[0] === "aiCacheAdditions") {
     const element = valueAtPath(values, path.slice(0, 2).concat("element"));
     const purpose = typeof element === "string" ? aiPurpose(path.slice(4), element) : undefined;
-    if (purpose != null) return { purpose, currentness: "current", ownerNodeIds, relationIds: [] };
+    if (purpose != null)
+      return {
+        purpose,
+        currentness: "current",
+        ownerNodeIds: nativeImplementationOwnerNodeIds(reference.owner.id, ownersByIssue),
+        relationIds: [],
+      };
   }
   if (path[0] === "personalReminderAiCacheAdditions") {
     const index = path[1];

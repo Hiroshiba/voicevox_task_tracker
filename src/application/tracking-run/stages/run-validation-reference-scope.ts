@@ -94,6 +94,7 @@ function causeClockReferencesSource(cause: unknown, sourceId: string): boolean {
 export function itemEvidenceScope(
   reference: MaterializedEvidenceReference,
   values: MaterializedReferenceValues,
+  implementationOwnerNodeIds: readonly string[],
 ): Readonly<{ nodeIds: readonly string[]; relationIds: readonly string[] }> {
   const ownerNodeId = reference.owner.id;
   const itemIndex = reference.path[2];
@@ -103,6 +104,20 @@ export function itemEvidenceScope(
   }
   const relationIds = new Set<string>();
   const ownerNodeIds = new Set([ownerNodeId]);
+  const assigneeWaitingOn = valueAtPath(item, ["waitingOn"]);
+  if (
+    Array.isArray(assigneeWaitingOn) &&
+    assigneeWaitingOn.some(
+      (waiting: unknown) =>
+        isRecord(waiting) &&
+        waiting["kind"] === "user" &&
+        waiting["role"] === "assignee" &&
+        Array.isArray(waiting["sourceIds"]) &&
+        waiting["sourceIds"].includes(reference.sourceId),
+    )
+  ) {
+    for (const nodeId of implementationOwnerNodeIds) ownerNodeIds.add(nodeId);
+  }
   for (const cause of item.personalReminderCauses) {
     const sourceIds = valueAtPath(cause, ["evidenceSourceIds"]);
     const assessmentSourceIds = valueAtPath(cause, [

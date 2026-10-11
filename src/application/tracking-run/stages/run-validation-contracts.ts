@@ -41,7 +41,7 @@ export type RunSnapshot = Readonly<{
     aiAnalysis: TrackedItemAiAnalysis;
     personalReminderCauses: readonly Readonly<{ causeId: string }>[];
   }>[];
-  relations: readonly Readonly<{ id: string; active: boolean }>[];
+  relations: FinalSnapshotCandidate["relations"];
   repositories: readonly Readonly<{
     id: string;
     owner: string;
