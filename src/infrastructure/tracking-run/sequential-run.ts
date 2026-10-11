@@ -33,6 +33,7 @@ import type { GenericAiExecutedRun } from "../../application/tracking-run/stages
 import type { GenericAiPlannedRun } from "../../application/tracking-run/stages/generic-ai-plan-contracts.js";
 import type { GraphReconciledRun } from "../../application/tracking-run/stages/graph-reconciliation.js";
 import type { InventoryCollectedRun } from "../../application/tracking-run/stages/inventory.js";
+import { RunCompletenessError } from "../../application/tracking-run/stages/run-completeness-error.js";
 import type { UtcIsoDateTime } from "../../domain/index.js";
 import {
   StateFormatError,
@@ -218,6 +219,8 @@ export class SequentialRunRunner {
     const recordId = randomUUID();
     const mismatchError =
       event === "cli.stage.failed" ? personalReminderAiDependencyMismatchError(error) : undefined;
+    const completenessError =
+      event === "cli.stage.failed" && error instanceof RunCompletenessError ? error : undefined;
     try {
       await recorder.append({
         event,
@@ -231,6 +234,26 @@ export class SequentialRunRunner {
           ...(mismatchError != null
             ? {
                 personalReminderAiDependencyMismatch: mismatchError.diagnosticDetails(),
+              }
+            : {}),
+          ...(completenessError != null
+            ? {
+                runCompleteness: {
+                  code: completenessError.code,
+                  sourceId: completenessError.sourceId,
+                  path: completenessError.path,
+                  ...(completenessError.use == null
+                    ? {}
+                    : {
+                        use: {
+                          destination: completenessError.use.destination,
+                          purpose: completenessError.use.purpose,
+                          requiredCurrentness: completenessError.use.requiredCurrentness,
+                          allowedOwnerNodeIds: completenessError.use.allowedOwnerNodeIds,
+                          allowedRelationIds: completenessError.use.allowedRelationIds,
+                        },
+                      }),
+                },
               }
             : {}),
         },

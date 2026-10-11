@@ -31,7 +31,7 @@ export class RunCompletenessError extends Error {
     use: EvidenceUse | undefined,
     cause?: unknown,
   ) {
-    super(`runの完全性を確認できません。種別: ${code} 対象: ${sourceId}`, { cause });
+    super(`runの完全性を確認できません。種別: ${code}`, { cause });
     this.name = "RunCompletenessError";
     this.code = code;
     this.sourceId = sourceId;
