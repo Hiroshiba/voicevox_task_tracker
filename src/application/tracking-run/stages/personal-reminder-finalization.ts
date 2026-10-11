@@ -65,6 +65,8 @@ export type PersonalReminderFinalizedRun = StageState<
 >;
 
 type CanonicalEntry = CanonicalPersonalReminderCausePlan["entries"][number];
+type PreparedPersonalReminderItem = Omit<PersonalReminderFinalizedItem, "evidence"> &
+  Readonly<{ localEvidence: readonly Evidence[] }>;
 
 function uniqueIndex<Key, Value>(
   values: readonly Value[],
@@ -246,17 +248,6 @@ export function finalizePersonalReminders(
     values.push(entry);
     entriesByNodeId.set(entry.seed.itemNodeId, values);
   }
-  const evidenceIndexes = personalReminderEvidenceIndexes(
-    [
-      ...run.data.finalItems.map((item) => item.evidence),
-      ...run.data.graph.edges.map((edge) => edge.evidence),
-      ...plan.causePlan.entries.map((entry) => entry.sourceEvidence),
-    ],
-    [
-      ...run.core.personalReminderInput.previousItems.map((item) => item.evidence),
-      ...run.core.personalReminderInput.previousRelations.map((relation) => relation.evidence),
-    ],
-  );
   const clockSources = indexCurrentClockEvidenceSources(
     run.data.sourceRecords,
     run.data.sourceRecords.evaluatedAt,
@@ -279,7 +270,7 @@ export function finalizePersonalReminders(
   }
   const causeIds = new Set<PersonalReminderCauseId>();
   let processedEntryCount = 0;
-  const items: PersonalReminderFinalizedItem[] = [];
+  const preparedItems: PreparedPersonalReminderItem[] = [];
   for (const graphItem of run.data.finalItems) {
     const planned = plannedItems.get(graphItem.nodeId);
     assertNonNullable(planned, `個人催促項目計画がありません。対象: ${graphItem.nodeId}`);
@@ -388,32 +379,50 @@ export function finalizePersonalReminders(
         })
         .sort((left, right) => left.cause.causeId.localeCompare(right.cause.causeId)),
     );
-    const completeEvidence = finalizePersonalReminderEvidence(
-      graphItem.nodeId,
-      finalizedCauses.map((result) => result.cause),
-      evidence,
-      evidenceIndexes.current,
-      evidenceIndexes.previous,
-      clockSources,
-      relationsById,
-      run.data.sourceRecords.evaluatedAt,
-    );
-    items.push(
+    preparedItems.push(
       Object.freeze({
         item: stripPreviousPersonalReminder(graphItem),
         causeResults: finalizedCauses,
-        evidence: completeEvidence,
+        localEvidence: Object.freeze(evidence),
         planning: planned.planning,
       }),
     );
   }
   if (
-    items.length !== plannedItems.size ||
-    items.length !== finalItems.size ||
+    preparedItems.length !== plannedItems.size ||
+    preparedItems.length !== finalItems.size ||
     processedEntryCount !== entries.size
   ) {
     throw new TypeError("個人催促最終項目と計画項目の集合が一致しません");
   }
+  const evidenceIndexes = personalReminderEvidenceIndexes(
+    [
+      ...run.data.finalItems.map((item) => item.evidence),
+      ...run.data.graph.edges.map((edge) => edge.evidence),
+      ...preparedItems.map((item) => item.localEvidence),
+    ],
+    [
+      ...run.core.personalReminderInput.previousItems.map((item) => item.evidence),
+      ...run.core.personalReminderInput.previousRelations.map((relation) => relation.evidence),
+    ],
+  );
+  const items: PersonalReminderFinalizedItem[] = preparedItems.map((prepared) =>
+    Object.freeze({
+      item: prepared.item,
+      causeResults: prepared.causeResults,
+      evidence: finalizePersonalReminderEvidence(
+        prepared.item.nodeId,
+        prepared.causeResults.map((result) => result.cause),
+        prepared.localEvidence,
+        evidenceIndexes.current,
+        evidenceIndexes.previous,
+        clockSources,
+        relationsById,
+        run.data.sourceRecords.evaluatedAt,
+      ),
+      planning: prepared.planning,
+    }),
+  );
   const personalReminderStatus =
     run.data.snapshotProjection.unavailablePersonalReminderConsumer ||
     run.data.plan.causePlan.continuityConflicts.length > 0 ||
