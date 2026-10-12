@@ -762,6 +762,7 @@ jobs:
           SANDBOX_FIRST_RESULT_PATH: ${{ runner.temp }}/first-result/sandbox-result.json
           SANDBOX_FIRST_COVERAGE_PATH: ${{ runner.temp }}/first-coverage/sandbox-coverage.json
           SANDBOX_FIRST_SNAPSHOT_PATH: ${{ runner.temp }}/first-snapshot.json
+          SANDBOX_REUSE_PLAN_PATH: ${{ runner.temp }}/checkpoint/sandbox-reuse-plan.json
           SANDBOX_STATE_VERIFICATION_PATH: ${{ runner.temp }}/state-verification.txt
           SANDBOX_COVERAGE_OUTPUT_PATH: ${{ runner.temp }}/sandbox-coverage.json
           SANDBOX_RESULT_OUTPUT_PATH: ${{ runner.temp }}/sandbox-result.json

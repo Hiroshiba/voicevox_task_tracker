@@ -408,6 +408,7 @@ jobs:
           path: |
             artifacts/workflow/validated-run.cpk
             artifacts/workflow/validated-run.cpk.sidecar.json
+            artifacts/workflow/sandbox-reuse-plan.json
           if-no-files-found: error
           retention-days: ${{ inputs.artifact_retention_days }}
       - name: 収集run reportを保存

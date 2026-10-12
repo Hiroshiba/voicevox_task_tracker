@@ -367,20 +367,6 @@ export async function planGenericAi(
         }
       }
     }
-    if (cacheProbe?.snapshotReuse.nodeId === nodeId) {
-      const expected = cacheProbe.snapshotReuse;
-      const actual = elements.find((element) => element.element === expected.element);
-      const previousAdopted = previous.adopted[expected.element];
-      if (
-        actual?.choice !== "snapshot_reuse" ||
-        actual.inputFingerprint !== expected.inputFingerprint ||
-        previousAdopted?.origin !== "current" ||
-        port.digest.sha256Utf8(serializeCanonicalJson(previousAdopted.generation)) !==
-          expected.generationDigest
-      ) {
-        throw new TypeError("cache probeの別nodeでfirstのsnapshotを再利用できません");
-      }
-    }
     const candidate = prepareAiAnalysisCandidate(
       Object.freeze({
         id: nodeId,
@@ -453,11 +439,7 @@ export async function planGenericAi(
       }),
     );
   }
-  if (
-    cacheProbe != null &&
-    (!items.some((item) => item.nodeId === cacheProbe.nodeId) ||
-      !items.some((item) => item.nodeId === cacheProbe.snapshotReuse.nodeId))
-  ) {
+  if (cacheProbe != null && !items.some((item) => item.nodeId === cacheProbe.nodeId)) {
     throw new TypeError("cache probeの対象nodeを今回のAI計画で確認できません");
   }
   const budget = port.reserveBudget(

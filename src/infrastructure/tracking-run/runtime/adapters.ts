@@ -122,6 +122,7 @@ export type CollectionRuntimeAdapters = Pick<
 export type CodexRuntimeAdapters = Pick<
   ProductionRuntimeAdapters,
   | "diagnosticsRecorder"
+  | "repositoryPath"
   | "codexProcessRunner"
   | "sleep"
   | "random"

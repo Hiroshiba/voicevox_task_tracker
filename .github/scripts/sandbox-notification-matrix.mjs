@@ -402,12 +402,7 @@ function assertContinuitySource(sourceManifest, proofRoot) {
   const firstItems = new Map(firstSnapshot.items.map((item) => [item.nodeId, item]));
   const secondItems = new Map(secondSnapshot.items.map((item) => [item.nodeId, item]));
   const probe = secondCoverage.continuity?.cacheProbe;
-  if (
-    probe == null ||
-    !Array.isArray(probe.elements) ||
-    probe.elements.length < 1 ||
-    probe.nodeId === probe.snapshotReuse?.nodeId
-  ) {
+  if (probe == null || !Array.isArray(probe.elements) || probe.elements.length < 1) {
     throw new TypeError("通知matrixのcache probe対象が不正です");
   }
   const firstCache = firstItems.get(probe.nodeId);
@@ -441,47 +436,21 @@ function assertContinuitySource(sourceManifest, proofRoot) {
   if (adoptedCacheCount < 1) {
     throw new TypeError("通知matrixにfirstの実AIからのcache採用がありません");
   }
-  const reuse = probe.snapshotReuse;
-  const firstReuseItem = firstItems.get(reuse.nodeId);
-  const secondReuseItem = secondItems.get(reuse.nodeId);
-  same(
-    firstReuseItem?.aiAnalysis.applications[reuse.element]?.origin,
-    "executed",
-    "通知matrixのfirst再利用元",
-  );
-  same(
-    secondReuseItem?.aiAnalysis.applications[reuse.element]?.origin,
-    "verified_reuse",
-    "通知matrixの別node再利用",
-  );
-  const firstReuseGeneration =
-    firstReuseItem?.aiAnalysis.adoptedElements[reuse.element]?.generation;
-  const secondReuseGeneration =
-    secondReuseItem?.aiAnalysis.adoptedElements[reuse.element]?.generation;
+  const reuse = secondCoverage.continuity.snapshotReuseWitness;
   if (
-    firstReuseGeneration == null ||
-    secondReuseGeneration == null ||
+    digestSchema.safeParse(secondCoverage.continuity.reusePlanProofDigest).success !== true ||
+    reuse == null ||
+    reuse.choice !== "snapshot_reuse" ||
+    reuse.nodeId === probe.nodeId ||
     !secondCoverage.continuity.snapshotReuses.some(
-      (entry) => entry.nodeId === reuse.nodeId && entry.element === reuse.element,
+      (entry) =>
+        entry.nodeId === reuse.nodeId &&
+        entry.element === reuse.element &&
+        entry.inputFingerprint === reuse.inputFingerprint,
     )
   ) {
-    throw new TypeError("通知matrixの別node再利用値がありません");
+    throw new TypeError("通知matrixの別nodeに計画済みsnapshot再利用がありません");
   }
-  same(
-    firstReuseGeneration.metadata.inputFingerprint,
-    reuse.inputFingerprint,
-    "通知matrixの再利用入力",
-  );
-  same(
-    nodeContentDigestPort.sha256Utf8(canonicalJson(firstReuseGeneration)),
-    reuse.generationDigest,
-    "通知matrixのfirst再利用元生成値",
-  );
-  same(
-    canonicalJson(secondReuseGeneration),
-    canonicalJson(firstReuseGeneration),
-    "通知matrixの別node再利用値",
-  );
   for (const reuse of secondCoverage.continuity.snapshotReuses) {
     const firstItem = firstItems.get(reuse.nodeId);
     const secondItem = secondItems.get(reuse.nodeId);
@@ -490,11 +459,18 @@ function assertContinuitySource(sourceManifest, proofRoot) {
     if (
       firstItem?.aiAnalysis.applications[reuse.element]?.origin !== "executed" ||
       secondItem?.aiAnalysis.applications[reuse.element]?.origin !== "verified_reuse" ||
+      firstItem.aiAnalysis.elements[reuse.element] == null ||
       firstAdopted?.reuseProof.status !== "verified" ||
-      secondAdopted?.reuseProof.status !== "verified"
+      secondAdopted?.reuseProof.status !== "verified" ||
+      firstAdopted.generation.metadata.generatedAt !== firstSnapshot.generatedAt
     ) {
       throw new TypeError("通知matrixのsnapshot再利用対象が一致しません");
     }
+    same(
+      canonicalJson(firstAdopted.generation),
+      canonicalJson(firstItem.aiAnalysis.elements[reuse.element].generation),
+      "通知matrixの実AI採用生成値",
+    );
     same(
       firstAdopted.reuseProof.inputFingerprint,
       reuse.inputFingerprint,

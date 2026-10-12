@@ -116,33 +116,9 @@ async function selectProbe() {
     }
     return cacheProof(revision, config.state.aiCacheDirectory, element, evaluated.generation);
   });
-  const second = items.find(
-    (item) =>
-      item.nodeId !== first.nodeId &&
-      AI_ANALYSIS_ELEMENTS.some((element) => firstExecutedAdoption(snapshot, item, element)),
-  );
-  if (second == null) {
-    throw new TypeError("firstに別nodeのsnapshot再利用対象がありません");
-  }
-  const reuseElement = AI_ANALYSIS_ELEMENTS.find((element) =>
-    firstExecutedAdoption(snapshot, second, element),
-  );
-  if (reuseElement == null) {
-    throw new TypeError("firstに別nodeの実AI採用要素がありません");
-  }
-  const adopted = second.aiAnalysis.adoptedElements[reuseElement];
-  if (adopted?.origin !== "current") {
-    throw new TypeError("firstに別nodeの現行AI採用値がありません");
-  }
   return {
     nodeId: first.nodeId,
     elements,
-    snapshotReuse: {
-      nodeId: second.nodeId,
-      element: reuseElement,
-      inputFingerprint: adopted.generation.metadata.inputFingerprint,
-      generationDigest: hashCanonicalJson(adopted.generation),
-    },
   };
 }
 

@@ -42,19 +42,12 @@ const cacheProbeSchema = z
         }),
       )
       .min(1),
-    snapshotReuse: z.strictObject({
-      nodeId: z.string().min(1).regex(/^\S+$/u),
-      element: aiAnalysisElementSchema,
-      inputFingerprint: hashSchema,
-      generationDigest: hashSchema,
-    }),
   })
   .superRefine((probe, context) => {
     const order = AI_ANALYSIS_ELEMENTS.filter((element) =>
       probe.elements.some((entry) => entry.element === element),
     );
     if (
-      probe.snapshotReuse.nodeId === probe.nodeId ||
       order.length !== probe.elements.length ||
       probe.elements.some((entry, index) => entry.element !== order[index])
     ) {

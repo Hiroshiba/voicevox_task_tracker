@@ -36,12 +36,6 @@ const cacheProbeSchema = z.strictObject({
       }),
     )
     .min(1),
-  snapshotReuse: z.strictObject({
-    nodeId: z.string().min(1).regex(/^\S+$/u),
-    element: analysisElementSchema,
-    inputFingerprint: hashSchema,
-    generationDigest: hashSchema,
-  }),
 });
 
 const recordingControlSchema = z

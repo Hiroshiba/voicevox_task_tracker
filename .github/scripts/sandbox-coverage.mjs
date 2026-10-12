@@ -3,12 +3,13 @@ import { readFileSync, writeFileSync } from "node:fs";
 import process from "node:process";
 
 import { z } from "zod";
-import { hashCanonicalJson } from "../../dist/canonical-json/index.js";
 import {
   assertCompleteSandboxStageCoverage,
   createSandboxStageCoverage,
 } from "../../dist/infrastructure/tracking-run/sandbox-stage-coverage.js";
+import { parseSandboxReusePlanProof } from "../../dist/infrastructure/tracking-run/sandbox-reuse-plan-proof.js";
 import { readVerifiedFirstResult, resultSchema, sha256 } from "./sandbox-continuity-result.mjs";
+import { plannedSnapshotReuseWitness, verifyCacheProbeAdoption } from "./sandbox-reuse-witness.mjs";
 import {
   readSandboxCheckpointEvidence,
   unavailableLegacyStageCoverage,
@@ -65,50 +66,6 @@ function countApplications(items) {
     }
   }
   return counts;
-}
-
-function verifiedSnapshotReuses(firstItems, secondItems) {
-  const firstByNodeId = new Map(firstItems.map((item) => [item.nodeId, item]));
-  const matches = [];
-  for (const secondItem of secondItems) {
-    const firstItem = firstByNodeId.get(secondItem.nodeId);
-    if (firstItem == null) {
-      continue;
-    }
-    for (const [element, secondApplication] of Object.entries(secondItem.aiAnalysis.applications)) {
-      if (
-        secondApplication.status !== "current_ai" ||
-        secondApplication.origin !== "verified_reuse" ||
-        firstItem.aiAnalysis.applications[element]?.status !== "current_ai" ||
-        firstItem.aiAnalysis.applications[element].origin !== "executed"
-      ) {
-        continue;
-      }
-      const firstAdopted = firstItem.aiAnalysis.adoptedElements[element];
-      const secondAdopted = secondItem.aiAnalysis.adoptedElements[element];
-      if (
-        firstAdopted?.origin !== "current" ||
-        secondAdopted?.origin !== "current" ||
-        firstAdopted.reuseProof.status !== "verified" ||
-        secondAdopted.reuseProof.status !== "verified" ||
-        firstAdopted.generation.metadata.inputFingerprint !==
-          secondAdopted.generation.metadata.inputFingerprint ||
-        firstAdopted.reuseProof.inputFingerprint !==
-          firstAdopted.generation.metadata.inputFingerprint ||
-        canonicalJson(firstAdopted.reuseProof) !== canonicalJson(secondAdopted.reuseProof) ||
-        canonicalJson(firstAdopted.generation) !== canonicalJson(secondAdopted.generation) ||
-        canonicalJson(firstAdopted.result) !== canonicalJson(secondAdopted.result)
-      ) {
-        throw new TypeError("second runのsnapshot再利用証拠がfirstの採用結果と一致しません");
-      }
-      matches.push({
-        nodeId: secondItem.nodeId,
-        element,
-        inputFingerprint: firstAdopted.reuseProof.inputFingerprint,
-      });
-    }
-  }
-  return matches;
 }
 
 function countPersonal(items) {
@@ -263,6 +220,8 @@ function createCoverage() {
       : [];
   let sameKeySuppressionConsistent = false;
   let snapshotReuses = [];
+  let snapshotReuseWitness = null;
+  let reusePlanProofDigest = null;
   if (continuityPhase !== "first" && continuityPhase !== "second") {
     throw new TypeError("coverageにはcontinuity phaseが必要です");
   }
@@ -286,62 +245,33 @@ function createCoverage() {
       throw new TypeError("second baseにはfirst ready revisionが必要です");
     }
     assertEqual(firstSnapshot.run.id, first.trackingRunId, "first snapshot run ID");
-    snapshotReuses = verifiedSnapshotReuses(firstSnapshot.items, snapshot.items);
     const probe = context.analysisMode.probe;
-    const firstCacheItem = firstSnapshot.items.find((item) => item.nodeId === probe.nodeId);
-    const secondCacheItem = snapshot.items.find((item) => item.nodeId === probe.nodeId);
-    const firstReuseItem = firstSnapshot.items.find(
-      (item) => item.nodeId === probe.snapshotReuse.nodeId,
+    const reusePlanProofPath = required("SANDBOX_REUSE_PLAN_PATH");
+    const reusePlanProof = parseSandboxReusePlanProof(readJson(reusePlanProofPath));
+    assertEqual(
+      reusePlanProof.actionsRunId,
+      required("GITHUB_RUN_ID"),
+      "再利用計画のActions run ID",
     );
-    const secondReuseItem = snapshot.items.find(
-      (item) => item.nodeId === probe.snapshotReuse.nodeId,
+    assertEqual(
+      reusePlanProof.actionsRunAttempt,
+      Number(required("GITHUB_RUN_ATTEMPT")),
+      "再利用計画のActions run attempt",
     );
-    const firstReuse = firstReuseItem?.aiAnalysis.adoptedElements[probe.snapshotReuse.element];
-    const secondReuse = secondReuseItem?.aiAnalysis.adoptedElements[probe.snapshotReuse.element];
-    if (
-      firstCacheItem == null ||
-      secondCacheItem == null ||
-      firstReuseItem?.aiAnalysis.applications[probe.snapshotReuse.element]?.origin !== "executed" ||
-      secondReuseItem?.aiAnalysis.applications[probe.snapshotReuse.element]?.origin !==
-        "verified_reuse" ||
-      firstReuse?.origin !== "current" ||
-      secondReuse?.origin !== "current" ||
-      firstReuse.generation.metadata.inputFingerprint !== probe.snapshotReuse.inputFingerprint ||
-      hashCanonicalJson(firstReuse.generation) !== probe.snapshotReuse.generationDigest ||
-      canonicalJson(firstReuse.generation) !== canonicalJson(secondReuse.generation) ||
-      !snapshotReuses.some(
-        (reuse) =>
-          reuse.nodeId === probe.snapshotReuse.nodeId &&
-          reuse.element === probe.snapshotReuse.element,
-      )
-    ) {
-      throw new TypeError("second runの別nodeでfirstのsnapshot再利用を確認できません");
-    }
-    let adoptedCacheCount = 0;
-    for (const expected of probe.elements) {
-      const firstEvaluated = firstCacheItem.aiAnalysis.elements[expected.element];
-      const secondEvaluated = secondCacheItem.aiAnalysis.elements[expected.element];
-      const firstApplication = firstCacheItem.aiAnalysis.applications[expected.element];
-      const secondApplication = secondCacheItem.aiAnalysis.applications[expected.element];
-      if (
-        firstEvaluated == null ||
-        secondEvaluated == null ||
-        firstEvaluated.generation.metadata.inputFingerprint !== expected.inputFingerprint ||
-        hashCanonicalJson(firstEvaluated.generation) !== expected.generationDigest ||
-        canonicalJson(firstEvaluated.generation) !== canonicalJson(secondEvaluated.generation)
-      ) {
-        throw new TypeError("second runのcache結果がfirstの生成値と一致しません");
-      }
-      if (firstApplication?.status === "current_ai" && firstApplication.origin === "executed") {
-        if (secondApplication?.status !== "current_ai" || secondApplication.origin !== "cache") {
-          throw new TypeError("second runでfirstの実AI結果をcache採用できません");
-        }
-        adoptedCacheCount += 1;
-      }
-    }
-    if (adoptedCacheCount < 1) {
-      throw new TypeError("second runにfirstの実file cache採用がありません");
-    }
+    assertEqual(reusePlanProof.runId, trackingRunId, "再利用計画のtracking run ID");
+    assertEqual(reusePlanProof.invocationId, analysis.invocationId, "再利用計画のinvocation ID");
+    assertEqual(reusePlanProof.codeRevision, context.codeRevision, "再利用計画のcode revision");
+    assertEqual(reusePlanProof.baseStateRevision, baseStateRevision, "再利用計画のbase revision");
+    assertEqual(reusePlanProof.cacheProbeNodeId, probe.nodeId, "再利用計画のcache probe node");
+    reusePlanProofDigest = sha256(readFileSync(reusePlanProofPath));
+    ({ snapshotReuses, snapshotReuseWitness } = plannedSnapshotReuseWitness(
+      firstSnapshot.items,
+      snapshot.items,
+      firstSnapshot.generatedAt,
+      reusePlanProof.choices,
+      probe.nodeId,
+    ));
+    verifyCacheProbeAdoption(firstSnapshot.items, snapshot.items, probe);
     const firstSentKeyDigests = z
       .array(digest)
       .min(1)
@@ -506,6 +436,8 @@ function createCoverage() {
             firstResult: first,
             firstSnapshotDigest: sha256(readFileSync(required("SANDBOX_FIRST_SNAPSHOT_PATH"))),
             snapshotReuses,
+            snapshotReuseWitness,
+            reusePlanProofDigest,
             cacheProbe:
               context.analysisMode.kind === "cache_probe" ? context.analysisMode.probe : null,
             remoteBaseReloaded: true,

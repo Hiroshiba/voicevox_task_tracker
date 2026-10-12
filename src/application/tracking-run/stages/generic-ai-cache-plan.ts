@@ -22,7 +22,7 @@ export type GenericAiCachedEntry = Readonly<{
 export type GenericAiCacheLookup =
   Readonly<{ status: "hit"; entry: GenericAiCachedEntry }> | Readonly<{ status: "miss" | "stale" }>;
 
-/** continuity secondでfirstの保存cacheとsnapshotを照合する対象。 */
+/** continuity secondでfirstの保存cacheを照合する対象。 */
 export type GenericAiCacheProbe = Readonly<{
   nodeId: string;
   elements: readonly Readonly<{
@@ -31,12 +31,6 @@ export type GenericAiCacheProbe = Readonly<{
     cacheKey: string;
     generationDigest: string;
   }>[];
-  snapshotReuse: Readonly<{
-    nodeId: string;
-    element: AiAnalysisElement;
-    inputFingerprint: string;
-    generationDigest: string;
-  }>;
 }>;
 
 /** 要素cacheの副作用境界。 */
