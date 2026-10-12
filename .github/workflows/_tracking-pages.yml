@@ -354,6 +354,13 @@ jobs:
             echo 'Pages公開時と記録時のpreflightが一致しません' >&2
             exit 1
           fi
+          if [[ "$TRACKING_EFFECT_TARGET" == 'sandbox' && "$PAGES_UPLOAD_OUTCOME" == 'success' ]]; then
+            if [[ ! "$PAGES_ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]]; then
+              echo 'sandbox Pages artifactのdigestが不正です' >&2
+              exit 1
+            fi
+            PAGES_ARTIFACT_DIGEST="sha256:$PAGES_ARTIFACT_DIGEST"
+          fi
           if [[ "$phase" == 'initial' && "$RECORD_PREFLIGHT_KIND" == 'observed' && "$DEPLOY_PREFLIGHT_KIND" == 'ready' && "$VOICEVOX_PREVIOUS_INITIAL_OUTCOME_STATUS" == 'downloaded' ]]; then
             PAGES_UPLOAD_OUTCOME=skipped
             PAGES_DEPLOYMENT_OUTCOME=skipped
