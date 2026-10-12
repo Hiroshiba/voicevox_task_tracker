@@ -21,6 +21,9 @@ import {
 } from "./notification-history-pages-deployment.js";
 
 const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
+export const NOTIFICATION_HISTORY_PAGES_RECORDING_ADAPTER_IDENTITY_DIGEST = digest.sha256Utf8(
+  "notification-history-pages-recording-adapter-v1",
+);
 
 const workflowObservationSchema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -351,7 +354,7 @@ export function recordNotificationHistorySequentialDeployment(
     externalReference = {
       kind: "recording",
       recordingId: input.recordingId,
-      adapterIdentityDigest: digest.sha256Utf8("notification-history-pages-recording-adapter-v1"),
+      adapterIdentityDigest: NOTIFICATION_HISTORY_PAGES_RECORDING_ADAPTER_IDENTITY_DIGEST,
       productionEffect: false,
     };
   }

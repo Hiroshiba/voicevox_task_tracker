@@ -7,8 +7,13 @@ import type { RuntimeRecoveryInputV2 } from "../../application/tracking-run/cont
 import type { ObservedStateCommitPosition } from "../../application/tracking-run/observed-state-commit.js";
 import type { ReceiptChainEntry } from "../../application/tracking-run/receipt-chain-schema.js";
 import { verifyReceiptChain } from "../../application/tracking-run/receipt-chain.js";
-import type { Receipt } from "../../application/tracking-run/receipt-schema.js";
+import type {
+  PagesDeploymentExternalReference,
+  PagesDeploymentReceipt,
+  Receipt,
+} from "../../application/tracking-run/receipt-schema.js";
 import { readRunTransactionMarkerRecoveryBootstrap } from "../../application/tracking-run/recovery-bootstrap.js";
+import type { RunExecutionPolicy } from "../../application/tracking-run/request.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import {
   validateStatePersistenceConfiguration,
@@ -32,6 +37,8 @@ import {
 } from "../../persistence/state-transaction-files.js";
 import { inspectRunBootstrapState } from "./bootstrap-state.js";
 import { nodeContentDigestPort } from "./content-digest.js";
+import { INITIAL_PAGES_RECORDING_ADAPTER_IDENTITY_DIGEST } from "./initial-pages-deployment.js";
+import { NOTIFICATION_HISTORY_PAGES_RECORDING_ADAPTER_IDENTITY_DIGEST } from "./notification-history-pages-deployment-record.js";
 import { selectRecoveryStage, type RecoveryStageInput } from "./recovery-stage.js";
 import { assertStateCommitChain } from "../../persistence/state-commit-chain-verification.js";
 import { observeStateCommitAtRevision } from "./state-receipt-observation.js";
@@ -71,6 +78,33 @@ function requireFile(files: ReadonlyMap<string, StateFileReadResult>, path: stri
     throw new TypeError(`再開に必要なstate fileがありません。対象: ${path}`);
   }
   return file.bytes;
+}
+
+function assertPagesDeploymentAdapterIdentity(
+  reference: PagesDeploymentExternalReference,
+  effectTarget: RunExecutionPolicy["effectTarget"],
+  phase: PagesDeploymentReceipt["phase"],
+  workflowAdapterIdentityDigest: string,
+): void {
+  if (effectTarget === "production") {
+    if (
+      reference.kind !== "github_pages_actions" ||
+      reference.adapterIdentityDigest !== workflowAdapterIdentityDigest
+    ) {
+      throw new TypeError("本番Pagesの参照とworkflow adapter identityが一致しません");
+    }
+    return;
+  }
+  const recordingAdapterIdentityDigest =
+    phase === "initial"
+      ? INITIAL_PAGES_RECORDING_ADAPTER_IDENTITY_DIGEST
+      : NOTIFICATION_HISTORY_PAGES_RECORDING_ADAPTER_IDENTITY_DIGEST;
+  if (
+    reference.kind !== "recording" ||
+    reference.adapterIdentityDigest !== recordingAdapterIdentityDigest
+  ) {
+    throw new TypeError("recording Pagesの参照とadapter identityが一致しません");
+  }
 }
 
 async function assertReceiptRevision(
@@ -120,6 +154,7 @@ async function verifiedReceipts(
   verified: VerifiedRunTransactionFiles,
   initialStateRevision: string,
   finalStateRevision: string,
+  workflowAdapterIdentityDigest: string,
 ): Promise<readonly Receipt[]> {
   if (request.receipts.length === 0) {
     return Object.freeze([]);
@@ -154,6 +189,24 @@ async function verifiedReceipts(
       receipt.result.pageUrl !== verified.record.initialPagesProjection.settings.url
     ) {
       throw new TypeError("初回Pages receiptの公開URLがrecordと一致しません");
+    }
+    if (receipt.receiptType === "pages_deployment" && receipt.result != null) {
+      assertPagesDeploymentAdapterIdentity(
+        receipt.result.externalReference,
+        verified.record.executionPolicy.effectTarget,
+        receipt.phase,
+        workflowAdapterIdentityDigest,
+      );
+      if (
+        receipt.phase === "initial" &&
+        verified.initialPagesEvidence != null &&
+        (receipt.result.externalReference.kind !==
+          verified.initialPagesEvidence.externalReference.kind ||
+          receipt.result.externalReference.adapterIdentityDigest !==
+            verified.initialPagesEvidence.externalReference.adapterIdentityDigest)
+      ) {
+        throw new TypeError("初回Pages receiptと保存証拠のadapter identityが一致しません");
+      }
     }
   }
   return chain;
@@ -262,12 +315,13 @@ export async function inspectRunState(
     ) {
       throw new TypeError("exact runtime回復計画とrecordが一致しません");
     }
-    if (
-      verified.initialPagesEvidence != null &&
-      verified.initialPagesEvidence.externalReference.adapterIdentityDigest !==
-        request.expectedWorkflowEffectAdapterIdentityDigest
-    ) {
-      throw new TypeError("初回Pages証拠のadapter identityがruntimeと一致しません");
+    if (verified.initialPagesEvidence != null) {
+      assertPagesDeploymentAdapterIdentity(
+        verified.initialPagesEvidence.externalReference,
+        verified.record.executionPolicy.effectTarget,
+        "initial",
+        request.expectedWorkflowEffectAdapterIdentityDigest,
+      );
     }
     const initialStateRevision =
       verified.marker.phase === "initial_state_committed"
@@ -291,6 +345,7 @@ export async function inspectRunState(
       verified,
       initialStateRevision,
       finalStateRevision,
+      request.expectedWorkflowEffectAdapterIdentityDigest,
     );
     let stateReceipt: Awaited<ReturnType<typeof observeStateCommitAtRevision>> | undefined;
     const precedingReceipt = receipts.at(-1);

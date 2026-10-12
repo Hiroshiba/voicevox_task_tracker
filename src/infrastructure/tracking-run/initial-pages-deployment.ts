@@ -44,6 +44,9 @@ import { resumeInitialPagesDeploy } from "./publication-resume-inputs.js";
 const sha256Schema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const revisionSchema = z.string().regex(/^[0-9a-f]{40}$/u);
 const MAX_DEPLOYMENT_ARTIFACT_BYTES = 1024 * 1024;
+export const INITIAL_PAGES_RECORDING_ADAPTER_IDENTITY_DIGEST = digest.sha256Utf8(
+  "initial-pages-recording-adapter-v1",
+);
 const preflightSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     schemaVersion: z.literal(1),
@@ -672,7 +675,7 @@ export function recordInitialPagesSequentialDeployment(
     externalReference = {
       kind: "recording",
       recordingId: input.recordingId,
-      adapterIdentityDigest: digest.sha256Utf8("initial-pages-recording-adapter-v1"),
+      adapterIdentityDigest: INITIAL_PAGES_RECORDING_ADAPTER_IDENTITY_DIGEST,
       productionEffect: false,
     };
   }
