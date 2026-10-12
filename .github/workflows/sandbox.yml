@@ -895,29 +895,7 @@ jobs:
             ambiguous-retry|ambiguous-acknowledge) action=send; outcome=recorded_ambiguous ;;
             *) echo '通知scenarioのcontrolが不正です' >&2; exit 1 ;;
           esac
-          prior="$SANDBOX_NOTIFICATION_PRIOR_JSON"
-          if [[ "$SANDBOX_CONTINUITY_PHASE" != 'second' ]]; then
-            coverage_digest="sha256:$(sha256sum "$SANDBOX_COVERAGE_PATH" | cut -d' ' -f1)"
-            prior="$(jq -cn \
-              --argjson previous "$prior" \
-              --arg scenarioId "$SANDBOX_SCENARIO_ID" \
-              --arg actionsRunId "$GITHUB_RUN_ID" \
-              --argjson actionsRunAttempt "$GITHUB_RUN_ATTEMPT" \
-              --arg environmentId "$SANDBOX_ENVIRONMENT_ID" \
-              --arg finalStateRevision "$SANDBOX_FINAL_REVISION" \
-              --arg coverageDigest "$coverage_digest" \
-              '$previous + [{scenarioId: $scenarioId, actionsRunId: $actionsRunId, actionsRunAttempt: $actionsRunAttempt, environmentId: $environmentId, finalStateRevision: $finalStateRevision, coverageDigest: $coverageDigest}]')"
-          fi
-          control="$(jq -cn --arg outcome "$outcome" --argjson prior "$prior" '{outcome: $outcome, messageIndex: 0, notification: {phase: "first", prior: $prior}}')"
-          gh workflow run sandbox.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" \
-            -f operation=reset \
-            -f source_ref="$SANDBOX_SOURCE_REF" \
-            -f environment_id="$SANDBOX_ENVIRONMENT_ID" \
-            -f reset_source=seed \
-            -f analysis_mode=normal \
-            -f notification_action="$action" \
-            -f scenario_id="$next_scenario" \
-            -f recording_control="$control"
+          bash .github/scripts/sandbox-start-next-notification.sh "$next_scenario" "$action" "$outcome"
       - name: 通知scenarioの先行coverageを取得
         if: inputs.scenario_id == 'ambiguous-acknowledge' && needs.prepare.outputs.notification_phase == 'resolution'
         env:
@@ -983,17 +961,28 @@ jobs:
           path: ${{ runner.temp }}/sandbox-notification-matrix.json
           if-no-files-found: error
           retention-days: 30
+      - name: continuity secondのcache probeを選定
+        if: needs.prepare.outputs.continuity_phase == 'first'
+        env:
+          SANDBOX_STATE_REPOSITORY_PATH: ${{ runner.temp }}/sandbox-state
+          SANDBOX_FIRST_FINAL_REVISION: ${{ steps.final_state.outputs.state_revision }}
+          SANDBOX_FIRST_TRACKING_RUN_ID: ${{ needs.tracking.outputs.tracking_run_id }}
+          SANDBOX_CACHE_PROBE_OUTPUT_PATH: ${{ runner.temp }}/cache-probe.json
+        run: node recovery-source/.github/scripts/sandbox-cache-probe.mjs select
+      - name: continuity secondの起動入力を生成
+        if: needs.prepare.outputs.continuity_phase == 'first'
+        env:
+          SANDBOX_TRACKING_RUN_ID: ${{ needs.tracking.outputs.tracking_run_id }}
+          SANDBOX_FINAL_REVISION: ${{ steps.final_state.outputs.state_revision }}
+          SANDBOX_CODE_REVISION: ${{ needs.prepare.outputs.code_revision }}
+        run: bash .github/scripts/sandbox-build-continuity-second-control.sh
       - name: continuity secondを非同期で起動
         if: needs.prepare.outputs.continuity_phase == 'first'
         env:
           GH_TOKEN: ${{ github.token }}
           SANDBOX_ENVIRONMENT_ID: ${{ needs.prepare.outputs.environment_id }}
           SANDBOX_SOURCE_REF: ${{ inputs.source_ref }}
-          SANDBOX_TRACKING_RUN_ID: ${{ needs.tracking.outputs.tracking_run_id }}
-          SANDBOX_FINAL_REVISION: ${{ steps.final_state.outputs.state_revision }}
-          SANDBOX_CODE_REVISION: ${{ needs.prepare.outputs.code_revision }}
-          SANDBOX_STATE_REPOSITORY_PATH: ${{ runner.temp }}/sandbox-state
-          SANDBOX_FIRST_FINAL_REVISION: ${{ steps.final_state.outputs.state_revision }}
-          SANDBOX_FIRST_TRACKING_RUN_ID: ${{ needs.tracking.outputs.tracking_run_id }}
-          SANDBOX_CACHE_PROBE_OUTPUT_PATH: ${{ runner.temp }}/cache-probe.json
         run: bash .github/scripts/sandbox-start-continuity-second.sh
+      - name: continuity secondの一時入力を削除
+        if: always() && needs.prepare.outputs.continuity_phase == 'first'
+        run: rm -f -- "$RUNNER_TEMP/cache-probe.json" "$RUNNER_TEMP/continuity-second-control.json"
