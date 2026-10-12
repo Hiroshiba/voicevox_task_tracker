@@ -11,7 +11,7 @@ import { createAiCacheEntry, createAiCacheKey } from "../../dist/codex/cache.js"
 import { loadConfig } from "../../dist/config/index.js";
 import { AI_ANALYSIS_ELEMENTS } from "../../dist/domain/ai-analysis-elements.js";
 import { parseSandboxContext } from "../../dist/infrastructure/tracking-run/sandbox-context.js";
-import { parseStateSnapshot } from "../../dist/persistence/snapshot.js";
+import { parseStateSnapshot } from "../../dist/persistence/snapshot-v23.js";
 
 const revisionSchema = z.string().regex(/^[0-9a-f]{40}$/u);
 const runIdSchema = z.string().regex(/^tracker-run:[0-9a-f]{64}$/u);
