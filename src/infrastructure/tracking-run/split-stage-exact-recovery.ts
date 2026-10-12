@@ -136,6 +136,11 @@ export async function recoverSplitStageRuntime(
     observation: { invocationId, observedAt: adapters.now().toISOString() },
     receipts: entries,
   });
+  if (verified.kind === "manual_resolution_required") {
+    throw new TypeError("V2固定入口のreceiptとexact stateを検証できません", {
+      cause: verified.cause,
+    });
+  }
   if (verified.kind !== "resume_pending") {
     throw new TypeError("V2固定入口のreceiptとexact stateを検証できません");
   }
