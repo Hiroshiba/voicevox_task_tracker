@@ -173,6 +173,8 @@ receipt消失時は同じ入力の解決操作を再実行し、実Gitの親子s
 
 `sandbox.yml`は`Hiroshiba/voicevox_task_tracker`の`codex/daily-transaction-refactor`から起動し、source_refも同じbranchにします。
 実行code revisionを固定し、reusable workflowの定義が一致することを確認します。
+finalizeはrunが取り消されておらず、prepareとtrackingが成功した場合だけ実行します。不要な手動解決jobがskipされていても完了処理を進めます。
+連続2 runのfirstとsecondは同じcode revisionで実行します。code revisionを変更する場合はfirstから始めます。
 createは既定でVOICEVOXの`tracker-state` HEADをseedにします。fork内のclean seedを使う場合は、state snapshot、通常通知ledger、運用通知ledgerの現行形式の3ファイルだけを持つbranchを`seed_ref`に、その期待commit SHAを`seed_revision`に指定します。
 custom seedはbranch headと期待SHA、stateのschema・semantic・ingress・公開安全性を照合してから新しいenvironmentを作ります。採用したcommit SHAをmanifestの`seedRevision`へ記録します。reset_sourceが`seed`のresetはこのSHAを再利用し、`latest`はVOICEVOXの`tracker-state` HEADを使います。
 create/resetは新しい`sandbox-state/env-<run ID>-<attempt>`を作り、`preparing` manifestを保存します。

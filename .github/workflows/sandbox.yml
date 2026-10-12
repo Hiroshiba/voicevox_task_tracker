@@ -634,7 +634,7 @@ jobs:
 
   finalize:
     needs: [prepare, tracking]
-    if: inputs.operation != 'dispose' && needs.tracking.result == 'success'
+    if: ${{ !cancelled() && inputs.operation != 'dispose' && needs.prepare.result == 'success' && needs.tracking.result == 'success' }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
