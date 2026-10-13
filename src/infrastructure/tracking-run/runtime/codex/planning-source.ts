@@ -5,6 +5,10 @@ import type {
   GenericAiPlanningPort,
 } from "../../../../application/tracking-run/stages/generic-ai-plan.js";
 import type { GenericAiCacheProbeSource } from "../../../../application/tracking-run/stages/generic-ai-cache-plan.js";
+import {
+  genericAiCacheProbeRejectionSummarySchema,
+  type GenericAiCacheProbeRejectionSummary,
+} from "../../../../application/tracking-run/stages/generic-ai-cache-probe-diagnostics.js";
 import { type AnalysisElementInputFingerprintMap } from "../../../../codex/analysis-element-dependencies.js";
 import { estimateAiInputCost } from "../../../../codex/budget.js";
 import {
@@ -252,6 +256,17 @@ export function createGenericAiPlanningPort(
         },
         error,
       );
+    },
+    recordCacheProbeRejection: async (
+      summary: GenericAiCacheProbeRejectionSummary,
+    ): Promise<void> => {
+      if (diagnostics == null) {
+        return;
+      }
+      await diagnostics.recorder.append({
+        event: "codex.cache_probe.rejected",
+        details: genericAiCacheProbeRejectionSummarySchema.parse(summary),
+      });
     },
   });
 }

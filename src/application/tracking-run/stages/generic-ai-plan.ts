@@ -67,6 +67,13 @@ import {
   type GenericAiCacheLookupPort,
 } from "./generic-ai-cache-plan.js";
 import type { GenericAiBudgetPlan } from "./generic-ai-budget-plan.js";
+import { assertNonNullable } from "../../../util/index.js";
+import {
+  createCacheProbeRejectionCounters,
+  summarizeCacheProbeRejections,
+  type GenericAiCacheProbeRejectionCounters,
+  type GenericAiCacheProbeRejectionSummary,
+} from "./generic-ai-cache-probe-diagnostics.js";
 
 export type { GenericAiElementPlan } from "./generic-ai-cache-plan.js";
 
@@ -124,6 +131,7 @@ export type GenericAiPlanningPort = Readonly<{
   ) => CodexAnalysisInput;
   serializeTransportInput: (input: CodexAnalysisInput) => string;
   recordInputValidationFailure: (candidateId: string, error: unknown) => Promise<void>;
+  recordCacheProbeRejection: (summary: GenericAiCacheProbeRejectionSummary) => Promise<void>;
 }>;
 
 function executionFingerprints(
@@ -188,17 +196,29 @@ async function matchingCacheProbeForItem(
   identity: AiAnalysisRunIdentity,
   executionFingerprints: Readonly<Record<AiAnalysisElement, AiAnalysisElementInputFingerprint>>,
   port: GenericAiPlanningPort,
+  counters: GenericAiCacheProbeRejectionCounters,
 ): Promise<GenericAiCacheProbe | undefined> {
   const nodeId = analysis.item.nodeId;
   const requiredCandidates = candidates.filter(
     (candidate) => preliminaryPlanning.necessities[candidate.element] === "required",
   );
+  counters.inspectedNodes += 1;
+  counters.inspectedElements += candidates.length;
+  counters.requiredElements += requiredCandidates.length;
+  counters.rejectedElements.not_required += candidates.length - requiredCandidates.length;
+  counters.candidateSubsets += (1 << requiredCandidates.length) - 1;
+  if (requiredCandidates.length === 0) {
+    counters.rejectedNodes.no_required_elements += 1;
+  } else {
+    counters.requiredNodes += 1;
+  }
   for (let size = requiredCandidates.length; size > 0; size -= 1) {
     for (let mask = 1; mask < 1 << requiredCandidates.length; mask += 1) {
       const expected = requiredCandidates.filter((_, index) => (mask & (1 << index)) !== 0);
       if (expected.length !== size) {
         continue;
       }
+      counters.inspectedSubsets += 1;
       if (
         expected.some((entry) => {
           if (entry.element !== "status" && entry.element !== "waitingOn") {
@@ -212,6 +232,7 @@ async function matchingCacheProbeForItem(
           );
         })
       ) {
+        counters.rejectedSubsets.state_pair_ineligible += 1;
         continue;
       }
       const requestedTarget: AiAnalysisTarget = Object.freeze({
@@ -224,6 +245,7 @@ async function matchingCacheProbeForItem(
         preliminaryPlanning,
       );
       if (executionTarget.elements.length !== expected.length) {
+        counters.rejectedSubsets.state_pair_ineligible += 1;
         continue;
       }
       const preliminaryExecutionPlanning = Object.freeze({
@@ -241,6 +263,7 @@ async function matchingCacheProbeForItem(
       if (
         expected.some((entry) => exactInputs[entry.element].fingerprint !== entry.inputFingerprint)
       ) {
+        counters.rejectedSubsets.exact_input_mismatch += 1;
         continue;
       }
       const inputFingerprints = elementInputFingerprints(exactInputs);
@@ -258,7 +281,14 @@ async function matchingCacheProbeForItem(
       let matched = true;
       for (const entry of expected) {
         const cached = await port.lookupCache(identity, planning, entry.element, nodeId);
-        if (cached.status !== "hit" || cached.entry.cacheKey !== entry.cacheKey) {
+        if (cached.status !== "hit") {
+          const reason = cached.status === "miss" ? "cache_miss" : "cache_stale";
+          counters.rejectedSubsets[reason] += 1;
+          matched = false;
+          break;
+        }
+        if (cached.entry.cacheKey !== entry.cacheKey) {
+          counters.rejectedSubsets.cache_key_mismatch += 1;
           matched = false;
           break;
         }
@@ -270,6 +300,7 @@ async function matchingCacheProbeForItem(
         }
       }
       if (matched) {
+        counters.qualifiedSubsets += 1;
         return Object.freeze({
           nodeId,
           elements: Object.freeze(expected),
@@ -294,6 +325,8 @@ export async function planGenericAi(
   );
   const target = port.target;
   const cacheProbe = port.cacheProbe;
+  const probeCounters =
+    cacheProbe == null ? undefined : createCacheProbeRejectionCounters(cacheProbe);
   if (target != null && cacheProbe != null) {
     throw new TypeError("AI分析の強制対象とcache probeは同時に指定できません");
   }
@@ -314,10 +347,15 @@ export async function planGenericAi(
       throw new TypeError(`AI計画の項目IDが重複しています。対象: ${nodeId}`);
     }
     itemIds.add(nodeId);
+    const probeCandidates = cacheProbe?.candidates.find((candidate) => candidate.nodeId === nodeId);
     let source: GenericAiPlanningItemSource;
     try {
       source = port.prepareItem(analyzed, analysis);
     } catch (error: unknown) {
+      if (probeCandidates != null && probeCounters != null) {
+        probeCounters.rejectedNodes.prepare_ineligible += 1;
+        probeCounters.rejectedElements.prepare_ineligible += probeCandidates.elements.length;
+      }
       await port.recordInputValidationFailure(nodeId, error);
       const previous =
         analyzed.core.previousState.snapshot.status === "available"
@@ -355,9 +393,8 @@ export async function planGenericAi(
       savedReuses: candidatePrevious.reuses,
     });
     const targetForItem = target?.nodeId === nodeId ? target : undefined;
-    const probeCandidates = cacheProbe?.candidates.find((candidate) => candidate.nodeId === nodeId);
     const probeForItem =
-      selectedCacheProbe == null && probeCandidates != null
+      selectedCacheProbe == null && probeCandidates != null && probeCounters != null
         ? await matchingCacheProbeForItem(
             analyzed,
             analysis,
@@ -369,6 +406,7 @@ export async function planGenericAi(
             identity,
             currentExecutionFingerprints,
             port,
+            probeCounters,
           )
         : undefined;
     if (probeForItem != null) {
@@ -563,6 +601,14 @@ export async function planGenericAi(
     );
   }
   if (cacheProbe != null && selectedCacheProbe == null) {
+    assertNonNullable(probeCounters, "cache probeの診断集計がありません");
+    for (const candidate of cacheProbe.candidates) {
+      if (!itemIds.has(candidate.nodeId)) {
+        probeCounters.rejectedNodes.node_missing += 1;
+        probeCounters.rejectedElements.node_missing += candidate.elements.length;
+      }
+    }
+    await port.recordCacheProbeRejection(summarizeCacheProbeRejections(probeCounters));
     throw new TypeError("secondの実入力に適格なcache probeがありません");
   }
   const budget = port.reserveBudget(
