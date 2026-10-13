@@ -81,6 +81,9 @@ function signalProjection(
 }
 
 function exactInputContext(input: CodexAnalysisInput, element: AiAnalysisElement): object {
+  const verifiedExternalRepositoryUrls = z
+    .array(z.string())
+    .parse(input.deterministicSignals["verifiedExternalRepositoryUrls"]);
   const selectedElements =
     element === "status" || element === "waitingOn"
       ? AI_ANALYSIS_ELEMENTS.filter(
@@ -99,6 +102,7 @@ function exactInputContext(input: CodexAnalysisInput, element: AiAnalysisElement
     inputProjectionVersion: GENERIC_AI_ELEMENT_DEFINITIONS[element].inputProjectionVersion,
     publicRepositoryAllowlist: input.deterministicSignals["publicRepositoryAllowlist"],
     verifiedExternalReferences: input.deterministicSignals["verifiedExternalReferences"],
+    ...(verifiedExternalRepositoryUrls.length === 0 ? {} : { verifiedExternalRepositoryUrls }),
     selectedElements: Object.freeze(selectedElements),
     lockedElements: Object.freeze(lockedElements),
   });

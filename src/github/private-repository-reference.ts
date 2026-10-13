@@ -300,13 +300,33 @@ export function containsDisallowedAiTextUrl(
   allowlist: readonly Pick<RepositoryReference, "owner" | "name">[],
   externalReferences: readonly VerifiedExternalReference[],
 ): boolean {
+  return containsDisallowedAiTextUrlWithVerifiedExternalUrls(
+    value,
+    allowlist,
+    verifiedExternalUrls(externalReferences),
+  );
+}
+
+/** AI由来の自然文を許可済みの外部URL集合で検証する。 */
+export function containsDisallowedAiTextUrlWithAllowedExternalUrls(
+  value: string,
+  allowlist: readonly Pick<RepositoryReference, "owner" | "name">[],
+  externalUrls: ReadonlySet<string>,
+): boolean {
+  return containsDisallowedAiTextUrlWithVerifiedExternalUrls(value, allowlist, externalUrls);
+}
+
+function containsDisallowedAiTextUrlWithVerifiedExternalUrls(
+  value: string,
+  allowlist: readonly Pick<RepositoryReference, "owner" | "name">[],
+  externalUrls: ReadonlySet<string> | undefined,
+): boolean {
   const scan = scanUrlLikeText(value);
   if (scan.status === "invalid") return true;
   const candidates = scan.candidates;
   if (candidates.length === 0) {
     return false;
   }
-  const externalUrls = verifiedExternalUrls(externalReferences);
   if (externalUrls == null) {
     return true;
   }
@@ -381,15 +401,24 @@ export function containsUnallowlistedGitHubRepositoryUrl(
   allowlist: readonly Pick<RepositoryReference, "owner" | "name">[],
   externalReferences: readonly VerifiedExternalReference[],
 ): boolean {
+  const externalUrls = verifiedExternalUrls(externalReferences);
+  return (
+    externalUrls == null ||
+    containsUnallowlistedGitHubRepositoryUrlWithAllowedExternalUrls(values, allowlist, externalUrls)
+  );
+}
+
+/** 公開値のGitHubリポジトリURLを許可済みの外部URL集合で検証する。 */
+export function containsUnallowlistedGitHubRepositoryUrlWithAllowedExternalUrls(
+  values: readonly unknown[],
+  allowlist: readonly Pick<RepositoryReference, "owner" | "name">[],
+  externalUrls: ReadonlySet<string>,
+): boolean {
   const allowed = new Set(
     allowlist.map(
       (repository) => `${repository.owner.toLowerCase()}/${repository.name.toLowerCase()}`,
     ),
   );
-  const externalUrls = verifiedExternalUrls(externalReferences);
-  if (externalUrls == null) {
-    return true;
-  }
   const pending: unknown[] = [...values];
   const visited = new WeakSet<object>();
   const visitedStrings = new Set<string>();

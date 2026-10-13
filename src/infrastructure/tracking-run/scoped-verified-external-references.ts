@@ -67,20 +67,32 @@ function referencedGitHubUrls(values: readonly unknown[]): ReadonlySet<string> {
   return urls;
 }
 
-/** 項目入力に現れる外部参照だけを今回の公開検証済み集合から選ぶ。 */
+/** 項目入力に現れる外部項目とrepositoryの証明を今回の検証済み集合から選ぶ。 */
 export function scopedVerifiedExternalReferences(
   references: readonly VerifiedExternalReference[],
   values: readonly unknown[],
-): readonly VerifiedExternalReference[] {
+): Readonly<{
+  references: readonly VerifiedExternalReference[];
+  repositoryUrls: readonly string[];
+}> {
   if (verifiedExternalUrls(references) == null) {
     throw new TypeError("Codex入力の検証済み外部参照URLが不正です");
   }
   const urls = referencedGitHubUrls(values);
-  return Object.freeze(
-    references.filter(
-      (reference) =>
-        urls.has(reference.url.toLowerCase()) ||
-        urls.has(`https://github.com/${reference.repositoryFullName}`.toLowerCase()),
+  return Object.freeze({
+    references: Object.freeze(
+      references.filter((reference) => urls.has(reference.url.toLowerCase())),
     ),
-  );
+    repositoryUrls: Object.freeze(
+      [
+        ...new Set(
+          references.map((reference) =>
+            `https://github.com/${reference.repositoryFullName}`.toLowerCase(),
+          ),
+        ),
+      ]
+        .filter((url) => urls.has(url))
+        .sort(),
+    ),
+  });
 }

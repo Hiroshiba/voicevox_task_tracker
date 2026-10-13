@@ -3,8 +3,8 @@ import { z } from "zod";
 import type { AiAnalysisElement } from "../domain/ai-analysis-elements.js";
 import { verifiedExternalUrls } from "../domain/verified-external-reference.js";
 import {
-  containsDisallowedAiTextUrl,
-  containsUnallowlistedGitHubRepositoryUrl,
+  containsDisallowedAiTextUrlWithAllowedExternalUrls,
+  containsUnallowlistedGitHubRepositoryUrlWithAllowedExternalUrls,
 } from "../github/private-repository-reference.js";
 import type { SchemaValidCodexElementOutput } from "./element-output.js";
 import type { CodexOutputValidationIssue } from "./errors.js";
@@ -23,6 +23,9 @@ const verifiedExternalReferencesSchema = z.array(
     number: z.number().int().positive(),
     url: z.url(),
   }),
+);
+const verifiedExternalRepositoryUrlsSchema = z.array(
+  z.string().regex(/^https:\/\/github\.com\/[a-z\d][a-z\d-]{0,38}\/[a-z\d_.-]+$/u),
 );
 
 function createIssue(
@@ -197,9 +200,14 @@ export function validateCodexOutputUrls(
   const verifiedExternalReferences = verifiedExternalReferencesSchema.parse(
     input.deterministicSignals["verifiedExternalReferences"],
   );
-  if (verifiedExternalUrls(verifiedExternalReferences) == null) {
+  const verifiedExternalRepositoryUrls = verifiedExternalRepositoryUrlsSchema.parse(
+    input.deterministicSignals["verifiedExternalRepositoryUrls"],
+  );
+  const verifiedUrls = verifiedExternalUrls(verifiedExternalReferences);
+  if (verifiedUrls == null) {
     throw new TypeError("Codex入力の検証済み外部参照URLが不正です");
   }
+  const allowedExternalUrls = new Set([...verifiedUrls, ...verifiedExternalRepositoryUrls]);
   if (organizationFromUrl(input.item.url)?.toLowerCase() !== TARGET_ORGANIZATION.toLowerCase()) {
     throw new TypeError("Codex入力の対象項目がVOICEVOX Organization内ではありません");
   }
@@ -215,10 +223,10 @@ export function validateCodexOutputUrls(
 
   for (const field of collectTextFields(output, input)) {
     if (
-      containsUnallowlistedGitHubRepositoryUrl(
+      containsUnallowlistedGitHubRepositoryUrlWithAllowedExternalUrls(
         [field.value],
         publicRepositoryAllowlist,
-        verifiedExternalReferences,
+        allowedExternalUrls,
       )
     ) {
       issues.push(
@@ -231,10 +239,10 @@ export function validateCodexOutputUrls(
       continue;
     }
     if (
-      containsDisallowedAiTextUrl(
+      containsDisallowedAiTextUrlWithAllowedExternalUrls(
         field.value,
         publicRepositoryAllowlist,
-        verifiedExternalReferences,
+        allowedExternalUrls,
       )
     ) {
       issues.push(
