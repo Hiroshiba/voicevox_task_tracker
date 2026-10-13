@@ -1,4 +1,5 @@
 import { analyzeDeterministically } from "../../../application/tracking-run/stages/deterministic.js";
+import { join } from "node:path";
 import {
   adoptGenericAi,
   type GenericAiAdoptedRun,
@@ -23,6 +24,10 @@ import { createCollectItemsStage } from "./collection/stage.js";
 import { createCollectInventoryStage } from "./daily-startup/inventory.js";
 import { createPersonalReminderStages } from "./personal-reminder/stage.js";
 import { validateRunCompleteness } from "./validation/stage.js";
+import {
+  SANDBOX_GENERIC_AI_INPUT_BUNDLE_NAME,
+  writeSandboxGenericAiInputEvidence,
+} from "../sandbox-generic-ai-input-evidence.js";
 
 /** 直列engineの解析段階をrunに閉じたadapterへ接続する。 */
 export function createAnalysisStages(
@@ -70,9 +75,21 @@ export function createAnalysisStages(
       );
       return executed;
     },
-    genericAiAdopted: (value) => {
+    genericAiAdopted: async (value) => {
       adopted = adoptGenericAi(value, nodeContentDigestPort);
-      return Promise.resolve(adopted);
+      if (
+        context.configuration.target.kind === "sandbox" &&
+        context.configuration.target.context.analysisMode.kind !== "cache_probe"
+      ) {
+        await writeSandboxGenericAiInputEvidence(
+          value,
+          adopted,
+          context.configuration.target.context,
+          adapters.environment,
+          join(adapters.repositoryPath, "artifacts/workflow", SANDBOX_GENERIC_AI_INPUT_BUNDLE_NAME),
+        );
+      }
+      return adopted;
     },
     graphReconciled: (value) => {
       reconciled = reconcileAdoptedGraph(value);

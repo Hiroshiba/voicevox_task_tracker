@@ -364,6 +364,7 @@ jobs:
           SANDBOX_CONTEXT_PATH: ${{ inputs.effect_target == 'sandbox' && format('{0}/sandbox-context.json', runner.temp) || '' }}
           SCHEDULE: ${{ inputs.schedule }}
           TRACKING_CONFIG_PATH: ${{ inputs.config_path }}
+          VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ inputs.effect_target == 'sandbox' && secrets.VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
         run: |
           current_time="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
           if [[ -n "$SCHEDULE" ]]; then
@@ -409,6 +410,7 @@ jobs:
             artifacts/workflow/validated-run.cpk
             artifacts/workflow/validated-run.cpk.sidecar.json
             artifacts/workflow/sandbox-reuse-plan.json
+            artifacts/workflow/sandbox-generic-ai-inputs.bundle
           if-no-files-found: error
           retention-days: ${{ inputs.artifact_retention_days }}
       - name: 収集run reportを保存

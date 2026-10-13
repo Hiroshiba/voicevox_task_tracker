@@ -110,6 +110,7 @@ export function createGenericAiPlanningPort(
   state: RuntimeState,
   diagnostics: CodexDiagnosticsContext | undefined,
   cacheProbeSource: GenericAiCacheProbeSource | undefined,
+  compareCacheProbeInputCategories: GenericAiPlanningPort["compareCacheProbeInputCategories"],
 ): GenericAiPlanningPort {
   const previousGraph = previousGraphIndex(state);
   const previousImpactByNodeId =
@@ -147,6 +148,7 @@ export function createGenericAiPlanningPort(
       ),
     target: forcedAiAnalysisTarget(configuration),
     cacheProbe: cacheProbeSource,
+    compareCacheProbeInputCategories,
     prepareItem: (
       run: DeterministicallyAnalyzedRun,
       analysis: DeterministicItemAnalysis,

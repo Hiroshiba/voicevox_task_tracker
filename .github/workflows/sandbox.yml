@@ -387,6 +387,7 @@ jobs:
           SANDBOX_FIRST_FINAL_REVISION: ${{ steps.recording_control.outputs.first_final_state_revision }}
           SANDBOX_FIRST_TRACKING_RUN_ID: ${{ steps.recording_control.outputs.first_tracking_run_id }}
           SANDBOX_CONTEXT_PATH: ${{ runner.temp }}/sandbox-context.json
+          SANDBOX_FIRST_RESULT_PATH: ${{ runner.temp }}/first-result/sandbox-result.json
         run: node .github/scripts/sandbox-cache-probe.mjs verify
       - name: sandbox制御入力を保存
         if: inputs.operation != 'dispose'
@@ -421,6 +422,8 @@ jobs:
           path: |
             ${{ runner.temp }}/sandbox-context.json
             ${{ runner.temp }}/sandbox-control.json
+            ${{ runner.temp }}/sandbox-generic-ai-inputs.bundle
+            ${{ runner.temp }}/sandbox-generic-ai-input-binding.json
           if-no-files-found: error
           retention-days: 30
       - name: sandbox環境を廃棄
@@ -848,7 +851,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sandbox-result-${{ needs.prepare.outputs.environment_id }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/sandbox-result.json
+          path: |
+            ${{ runner.temp }}/sandbox-result.json
+            ${{ runner.temp }}/sandbox-generic-ai-inputs.bundle
           if-no-files-found: error
           retention-days: 30
       - name: 新環境のmanifestをreadyへ昇格

@@ -8,6 +8,7 @@ import {
   createSandboxStageCoverage,
 } from "../../dist/infrastructure/tracking-run/sandbox-stage-coverage.js";
 import { parseSandboxReusePlanProof } from "../../dist/infrastructure/tracking-run/sandbox-reuse-plan-proof.js";
+import { copySandboxCheckpointInputEvidence } from "../../dist/infrastructure/tracking-run/sandbox-generic-ai-input-evidence.js";
 import { readVerifiedFirstResult, resultSchema, sha256 } from "./sandbox-continuity-result.mjs";
 import { plannedSnapshotReuseWitness, verifyCacheProbeAdoption } from "./sandbox-reuse-witness.mjs";
 import { firstFileCacheProbeSource } from "./sandbox-cache-probe-source.mjs";
@@ -505,6 +506,12 @@ async function createCoverage() {
     productionPagesDeployed: false,
     productionDiscordSent: false,
   });
+  if (continuityPhase === "first") {
+    await copySandboxCheckpointInputEvidence(
+      required("SANDBOX_CHECKPOINT_PATH"),
+      required("SANDBOX_RESULT_OUTPUT_PATH"),
+    );
+  }
   writeFileSync(required("SANDBOX_RESULT_OUTPUT_PATH"), `${JSON.stringify(result)}\n`);
 }
 

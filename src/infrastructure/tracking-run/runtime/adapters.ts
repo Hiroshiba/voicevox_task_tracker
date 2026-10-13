@@ -121,6 +121,7 @@ export type CollectionRuntimeAdapters = Pick<
 
 export type CodexRuntimeAdapters = Pick<
   ProductionRuntimeAdapters,
+  | "environment"
   | "diagnosticsRecorder"
   | "repositoryPath"
   | "codexProcessRunner"

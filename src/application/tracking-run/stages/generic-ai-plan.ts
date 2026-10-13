@@ -71,6 +71,7 @@ import { assertNonNullable } from "../../../util/index.js";
 import {
   createCacheProbeRejectionCounters,
   summarizeCacheProbeRejections,
+  type GenericAiExactInputCategory,
   type GenericAiCacheProbeRejectionCounters,
   type GenericAiCacheProbeRejectionSummary,
 } from "./generic-ai-cache-probe-diagnostics.js";
@@ -131,6 +132,12 @@ export type GenericAiPlanningPort = Readonly<{
   ) => CodexAnalysisInput;
   serializeTransportInput: (input: CodexAnalysisInput) => string;
   recordInputValidationFailure: (candidateId: string, error: unknown) => Promise<void>;
+  compareCacheProbeInputCategories:
+    | ((
+        probe: GenericAiCacheProbe,
+        input: CodexAnalysisInput,
+      ) => readonly GenericAiExactInputCategory[])
+    | undefined;
   recordCacheProbeRejection: (summary: GenericAiCacheProbeRejectionSummary) => Promise<void>;
 }>;
 
@@ -264,6 +271,15 @@ async function matchingCacheProbeForItem(
         expected.some((entry) => exactInputs[entry.element].fingerprint !== entry.inputFingerprint)
       ) {
         counters.rejectedSubsets.exact_input_mismatch += 1;
+        const compareCategories = port.compareCacheProbeInputCategories;
+        assertNonNullable(compareCategories, "cache probeの実入力カテゴリ比較がありません");
+        const categories = compareCategories({ nodeId, elements: expected }, input);
+        if (categories.length === 0 || new Set(categories).size !== categories.length) {
+          throw new TypeError("cache probeの厳密入力不一致に対応するカテゴリ証拠がありません");
+        }
+        for (const category of categories) {
+          counters.exactInputMismatchCategories[category] += 1;
+        }
         continue;
       }
       const inputFingerprints = elementInputFingerprints(exactInputs);

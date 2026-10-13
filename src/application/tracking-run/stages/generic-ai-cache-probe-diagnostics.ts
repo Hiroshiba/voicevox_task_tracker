@@ -3,6 +3,24 @@ import { z } from "zod";
 import type { GenericAiCacheProbeSource } from "./generic-ai-cache-plan.js";
 
 const countSchema = z.number().int().nonnegative();
+
+/** 汎用AIの厳密入力を分ける固定top-levelカテゴリ。 */
+export const genericAiExactInputCategorySchema = z.enum([
+  "inputProjectionVersion",
+  "publicRepositoryAllowlist",
+  "verifiedExternalReferences",
+  "selectedElements",
+  "lockedElements",
+  "item",
+  "candidates",
+  "sources",
+  "deterministicSignals",
+  "humanProgressSourceIds",
+]);
+
+/** 値を含めず厳密入力の差を示すカテゴリ。 */
+export type GenericAiExactInputCategory = z.output<typeof genericAiExactInputCategorySchema>;
+
 const nodeRejectionReasonSchema = z.enum([
   "node_missing",
   "prepare_ineligible",
@@ -29,6 +47,7 @@ const countersSchema = z.strictObject({
   rejectedNodes: z.record(nodeRejectionReasonSchema, countSchema),
   rejectedElements: z.record(elementRejectionReasonSchema, countSchema),
   rejectedSubsets: z.record(subsetRejectionReasonSchema, countSchema),
+  exactInputMismatchCategories: z.record(genericAiExactInputCategorySchema, countSchema),
 });
 
 /** 識別子や入力値を含めないcache probeの棄却集計schema。 */
@@ -69,6 +88,18 @@ export function createCacheProbeRejectionCounters(
       cache_miss: 0,
       cache_stale: 0,
       cache_key_mismatch: 0,
+    },
+    exactInputMismatchCategories: {
+      inputProjectionVersion: 0,
+      publicRepositoryAllowlist: 0,
+      verifiedExternalReferences: 0,
+      selectedElements: 0,
+      lockedElements: 0,
+      item: 0,
+      candidates: 0,
+      sources: 0,
+      deterministicSignals: 0,
+      humanProgressSourceIds: 0,
     },
   };
 }
