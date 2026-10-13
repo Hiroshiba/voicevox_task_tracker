@@ -39,6 +39,7 @@ import {
   selectRelationAssessmentCandidates,
 } from "../../graph/relation-candidate-endpoints.js";
 import { assertNonNullable } from "../../util/index.js";
+import { scopedVerifiedExternalReferences } from "./scoped-verified-external-references.js";
 
 type CodexWaitingOnCandidate = Readonly<{ id: string }>;
 
@@ -825,6 +826,19 @@ export function createCodexInput(
       addCodexSourceRecordsForContext(sourceRecords, sourceOccurredAtById, sourceContext);
     }
   }
+  const lockedElements = projectCodexLockedElements(preservedElements);
+  const itemVerifiedExternalReferences = scopedVerifiedExternalReferences(
+    verifiedExternalReferences,
+    [
+      analysis.item.title,
+      [...sourceRecords.values()],
+      relationCandidates.map((candidate) => relationNodes(candidate.relation)),
+      analysis.effectiveAssigneeCandidates.map(({ sourceContexts }) =>
+        sourceContexts.map(({ item }) => item.url),
+      ),
+      lockedElements,
+    ],
+  );
   return createCodexAnalysisInput({
     schemaVersion: "5",
     now: evaluatedAt,
@@ -854,7 +868,7 @@ export function createCodexInput(
         owner: repository.owner,
         name: repository.name,
       })),
-      verifiedExternalReferences,
+      verifiedExternalReferences: itemVerifiedExternalReferences,
       status: analysis.decision.status,
       waitingOn: analysis.decision.waitingOn,
       relationCandidateIds: relationCandidates.map((candidate) => candidate.id),
@@ -911,6 +925,6 @@ export function createCodexInput(
       effectiveAssigneeConfidenceThreshold: configuration.config.ai.confidence.high,
     },
     selectedElements,
-    lockedElements: projectCodexLockedElements(preservedElements),
+    lockedElements,
   });
 }
