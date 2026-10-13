@@ -210,6 +210,7 @@ export function createGitHubReadPort(
           targets,
           observedAt,
           graphql: client.graphql,
+          request: client.request,
         })
       ).items;
       const targetsByNodeId = new Map(targets.map((target) => [target.item.nodeId, target.item]));

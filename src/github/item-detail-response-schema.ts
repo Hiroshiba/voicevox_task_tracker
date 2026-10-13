@@ -393,6 +393,7 @@ export const basePullRequestSchema = z.object({
   id: opaqueIdSchema,
   body: z.string(),
   closingIssuesReferences: referencedItemConnectionSchema,
+  baseRefOid: shaSchema,
   headRefOid: shaSchema,
   headRef: headRefSchema,
   mergeable: z.enum(["CONFLICTING", "MERGEABLE", "UNKNOWN"]),
@@ -435,6 +436,7 @@ export const pullRequestCommitPageResponseSchema = z.object({
     .object({
       __typename: z.literal("PullRequest"),
       id: opaqueIdSchema,
+      baseRefOid: shaSchema,
       headRefOid: shaSchema,
       commits: pullRequestCommitConnectionSchema,
     })
@@ -445,8 +447,23 @@ export const pullRequestCommitStabilityResponseSchema = z.object({
     .object({
       __typename: z.literal("PullRequest"),
       id: opaqueIdSchema,
+      baseRefOid: shaSchema,
       headRefOid: shaSchema,
       commits: z.object({ totalCount: z.number().int().nonnegative() }),
+    })
+    .nullable(),
+});
+export const pullRequestMissingCommitResponseSchema = z.object({
+  item: z
+    .object({
+      __typename: z.literal("PullRequest"),
+      id: opaqueIdSchema,
+      baseRefOid: shaSchema,
+      headRefOid: shaSchema,
+      commits: z.object({ totalCount: z.number().int().nonnegative() }),
+      repository: z.object({
+        object: commitSchema.extend({ __typename: z.literal("Commit") }).nullable(),
+      }),
     })
     .nullable(),
 });

@@ -137,6 +137,7 @@ export function createItemDetailQuery(capabilities: GitHubItemDetailCapabilities
               endCursor
             }
           }
+          baseRefOid
           headRefOid
           headRef {
             target {

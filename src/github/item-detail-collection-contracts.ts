@@ -1,4 +1,5 @@
 import { type UtcIsoDateTime } from "../domain/index.js";
+import type { GitHubRestRequest } from "./client.js";
 import type { Graphql } from "./item-detail-response-schema.js";
 import { type EnumeratedGitHubItem } from "./item-enumeration.js";
 import { type PublicRepositoryAllowlist } from "./public-repository-allowlist.js";
@@ -13,4 +14,5 @@ export type CollectGitHubItemDetailsOptions = Readonly<{
   targets: readonly GitHubItemDetailTarget[];
   observedAt: UtcIsoDateTime;
   graphql: Graphql;
+  request: GitHubRestRequest;
 }>;

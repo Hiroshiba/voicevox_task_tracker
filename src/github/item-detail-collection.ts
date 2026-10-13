@@ -83,14 +83,17 @@ async function collectIssueDetail(
 
 async function collectPullRequestDetail(
   item: EnumeratedGitHubItem,
+  repository: PublicRepository,
   pullRequest: z.output<typeof basePullRequestSchema>,
   options: CollectGitHubItemDetailsOptions,
 ): Promise<GitHubItemDetail> {
   const headCommit = await resolvePullRequestHeadCommit(item.nodeId, pullRequest, options.graphql);
   const commitMembership = await collectPullRequestCommitMembership(
     item,
+    repository,
     pullRequest,
     options.graphql,
+    options.request,
   );
   const commentNodes = await collectCommentNodes(item, pullRequest.comments, options.graphql);
   const reviewNodes = await collectReviewNodes(item, pullRequest.reviews, options.graphql);
@@ -266,7 +269,7 @@ async function collectItemDetail(
   const detail =
     responseItem.__typename === "Issue"
       ? await collectIssueDetail(item, responseItem, capabilities, options)
-      : await collectPullRequestDetail(item, responseItem, options);
+      : await collectPullRequestDetail(item, repository, responseItem, options);
   warnUnavailableEvidence(item, repository, detail);
   return detail;
 }

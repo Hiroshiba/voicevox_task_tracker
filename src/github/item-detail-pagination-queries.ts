@@ -28,6 +28,7 @@ export const PULL_REQUEST_COMMIT_PAGE_QUERY = `
       __typename
       ... on PullRequest {
         id
+        baseRefOid
         headRefOid
         commits(first: 100, after: $after) {
           totalCount
@@ -55,9 +56,37 @@ export const PULL_REQUEST_COMMIT_STABILITY_QUERY = `
       __typename
       ... on PullRequest {
         id
+        baseRefOid
         headRefOid
         commits(first: 1) {
           totalCount
+        }
+      }
+    }
+  }
+`;
+
+export const PULL_REQUEST_MISSING_COMMIT_QUERY = `
+  query GitHubPullRequestMissingCommit($itemId: ID!, $commitOid: GitObjectID!) {
+    item: node(id: $itemId) {
+      __typename
+      ... on PullRequest {
+        id
+        baseRefOid
+        headRefOid
+        commits(first: 1) {
+          totalCount
+        }
+        repository {
+          object(oid: $commitOid) {
+            __typename
+            ... on Commit {
+              id
+              oid
+              committedDate
+              pushedDate
+            }
+          }
         }
       }
     }
