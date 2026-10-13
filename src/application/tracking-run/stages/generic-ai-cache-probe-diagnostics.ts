@@ -1,25 +1,11 @@
 import { z } from "zod";
 
+import { genericAiExactInputCategorySchema } from "../../../codex/generic-ai-definition.js";
 import type { GenericAiCacheProbeSource } from "./generic-ai-cache-plan.js";
 
 const countSchema = z.number().int().nonnegative();
 
-/** 汎用AIの厳密入力を分ける固定top-levelカテゴリ。 */
-export const genericAiExactInputCategorySchema = z.enum([
-  "inputProjectionVersion",
-  "publicRepositoryAllowlist",
-  "verifiedExternalReferences",
-  "selectedElements",
-  "lockedElements",
-  "item",
-  "candidates",
-  "sources",
-  "deterministicSignals",
-  "humanProgressSourceIds",
-]);
-
-/** 値を含めず厳密入力の差を示すカテゴリ。 */
-export type GenericAiExactInputCategory = z.output<typeof genericAiExactInputCategorySchema>;
+export type { GenericAiExactInputCategory } from "../../../codex/generic-ai-definition.js";
 
 const nodeRejectionReasonSchema = z.enum([
   "node_missing",
@@ -89,18 +75,13 @@ export function createCacheProbeRejectionCounters(
       cache_stale: 0,
       cache_key_mismatch: 0,
     },
-    exactInputMismatchCategories: {
-      inputProjectionVersion: 0,
-      publicRepositoryAllowlist: 0,
-      verifiedExternalReferences: 0,
-      selectedElements: 0,
-      lockedElements: 0,
-      item: 0,
-      candidates: 0,
-      sources: 0,
-      deterministicSignals: 0,
-      humanProgressSourceIds: 0,
-    },
+    exactInputMismatchCategories: z
+      .record(genericAiExactInputCategorySchema, countSchema)
+      .parse(
+        Object.fromEntries(
+          genericAiExactInputCategorySchema.options.map((category) => [category, 0]),
+        ),
+      ),
   };
 }
 

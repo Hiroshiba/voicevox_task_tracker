@@ -8,6 +8,29 @@ import {
 } from "../domain/ai-analysis-elements.js";
 import type { CodexAnalysisInput } from "./input.js";
 
+/** 汎用AIの厳密入力を分ける固定top-levelカテゴリ。 */
+export const genericAiExactInputCategorySchema = z.enum([
+  "inputProjectionVersion",
+  "publicRepositoryAllowlist",
+  "verifiedExternalReferences",
+  "verifiedExternalRepositoryUrls",
+  "selectedElements",
+  "lockedElements",
+  "item",
+  "candidates",
+  "sources",
+  "deterministicSignals",
+  "humanProgressSourceIds",
+]);
+
+/** 値を含めず厳密入力の差を示すカテゴリ。 */
+export type GenericAiExactInputCategory = z.output<typeof genericAiExactInputCategorySchema>;
+
+/** 厳密入力の全top-level keyがカテゴリに含まれることを確かめる。 */
+export function assertGenericAiExactInputCategories(exactInput: object): void {
+  genericAiExactInputCategorySchema.array().parse(Object.keys(exactInput));
+}
+
 type StateNecessityInput = Readonly<{
   deterministic: boolean;
   unresolvedRequest: boolean;

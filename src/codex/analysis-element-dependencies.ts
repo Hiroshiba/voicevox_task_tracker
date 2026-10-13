@@ -14,6 +14,8 @@ import { type AnalysisElementReuseRecord } from "./analysis-elements.js";
 import {
   AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS,
   AI_ANALYSIS_ELEMENT_REVISIONS,
+  GENERIC_AI_ELEMENT_DEFINITIONS,
+  assertGenericAiExactInputCategories,
 } from "./generic-ai-definition.js";
 import {
   assessAnalysisImpact,
@@ -24,7 +26,6 @@ import {
   type AnalysisImpactValue,
   type AnalysisImpactVersion,
 } from "./analysis-impact.js";
-import { GENERIC_AI_ELEMENT_DEFINITIONS } from "./generic-ai-definition.js";
 import { type CodexAnalysisInput } from "./input.js";
 
 function hashCanonicalJson(value: unknown): AiAnalysisElementInputFingerprint {
@@ -290,6 +291,7 @@ export function createAnalysisElementExactInput(
   element: AiAnalysisElement,
 ): Readonly<{ exactInput: object; fingerprint: AiAnalysisElementInputFingerprint }> {
   const exactInput = GENERIC_AI_ELEMENT_DEFINITIONS[element].exactInput(input);
+  assertGenericAiExactInputCategories(exactInput);
   return Object.freeze({ exactInput, fingerprint: hashCanonicalJson(exactInput) });
 }
 

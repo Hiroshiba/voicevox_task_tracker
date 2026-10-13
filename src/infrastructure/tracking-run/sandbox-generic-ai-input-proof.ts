@@ -8,13 +8,14 @@ import type {
   GenericAiCacheProbe,
   GenericAiCacheProbeSource,
 } from "../../application/tracking-run/stages/generic-ai-cache-plan.js";
-import {
-  genericAiExactInputCategorySchema,
-  type GenericAiExactInputCategory,
-} from "../../application/tracking-run/stages/generic-ai-cache-probe-diagnostics.js";
 import type { GenericAiExecutedRun } from "../../application/tracking-run/stages/generic-ai-execution.js";
 import { hashCanonicalJson, serializeCanonicalJson } from "../../canonical-json/index.js";
 import { createAnalysisElementExactInput } from "../../codex/analysis-element-dependencies.js";
+import {
+  assertGenericAiExactInputCategories,
+  genericAiExactInputCategorySchema,
+  type GenericAiExactInputCategory,
+} from "../../codex/generic-ai-definition.js";
 import type { CodexAnalysisInput } from "../../codex/input.js";
 import { AI_ANALYSIS_ELEMENTS } from "../../domain/ai-analysis-elements.js";
 import { assertNonNullable } from "../../util/assert-non-nullable.js";
@@ -42,7 +43,7 @@ export const sandboxGenericAiInputBindingSchema = z.strictObject({
 const categoryDigestsSchema = z.record(genericAiExactInputCategorySchema, digestSchema);
 const proofSchema = z
   .strictObject({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     kind: z.literal("generic_ai_execution_input_categories"),
     binding: sandboxGenericAiInputBindingSchema,
     records: z
@@ -82,7 +83,7 @@ export function createSandboxGenericAiInputBinding(
 
 function inputCategoryDigests(exactInput: object): z.output<typeof categoryDigestsSchema> {
   const input = z.record(z.string(), z.unknown()).parse(exactInput);
-  genericAiExactInputCategorySchema.array().parse(Object.keys(input));
+  assertGenericAiExactInputCategories(input);
   return categoryDigestsSchema.parse(
     Object.fromEntries(
       genericAiExactInputCategorySchema.options.map((category) => [
@@ -177,7 +178,7 @@ export function createSandboxGenericAiInputProof(
     }
   }
   return proofSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "generic_ai_execution_input_categories",
     binding: createSandboxGenericAiInputBinding(context, executed.core.identity),
     records,
