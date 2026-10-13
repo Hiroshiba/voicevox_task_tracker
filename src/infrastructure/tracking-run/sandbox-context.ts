@@ -6,11 +6,6 @@ import {
   type AiAnalysisTarget,
 } from "../../codex/index.js";
 import type { SandboxEnvironmentManifest } from "../../persistence/sandbox-environment-manifest.js";
-import {
-  AI_ANALYSIS_ELEMENTS,
-  aiAnalysisElementSchema,
-} from "../../domain/ai-analysis-elements.js";
-import type { GenericAiCacheProbe } from "../../application/tracking-run/stages/generic-ai-cache-plan.js";
 
 export const SANDBOX_BRANCH_PREFIX = "sandbox-state/" as const;
 export const SANDBOX_SOURCE_REPOSITORY = "Hiroshiba/voicevox_task_tracker" as const;
@@ -29,31 +24,11 @@ const sourceRefSchema = z
 const workflowRunIdSchema = z.string().regex(WORKFLOW_RUN_ID_PATTERN, "workflow run IDが不正です");
 const workflowRunAttemptSchema = z.number().int().positive();
 const hashSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
-const cacheProbeSchema = z
-  .strictObject({
-    nodeId: z.string().min(1).regex(/^\S+$/u),
-    elements: z
-      .array(
-        z.strictObject({
-          element: aiAnalysisElementSchema,
-          inputFingerprint: hashSchema,
-          cacheKey: hashSchema,
-          generationDigest: hashSchema,
-        }),
-      )
-      .min(1),
-  })
-  .superRefine((probe, context) => {
-    const order = AI_ANALYSIS_ELEMENTS.filter((element) =>
-      probe.elements.some((entry) => entry.element === element),
-    );
-    if (
-      order.length !== probe.elements.length ||
-      probe.elements.some((entry, index) => entry.element !== order[index])
-    ) {
-      context.addIssue({ code: "custom", message: "cache probeの対象が不正です" });
-    }
-  });
+const cacheProbeSchema = z.strictObject({
+  firstFinalStateRevision: gitRevisionSchema,
+  firstTrackingRunId: z.string().regex(/^tracker-run:[0-9a-f]{64}$/u),
+  candidateDigest: hashSchema,
+});
 const analysisModeSchema = z.discriminatedUnion("kind", [
   z.strictObject({
     kind: z.literal("normal"),
@@ -91,7 +66,7 @@ type SandboxAnalysisMode =
     }>
   | Readonly<{
       kind: "cache_probe";
-      probe: GenericAiCacheProbe;
+      probe: z.output<typeof cacheProbeSchema>;
     }>;
 
 export type SandboxRunContext = Readonly<{

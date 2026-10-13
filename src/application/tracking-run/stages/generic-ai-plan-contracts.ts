@@ -14,7 +14,7 @@ import type {
 import type { StageState } from "../contracts/run-core.js";
 import type { FinalSnapshotPlanProjection } from "../contracts/final-snapshot.js";
 import type { DeterministicallyAnalyzedRun } from "./deterministic.js";
-import type { GenericAiElementPlan } from "./generic-ai-cache-plan.js";
+import type { GenericAiCacheProbe, GenericAiElementPlan } from "./generic-ai-cache-plan.js";
 import type { GenericAiBudgetPlan } from "./generic-ai-budget-plan.js";
 
 /** 1項目の全要素と実行用候補を保持する。 */
@@ -45,6 +45,7 @@ export type GenericAiPlan = Readonly<{
   aiEnabled: boolean;
   minimumConfidence: number;
   target?: AiAnalysisTarget;
+  cacheProbe?: GenericAiCacheProbe;
   items: readonly GenericAiItemPlan[];
   budget: GenericAiBudgetPlan;
   failures: readonly GenericAiInputFailurePlan[];

@@ -33,6 +33,12 @@ export type GenericAiCacheProbe = Readonly<{
   }>[];
 }>;
 
+/** firstの実file cache候補とその集合digest。 */
+export type GenericAiCacheProbeSource = Readonly<{
+  candidateDigest: string;
+  candidates: readonly GenericAiCacheProbe[];
+}>;
+
 /** 要素cacheの副作用境界。 */
 export type GenericAiCacheLookupPort = (
   identity: AiAnalysisRunIdentity,

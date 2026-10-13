@@ -13,29 +13,10 @@ const priorNotificationScenarioSchema = z.strictObject({
 });
 
 const hashSchema = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
-const analysisElementSchema = z.enum([
-  "status",
-  "waitingOn",
-  "nextAction",
-  "relations",
-  "progress",
-  "importance",
-  "deadline",
-  "notification",
-  "selfCommitment",
-]);
 const cacheProbeSchema = z.strictObject({
-  nodeId: z.string().min(1).regex(/^\S+$/u),
-  elements: z
-    .array(
-      z.strictObject({
-        element: analysisElementSchema,
-        inputFingerprint: hashSchema,
-        cacheKey: hashSchema,
-        generationDigest: hashSchema,
-      }),
-    )
-    .min(1),
+  firstFinalStateRevision: z.string().regex(/^[0-9a-f]{40}$/u),
+  firstTrackingRunId: z.string().regex(/^tracker-run:[0-9a-f]{64}$/u),
+  candidateDigest: hashSchema,
 });
 
 const recordingControlSchema = z
@@ -80,7 +61,20 @@ const recordingControlSchema = z
   })
   .refine((control) => control.outcome !== "recorded_success" || control.messageIndex === 0, {
     message: "recorded_successのmessageIndexは0にしてください",
-  });
+  })
+  .refine(
+    (control) => {
+      const second = control.continuity;
+      return (
+        second?.phase !== "second" ||
+        (second.firstFinalStateRevision === second.cacheProbe.firstFinalStateRevision &&
+          second.firstTrackingRunId === second.cacheProbe.firstTrackingRunId)
+      );
+    },
+    {
+      message: "cache probeのfirst参照がcontinuity入力と一致しません",
+    },
+  );
 
 const rawControl = process.env["SANDBOX_RECORDING_CONTROL"];
 if (rawControl == null) {

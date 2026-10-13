@@ -10,6 +10,7 @@ import {
 import { parseSandboxReusePlanProof } from "../../dist/infrastructure/tracking-run/sandbox-reuse-plan-proof.js";
 import { readVerifiedFirstResult, resultSchema, sha256 } from "./sandbox-continuity-result.mjs";
 import { plannedSnapshotReuseWitness, verifyCacheProbeAdoption } from "./sandbox-reuse-witness.mjs";
+import { firstFileCacheProbeSource } from "./sandbox-cache-probe-source.mjs";
 import {
   readSandboxCheckpointEvidence,
   unavailableLegacyStageCoverage,
@@ -102,7 +103,7 @@ function stateCommits(receipts) {
   });
 }
 
-function createCoverage() {
+async function createCoverage() {
   const context = readJson(required("SANDBOX_CONTEXT_PATH"));
   const chainBytes = readFileSync(required("SANDBOX_RECEIPT_CHAIN_PATH"));
   const chain = readJson(required("SANDBOX_RECEIPT_CHAIN_PATH"));
@@ -222,6 +223,7 @@ function createCoverage() {
   let snapshotReuses = [];
   let snapshotReuseWitness = null;
   let reusePlanProofDigest = null;
+  let selectedCacheProbe = null;
   if (continuityPhase !== "first" && continuityPhase !== "second") {
     throw new TypeError("coverageにはcontinuity phaseが必要です");
   }
@@ -245,7 +247,19 @@ function createCoverage() {
       throw new TypeError("second baseにはfirst ready revisionが必要です");
     }
     assertEqual(firstSnapshot.run.id, first.trackingRunId, "first snapshot run ID");
-    const probe = context.analysisMode.probe;
+    const reference = context.analysisMode.probe;
+    assertEqual(
+      reference.firstFinalStateRevision,
+      first.finalStateRevision,
+      "cache probeのF1 revision",
+    );
+    assertEqual(reference.firstTrackingRunId, first.trackingRunId, "cache probeのfirst run ID");
+    const source = await firstFileCacheProbeSource(
+      required("SANDBOX_STATE_REPOSITORY_PATH"),
+      first.finalStateRevision,
+      first.trackingRunId,
+    );
+    assertEqual(source.candidateDigest, reference.candidateDigest, "F1の実file cache候補集合");
     const reusePlanProofPath = required("SANDBOX_REUSE_PLAN_PATH");
     const reusePlanProof = parseSandboxReusePlanProof(readJson(reusePlanProofPath));
     assertEqual(
@@ -262,7 +276,25 @@ function createCoverage() {
     assertEqual(reusePlanProof.invocationId, analysis.invocationId, "再利用計画のinvocation ID");
     assertEqual(reusePlanProof.codeRevision, context.codeRevision, "再利用計画のcode revision");
     assertEqual(reusePlanProof.baseStateRevision, baseStateRevision, "再利用計画のbase revision");
-    assertEqual(reusePlanProof.cacheProbeNodeId, probe.nodeId, "再利用計画のcache probe node");
+    assertEqual(
+      reusePlanProof.cacheProbeSourceDigest,
+      reference.candidateDigest,
+      "再利用計画のcache probe候補集合",
+    );
+    const probe = reusePlanProof.cacheProbe;
+    const firstCandidate = source.candidates.find((candidate) => candidate.nodeId === probe.nodeId);
+    if (
+      firstCandidate == null ||
+      probe.elements.some(
+        (element) =>
+          !firstCandidate.elements.some(
+            (candidate) => canonicalJson(candidate) === canonicalJson(element),
+          ),
+      )
+    ) {
+      throw new TypeError("再利用計画のcache probeがF1の実file cache候補にありません");
+    }
+    selectedCacheProbe = probe;
     reusePlanProofDigest = sha256(readFileSync(reusePlanProofPath));
     ({ snapshotReuses, snapshotReuseWitness } = plannedSnapshotReuseWitness(
       firstSnapshot.items,
@@ -438,8 +470,7 @@ function createCoverage() {
             snapshotReuses,
             snapshotReuseWitness,
             reusePlanProofDigest,
-            cacheProbe:
-              context.analysisMode.kind === "cache_probe" ? context.analysisMode.probe : null,
+            cacheProbe: selectedCacheProbe,
             remoteBaseReloaded: true,
           },
     productionAdapters: { pagesDeployExecuted: false, discordSendExecuted: false },
@@ -480,7 +511,7 @@ function createCoverage() {
 if (process.argv[2] === "verify-first") {
   readVerifiedFirstResult();
 } else if (process.argv[2] === "report") {
-  createCoverage();
+  await createCoverage();
 } else {
   throw new TypeError("sandbox coverage commandが不正です");
 }

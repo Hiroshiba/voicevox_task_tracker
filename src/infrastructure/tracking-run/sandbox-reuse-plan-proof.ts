@@ -4,20 +4,33 @@ import { dirname } from "node:path";
 import { z } from "zod";
 
 import type { GenericAiPlannedRun } from "../../application/tracking-run/stages/generic-ai-plan-contracts.js";
-import { serializeCanonicalJson } from "../../canonical-json/value.js";
+import { hashCanonicalJson, serializeCanonicalJson } from "../../canonical-json/index.js";
 import { aiAnalysisElementSchema } from "../../domain/ai-analysis-elements.js";
 import type { SandboxRunContext } from "./sandbox-context.js";
 
 const planProofSchema = z
   .strictObject({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(2),
     actionsRunId: z.string().regex(/^[1-9][0-9]*$/u),
     actionsRunAttempt: z.number().int().positive(),
     runId: z.string().regex(/^tracker-run:[0-9a-f]{64}$/u),
     invocationId: z.uuid(),
     codeRevision: z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u),
     baseStateRevision: z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/u),
-    cacheProbeNodeId: z.string().min(1).regex(/^\S+$/u),
+    cacheProbeSourceDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+    cacheProbe: z.strictObject({
+      nodeId: z.string().min(1).regex(/^\S+$/u),
+      elements: z
+        .array(
+          z.strictObject({
+            element: aiAnalysisElementSchema,
+            inputFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+            cacheKey: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+            generationDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
+          }),
+        )
+        .min(1),
+    }),
     choices: z.array(
       z.strictObject({
         nodeId: z.string().min(1).regex(/^\S+$/u),
@@ -42,15 +55,33 @@ export function createSandboxReusePlanProof(
   if (context.analysisMode.kind !== "cache_probe") {
     throw new TypeError("snapshot再利用証拠にはcache probeが必要です");
   }
+  const probe = planned.data.plan.cacheProbe;
+  const item = planned.data.plan.items.find((entry) => entry.nodeId === probe?.nodeId);
+  if (
+    probe == null ||
+    item == null ||
+    probe.elements.some((expected) => {
+      const actual = item.elements.find((element) => element.element === expected.element);
+      return (
+        actual?.choice !== "cache_hit" ||
+        actual.inputFingerprint !== expected.inputFingerprint ||
+        actual.entry.cacheKey !== expected.cacheKey ||
+        hashCanonicalJson(actual.entry.generation) !== expected.generationDigest
+      );
+    })
+  ) {
+    throw new TypeError("snapshot再利用証拠のcache probeが実計画と一致しません");
+  }
   return planProofSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     actionsRunId: context.workflowRunId,
     actionsRunAttempt: context.workflowRunAttempt,
     runId: planned.core.identity.runId,
     invocationId: planned.core.identity.invocationId,
     codeRevision: context.codeRevision,
     baseStateRevision: context.baseStateRevision,
-    cacheProbeNodeId: context.analysisMode.probe.nodeId,
+    cacheProbeSourceDigest: context.analysisMode.probe.candidateDigest,
+    cacheProbe: probe,
     choices: planned.data.plan.items.flatMap((item) =>
       item.elements.flatMap((element) =>
         element.choice === "snapshot_reuse"

@@ -759,6 +759,7 @@ jobs:
           SANDBOX_FIRST_TRACKING_RUN_ID: ${{ needs.prepare.outputs.first_tracking_run_id }}
           SANDBOX_FIRST_FINAL_REVISION: ${{ needs.prepare.outputs.first_final_state_revision }}
           SANDBOX_FIRST_CODE_REVISION: ${{ needs.prepare.outputs.first_code_revision }}
+          SANDBOX_STATE_REPOSITORY_PATH: ${{ runner.temp }}/sandbox-state
           SANDBOX_FIRST_RESULT_PATH: ${{ runner.temp }}/first-result/sandbox-result.json
           SANDBOX_FIRST_COVERAGE_PATH: ${{ runner.temp }}/first-coverage/sandbox-coverage.json
           SANDBOX_FIRST_SNAPSHOT_PATH: ${{ runner.temp }}/first-snapshot.json

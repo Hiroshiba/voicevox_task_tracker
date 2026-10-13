@@ -63,6 +63,7 @@ import type { DeterministicItemAnalysis } from "./deterministic-item.js";
 import {
   planGenericAiCachedElements,
   type GenericAiCacheProbe,
+  type GenericAiCacheProbeSource,
   type GenericAiCacheLookupPort,
 } from "./generic-ai-cache-plan.js";
 import type { GenericAiBudgetPlan } from "./generic-ai-budget-plan.js";
@@ -98,7 +99,7 @@ export type GenericAiPlanningPort = Readonly<{
   lookupCache: GenericAiCacheLookupPort;
   reserveBudget: (candidates: readonly PreparedAiAnalysisCandidate[]) => GenericAiBudgetPlan;
   target: AiAnalysisTarget | undefined;
-  cacheProbe: GenericAiCacheProbe | undefined;
+  cacheProbe: GenericAiCacheProbeSource | undefined;
   prepareItem: (
     run: DeterministicallyAnalyzedRun,
     analysis: DeterministicItemAnalysis,
@@ -176,6 +177,110 @@ function targetWithRequiredStateCompanion(
   });
 }
 
+async function matchingCacheProbeForItem(
+  analyzed: DeterministicallyAnalyzedRun,
+  analysis: DeterministicItemAnalysis,
+  source: GenericAiPlanningItemSource,
+  candidateInput: CodexAnalysisInput,
+  candidateExactInputs: ReturnType<typeof createAnalysisElementExactInputs>,
+  preliminaryPlanning: AnalysisElementPlanning,
+  candidates: GenericAiCacheProbe["elements"],
+  identity: AiAnalysisRunIdentity,
+  executionFingerprints: Readonly<Record<AiAnalysisElement, AiAnalysisElementInputFingerprint>>,
+  port: GenericAiPlanningPort,
+): Promise<GenericAiCacheProbe | undefined> {
+  const nodeId = analysis.item.nodeId;
+  for (const candidate of candidates) {
+    if (preliminaryPlanning.necessities[candidate.element] !== "required") {
+      continue;
+    }
+    if (candidate.element === "status" || candidate.element === "waitingOn") {
+      const counterpart = candidate.element === "status" ? "waitingOn" : "status";
+      if (
+        candidateInput.lockedElements[counterpart] == null &&
+        verifiedPlannedElementResult(preliminaryPlanning, counterpart) == null &&
+        (preliminaryPlanning.necessities[counterpart] !== "required" ||
+          !candidates.some((entry) => entry.element === counterpart))
+      ) {
+        continue;
+      }
+    }
+    const requestedTarget: AiAnalysisTarget = Object.freeze({
+      nodeId,
+      elements: Object.freeze([candidate.element]),
+    });
+    const executionTarget = targetWithRequiredStateCompanion(
+      requestedTarget,
+      candidateInput,
+      preliminaryPlanning,
+    );
+    const expected = executionTarget.elements.map((element) =>
+      candidates.find((entry) => entry.element === element),
+    );
+    if (
+      expected.some((entry) => entry == null) ||
+      executionTarget.elements.some(
+        (element) => preliminaryPlanning.necessities[element] !== "required",
+      )
+    ) {
+      continue;
+    }
+    const preliminaryExecutionPlanning = Object.freeze({
+      ...preliminaryPlanning,
+      selection: forceAnalysisElementSelection(preliminaryPlanning, executionTarget),
+    });
+    const input = port.createTransportInput(
+      analyzed,
+      analysis,
+      source,
+      preliminaryExecutionPlanning,
+      executionTarget,
+    );
+    const exactInputs = withExecutedAnalysisElementExactInputs(candidateExactInputs, input);
+    const inputFingerprints = elementInputFingerprints(exactInputs);
+    const previous = port.resolvePrevious(analysis, source, input, inputFingerprints);
+    const planning = planAnalysisElements({
+      necessities: determineAnalysisElementNecessities(source.necessityInput),
+      inputFingerprints,
+      executionFingerprints,
+      inputProjectionVersions: AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS,
+      dependencyFingerprints: source.dependencyFingerprints,
+      savedGenerations: previous.generations,
+      savedEvaluations: previous.evaluations,
+      savedReuses: previous.reuses,
+    });
+    let matched = true;
+    for (const entry of expected) {
+      if (entry == null) {
+        matched = false;
+        break;
+      }
+      if (exactInputs[entry.element].fingerprint !== entry.inputFingerprint) {
+        matched = false;
+        break;
+      }
+      const cached = await port.lookupCache(identity, planning, entry.element, nodeId);
+      if (cached.status !== "hit" || cached.entry.cacheKey !== entry.cacheKey) {
+        matched = false;
+        break;
+      }
+      if (
+        port.digest.sha256Utf8(serializeCanonicalJson(cached.entry.generation)) !==
+        entry.generationDigest
+      ) {
+        throw new TypeError("cache probeの実file cache生成値がfirstと一致しません");
+      }
+    }
+    if (matched) {
+      return Object.freeze({
+        nodeId,
+        elements: Object.freeze(expected.filter((entry) => entry != null)),
+      });
+    }
+  }
+  return undefined;
+}
+
 /** 確定済み判定から全9要素の汎用AI計画を作る。 */
 export async function planGenericAi(
   analyzed: DeterministicallyAnalyzedRun,
@@ -200,6 +305,7 @@ export async function planGenericAi(
     throw new TypeError("cache probeにはAIを有効にしてください");
   }
   const items: GenericAiItemPlan[] = [];
+  let selectedCacheProbe: GenericAiCacheProbe | undefined;
   const failures: GenericAiPlan["failures"][number][] = [];
   const analysisImpactDecisions: GenericAiPlan["analysisImpactDecisions"][number][] = [];
   const itemIds = new Set<string>();
@@ -250,7 +356,25 @@ export async function planGenericAi(
       savedReuses: candidatePrevious.reuses,
     });
     const targetForItem = target?.nodeId === nodeId ? target : undefined;
-    const probeForItem = cacheProbe?.nodeId === nodeId ? cacheProbe : undefined;
+    const probeCandidates = cacheProbe?.candidates.find((candidate) => candidate.nodeId === nodeId);
+    const probeForItem =
+      selectedCacheProbe == null && probeCandidates != null
+        ? await matchingCacheProbeForItem(
+            analyzed,
+            analysis,
+            source,
+            candidateInput,
+            candidateExactInputs,
+            preliminaryPlanning,
+            probeCandidates.elements,
+            identity,
+            currentExecutionFingerprints,
+            port,
+          )
+        : undefined;
+    if (probeForItem != null) {
+      selectedCacheProbe = probeForItem;
+    }
     const requestedTarget =
       targetForItem ??
       (probeForItem == null
@@ -267,7 +391,7 @@ export async function planGenericAi(
       throw new TypeError("cache probeの状態要素選択がfirstと一致しません");
     }
     const preliminaryExecutionPlanning =
-      target == null && probeForItem == null
+      target == null && cacheProbe == null
         ? preliminaryPlanning
         : executionTarget != null
           ? Object.freeze({
@@ -306,7 +430,7 @@ export async function planGenericAi(
       savedReuses: previous.reuses,
     });
     const executionPlanning =
-      target == null && probeForItem == null
+      target == null && cacheProbe == null
         ? planning
         : executionTarget != null
           ? Object.freeze({
@@ -439,8 +563,8 @@ export async function planGenericAi(
       }),
     );
   }
-  if (cacheProbe != null && !items.some((item) => item.nodeId === cacheProbe.nodeId)) {
-    throw new TypeError("cache probeの対象nodeを今回のAI計画で確認できません");
+  if (cacheProbe != null && selectedCacheProbe == null) {
+    throw new TypeError("secondの実入力に適格なcache probeがありません");
   }
   const budget = port.reserveBudget(
     items.flatMap((item) => (item.executionCandidate == null ? [] : [item.executionCandidate])),
@@ -476,6 +600,7 @@ export async function planGenericAi(
     aiEnabled: analyzed.core.config.ai.enabled,
     minimumConfidence: analyzed.core.config.ai.confidence.medium,
     ...(target == null ? {} : { target }),
+    ...(selectedCacheProbe == null ? {} : { cacheProbe: selectedCacheProbe }),
     items: budgetedItems,
     budget,
     failures: Object.freeze(failures),

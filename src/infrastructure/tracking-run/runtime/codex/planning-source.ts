@@ -4,6 +4,7 @@ import type {
   GenericAiPlanningItemSource,
   GenericAiPlanningPort,
 } from "../../../../application/tracking-run/stages/generic-ai-plan.js";
+import type { GenericAiCacheProbeSource } from "../../../../application/tracking-run/stages/generic-ai-cache-plan.js";
 import { type AnalysisElementInputFingerprintMap } from "../../../../codex/analysis-element-dependencies.js";
 import { estimateAiInputCost } from "../../../../codex/budget.js";
 import {
@@ -28,6 +29,7 @@ import type { AnalyzeGraphResult } from "../../../../graph/index.js";
 import { relationNodes } from "../../../../graph/relation-candidate-endpoints.js";
 import { createCodexInput } from "../../codex-input-projection.js";
 import { nodeContentDigestPort } from "../../content-digest.js";
+import { readFirstFileCacheProbeSource } from "../../sandbox-cache-probe-source.js";
 import { forcedAiAnalysisTarget } from "../ai-analysis-target.js";
 import { elementDependencyFingerprints } from "../analysis-identity.js";
 import type { RuntimeConfiguration, RuntimeState } from "../contracts.js";
@@ -103,6 +105,7 @@ export function createGenericAiPlanningPort(
   configuration: RuntimeConfiguration,
   state: RuntimeState,
   diagnostics: CodexDiagnosticsContext | undefined,
+  cacheProbeSource: GenericAiCacheProbeSource | undefined,
 ): GenericAiPlanningPort {
   const previousGraph = previousGraphIndex(state);
   const previousImpactByNodeId =
@@ -139,11 +142,7 @@ export function createGenericAiPlanningPort(
         preflightCharge,
       ),
     target: forcedAiAnalysisTarget(configuration),
-    cacheProbe:
-      configuration.target.kind === "sandbox" &&
-      configuration.target.context.analysisMode.kind === "cache_probe"
-        ? configuration.target.context.analysisMode.probe
-        : undefined,
+    cacheProbe: cacheProbeSource,
     prepareItem: (
       run: DeterministicallyAnalyzedRun,
       analysis: DeterministicItemAnalysis,
@@ -255,4 +254,32 @@ export function createGenericAiPlanningPort(
       );
     },
   });
+}
+
+/** secondの再読込stateとfile cacheからfirst候補を再構築する。 */
+export async function readSandboxCacheProbeSource(
+  configuration: RuntimeConfiguration,
+  state: RuntimeState,
+): Promise<GenericAiCacheProbeSource | undefined> {
+  if (
+    configuration.target.kind !== "sandbox" ||
+    configuration.target.context.analysisMode.kind !== "cache_probe"
+  ) {
+    return undefined;
+  }
+  if (state.rawSnapshot.status !== "available") {
+    throw new TypeError("cache probeのfirst snapshotがありません");
+  }
+  const reference = configuration.target.context.analysisMode.probe;
+  if (state.rawSnapshot.snapshot.run.id !== reference.firstTrackingRunId) {
+    throw new TypeError("cache probeのfirst tracking run IDが再読込stateと一致しません");
+  }
+  const source = await readFirstFileCacheProbeSource(
+    state.rawSnapshot.snapshot,
+    state.session.aiCache,
+  );
+  if (source.candidateDigest !== reference.candidateDigest) {
+    throw new TypeError("cache probeのfirst候補集合が再読込stateと一致しません");
+  }
+  return source;
 }

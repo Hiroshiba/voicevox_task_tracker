@@ -2,7 +2,7 @@ import { planGenericAi } from "../../../../application/tracking-run/stages/gener
 import { join } from "node:path";
 import type { CodexRuntimeAdapters } from "../adapters.js";
 import type { AnalysisRuntimeContext, AnalysisStages } from "../analysis-contracts.js";
-import { createGenericAiPlanningPort } from "./planning-source.js";
+import { createGenericAiPlanningPort, readSandboxCacheProbeSource } from "./planning-source.js";
 import { writeSandboxReusePlanProof } from "../../sandbox-reuse-plan-proof.js";
 
 /** 決定論的な判定から汎用AIの入力と選択を確定する。 */
@@ -21,9 +21,10 @@ export function createPlanGenericAiStage(
           stage: "codex_analysis",
         });
   return async (analyzed) => {
+    const cacheProbeSource = await readSandboxCacheProbeSource(configuration, state);
     const planned = await planGenericAi(
       analyzed,
-      createGenericAiPlanningPort(configuration, state, diagnostics),
+      createGenericAiPlanningPort(configuration, state, diagnostics, cacheProbeSource),
     );
     if (
       configuration.target.kind === "sandbox" &&
