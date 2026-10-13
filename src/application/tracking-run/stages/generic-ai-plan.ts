@@ -190,92 +190,91 @@ async function matchingCacheProbeForItem(
   port: GenericAiPlanningPort,
 ): Promise<GenericAiCacheProbe | undefined> {
   const nodeId = analysis.item.nodeId;
-  for (const candidate of candidates) {
-    if (preliminaryPlanning.necessities[candidate.element] !== "required") {
-      continue;
-    }
-    if (candidate.element === "status" || candidate.element === "waitingOn") {
-      const counterpart = candidate.element === "status" ? "waitingOn" : "status";
+  const requiredCandidates = candidates.filter(
+    (candidate) => preliminaryPlanning.necessities[candidate.element] === "required",
+  );
+  for (let size = requiredCandidates.length; size > 0; size -= 1) {
+    for (let mask = 1; mask < 1 << requiredCandidates.length; mask += 1) {
+      const expected = requiredCandidates.filter((_, index) => (mask & (1 << index)) !== 0);
+      if (expected.length !== size) {
+        continue;
+      }
       if (
-        candidateInput.lockedElements[counterpart] == null &&
-        verifiedPlannedElementResult(preliminaryPlanning, counterpart) == null &&
-        (preliminaryPlanning.necessities[counterpart] !== "required" ||
-          !candidates.some((entry) => entry.element === counterpart))
+        expected.some((entry) => {
+          if (entry.element !== "status" && entry.element !== "waitingOn") {
+            return false;
+          }
+          const counterpart = entry.element === "status" ? "waitingOn" : "status";
+          return (
+            !expected.some((candidate) => candidate.element === counterpart) &&
+            candidateInput.lockedElements[counterpart] == null &&
+            verifiedPlannedElementResult(preliminaryPlanning, counterpart) == null
+          );
+        })
       ) {
         continue;
       }
-    }
-    const requestedTarget: AiAnalysisTarget = Object.freeze({
-      nodeId,
-      elements: Object.freeze([candidate.element]),
-    });
-    const executionTarget = targetWithRequiredStateCompanion(
-      requestedTarget,
-      candidateInput,
-      preliminaryPlanning,
-    );
-    const expected = executionTarget.elements.map((element) =>
-      candidates.find((entry) => entry.element === element),
-    );
-    if (
-      expected.some((entry) => entry == null) ||
-      executionTarget.elements.some(
-        (element) => preliminaryPlanning.necessities[element] !== "required",
-      )
-    ) {
-      continue;
-    }
-    const preliminaryExecutionPlanning = Object.freeze({
-      ...preliminaryPlanning,
-      selection: forceAnalysisElementSelection(preliminaryPlanning, executionTarget),
-    });
-    const input = port.createTransportInput(
-      analyzed,
-      analysis,
-      source,
-      preliminaryExecutionPlanning,
-      executionTarget,
-    );
-    const exactInputs = withExecutedAnalysisElementExactInputs(candidateExactInputs, input);
-    const inputFingerprints = elementInputFingerprints(exactInputs);
-    const previous = port.resolvePrevious(analysis, source, input, inputFingerprints);
-    const planning = planAnalysisElements({
-      necessities: determineAnalysisElementNecessities(source.necessityInput),
-      inputFingerprints,
-      executionFingerprints,
-      inputProjectionVersions: AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS,
-      dependencyFingerprints: source.dependencyFingerprints,
-      savedGenerations: previous.generations,
-      savedEvaluations: previous.evaluations,
-      savedReuses: previous.reuses,
-    });
-    let matched = true;
-    for (const entry of expected) {
-      if (entry == null) {
-        matched = false;
-        break;
-      }
-      if (exactInputs[entry.element].fingerprint !== entry.inputFingerprint) {
-        matched = false;
-        break;
-      }
-      const cached = await port.lookupCache(identity, planning, entry.element, nodeId);
-      if (cached.status !== "hit" || cached.entry.cacheKey !== entry.cacheKey) {
-        matched = false;
-        break;
-      }
-      if (
-        port.digest.sha256Utf8(serializeCanonicalJson(cached.entry.generation)) !==
-        entry.generationDigest
-      ) {
-        throw new TypeError("cache probeの実file cache生成値がfirstと一致しません");
-      }
-    }
-    if (matched) {
-      return Object.freeze({
+      const requestedTarget: AiAnalysisTarget = Object.freeze({
         nodeId,
-        elements: Object.freeze(expected.filter((entry) => entry != null)),
+        elements: Object.freeze(expected.map((entry) => entry.element)),
       });
+      const executionTarget = targetWithRequiredStateCompanion(
+        requestedTarget,
+        candidateInput,
+        preliminaryPlanning,
+      );
+      if (executionTarget.elements.length !== expected.length) {
+        continue;
+      }
+      const preliminaryExecutionPlanning = Object.freeze({
+        ...preliminaryPlanning,
+        selection: forceAnalysisElementSelection(preliminaryPlanning, executionTarget),
+      });
+      const input = port.createTransportInput(
+        analyzed,
+        analysis,
+        source,
+        preliminaryExecutionPlanning,
+        executionTarget,
+      );
+      const exactInputs = withExecutedAnalysisElementExactInputs(candidateExactInputs, input);
+      if (
+        expected.some((entry) => exactInputs[entry.element].fingerprint !== entry.inputFingerprint)
+      ) {
+        continue;
+      }
+      const inputFingerprints = elementInputFingerprints(exactInputs);
+      const previous = port.resolvePrevious(analysis, source, input, inputFingerprints);
+      const planning = planAnalysisElements({
+        necessities: determineAnalysisElementNecessities(source.necessityInput),
+        inputFingerprints,
+        executionFingerprints,
+        inputProjectionVersions: AI_ANALYSIS_ELEMENT_INPUT_PROJECTION_VERSIONS,
+        dependencyFingerprints: source.dependencyFingerprints,
+        savedGenerations: previous.generations,
+        savedEvaluations: previous.evaluations,
+        savedReuses: previous.reuses,
+      });
+      let matched = true;
+      for (const entry of expected) {
+        const cached = await port.lookupCache(identity, planning, entry.element, nodeId);
+        if (cached.status !== "hit" || cached.entry.cacheKey !== entry.cacheKey) {
+          matched = false;
+          break;
+        }
+        if (
+          port.digest.sha256Utf8(serializeCanonicalJson(cached.entry.generation)) !==
+          entry.generationDigest
+        ) {
+          throw new TypeError("cache probeの実file cache生成値がfirstと一致しません");
+        }
+      }
+      if (matched) {
+        return Object.freeze({
+          nodeId,
+          elements: Object.freeze(expected),
+        });
+      }
     }
   }
   return undefined;

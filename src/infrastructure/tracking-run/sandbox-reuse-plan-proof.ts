@@ -29,7 +29,11 @@ const planProofSchema = z
             generationDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/u),
           }),
         )
-        .min(1),
+        .min(1)
+        .refine(
+          (elements) => new Set(elements.map((entry) => entry.element)).size === elements.length,
+          { message: "cache probeの要素が重複しています" },
+        ),
     }),
     choices: z.array(
       z.strictObject({
@@ -56,10 +60,18 @@ export function createSandboxReusePlanProof(
     throw new TypeError("snapshot再利用証拠にはcache probeが必要です");
   }
   const probe = planned.data.plan.cacheProbe;
-  const item = planned.data.plan.items.find((entry) => entry.nodeId === probe?.nodeId);
+  if (probe == null) {
+    throw new TypeError("snapshot再利用証拠のcache probeが実計画と一致しません");
+  }
+  const item = planned.data.plan.items.find((entry) => entry.nodeId === probe.nodeId);
+  if (item == null) {
+    throw new TypeError("snapshot再利用証拠のcache probeが実計画と一致しません");
+  }
   if (
-    probe == null ||
-    item == null ||
+    item.selectedElements.length !== probe.elements.length ||
+    item.selectedElements.some(
+      (element) => !probe.elements.some((expected) => expected.element === element),
+    ) ||
     probe.elements.some((expected) => {
       const actual = item.elements.find((element) => element.element === expected.element);
       return (

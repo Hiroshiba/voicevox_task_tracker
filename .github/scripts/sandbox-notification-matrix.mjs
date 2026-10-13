@@ -17,6 +17,7 @@ import {
 import { parseSandboxEnvironmentManifest } from "../../dist/persistence/sandbox-environment-manifest.js";
 
 import { resultSchema, sha256 } from "./sandbox-continuity-result.mjs";
+import { verifyCacheProbeAdoption } from "./sandbox-reuse-witness.mjs";
 
 const scenarioIds = [
   "send-clear-rejection",
@@ -405,37 +406,11 @@ function assertContinuitySource(sourceManifest, proofRoot) {
   if (probe == null || !Array.isArray(probe.elements) || probe.elements.length < 1) {
     throw new TypeError("通知matrixのcache probe対象が不正です");
   }
-  const firstCache = firstItems.get(probe.nodeId);
-  const secondCache = secondItems.get(probe.nodeId);
-  let adoptedCacheCount = 0;
-  for (const expected of probe.elements) {
-    const firstGeneration = firstCache?.aiAnalysis.elements[expected.element]?.generation;
-    const secondGeneration = secondCache?.aiAnalysis.elements[expected.element]?.generation;
-    if (firstGeneration == null || secondGeneration == null) {
-      throw new TypeError("通知matrixのcache probe生成値がありません");
-    }
-    same(
-      nodeContentDigestPort.sha256Utf8(canonicalJson(firstGeneration)),
-      expected.generationDigest,
-      "通知matrixのfirst cache生成値",
-    );
-    same(
-      canonicalJson(secondGeneration),
-      canonicalJson(firstGeneration),
-      "通知matrixのcache採用値",
-    );
-    if (firstCache.aiAnalysis.applications[expected.element]?.origin === "executed") {
-      same(
-        secondCache.aiAnalysis.applications[expected.element]?.origin,
-        "cache",
-        "通知matrixの実file cache採用",
-      );
-      adoptedCacheCount += 1;
-    }
-  }
-  if (adoptedCacheCount < 1) {
-    throw new TypeError("通知matrixにfirstの実AIからのcache採用がありません");
-  }
+  same(
+    verifyCacheProbeAdoption(firstSnapshot.items, secondSnapshot.items, probe),
+    probe.elements.length,
+    "通知matrixの実file cache採用要素数",
+  );
   const reuse = secondCoverage.continuity.snapshotReuseWitness;
   if (
     digestSchema.safeParse(secondCoverage.continuity.reusePlanProofDigest).success !== true ||
