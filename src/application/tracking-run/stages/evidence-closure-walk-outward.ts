@@ -20,7 +20,11 @@ import {
   nativeImplementationOwnerNodeIds,
 } from "./evidence-native-implementation-scope.js";
 import { personalReminderCauseEvidenceSourceIds } from "./personal-reminder-cause-references.js";
-import { personalReminderCauseScope, relatedScope } from "./personal-reminder-related-scope.js";
+import {
+  personalReminderCauseScope,
+  personalReminderSourceOwnerNodeIds,
+  relatedScope,
+} from "./personal-reminder-related-scope.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 
 function walkEvidence(
@@ -306,7 +310,13 @@ function walkItems(
           destination,
           "personal_reminder_cause",
           "historical_allowed",
-          scope.nodeIds,
+          personalReminderSourceOwnerNodeIds(
+            cause.itemNodeId,
+            sourceId,
+            scope.nodeIds,
+            ownersByIssue,
+            currentById,
+          ),
           scope.relationIds,
         );
       }
@@ -318,7 +328,13 @@ function walkItems(
             destination,
             "personal_reminder_assessment",
             "historical_allowed",
-            scope.nodeIds,
+            personalReminderSourceOwnerNodeIds(
+              cause.itemNodeId,
+              sourceId,
+              scope.nodeIds,
+              ownersByIssue,
+              currentById,
+            ),
             scope.relationIds,
           );
         }
@@ -520,7 +536,13 @@ export function walkOutwardEvidenceUses(
           Object.freeze({ kind: "item", itemNodeId: addition.itemNodeId }),
           "personal_reminder_cache",
           "current",
-          scope.nodeIds,
+          personalReminderSourceOwnerNodeIds(
+            addition.itemNodeId,
+            sourceId,
+            scope.nodeIds,
+            ownersByIssue,
+            currentById,
+          ),
           scope.relationIds,
         );
       }

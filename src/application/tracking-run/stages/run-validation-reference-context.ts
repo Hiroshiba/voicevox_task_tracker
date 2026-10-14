@@ -9,6 +9,7 @@ import {
   nativeImplementationEvidenceOwnerNodeIds,
   nativeImplementationOwnerNodeIds,
 } from "./evidence-native-implementation-scope.js";
+import { personalReminderSourceOwnerNodeIds } from "./personal-reminder-related-scope.js";
 import {
   causeScope,
   isRecord,
@@ -126,14 +127,26 @@ export function referenceContext(
         return {
           purpose: "personal_reminder_cause",
           currentness: "historical_allowed",
-          ownerNodeIds: scope.nodeIds,
+          ownerNodeIds: personalReminderSourceOwnerNodeIds(
+            reference.owner.id,
+            reference.sourceId,
+            scope.nodeIds,
+            ownersByIssue,
+            currentById,
+          ),
           relationIds: scope.relationIds,
         };
       if (path[5] === "adoptedAssessment")
         return {
           purpose: "personal_reminder_assessment",
           currentness: "historical_allowed",
-          ownerNodeIds: scope.nodeIds,
+          ownerNodeIds: personalReminderSourceOwnerNodeIds(
+            reference.owner.id,
+            reference.sourceId,
+            scope.nodeIds,
+            ownersByIssue,
+            currentById,
+          ),
           relationIds: scope.relationIds,
         };
       if (path.includes("sourceIds"))
@@ -215,7 +228,13 @@ export function referenceContext(
     return {
       purpose: "personal_reminder_cache",
       currentness: "current",
-      ownerNodeIds: scope.nodeIds,
+      ownerNodeIds: personalReminderSourceOwnerNodeIds(
+        reference.owner.id,
+        reference.sourceId,
+        scope.nodeIds,
+        ownersByIssue,
+        currentById,
+      ),
       relationIds: scope.relationIds,
     };
   }

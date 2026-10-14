@@ -1,5 +1,7 @@
 import type { PersonalReminderCause } from "../../../domain/personal-reminder-causes.js";
 import type { GraphNodeId } from "../../../domain/types.js";
+import type { CurrentSourceFact } from "../contracts/evidence-catalog.js";
+import { nativeImplementationEvidenceOwnerNodeIds } from "./evidence-native-implementation-scope.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 
 type RelatedRelation = Readonly<{
@@ -30,6 +32,29 @@ export function relatedScope(
     nodeIds: Object.freeze([...nodes].sort()),
     relationIds: Object.freeze([...new Set(relationIds)].sort()),
   });
+}
+
+/** 個人催促の対象Issueを実装するPRだけを現行sourceの所有範囲へ加える。 */
+export function personalReminderSourceOwnerNodeIds(
+  itemNodeId: string,
+  sourceId: string,
+  scopeNodeIds: readonly string[],
+  ownersByIssue: ReadonlyMap<string, readonly string[]>,
+  currentById: ReadonlyMap<string, readonly CurrentSourceFact[]>,
+): readonly string[] {
+  return Object.freeze(
+    [
+      ...new Set([
+        ...scopeNodeIds,
+        ...nativeImplementationEvidenceOwnerNodeIds(
+          sourceId,
+          [itemNodeId],
+          ownersByIssue,
+          currentById,
+        ),
+      ]),
+    ].sort(),
+  );
 }
 
 /** 個人催促原因の責務と採用relationから利用できる対象範囲を返す。 */
