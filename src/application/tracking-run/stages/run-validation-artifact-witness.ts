@@ -14,6 +14,7 @@ import type {
   HistoricalNativeImplementation,
   OwnedHistoricalAiResult,
   OwnedHistoricalEvidence,
+  OwnedHistoricalInputEvent,
   ResolvedEvidenceUse,
 } from "../contracts/evidence-closure.js";
 import type { ContentDigestPort } from "../contracts/content-digest-port.js";
@@ -37,6 +38,12 @@ import {
   collectOwnedHistoricalEvidence,
   type HistoricalEvidenceSnapshotInput,
 } from "./evidence-closure-historical.js";
+import {
+  collectOwnedHistoricalInputEvents,
+  currentInputEventAtUse,
+  indexHistoricalInputEvents,
+  type HistoricalInputEventSnapshotInput,
+} from "./evidence-closure-historical-input-events.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 import {
   assertMaterializedReferenceBindings,
@@ -62,6 +69,7 @@ import type { EvidenceClosureAdditions } from "./evidence-closure.js";
 export type EvidenceClosureWitness = Readonly<{
   currentSources: readonly CurrentSourceFact[];
   historicalEvidence: readonly OwnedHistoricalEvidence[];
+  historicalInputEvents: readonly OwnedHistoricalInputEvent[];
   historicalAiResults: readonly OwnedHistoricalAiResult[];
   historicalNativeImplementations: readonly HistoricalNativeImplementation[];
   previousPendingCauses: readonly PreviousPendingCauseContext[];
@@ -177,6 +185,26 @@ export function assertHistoricalEvidenceWitnessMatchesBaseSnapshot(
   }
 }
 
+/** 固定base revisionの入力イベントと公開witnessの所有位置を照合する。 */
+export function assertHistoricalInputEventWitnessMatchesBaseSnapshot(
+  witness: EvidenceClosureWitness,
+  snapshot: HistoricalInputEventSnapshotInput | undefined,
+): void {
+  const actual =
+    snapshot == null ? Object.freeze([]) : collectOwnedHistoricalInputEvents(snapshot.items);
+  const identities = new Set(actual.map(serializeCanonicalJson));
+  for (const record of witness.historicalInputEvents) {
+    if (!identities.has(serializeCanonicalJson(record))) {
+      throw new RunCompletenessError(
+        "missing_source",
+        record.event.sourceId,
+        record.path,
+        undefined,
+      );
+    }
+  }
+}
+
 /** 固定base revisionのnative実装関係と公開witnessの履歴scopeを照合する。 */
 export function assertHistoricalNativeImplementationWitnessMatchesBaseSnapshot(
   witness: EvidenceClosureWitness,
@@ -248,6 +276,7 @@ function assertSavedAiOriginShape(
 export function createEvidenceClosureWitness(
   closure: EvidenceClosureResult,
   historicalEvidence: readonly OwnedHistoricalEvidence[],
+  historicalInputEvents: readonly OwnedHistoricalInputEvent[],
   historicalAiResults: readonly OwnedHistoricalAiResult[],
   historicalNativeImplementations: readonly HistoricalNativeImplementation[],
   previousInput: PersonalReminderPlanningInput["previousBaseSnapshot"],
@@ -300,12 +329,15 @@ export function createEvidenceClosureWitness(
     evaluatedAt,
     approvedRepositories,
     historicalEvidence,
+    historicalInputEvents,
+    historicalInputEventsById: indexHistoricalInputEvents(historicalInputEvents),
     historicalAiResults: selectedAi,
     historicalNativeImplementations,
     retainedAiSourceIdsByItem: retainedAiSourceIdsByItem(values.snapshot.items),
   });
   const fullHistoricalById = indexedHistorical(historicalEvidence);
   const selectedHistorical = new Map<string, OwnedHistoricalEvidence>();
+  const selectedHistoricalInputEvents = new Map<string, OwnedHistoricalInputEvent>();
   const usedCurrentFactIds = new Set<string>();
   for (const { use, annotation } of sourceUses) {
     const aiSlot = resolvedAiSlot(use.path, findAiResultSlot, originsByPath);
@@ -317,6 +349,7 @@ export function createEvidenceClosureWitness(
       digest,
       annotation,
       aiSlot,
+      currentInputEventAtUse(use, values.snapshot.items, "snapshot"),
     );
     if (use.purpose !== "previous_notification_pending" && candidateCurrentById.has(use.sourceId)) {
       usedCurrentFactIds.add(use.sourceId);
@@ -324,17 +357,26 @@ export function createEvidenceClosureWitness(
     for (const value of actual.historical) {
       selectedHistorical.set(serializeCanonicalJson(value), value);
     }
+    if (actual.historicalInputEvent != null) {
+      selectedHistoricalInputEvents.set(
+        serializeCanonicalJson(actual.historicalInputEvent),
+        actual.historicalInputEvent,
+      );
+    }
   }
   const currentSources = canonicalSort(
     candidateCurrentSources.filter((fact) => usedCurrentFactIds.has(fact.sourceId)),
   );
   const currentById = indexedValues(currentSources);
   const usedHistoricalEvidence = canonicalSort([...selectedHistorical.values()]);
+  const usedHistoricalInputEvents = canonicalSort([...selectedHistoricalInputEvents.values()]);
   const historicalById = indexedHistorical(usedHistoricalEvidence);
   const context = Object.freeze({
     evaluatedAt,
     approvedRepositories,
     historicalEvidence: usedHistoricalEvidence,
+    historicalInputEvents: usedHistoricalInputEvents,
+    historicalInputEventsById: indexHistoricalInputEvents(usedHistoricalInputEvents),
     historicalAiResults: selectedAi,
     historicalNativeImplementations,
     retainedAiSourceIdsByItem: retainedAiSourceIdsByItem(values.snapshot.items),
@@ -350,6 +392,7 @@ export function createEvidenceClosureWitness(
           digest,
           annotation,
           resolvedAiSlot(use.path, findAiResultSlot, originsByPath),
+          currentInputEventAtUse(use, values.snapshot.items, "snapshot"),
         ).resolved,
     ),
   );
@@ -357,6 +400,7 @@ export function createEvidenceClosureWitness(
   return Object.freeze({
     currentSources,
     historicalEvidence: usedHistoricalEvidence,
+    historicalInputEvents: usedHistoricalInputEvents,
     historicalAiResults: selectedAi,
     historicalNativeImplementations,
     previousPendingCauses,
@@ -591,6 +635,12 @@ export function assertEvidenceClosureWitness(
     "closure",
   );
   assertRunValueMatches(
+    canonicalSort(witness.historicalInputEvents),
+    witness.historicalInputEvents,
+    ["evidenceClosureWitness", "historicalInputEvents"],
+    "closure",
+  );
+  assertRunValueMatches(
     canonicalSort(witness.historicalAiResults),
     witness.historicalAiResults,
     ["evidenceClosureWitness", "historicalAiResults"],
@@ -664,11 +714,14 @@ export function assertEvidenceClosureWitness(
     evaluatedAt,
     approvedRepositories,
     historicalEvidence: witness.historicalEvidence,
+    historicalInputEvents: witness.historicalInputEvents,
+    historicalInputEventsById: indexHistoricalInputEvents(witness.historicalInputEvents),
     historicalAiResults: witness.historicalAiResults,
     historicalNativeImplementations: witness.historicalNativeImplementations,
     retainedAiSourceIdsByItem: retainedAiSourceIdsByItem(values.snapshot.items),
   });
   const selectedHistorical = new Map<string, OwnedHistoricalEvidence>();
+  const selectedHistoricalInputEvents = new Map<string, OwnedHistoricalInputEvent>();
   for (const [index, resolved] of witness.resolvedUses.entries()) {
     assertRunValueMatches(
       [...new Set(resolved.use.allowedOwnerNodeIds)].sort(),
@@ -699,6 +752,7 @@ export function assertEvidenceClosureWitness(
       digest,
       sourceUse.annotation,
       resolvedAiSlot(sourceUse.use.path, findAiResultSlot, originsByPath),
+      currentInputEventAtUse(sourceUse.use, values.snapshot.items, "snapshot"),
     );
     assertRunValueMatches(
       actual.resolved,
@@ -715,6 +769,12 @@ export function assertEvidenceClosureWitness(
     for (const value of actual.historical) {
       selectedHistorical.set(serializeCanonicalJson(value), value);
     }
+    if (actual.historicalInputEvent != null) {
+      selectedHistoricalInputEvents.set(
+        serializeCanonicalJson(actual.historicalInputEvent),
+        actual.historicalInputEvent,
+      );
+    }
   }
   for (const fact of witness.currentSources) {
     if (!currentIds.has(fact.sourceId)) {
@@ -730,6 +790,12 @@ export function assertEvidenceClosureWitness(
     canonicalSort([...selectedHistorical.values()]),
     witness.historicalEvidence,
     ["evidenceClosureWitness", "historicalEvidence"],
+    "closure",
+  );
+  assertRunValueMatches(
+    canonicalSort([...selectedHistoricalInputEvents.values()]),
+    witness.historicalInputEvents,
+    ["evidenceClosureWitness", "historicalInputEvents"],
     "closure",
   );
 }

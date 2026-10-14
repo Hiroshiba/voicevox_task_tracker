@@ -21,6 +21,7 @@ import type {
   HistoricalNativeImplementation,
   OwnedHistoricalAiResult,
   OwnedHistoricalEvidence,
+  OwnedHistoricalInputEvent,
 } from "../contracts/evidence-closure.js";
 import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import type {
@@ -45,6 +46,7 @@ import type {
 import { reconcileRetainedPersonalReminderCause } from "./personal-reminder-retained-cause.js";
 import { normalizeLabelRules } from "./collection-label-rules.js";
 import { collectOwnedHistoricalEvidence } from "./evidence-closure-historical.js";
+import { collectOwnedHistoricalInputEvents } from "./evidence-closure-historical-input-events.js";
 import { collectOwnedHistoricalAiResults } from "./evidence-closure-historical-ai.js";
 import { collectHistoricalNativeImplementations } from "./evidence-native-implementation-scope.js";
 
@@ -58,6 +60,7 @@ export type PersonalReminderFinalizedRun = StageState<
     Readonly<{
       items: readonly PersonalReminderFinalizedItem[];
       historicalEvidence: readonly OwnedHistoricalEvidence[];
+      historicalInputEvents: readonly OwnedHistoricalInputEvent[];
       historicalAiResults: readonly OwnedHistoricalAiResult[];
       historicalNativeImplementations: readonly HistoricalNativeImplementation[];
       personalReminderStatus: "success" | "fallback";
@@ -457,6 +460,9 @@ export function finalizePersonalReminders(
       historicalEvidence: collectOwnedHistoricalEvidence(
         run.core.personalReminderInput.previousBaseSnapshot.items,
         run.core.personalReminderInput.previousBaseSnapshot.relations,
+      ),
+      historicalInputEvents: collectOwnedHistoricalInputEvents(
+        run.core.personalReminderInput.previousBaseSnapshot.items,
       ),
       historicalAiResults: collectOwnedHistoricalAiResults(
         run.core.personalReminderInput.previousAiSnapshot,

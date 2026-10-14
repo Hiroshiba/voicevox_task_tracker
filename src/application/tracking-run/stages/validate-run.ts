@@ -17,6 +17,7 @@ import type { RunExecutionPolicy, RunIdentity } from "../request.js";
 import type { EvidenceClosureAdditions } from "./evidence-closure.js";
 import { createEvidenceClosureWitness } from "./run-validation-artifact-witness.js";
 import { collectHistoricalNativeImplementations } from "./evidence-native-implementation-scope.js";
+import { collectOwnedHistoricalInputEvents } from "./evidence-closure-historical-input-events.js";
 import type { PersonalReminderFinalizedRun } from "./personal-reminder-finalization.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 import {
@@ -323,6 +324,14 @@ export function validateRun<
     run.data.aiItems,
   );
   assertRunValueMatches(
+    collectOwnedHistoricalInputEvents(
+      input.graphReconciled.core.personalReminderInput.previousBaseSnapshot.items,
+    ),
+    run.data.historicalInputEvents,
+    ["historicalInputEvents"],
+    "closure",
+  );
+  assertRunValueMatches(
     collectHistoricalNativeImplementations(
       input.graphReconciled.core.personalReminderInput.previousRelations,
       input.graphReconciled.core.personalReminderInput.previousAiSnapshot,
@@ -334,6 +343,7 @@ export function validateRun<
   const evidenceClosureWitness = createEvidenceClosureWitness(
     input.closure,
     run.data.historicalEvidence,
+    run.data.historicalInputEvents,
     run.data.historicalAiResults,
     run.data.historicalNativeImplementations,
     input.graphReconciled.core.personalReminderInput.previousBaseSnapshot,

@@ -65,7 +65,7 @@ export type PersonalReminderPlanningInput = Readonly<{
   previousBaseSnapshot: Readonly<{
     items: readonly Pick<
       Extract<AnalysisPreviousState["snapshot"], { status: "available" }>["trackedItems"][number],
-      "nodeId" | "repositoryId" | "personalReminderCauses" | "evidence"
+      "nodeId" | "repositoryId" | "personalReminderCauses" | "inputEvents" | "evidence"
     >[];
     relations: readonly Pick<
       Extract<AnalysisPreviousState["snapshot"], { status: "available" }>["relations"][number],
@@ -181,6 +181,7 @@ export function projectGenericAiRunCore(analyzed: AnalysisRunCore): GenericAiRun
                     nodeId: item.nodeId,
                     repositoryId: item.repositoryId,
                     personalReminderCauses: item.personalReminderCauses,
+                    inputEvents: item.inputEvents,
                     evidence: item.evidence,
                   }),
                 ),

@@ -1,4 +1,9 @@
-import type { GitHubNodeId, GitHubRepositoryId, UtcIsoDateTime } from "../../../domain/index.js";
+import type {
+  GitHubNodeId,
+  GitHubRepositoryId,
+  TrackedItemInputEvent,
+  UtcIsoDateTime,
+} from "../../../domain/index.js";
 import type { TrackedItemAiAnalysis } from "../../../domain/tracked-item-ai-analysis.js";
 import type { Relation } from "../../../domain/relation.js";
 import type {
@@ -25,6 +30,7 @@ export type MaterializedReferenceValues = Readonly<{
     items: readonly Readonly<{
       nodeId: GitHubNodeId;
       repositoryId: GitHubRepositoryId;
+      inputEvents: readonly TrackedItemInputEvent[];
       aiAnalysis: TrackedItemAiAnalysis;
       personalReminderCauses: readonly Readonly<{ causeId: string }>[];
     }>[];

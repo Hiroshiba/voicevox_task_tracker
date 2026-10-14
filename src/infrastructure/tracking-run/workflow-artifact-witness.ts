@@ -11,6 +11,7 @@ import {
   createGitHubNodeId,
   createGitHubRepositoryId,
   createUtcIsoDateTime,
+  type GitHubItemUrl,
 } from "../../domain/index.js";
 import {
   personalReminderCauseIdSchema,
@@ -135,6 +136,28 @@ const historicalEvidenceSchema = z.strictObject({
     }),
   ]),
 });
+const historicalInputEventSchema = z.strictObject({
+  owner: z.strictObject({ itemNodeId: nodeIdSchema, repositoryId: repositoryIdSchema }),
+  path: z.tuple([
+    z.literal("items"),
+    z.number().int().nonnegative(),
+    z.literal("inputEvents"),
+    z.number().int().nonnegative(),
+  ]),
+  event: z.strictObject({
+    sourceId: sourceIdSchema,
+    url: z
+      .string()
+      .min(1)
+      .max(1000)
+      .regex(/^https:\/\/github\.com\//u)
+      .transform(parseHistoricalInputEventUrl),
+  }),
+});
+
+function parseHistoricalInputEventUrl(value: string): GitHubItemUrl {
+  return `https://github.com/${value.slice("https://github.com/".length)}`;
+}
 const historicalAiResultSchema = z
   .strictObject({
     owner: z.strictObject({ itemNodeId: nodeIdSchema, repositoryId: repositoryIdSchema }),
@@ -165,6 +188,7 @@ const evidenceUseSchema = z.strictObject({
 const witnessSchema = z.strictObject({
   currentSources: z.array(currentSourceSchema),
   historicalEvidence: z.array(historicalEvidenceSchema),
+  historicalInputEvents: z.array(historicalInputEventSchema),
   historicalAiResults: z.array(historicalAiResultSchema),
   historicalNativeImplementations: z.array(
     z.strictObject({

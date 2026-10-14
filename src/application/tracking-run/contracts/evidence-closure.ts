@@ -10,6 +10,7 @@ import type {
   GitHubNodeId,
   GitHubRepositoryId,
   NormalizedEvent,
+  TrackedItemInputEvent,
   UtcIsoDateTime,
 } from "../../../domain/types.js";
 import type { PendingNotification } from "../../../domain/pending-notification.js";
@@ -32,6 +33,20 @@ export type OwnedHistoricalEvidence = Readonly<{
         fromNodeId: string;
         toNodeId: string;
       }>;
+}>;
+
+/** 前回snapshotの入力イベントを所有項目と保存位置付きで保持する。 */
+export type OwnedHistoricalInputEvent = Readonly<{
+  owner: Readonly<{ itemNodeId: GitHubNodeId; repositoryId: GitHubRepositoryId }>;
+  path: readonly ["items", number, "inputEvents", number];
+  event: TrackedItemInputEvent;
+}>;
+
+/** 今回保存する項目が保持する入力イベント。 */
+export type CurrentInputEvent = Readonly<{
+  itemNodeId: GitHubNodeId;
+  repositoryId: GitHubRepositoryId;
+  event: TrackedItemInputEvent;
 }>;
 
 /** 前回snapshotのAI結果を元の所有者、要素、保存位置付きで保持する。 */
@@ -156,13 +171,17 @@ export type EvidenceClosureContext = Readonly<{
   evaluatedAt: UtcIsoDateTime;
   approvedRepositories: readonly PublicRepository[];
   historicalEvidence: readonly OwnedHistoricalEvidence[];
+  historicalInputEvents: readonly OwnedHistoricalInputEvent[];
   historicalAiResults: readonly OwnedHistoricalAiResult[];
   historicalNativeImplementations: readonly HistoricalNativeImplementation[];
 }>;
 
 /** 保持AIと前回根拠を現在値から区別して解決する文脈。 */
 export type EvidenceResolutionContext = EvidenceClosureContext &
-  Readonly<{ retainedAiSourceIdsByItem: ReadonlyMap<string, ReadonlySet<string>> }>;
+  Readonly<{
+    historicalInputEventsById: ReadonlyMap<string, readonly OwnedHistoricalInputEvent[]>;
+    retainedAiSourceIdsByItem: ReadonlyMap<string, ReadonlySet<string>>;
+  }>;
 
 /** 最終outward値を再走査して照合できる決定論的な閉包成果。 */
 export type EvidenceClosureResult = Readonly<{

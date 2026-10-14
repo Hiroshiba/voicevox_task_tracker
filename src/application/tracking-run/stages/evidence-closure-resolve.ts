@@ -1,12 +1,15 @@
 import { serializeCanonicalJson } from "../../../canonical-json/value.js";
-import { parseSourceId } from "../../../domain/source-id.js";
+import { buildSourceId, parseSourceId } from "../../../domain/source-id.js";
 import { isProductionSourceIdKind } from "../../../github/production-source-id.js";
+import { assertNonNullable } from "../../../util/assert-non-nullable.js";
 import type { CurrentSourceFact } from "../contracts/evidence-catalog.js";
 import type { ContentDigestPort } from "../contracts/content-digest-port.js";
 import type {
   EvidenceResolutionContext,
   EvidenceUse,
+  CurrentInputEvent,
   OwnedHistoricalEvidence,
+  OwnedHistoricalInputEvent,
   ResolvedEvidenceUse,
 } from "../contracts/evidence-closure.js";
 import {
@@ -15,6 +18,17 @@ import {
   type AiResultSlot,
 } from "./evidence-ai-results.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
+
+const inputEventSourceKinds = new Set([
+  "github_issue_comment",
+  "github_pull_request_review_comment",
+  "github_pull_request_review",
+  "github_timeline_event",
+  "github_pull_request_commit",
+  "github_native_dependency",
+  "github_native_hierarchy",
+  "github_native_closing_issue",
+]);
 
 function historyEventKinds(kind: string): readonly string[] {
   if (kind === "comment") return ["github_issue_comment", "github_pull_request_review_comment"];
@@ -190,6 +204,75 @@ function assertKnownItemSourceOwner(
   }
 }
 
+function resolveHistoricalInputEvent(
+  use: EvidenceUse,
+  sourceKind: string,
+  currentById: ReadonlyMap<string, readonly CurrentSourceFact[]>,
+  context: EvidenceResolutionContext,
+  digest: ContentDigestPort,
+  currentEvent: CurrentInputEvent | undefined,
+): Readonly<{
+  resolved: ResolvedEvidenceUse;
+  historical: readonly OwnedHistoricalEvidence[];
+  historicalInputEvent: OwnedHistoricalInputEvent;
+}> {
+  if (
+    use.requiredCurrentness !== "historical_allowed" ||
+    use.destination.kind !== "item" ||
+    currentEvent == null ||
+    !inputEventSourceKinds.has(sourceKind) ||
+    !use.allowedOwnerNodeIds.includes(currentEvent.itemNodeId)
+  ) {
+    throw new RunCompletenessError("invalid_reference", use.sourceId, use.path, use);
+  }
+  const detailSourceId = buildSourceId("github_item_detail", currentEvent.itemNodeId);
+  if ((currentById.get(detailSourceId) ?? []).length !== 0) {
+    throw new RunCompletenessError("missing_source", use.sourceId, use.path, use);
+  }
+  const matched = context.historicalInputEventsById.get(use.sourceId) ?? [];
+  if (matched.length === 0) {
+    throw new RunCompletenessError("missing_source", use.sourceId, use.path, use);
+  }
+  if (matched.length !== 1) {
+    throw new RunCompletenessError("source_id_conflict", use.sourceId, use.path, use);
+  }
+  const record = matched[0];
+  assertNonNullable(record, "前回snapshotの入力イベントを取得できません");
+  if (
+    record.owner.itemNodeId !== currentEvent.itemNodeId ||
+    use.destination.itemNodeId !== currentEvent.itemNodeId ||
+    record.owner.repositoryId !== currentEvent.repositoryId
+  ) {
+    throw new RunCompletenessError("wrong_owner", use.sourceId, use.path, use);
+  }
+  const approved = new Set<string>(context.approvedRepositories.map((repository) => repository.id));
+  if (!approved.has(record.owner.repositoryId)) {
+    throw new RunCompletenessError("private_source", use.sourceId, use.path, use);
+  }
+  if (record.event.url !== currentEvent.event.url) {
+    throw new RunCompletenessError("source_id_conflict", use.sourceId, use.path, use);
+  }
+  const url = new URL(record.event.url);
+  if (
+    url.protocol !== "https:" ||
+    url.hostname !== "github.com" ||
+    url.port !== "" ||
+    url.username !== "" ||
+    url.password !== ""
+  ) {
+    throw new RunCompletenessError("private_source", use.sourceId, use.path, use);
+  }
+  return Object.freeze({
+    resolved: Object.freeze({
+      use,
+      resolution: "historical",
+      recordDigest: digest.sha256Utf8(serializeCanonicalJson(record)),
+    }),
+    historical: Object.freeze([]),
+    historicalInputEvent: record,
+  });
+}
+
 function retainedRelationBodyEvidence(
   use: EvidenceUse,
   sourceKind: string,
@@ -242,7 +325,12 @@ export function resolveEvidenceUse(
   digest: ContentDigestPort,
   annotation?: Readonly<{ supports: string; summary: string }>,
   aiSlot?: Readonly<{ slot: AiResultSlot; origin: "current" | "historical" }>,
-): Readonly<{ resolved: ResolvedEvidenceUse; historical: readonly OwnedHistoricalEvidence[] }> {
+  currentInputEvent?: CurrentInputEvent,
+): Readonly<{
+  resolved: ResolvedEvidenceUse;
+  historical: readonly OwnedHistoricalEvidence[];
+  historicalInputEvent?: OwnedHistoricalInputEvent;
+}> {
   const sourceKind = parseSourceId(use.sourceId).kind;
   if (!isProductionSourceIdKind(sourceKind)) {
     throw new RunCompletenessError("kind_mismatch", use.sourceId, use.path, use);
@@ -382,6 +470,16 @@ export function resolveEvidenceUse(
       }),
       historical: Object.freeze([]),
     });
+  }
+  if (use.purpose === "item_input_event") {
+    return resolveHistoricalInputEvent(
+      use,
+      sourceKind,
+      currentById,
+      context,
+      digest,
+      currentInputEvent,
+    );
   }
   const historical = historicalById.get(use.sourceId) ?? [];
   if (use.requiredCurrentness === "current" || historical.length === 0) {

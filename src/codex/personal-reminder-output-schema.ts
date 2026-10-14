@@ -33,7 +33,7 @@ const referencesSchema = z.strictObject({
 
 const confidenceSchema = z.number().min(0).max(1);
 
-const personalReminderRawAssessmentSchema = z.discriminatedUnion("verdict", [
+const personalReminderRawAssessmentSchema = z.union([
   z.strictObject({
     verdict: z.literal("actionable"),
     references: referencesSchema,

@@ -21,6 +21,10 @@ import {
 import { collectAdoptionAiResultSlots, createAiResultOrigins } from "./evidence-ai-provenance.js";
 import { collectCurrentSourceFacts } from "./evidence-catalog-source-facts.js";
 import { resolveEvidenceUse } from "./evidence-closure-resolve.js";
+import {
+  currentInputEventAtUse,
+  indexHistoricalInputEvents,
+} from "./evidence-closure-historical-input-events.js";
 import { assertEvidenceClosureInput } from "./evidence-closure-validation.js";
 import { walkOutwardEvidenceUses } from "./evidence-closure-walk-outward.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
@@ -265,8 +269,10 @@ export function closeEvidenceReferences(
   const previousById = historicalById(context.historicalEvidence);
   const resolutionContext: EvidenceResolutionContext = Object.freeze({
     ...context,
+    historicalInputEventsById: indexHistoricalInputEvents(context.historicalInputEvents),
     retainedAiSourceIdsByItem: retainedAiSourceIdsByItem(outward.items.map((entry) => entry.item)),
   });
+  const currentItems = Object.freeze(outward.items.map((entry) => entry.item));
   const tracked = outward.items.map((entry, index) => ({
     item: entry.item,
     path: ["items", index, "item"],
@@ -347,6 +353,7 @@ export function closeEvidenceReferences(
         digest,
         evidenceAnnotation(outward, use),
         slot == null || origin == null ? undefined : { slot, origin },
+        currentInputEventAtUse(use, currentItems, "outward"),
       );
       resolved.push(match.resolved);
       for (const historical of match.historical) {
@@ -407,6 +414,7 @@ export function closeFinalizedRunEvidence(
     evaluatedAt: run.data.sourceRecords.evaluatedAt,
     approvedRepositories: run.data.approvedRepositories,
     historicalEvidence: run.data.historicalEvidence,
+    historicalInputEvents: run.data.historicalInputEvents,
     historicalAiResults: run.data.historicalAiResults,
     historicalNativeImplementations: run.data.historicalNativeImplementations,
   });

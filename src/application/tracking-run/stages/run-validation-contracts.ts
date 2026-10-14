@@ -1,5 +1,9 @@
 import type { Sha256Hash } from "../../../canonical-json/sha256.js";
-import type { GitHubNodeId, GitHubRepositoryId } from "../../../domain/types.js";
+import type {
+  GitHubNodeId,
+  GitHubRepositoryId,
+  TrackedItemInputEvent,
+} from "../../../domain/types.js";
 import type { TrackedItemAiAnalysis } from "../../../domain/tracked-item-ai-analysis.js";
 import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
 import type { AiBudgetLedgerSummary } from "../contracts/ai-budget-ledger.js";
@@ -38,6 +42,7 @@ export type RunSnapshot = Readonly<{
   items: readonly Readonly<{
     nodeId: GitHubNodeId;
     repositoryId: GitHubRepositoryId;
+    inputEvents: readonly TrackedItemInputEvent[];
     aiAnalysis: TrackedItemAiAnalysis;
     personalReminderCauses: readonly Readonly<{ causeId: string }>[];
   }>[];

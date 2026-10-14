@@ -10,6 +10,7 @@ import { runtimeRecoveryPlanSchema } from "../../application/tracking-run/recove
 import {
   assertHistoricalAiWitnessMatchesBaseSnapshot,
   assertHistoricalEvidenceWitnessMatchesBaseSnapshot,
+  assertHistoricalInputEventWitnessMatchesBaseSnapshot,
   assertHistoricalNativeImplementationWitnessMatchesBaseSnapshot,
 } from "../../application/tracking-run/stages/run-validation-artifact-witness.js";
 import { assertRetainedItemAiAnalysisMatchesBase } from "../../application/tracking-run/stages/run-validation-ai-lineage.js";
@@ -164,6 +165,10 @@ export function bindPublicationCheckpoint(
     evidenceSnapshot == null
       ? undefined
       : { items: evidenceSnapshot.items, relations: evidenceSnapshot.relations },
+  );
+  assertHistoricalInputEventWitnessMatchesBaseSnapshot(
+    decoded.validated.evidenceClosureWitness,
+    evidenceSnapshot == null ? undefined : { items: evidenceSnapshot.items },
   );
   assertHistoricalNativeImplementationWitnessMatchesBaseSnapshot(
     decoded.validated.evidenceClosureWitness,
