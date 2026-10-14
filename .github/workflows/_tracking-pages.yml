@@ -51,7 +51,7 @@ jobs:
   deploy:
     name: ${{ inputs.phase == 'initial' && 'initial-pages-deploy' || 'notification-history-pages-deploy' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 45
     permissions:
       contents: read
       actions: read
@@ -205,7 +205,7 @@ jobs:
     if: always()
     name: ${{ inputs.phase == 'initial' && 'initial-pages-record' || 'notification-history-pages-record' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 45
     permissions:
       contents: write
       actions: read
