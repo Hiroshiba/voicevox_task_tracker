@@ -23,7 +23,6 @@ import {
 } from "../../github/repository-inventory.js";
 
 import { createPublicBoundaryDiagnosticError } from "./public-boundary-diagnostic.js";
-import { assertExcludedPullRequestReturns404 } from "./excluded-pull-request-404.js";
 
 type GitHubInventoryDependencies = Readonly<{
   credentials: GitHubAppCredentials;
@@ -148,7 +147,6 @@ export function createGitHubRepositoryInventoryPort(
           knownSecrets: dependencies.knownSecrets,
         });
       }
-      await assertExcludedPullRequestReturns404(client.request);
       dependencies.sessions.register(prepared.core.identity.runId, client, inventory);
       return Object.freeze({
         allowlist,

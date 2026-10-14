@@ -54,7 +54,6 @@ import { normalNotificationLedgerValue } from "../../publication/publication-ord
 import { createInitialStateWriteManifest } from "../../persistence/initial-state-write-manifest.js";
 import { nodeContentDigestPort as digest } from "./content-digest.js";
 import { materializeDurablePublicationRecord } from "./durable-record.js";
-import { projectExcludedPullRequestSnapshot } from "./excluded-pull-request-snapshot.js";
 import type { InitialStateCommitObserver } from "./initial-state-commit-progress.js";
 import type { BoundPublicationCheckpoint } from "./publication-checkpoint-binding.js";
 
@@ -186,8 +185,6 @@ export async function prepareInitialStateFiles(
     throw new TypeError("公開計画の前回通常ledgerがCAS親と一致しません");
   }
   const previousSnapshot = previous.status === "available" ? previous.snapshot : undefined;
-  const previousEvidenceSnapshot =
-    previousSnapshot == null ? undefined : projectExcludedPullRequestSnapshot(previousSnapshot);
   if (
     (parent.status === "missing" && previous.status !== "missing_branch") ||
     (parent.status === "present" && previous.status === "missing_branch")
@@ -226,21 +223,21 @@ export async function prepareInitialStateFiles(
     step: "closure_current_complete",
     count: snapshot.items.length + snapshot.relations.length,
   });
-  if (previousEvidenceSnapshot != null) {
+  if (previousSnapshot != null) {
     const evidenceIndex = createPersonalReminderEvidenceSourceIndex([
       ...snapshot.items.map((item) => item.evidence),
       ...snapshot.relations.map((relation) => relation.evidence),
-      ...previousEvidenceSnapshot.items.map((item) => item.evidence),
-      ...previousEvidenceSnapshot.relations.map((relation) => relation.evidence),
+      ...previousSnapshot.items.map((item) => item.evidence),
+      ...previousSnapshot.relations.map((relation) => relation.evidence),
     ]);
     assertPersonalReminderEvidenceRecordsClosure(snapshot, evidenceIndex);
   }
   observePerformanceDetail?.({
     step: "closure_prior_records_complete",
     count:
-      previousEvidenceSnapshot == null
+      previousSnapshot == null
         ? 0
-        : previousEvidenceSnapshot.items.length + previousEvidenceSnapshot.relations.length,
+        : previousSnapshot.items.length + previousSnapshot.relations.length,
   });
   observeProgress?.("history");
   const historyRecord = createStateHistoryRecord(

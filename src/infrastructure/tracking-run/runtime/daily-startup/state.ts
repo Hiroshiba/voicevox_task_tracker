@@ -1,5 +1,4 @@
 import { projectPreviousSnapshot, readBaseStateIngress } from "../../base-state-ingress.js";
-import { projectExcludedPullRequestSnapshot } from "../../excluded-pull-request-snapshot.js";
 import type { SequentialRunDependencies } from "../../sequential-run-contracts.js";
 
 import type { StateRuntimeAdapters } from "../adapters.js";
@@ -16,20 +15,12 @@ export function createLoadStateStage(
       configuration.config.staleness.timezone,
       configuration.baseStateHead,
     );
-    const snapshot =
-      ingress.snapshot.status === "available"
-        ? Object.freeze({
-            ...ingress.snapshot,
-            snapshot: projectExcludedPullRequestSnapshot(ingress.snapshot.snapshot),
-          })
-        : ingress.snapshot;
     return Object.freeze({
       ...ingress,
       rawSnapshot: ingress.snapshot,
-      snapshot,
       previousState: Object.freeze({
         ...ingress.previousState,
-        snapshot: projectPreviousSnapshot(snapshot),
+        snapshot: projectPreviousSnapshot(ingress.snapshot),
       }),
     });
   };

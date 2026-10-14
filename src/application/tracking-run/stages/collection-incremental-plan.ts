@@ -26,7 +26,6 @@ import {
 import { staleAiAnalysisElementsForLifecycle } from "./collection-lifecycle.js";
 import { personalReminderCauseSourceIds } from "./personal-reminder-cause-references.js";
 import { personalReminderCauseScope } from "./personal-reminder-related-scope.js";
-import { isExcludedPullRequestIdentifier } from "../excluded-pull-request.js";
 
 export type CollectionPlanningReferences = Readonly<{
   adjacentNodeIds: ReadonlySet<GitHubNodeId>;
@@ -199,7 +198,6 @@ export function missingIdentifiers(
   return Object.freeze(
     [...new Set(identifiers.map(normalizeTrackingIdentifier))].filter(
       (identifier) =>
-        !isExcludedPullRequestIdentifier(identifier) &&
         !currentItems.some((item) => item.nodeId === identifier || item.url === identifier),
     ),
   );
@@ -245,11 +243,7 @@ export function requiredTrackingDetailNodeIds(
 
 /** 設定されたnode識別子を返す。 */
 export function configuredNodeIdentifiers(config: Config): readonly string[] {
-  return Object.freeze(
-    config.tracking.include.filter(
-      (identifier) => !identifier.includes("://") && !isExcludedPullRequestIdentifier(identifier),
-    ),
-  );
+  return Object.freeze(config.tracking.include.filter((identifier) => !identifier.includes("://")));
 }
 
 /** 個人催促の詳細取得対象を返す。 */

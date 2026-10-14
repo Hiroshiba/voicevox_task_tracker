@@ -9,7 +9,6 @@ import type { GitHubItemDetail } from "../../../github/item-detail-types.js";
 import type { FreshObservedGitHubItem } from "../../../github/item-normalization.js";
 import type { PublicRepository } from "../../../github/public-repository-allowlist.js";
 import { deduplicateByStableId } from "../../../github/stable-id.js";
-import { isExcludedPullRequestItem } from "../excluded-pull-request.js";
 import type {
   PreviousCollectionItem,
   PreviousCollectionRepository,
@@ -193,9 +192,7 @@ async function collectFreshRepository(
       ? Object.freeze([])
       : await read.enumerateByIdentifiers(identifiers, context.startedAt);
   const enumeratedItems = deduplicateByStableId(
-    [...openItems, ...resolvedNodeItems, ...individuallyEnumeratedItems].filter(
-      (item) => !isExcludedPullRequestItem(item, repository),
-    ),
+    [...openItems, ...resolvedNodeItems, ...individuallyEnumeratedItems],
     (item) => item.nodeId,
   );
   const itemCollection = await collectRepositoryItemObservations(

@@ -19,7 +19,6 @@ import { assertValidatedRun } from "../../application/tracking-run/stages/valida
 import { parseSha256Hash, type Sha256Hash } from "../../canonical-json/sha256.js";
 import { serializeCanonicalJson } from "../../canonical-json/value.js";
 import { createStateHistoryRecord } from "../../persistence/history.js";
-import { projectExcludedPullRequestSnapshot } from "./excluded-pull-request-snapshot.js";
 import { validatedRunPayloadRepositoryInventory } from "./validated-run-payload.js";
 import type { StateNotificationLedger } from "../../persistence/state-documents.js";
 import type { StateSnapshotReadResult } from "../../persistence/state-persistence-session.js";
@@ -130,8 +129,6 @@ export function bindPublicationCheckpoint(
     baseWitness.previousSnapshot.status === "available"
       ? baseWitness.previousSnapshot.snapshot
       : undefined;
-  const evidenceSnapshot =
-    snapshot == null ? undefined : projectExcludedPullRequestSnapshot(snapshot);
   const writeSet = decoded.publicationPlan.initialStateWriteSet;
   const expectedHistoryRecord = createStateHistoryRecord(
     snapshot,
@@ -148,45 +145,41 @@ export function bindPublicationCheckpoint(
   }
   assertHistoricalAiWitnessMatchesBaseSnapshot(
     decoded.validated.evidenceClosureWitness,
-    evidenceSnapshot == null
+    snapshot == null
       ? undefined
       : {
-          trackedItems: evidenceSnapshot.items,
-          collectionRepositories: evidenceSnapshot.collection.repositories,
+          trackedItems: snapshot.items,
+          collectionRepositories: snapshot.collection.repositories,
         },
   );
   assertRetainedItemAiAnalysisMatchesBase(
     decoded.validated.snapshot,
     decoded.validated.finalItemAiLineage,
-    evidenceSnapshot,
+    snapshot,
   );
   assertHistoricalEvidenceWitnessMatchesBaseSnapshot(
     decoded.validated.evidenceClosureWitness,
-    evidenceSnapshot == null
-      ? undefined
-      : { items: evidenceSnapshot.items, relations: evidenceSnapshot.relations },
+    snapshot == null ? undefined : { items: snapshot.items, relations: snapshot.relations },
   );
   assertHistoricalInputEventWitnessMatchesBaseSnapshot(
     decoded.validated.evidenceClosureWitness,
-    evidenceSnapshot == null ? undefined : { items: evidenceSnapshot.items },
+    snapshot == null ? undefined : { items: snapshot.items },
   );
   assertHistoricalNativeImplementationWitnessMatchesBaseSnapshot(
     decoded.validated.evidenceClosureWitness,
-    evidenceSnapshot == null
+    snapshot == null
       ? undefined
       : {
-          trackedItems: evidenceSnapshot.items,
-          collectionRepositories: evidenceSnapshot.collection.repositories,
-          relations: evidenceSnapshot.relations,
+          trackedItems: snapshot.items,
+          collectionRepositories: snapshot.collection.repositories,
+          relations: snapshot.relations,
         },
   );
   assertPreviousPendingCausesMatchBase(
     decoded.validated.evidenceClosureWitness.previousPendingCauses,
     decoded.validated.previousNotificationLedger,
     baseWitness.previousNotificationLedger,
-    evidenceSnapshot == null
-      ? undefined
-      : { items: evidenceSnapshot.items, relations: evidenceSnapshot.relations },
+    snapshot == null ? undefined : { items: snapshot.items, relations: snapshot.relations },
   );
   assertRecoveryPlanMatchesRuntime(decoded.runtimeIdentity, metadata.runtimeRecoveryPlan, digest);
   if (

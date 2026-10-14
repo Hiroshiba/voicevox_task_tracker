@@ -9,7 +9,6 @@ import {
   AI_ANALYSIS_ELEMENT_SCHEMA_VERSION,
 } from "../../domain/ai-analysis-elements.js";
 import type { StateSnapshot } from "../../persistence/snapshot-v23.js";
-import { affectedIssueNodeId } from "../../application/tracking-run/excluded-pull-request.js";
 import type {
   GenericAiCacheProbe,
   GenericAiCacheProbeSource,
@@ -25,9 +24,6 @@ export async function readFirstFileCacheProbeSource(
     left.nodeId < right.nodeId ? -1 : left.nodeId > right.nodeId ? 1 : 0,
   );
   for (const item of items) {
-    if (item.nodeId === affectedIssueNodeId) {
-      continue;
-    }
     const elements: GenericAiCacheProbe["elements"][number][] = [];
     for (const element of AI_ANALYSIS_ELEMENTS) {
       const application = item.aiAnalysis.applications[element];
