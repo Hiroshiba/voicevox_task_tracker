@@ -64,25 +64,138 @@ jobs:
           .github/scripts/mask-codex-auth-values.sh "${{ runner.temp }}/codex-home/auth.json"
           echo "placed=true" >> "$GITHUB_OUTPUT"
 
-      - name: GitHub収集とCodex解析をdry-runで実行
+      - name: Codex認証preflightのscalar診断
         env:
-          CODEX_AUTH_SYNC_TOKEN_PRESENT: ${{ secrets.CODEX_AUTH_SYNC_TOKEN != '' }}
           CODEX_HOME: ${{ runner.temp }}/codex-home
-          GH_APP_ID: ${{ vars.GH_APP_ID }}
-          GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
         run: |
+          export PATH="$GITHUB_WORKSPACE/node_modules/.bin:$PATH"
           pnpm exec node --input-type=module --eval '
-          const { createDefaultCliApplication } = await import("./dist/index.js");
-          const result = await createDefaultCliApplication().run([
-            "dry-run",
-            "--config",
-            "config.yml",
-            "--artifact",
-            "artifacts/dry-run.json",
-            "--report",
-            "artifacts/run-reports/dry-run.json",
-          ]);
-          process.exitCode = result.exitCode;
+          import { accessSync, constants, existsSync } from "node:fs";
+          import { delimiter, join } from "node:path";
+
+          function safeErrorClass(error) {
+            if (!(error instanceof Error)) {
+              return "non_error";
+            }
+            const allowed = new Set([
+              "Error",
+              "TypeError",
+              "RangeError",
+              "CodexProcessStartError",
+              "CodexNonZeroExitError",
+              "CodexTimeoutError",
+              "CodexTemporaryWorkspaceError",
+            ]);
+            return allowed.has(error.name) ? error.name : "other_error";
+          }
+
+          function safeErrorCode(error) {
+            if (typeof error !== "object" || error == null || !("code" in error)) {
+              return "none";
+            }
+            if (typeof error.code !== "string" || !/^[A-Z0-9_]{1,64}$/u.test(error.code)) {
+              return "invalid";
+            }
+            return error.code;
+          }
+
+          function safeCauseCodes(error) {
+            const codes = [];
+            let current = error;
+            for (let depth = 0; depth < 4; depth += 1) {
+              codes.push(safeErrorCode(current));
+              if (!(current instanceof Error) || current.cause == null) {
+                break;
+              }
+              current = current.cause;
+            }
+            return codes.join(",");
+          }
+
+          function commandResolved(request) {
+            return request.environment.PATH.split(delimiter).some((directory) => {
+              const candidate = join(directory.length === 0 ? "." : directory, request.command);
+              try {
+                accessSync(candidate, constants.X_OK);
+                return true;
+              } catch {
+                return false;
+              }
+            });
+          }
+
+          const startedAt = Date.now();
+          let stage = "setup";
+          let runnerAttempts = 0;
+          let runnerError;
+          let runnerCwdExists = false;
+          let runnerCommandResolved = false;
+          let budget;
+          try {
+            const { loadConfig } = await import("./dist/config/index.js");
+            const { CodexAttemptBudget, executeCodexAuthenticationPreflight } = await import(
+              "./dist/codex/index.js"
+            );
+            const { createDefaultCliCompositionAdapters } = await import(
+              "./dist/cli/composition-root.js"
+            );
+            const { createCodexAdapterConfiguration, createCodexAdapterDependencies } = await import(
+              "./dist/cli/codex-runtime-support.js"
+            );
+            const config = await loadConfig("config.yml");
+            const adapters = createDefaultCliCompositionAdapters();
+            budget = new CodexAttemptBudget(config.ai.budget.maxCodexExecAttemptsPerRun);
+            const tickets = budget.reserveInitialAttempts(2);
+            if (tickets == null || tickets[1] == null) {
+              throw new Error("認証preflightの試行枠を確保できませんでした");
+            }
+            const observedAdapters = {
+              ...adapters,
+              codexProcessRunner: async (request) => {
+                runnerAttempts += 1;
+                runnerCwdExists = existsSync(request.workingDirectory);
+                runnerCommandResolved = commandResolved(request);
+                try {
+                  return await adapters.codexProcessRunner(request);
+                } catch (error) {
+                  runnerError = error;
+                  throw error;
+                }
+              },
+            };
+            const configuration = createCodexAdapterConfiguration(config);
+            const dependencies = createCodexAdapterDependencies(
+              observedAdapters,
+              { environment: process.env },
+              budget,
+              undefined,
+              undefined,
+            );
+            stage = "preflight";
+            await executeCodexAuthenticationPreflight(
+              {
+                ...configuration,
+                execution: { ...configuration.execution, maxAttempts: 1 },
+              },
+              { ...dependencies, initialAttemptTicket: tickets[1] },
+            );
+            console.log("probe_result=success");
+          } catch (error) {
+            console.log("probe_result=failure");
+            console.log(`probe_stage=${stage}`);
+            console.log(`preflight_error_class=${safeErrorClass(error)}`);
+            console.log(`preflight_cause_codes=${safeCauseCodes(error)}`);
+            console.log(`runner_rejected=${runnerError != null}`);
+            console.log(`runner_error_class=${safeErrorClass(runnerError)}`);
+            console.log(`runner_error_code=${safeErrorCode(runnerError)}`);
+            process.exitCode = 1;
+          } finally {
+            console.log(`attempt_count=${budget?.attemptCount ?? 0}`);
+            console.log(`runner_attempts=${runnerAttempts}`);
+            console.log(`runner_cwd_exists=${runnerCwdExists}`);
+            console.log(`runner_command_resolved=${runnerCommandResolved}`);
+            console.log(`duration_ms=${Date.now() - startedAt}`);
+          }
           '
 
       - name: dry-run成果物を保存
