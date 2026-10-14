@@ -89,6 +89,11 @@ export function createPersonalReminderAiOutputSchema(): PersonalReminderAiOutput
     io: "input",
     unrepresentable: "throw",
     reused: "inline",
+    override: ({ zodSchema, jsonSchema: generatedSchema }) => {
+      if (zodSchema === referencesSchema.shape.reasonSummary) {
+        delete generatedSchema.pattern;
+      }
+    },
   });
   return Object.freeze({
     ...jsonSchema,

@@ -70,6 +70,7 @@ export function reconcileGraphPass(
   });
   const preservedGraph = preserveUnverifiedGraphEdges(
     collection,
+    reduction.items,
     previous?.edges ?? [],
     reconciled.edges,
     candidates,

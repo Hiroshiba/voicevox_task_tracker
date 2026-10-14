@@ -1,4 +1,6 @@
+import { serializeCanonicalJson } from "../../../canonical-json/value.js";
 import {
+  aiAnalysisDependencyForApplication,
   aiAnalysisDependencyForRelation,
   combineAiAnalysisDependencies,
   normalizeAiAnalysisDependency,
@@ -21,7 +23,10 @@ import {
   relationNodes,
 } from "../../../graph/relation-candidate-endpoints.js";
 import { assertNonNullable } from "../../../util/index.js";
-import type { GraphWorkingCollection } from "./graph-reconciliation-contracts.js";
+import type {
+  GraphWorkingCollection,
+  PendingGraphTrackedItem,
+} from "./graph-reconciliation-contracts.js";
 import {
   nativeRelationEndpointSelection,
   nativeRelationSourceObservations,
@@ -121,9 +126,36 @@ function activeProofForPreservedEdge(
   });
 }
 
+function preservedRelationDependencyMatchesCurrentOwner(
+  edge: ReconciledGraphEdge,
+  dependency: AiAnalysisDependency,
+  candidate: RelationCandidate,
+  itemsByNodeId: ReadonlyMap<GraphNodeId, PendingGraphTrackedItem>,
+  staleNodeIds: ReadonlySet<GraphNodeId>,
+): boolean {
+  if (staleNodeIds.has(edge.fromNodeId) || staleNodeIds.has(edge.toNodeId)) {
+    return true;
+  }
+  const owner = itemsByNodeId.get(relationAssessmentOwnerNodeId(candidate));
+  if (owner == null) {
+    return false;
+  }
+  const currentDependency = aiAnalysisDependencyForApplication(
+    owner.nodeId,
+    "relations",
+    owner.aiAnalysis.applications.relations,
+  );
+  return (
+    currentDependency.status !== "not_dependent" &&
+    serializeCanonicalJson(dependency) ===
+      serializeCanonicalJson(aiAnalysisDependencyForRelation(edge.id, currentDependency))
+  );
+}
+
 /** 未確認の前回辺を保持して候補判定の証明を整える。 */
 export function preserveUnverifiedGraphEdges(
   collection: GraphWorkingCollection,
+  items: readonly PendingGraphTrackedItem[],
   previousEdges: readonly ReconciledGraphEdge[],
   reconciledEdges: readonly ReconciledGraphEdge[],
   candidates: readonly RelationCandidate[],
@@ -138,6 +170,10 @@ export function preserveUnverifiedGraphEdges(
   const detailsByNodeId = new Map<GraphNodeId, GitHubItemDetail>(
     collection.details.map((detail) => [detail.nodeId, detail]),
   );
+  const itemsByNodeId = new Map<GraphNodeId, PendingGraphTrackedItem>(
+    items.map((item) => [item.nodeId, item]),
+  );
+  const staleNodeIds = new Set<GraphNodeId>(collection.staleItems.map((item) => item.nodeId));
   const selection = nativeRelationEndpointSelection(collection);
   const obsoleteEdgeIds = obsoleteNativeEdgeIds(
     collection,
@@ -186,50 +222,49 @@ export function preserveUnverifiedGraphEdges(
       }
       const proof = proofsByCandidateId.get(preserved.id);
       const candidate = candidatesById.get(preserved.id);
-      const candidateNodes: readonly RelationCandidateNode[] =
-        candidate == null ? Object.freeze([]) : relationNodes(candidate.relation);
-      const assessmentOwnerNodeId =
-        candidate == null ? undefined : relationAssessmentOwnerNodeId(candidate);
-      const assessmentOwner =
-        candidate == null
-          ? undefined
-          : candidateNodes.find((node) => node.nodeId === assessmentOwnerNodeId);
-      if (candidate != null) {
-        assertNonNullable(
-          assessmentOwner,
-          `関係候補 ${candidate.id}のAI判定owner nodeがありません`,
-        );
-      }
+      assertNonNullable(candidate, `保持対象の関係候補 ${preserved.id}がありません`);
+      const candidateNodes: readonly RelationCandidateNode[] = relationNodes(candidate.relation);
+      const assessmentOwnerNodeId = relationAssessmentOwnerNodeId(candidate);
+      const assessmentOwner = candidateNodes.find((node) => node.nodeId === assessmentOwnerNodeId);
+      assertNonNullable(assessmentOwner, `関係候補 ${candidate.id}のAI判定owner nodeがありません`);
       const organizationCandidateNodes = candidateNodes.filter(isOrganizationRelationCandidateNode);
       const fallbackProducerNode =
         organizationCandidateNodes.find((node) => node.nodeId === assessmentOwnerNodeId) ??
         organizationCandidateNodes[0];
-      if (candidate != null) {
-        assertNonNullable(
-          fallbackProducerNode,
-          `関係候補 ${candidate.id}のOrganization側nodeがありません`,
-        );
-      }
-      const fallbackProducer =
-        fallbackProducerNode == null
-          ? undefined
-          : Object.freeze({
-              kind: "item_element",
-              nodeId: fallbackProducerNode.nodeId,
-              element: "relations",
-            } satisfies AiAnalysisDependencyProducer);
+      assertNonNullable(
+        fallbackProducerNode,
+        `関係候補 ${candidate.id}のOrganization側nodeがありません`,
+      );
+      const fallbackProducer = Object.freeze({
+        kind: "item_element",
+        nodeId: fallbackProducerNode.nodeId,
+        element: "relations",
+      } satisfies AiAnalysisDependencyProducer);
       const sourceDependency = downgradedPreservedRelationDependency(
         preserved,
         proof?.dependency,
         fallbackProducer,
       );
-      if (sourceDependency == null) {
-        return preserved;
+      assertNonNullable(
+        sourceDependency,
+        `active stale edgeの降格済みAI依存がありません。対象: ${preserved.id}`,
+      );
+      const dependency = aiAnalysisDependencyForRelation(preserved.id, sourceDependency);
+      if (
+        !preservedRelationDependencyMatchesCurrentOwner(
+          preserved,
+          dependency,
+          candidate,
+          itemsByNodeId,
+          staleNodeIds,
+        )
+      ) {
+        return edge;
       }
       preservedSourceDependencies.set(preserved.id, sourceDependency);
       return Object.freeze({
         ...preserved,
-        aiDependency: aiAnalysisDependencyForRelation(preserved.id, sourceDependency),
+        aiDependency: dependency,
       });
     });
   const resultIds = new Set(result.map((edge) => edge.id));
@@ -239,15 +274,12 @@ export function preserveUnverifiedGraphEdges(
     }
   }
   const normalizedCandidateDecisionProofs = candidateDecisionProofs.map((proof) => {
-    const preserved = preservedEdges.get(proof.candidateId);
-    if (preserved == null || preserved.provenance === "native") {
+    const sourceDependency = preservedSourceDependencies.get(proof.candidateId);
+    if (sourceDependency == null) {
       return proof;
     }
-    const sourceDependency = preservedSourceDependencies.get(proof.candidateId);
-    assertNonNullable(
-      sourceDependency,
-      `active stale edgeの降格済みAI依存がありません。対象: ${proof.candidateId}`,
-    );
+    const preserved = preservedEdges.get(proof.candidateId);
+    assertNonNullable(preserved, `保持した推定edgeがありません。対象: ${proof.candidateId}`);
     return activeProofForPreservedEdge(proof, preserved, sourceDependency);
   });
   return Object.freeze({

@@ -322,7 +322,7 @@ AIは各`causeId`について、`actionable`、`waiting`、`duplicate`、`not_re
 optionの`targetScope`はrelationが接続する責務範囲で、`itemNodeId`は待機・表示の主項目です。relationは原因の責務範囲と`targetScope`の間を接続し、主項目への直接接続は必須にしません。候補は`current_draft`から作り、責務範囲全体の文脈と、`targetScope`の全nodeが入力の`items`に含まれることを保証します。未収集の端点は不完全な入力として扱います。保存する`waitingFor`と公開DTOが示す待機先は主項目です。
 
 意味入力のfingerprintは、原因の責務範囲とoptionの`targetScope`を含む原因ごとの参照入力から作り、同じbatchの別原因や無関係な項目の変化では無効化しません。AI送信用の入力にも同じ責務範囲を渡し、relationの接続と参照先を検証します。時間の経過、閾値到達、説明文だけの変更は再推論の理由にしません。
-個人催促AIの出力構造は、`src/codex/personal-reminder-output-schema.ts`のZod定義を正本とします。AIへ渡すJSON Schemaと受信時の型は、この定義から導出します。
+個人催促AIの出力構造は、`src/codex/personal-reminder-output-schema.ts`のZod定義を正本とします。AIへ渡すJSON Schemaと受信時の型は、この定義から導出します。AIへ渡すJSON Schemaでは`references.reasonSummary`のURL禁止patternを省き、受信時のZod検証と意味検証でURLを拒否します。
 出力の構造検証と対象項目の一致確認は別の段階で行い、失敗したbatchは採用しません。通過したbatchは、原因ごとの根拠や選択肢を意味検証して採用します。一つの原因の失敗で、他の原因の採用値とcacheを失いません。
 `currentInput`、`latestAttempt`、`adoptedAssessment`を分けて保存します。実行状態は`not_evaluated`、`completed`、`failed`、`deferred`で表し、正常な`unknown`も`completed`です。採用値の入力fingerprintと規則版が現在値へ一致する場合だけ表示と通知に使います。新しい実行が失敗・延期しても、この一致を満たす採用値は有効です。不一致の旧採用値は根拠を追跡するため保持し、現在対応は未確定にします。
 
@@ -347,6 +347,7 @@ runtimeの分析対象に含まれ、継続競合がない項目は`evaluated`�
 
 保持値に記録された`migration`と`not_recorded`は、producerを照合できても理由として残します。`proof_unknown`は入力の由来と判定担当の最終適用元から再計算します。判定担当項目がないなど、解決できないproducerがある場合は`not_recorded`を加え、解決できたproducerと理由は保持します。`stale_repository`は履歴から持ち越さず、現在もstaleと確認した専用の経路でだけ付けます。
 取得不能で保持するactiveな推定relationでは、理由を`migration`と`proof_unknown`に限ります。今回の候補に付いた`not_recorded`や`stale_repository`は、保持relationの履歴理由へ流用しません。
+前回のactiveな推定relationを保持するときは、staleな端点がない場合、保持後のAI依存が現在の判定担当項目の`applications.relations`と一致することを確かめます。一致しなければ、通常の関係照合で得たinactiveな辺と未判定の証明を使います。
 保持した推定relationの根拠、confidence、最終確認時刻は更新しません。今回の判定が`none`の場合や、同じ候補がなくなった場合はactiveな辺として保持しません。
 
 open項目の列挙計画は`pending`にし、今回組み立て直していない値・採用済み評価・根拠・confidence・時計は保持します。この照合にはAIの追加実行を必要とせず、call上限に達した場合も行います。候補IDに対する両端や判定担当の不一致、今回使った候補や適用元の欠落は構造矛盾として例外にします。
