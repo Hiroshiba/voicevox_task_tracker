@@ -1,8 +1,9 @@
 # 開発手順
 
-VOICEVOX Task Trackerを手元で開発するための手順です。
+VOICEVOX Task Trackerを開発・検証するための手順です。
 本番環境の構築は[デプロイ手順](DEPLOYMENT.md)、運用中の操作は[運用手順](OPERATIONS.md)を参照してください。
 設計の背景は[アーキテクチャ](ARCHITECTURE.md)にあります。
+静的確認はローカルとPull RequestのCIで行い、実データの収集・AI解析と性能検証は目的に合う手動workflowで確認します。
 
 ## 環境を用意する
 
@@ -89,8 +90,10 @@ summaryは最初に、detailsは詳細表示や検索時に、通知履歴は履
 
 ローカルで重い通しrun、全件AI再推論、5,000項目の性能profileを実行しません。
 `dry-run`も実GitHub収集と実Codexを使うため、認証不要の静的確認には使えません。
-実サービスの確認は、対象範囲と予算を決めたsandbox workflowで行い、連続runと通知actionの証拠を保存します。
+収集とAI解析を本番のstate、Pages、Discordへ書き込まずに確認する場合は、[forkの手動dry-run](DEPLOYMENT.md#forkで手動dry-runを実行する)を使います。
+試行用stateの保存やPages生成、連続run、通知actionまで確認する場合は、対象範囲と予算を決めたsandbox workflowを使い、証拠を保存します。
 性能計測は通常CIから分離した`performance.yml`の手動workflowで行います。
+対象のリモートブランチから起動し、ローカルで`pnpm perf:profile`は実行しません。操作は[性能profile](OPERATIONS.md#性能profile)を参照してください。
 性能profileではstage開始に加え、初回commitの正規化、直列化、候補検証、fileの完全検証と証明の再利用、finalizationのsettlement検証、CAS、receipt、完了の境界でメモリ使用量を記録します。観測値は固定の処理名と数値に限定し、通常runでは出力しません。
 
 CLIは明示的なsubcommandを受け取り、option形式のcommand変換を行いません。
@@ -350,7 +353,7 @@ IssueとPull Requestの種別はそれぞれsuccess系とinfo系、状態はneut
 
 ## Pull Requestを出す前に
 
-CIと同じ検査を手元で実行します。
+CIと同じ検査を手元で実行します。Pull Requestでも`.github/workflows/ci.yml`が自動実行されるため、マージ前に結果を確認します。
 
 ```console
 pnpm typecheck

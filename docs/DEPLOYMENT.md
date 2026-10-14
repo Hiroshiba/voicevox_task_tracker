@@ -44,7 +44,7 @@ workflowでは`GH_APP_INSTALLATION_ID`を設定しません。
 ## Actionsの設定
 
 日次workflowには、repositoryのSettingsからActions variableとActions secretを登録します。
-forkのsandbox workflowには、[試行用認証の登録手順](#forkの試行用認証を登録する)を使います。
+forkのsandboxと手動dry-runには、[試行用認証の登録手順](#forkの試行用認証を登録する)を使います。
 
 | 名前                                                  | 種別     | 値                                                  |
 | ----------------------------------------------------- | -------- | --------------------------------------------------- |
@@ -103,15 +103,15 @@ Codex CLIはaccess tokenの残り有効期間が5分未満になるとrefresh to
 `auth-json`で実行候補が1件以上あるrunでは、候補processより先に固定した短文による認証preflightを空の一時directoryで1論理call実行します。候補データと通常のsystem promptは渡さず、preflightの完了後に設定済みの並列度で候補を処理します。候補なし、cache hitだけ、全候補が予算延期のrunでは実行しません。
 `api-key`ではpreflightを実行しません。このpreflightは必要時のtoken更新機会を先に設ける緩和策であり、refreshを強制しません。preflight後に各並列processが更新条件へ入れば、認証競合は残ります。
 preflightに失敗したrunは候補を1件も開始せず、`generic_ai_executed`を失敗させます。
-認証secretへの書き戻しは本番の`analyze`だけが行います。
+認証secretへの書き戻しは本番の`analyze`とforkの手動dry-runが行います。
 配置後のmaskまで完了していれば、書き戻しstepを先行stepの成否を問わず実行します。
 本番の実行stepへは`CODEX_AUTH_SYNC_TOKEN`の有無を示す真偽値だけを渡します。`auth-json`で実行候補がある場合、この値が偽ならCodexの起動前に失敗します。
-tokenの値は本番の書き戻しstepだけへ`GH_TOKEN`として渡します。
+tokenの値は本番と手動dry-runの書き戻しstepだけへ`GH_TOKEN`として渡します。
 書き戻しstepは更新後の値をmaskしてから、配置時のsha256と現在の`auth.json`を比較します。
 変更があってtokenが空なら、secretの更新前に失敗します。
 変更がなければsecretを更新せず、変更があれば`gh secret set`で`CODEX_AUTH_JSON`を更新します。
 この同期が成功する限り、手動の再ログインとsecretの再登録なしにtokenの期限が延長され続けます。
-`analyze`は認証ファイルの配置直後に`.github/scripts/mask-codex-auth-values.sh`を実行します。本番の書き戻し直前にも実行します。
+`analyze`と手動dry-runは認証ファイルの配置直後に`.github/scripts/mask-codex-auth-values.sh`を実行します。書き戻し直前にも実行します。
 このscriptは`auth.json`内のすべての文字列値を`jq`で取り出し、改行を含む値を行へ分け、16文字以上の各行を`::add-mask::`へ登録します。
 値に含まれる`%`はworkflow commandへ渡す前に`%25`へescapeします。
 GitHub Actionsの自動マスクはrun開始時に読み込んだsecret値と完全一致する文字列だけを隠します。
@@ -120,10 +120,10 @@ Codexが更新した`auth.json`もjob開始時のsecretとは異なるため、�
 jobの最後に`codex-home`と指紋ファイルを削除します。
 Codex認証情報と`CODEX_AUTH_SYNC_TOKEN`を`config.yml`、branch、artifact、run logへ書きません。
 
-同じrepositoryの`analyze` jobは、共通の排他groupで認証の使用を直列化します。書き戻しも本番で直列化します。
+同じrepositoryの`analyze` jobと手動dry-runは、共通の排他groupで認証の使用と書き戻しを直列化します。
 repository secretはworkflow runの受付時に読み込まれるため、待機中に別runが認証を更新しても、受付済みrunには反映されません。
 手動実行は、同じ認証を使う前のrunが完了してから起動します。
-この制約は日次workflowとsandbox workflowに共通です。
+この制約は日次workflow、sandbox、手動dry-runに共通です。
 同期用の真偽値はtokenの登録有無だけを示し、有効期限やsecret更新権限は保証しません。
 tokenの権限不足やjobの中断が起きた場合、stateの保存と認証secretの同期は原子的に完了しません。
 
@@ -172,10 +172,15 @@ reportとfailure artifactをsnapshotやPagesの入力として使いません。
 
 `Hiroshiba/voicevox_task_tracker`のrepository variableへ`GH_APP_ID`を登録します。
 repository secretsへ`GH_APP_PRIVATE_KEY`、`CODEX_AUTH_JSON`、`VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64`を登録します。
+手動dry-runにはfork専用の`CODEX_AUTH_SYNC_TOKEN`も登録します。
+同期用のfine-grained personal access tokenはResource ownerを`Hiroshiba`にし、対象を`Hiroshiba/voicevox_task_tracker`だけに絞ります。
+Repository permissionsは`Secrets`の`Read and write`だけを与えます。
+同期用tokenは自動延長されないため、期限前に再発行します。
 診断鍵は本番とは別の32 byteの乱数をBase64へ変換し、Git管理外の安全な場所へ権限600で保管します。
 
 ```console
 gh secret set CODEX_AUTH_JSON --repo Hiroshiba/voicevox_task_tracker < "${CODEX_HOME:-$HOME/.codex}/auth.json"
+gh secret set CODEX_AUTH_SYNC_TOKEN --repo Hiroshiba/voicevox_task_tracker
 umask 077
 openssl rand 32 | openssl base64 -A > path/to/sandbox-diagnostics-key.b64
 chmod 600 path/to/sandbox-diagnostics-key.b64
@@ -183,10 +188,44 @@ gh secret set VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64 --repo
 ```
 
 sandboxは`CODEX_AUTH_SYNC_TOKEN`を受け取らず、Codex認証secretを書き戻しません。
+手動dry-runは認証ファイルが更新された場合にforkの`CODEX_AUTH_JSON`へ書き戻します。
 診断鍵が未設定または形式不正なら、環境の準備とCodexの起動前に停止します。
 Codexが`auth.json`を更新しても次のActions runへ引き継がれません。
 自動起動されるcontinuityの2回目や後続scenarioは、古いrefresh tokenが無効になると認証エラーで停止し得ます。
 認証エラーから復旧するときは、再ログインで得た`auth.json`をforkの`CODEX_AUTH_JSON` secretへ登録してから継続実行します。
+
+### forkで手動dry-runを実行する
+
+実データの収集とAI解析をstateの本番保存やPages公開、Discord送信なしで確認するときは、forkの「手動dry-run」を使います。
+最初に`.github/workflows/dry-run.yml`をforkのデフォルトブランチへ反映し、Actionsを有効にします。
+起動するworkflowのbranchにはforkのデフォルトブランチを選び、`source_ref`へ同じfork内の実行対象branch名かcommit SHAを指定します。
+
+```console
+gh workflow run dry-run.yml --repo Hiroshiba/voicevox_task_tracker --ref main -f source_ref=feature/example
+```
+
+workflowは指定したcodeと`config.yml`を使い、公開上流の`tracker-state`を基準にします。
+stateの取得に失敗した場合や未完了の本番runがある場合は停止します。
+隔離したローカルGitと記録用portで全stageを実行し、本番のstate、Pages、Discordへは書き込みません。
+実行前に`source_ref`の`maintainers`などの設定を確認します。dry-runにrepository filterとforcedモードの入力はありません。
+
+runの失敗stepと次のActions artifactを確認します。保持期間は30日です。
+
+| artifact名                                | 出力先                               | 確認内容                                       |
+| ----------------------------------------- | ------------------------------------ | ---------------------------------------------- |
+| `dry-run-report-<run ID>-<run attempt>`   | `artifacts/run-reports/dry-run.json` | `status`、`complete`、`metrics`、`diagnostics` |
+| `dry-run-artifact-<run ID>-<run attempt>` | `artifacts/dry-run.json`             | `result`、`effectReport`、通知候補、公開計画   |
+
+```console
+gh run list --repo Hiroshiba/voicevox_task_tracker --workflow dry-run.yml --limit 1
+gh run view RUN_ID --repo Hiroshiba/voicevox_task_tracker
+gh run download RUN_ID --repo Hiroshiba/voicevox_task_tracker --dir hiho_dry_run
+```
+
+reportの`status`と`complete`、artifactの`effectReport`にある本番への書き込み件数を照合します。
+`result`ではrepository範囲、待ち相手の`waitingOn`、関係、通知候補を確認します。
+CLI開始前や途中で失敗するとartifactがない場合があります。
+実分析の確認ではpreflight以外のAI呼び出しがあったかを確認します。cache再利用や予算延期で実分析が0件だった場合は、[sandboxのforcedモード](OPERATIONS.md#sandboxで連続runと通知actionを確認する)を使います。
 
 ## マージゲートの設定
 

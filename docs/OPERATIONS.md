@@ -183,6 +183,7 @@ workflowの排他groupはenvironment ID単位です。resetは旧環境のgroup�
 新branch作成後にresetが失敗した場合、そのbranchは`preparing`のまま残ります。確定したresult、receipt、coverage artifactがそろっていれば`recover-reset`に旧environment IDと新environment IDを指定します。確定結果を持つrunが元resetと異なる場合は、そのActions run IDとattemptも指定します。復旧はmanifestに記録した元reset runのID、attempt、code revision、終了状態、旧環境headと、新環境のstate、receipt、coverageを照合します。検証CLIは元のcode revisionから組み立て、追跡や通知を再実行せずmanifestだけをreadyへ進めます。source branchのheadが進んでも復旧できます。証拠が欠ける場合や新旧環境のheadが変わった場合は停止します。
 Discordと本番Pagesへは書き込まず、実GitHub収集・実AI・sandbox state更新と、Pages/Discordのrecording portを組み合わせます。
 同じCodex認証を使うrunは前のrunが完了してから起動します。
+同じforkの手動dry-runも認証の排他groupを共有します。sandboxは認証secretを書き戻さず、手動dry-runは認証ファイルが更新された場合にforkのsecretへ書き戻します。
 
 連続2 runではscenario_idをcontinuity、notification_actionをsend、outcomeをrecorded_success、messageIndexを0にします。
 firstはnormal modeのcreateまたはresetで、実AIの採用結果を残します。
@@ -220,6 +221,18 @@ notification controlのpriorへ先行scenarioの実行ID、environment、最終r
 Actionsの成功表示だけでgate完了にしません。
 同じenvironmentの2 runと全action scenarioについて、実行ID、固定SHA、state revision、receipt chain、effect report、result、coverage artifactを保存して照合します。
 未実行、DNS・認証・外部サービス障害で止まった確認は未完了として記録します。
+
+## 性能profile
+
+日次runの処理時間、API予算、AI論理call数、Pages summaryのサイズに影響する変更では、対象のリモートブランチからGitHub Actionsの「性能profile」を手動実行します。
+通常のPull RequestのCIでは実行されません。
+
+```console
+gh workflow run performance.yml --repo Hiroshiba/voicevox_task_tracker --ref feature/example
+```
+
+完了後はActions artifactの`end-to-end-performance-profile`を取得し、`performance-profile.json`を確認します。
+ローカルで`pnpm perf:profile`は実行しません。
 
 ## 誤判定の直し方
 
