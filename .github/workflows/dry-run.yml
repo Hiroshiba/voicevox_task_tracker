@@ -29,6 +29,9 @@ jobs:
           ref: ${{ inputs.source_ref }}
           persist-credentials: false
 
+      - name: 公開上流の既存stateを取得
+        run: git fetch --no-tags https://github.com/VOICEVOX/voicevox_task_tracker.git refs/heads/tracker-state:refs/heads/tracker-state
+
       - name: Node.jsを準備
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -61,284 +64,44 @@ jobs:
           .github/scripts/mask-codex-auth-values.sh "${{ runner.temp }}/codex-home/auth.json"
           echo "placed=true" >> "$GITHUB_OUTPUT"
 
-      - name: Codex preflight の spawn を診断
+      - name: GitHub収集とCodex解析をdry-runで実行
         env:
+          CODEX_AUTH_SYNC_TOKEN_PRESENT: ${{ secrets.CODEX_AUTH_SYNC_TOKEN != '' }}
           CODEX_HOME: ${{ runner.temp }}/codex-home
+          GH_APP_ID: ${{ vars.GH_APP_ID }}
+          GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
         run: |
-          trap 'rm -f hiho-codex-spawn-probe.mjs' EXIT
-          cat > hiho-codex-spawn-probe.mjs <<'NODE'
-          import { accessSync, closeSync, constants, existsSync, lstatSync, openSync, readSync, statSync } from "node:fs";
-          import { delimiter, isAbsolute, resolve } from "node:path";
+          pnpm exec node --input-type=module --eval '
+          const { createDefaultCliApplication } = await import("./dist/index.js");
+          const result = await createDefaultCliApplication().run([
+            "dry-run",
+            "--config",
+            "config.yml",
+            "--artifact",
+            "artifacts/dry-run.json",
+            "--report",
+            "artifacts/run-reports/dry-run.json",
+          ]);
+          process.exitCode = result.exitCode;
+          '
 
-          function safeErrorClass(error) {
-            if (!(error instanceof Error)) {
-              return "non_error";
-            }
-            const allowed = new Set([
-              "Error",
-              "TypeError",
-              "RangeError",
-              "CodexProcessStartError",
-              "CodexNonZeroExitError",
-              "CodexTimeoutError",
-              "CodexTemporaryWorkspaceError",
-            ]);
-            return allowed.has(error.name) ? error.name : "other_error";
-          }
+      - name: dry-run成果物を保存
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dry-run-artifact-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/dry-run.json
+          if-no-files-found: warn
+          retention-days: 30
 
-          function safeErrorCode(error) {
-            if (typeof error !== "object" || error == null || !("code" in error)) {
-              return "none";
-            }
-            if (typeof error.code !== "string" || !/^[A-Z0-9_]{1,64}$/u.test(error.code)) {
-              return "invalid";
-            }
-            return error.code;
-          }
-
-          function safeCauseCodes(error) {
-            const codes = [];
-            let current = error;
-            for (let depth = 0; depth < 4; depth += 1) {
-              codes.push(safeErrorCode(current));
-              if (!(current instanceof Error) || current.cause == null) {
-                break;
-              }
-              current = current.cause;
-            }
-            return codes.join(",");
-          }
-
-          function executable(candidate) {
-            try {
-              accessSync(candidate, constants.X_OK);
-              return true;
-            } catch (error) {
-              if (["ENOENT", "ENOTDIR", "EACCES"].includes(safeErrorCode(error))) {
-                return false;
-              }
-              throw error;
-            }
-          }
-
-          function interpreterClass(candidate) {
-            let descriptor;
-            try {
-              descriptor = openSync(candidate, "r");
-            } catch (error) {
-              if (safeErrorCode(error) === "EACCES") {
-                return "unreadable";
-              }
-              throw error;
-            }
-            try {
-              const firstBytes = Buffer.alloc(256);
-              const length = readSync(descriptor, firstBytes, 0, firstBytes.length, 0);
-              const firstLine = firstBytes.subarray(0, length).toString("utf8").split("\n", 1)[0];
-              if (!firstLine.startsWith("#!")) {
-                return "none";
-              }
-              const [interpreter, argument] = firstLine.slice(2).trim().split(/\s+/u);
-              if (interpreter === "/usr/bin/env" && argument === "node") {
-                return "env_node";
-              }
-              if (interpreter === "/bin/sh") {
-                return "bin_sh";
-              }
-              if (interpreter === "/bin/bash") {
-                return "bin_bash";
-              }
-              if (interpreter === "/usr/bin/node") {
-                return "usr_bin_node";
-              }
-              return "other";
-            } finally {
-              closeSync(descriptor);
-            }
-          }
-
-          function inspectCandidate(candidate) {
-            try {
-              const metadata = lstatSync(candidate);
-              let targetExists = false;
-              let targetIsFile = false;
-              try {
-                const target = statSync(candidate);
-                targetExists = true;
-                targetIsFile = target.isFile();
-              } catch (error) {
-                if (!["ENOENT", "ENOTDIR"].includes(safeErrorCode(error))) {
-                  throw error;
-                }
-              }
-              const canExecute = targetIsFile && executable(candidate);
-              return {
-                exists: true,
-                symlink: metadata.isSymbolicLink(),
-                targetExists,
-                executable: canExecute,
-                interpreter: canExecute ? interpreterClass(candidate) : "not_applicable",
-              };
-            } catch (error) {
-              if (["ENOENT", "ENOTDIR"].includes(safeErrorCode(error))) {
-                return {
-                  exists: false,
-                  symlink: false,
-                  targetExists: false,
-                  executable: false,
-                  interpreter: "not_applicable",
-                };
-              }
-              throw error;
-            }
-          }
-
-          function inspectPath(request, workingDirectory) {
-            return request.environment.PATH.split(delimiter).map((entry) => ({
-              relative: !isAbsolute(entry),
-              candidate: inspectCandidate(resolve(workingDirectory, entry, request.command)),
-            }));
-          }
-
-          function summarizePath(request) {
-            const parent = inspectPath(request, process.cwd());
-            const child = inspectPath(request, request.workingDirectory);
-            const parentFirst = parent.find(({ candidate }) => candidate.executable);
-            const childFirst = child.find(({ candidate }) => candidate.executable);
-            return {
-              relativeEntriesPresent: parent.some(({ relative }) => relative),
-              parentExecutable: parentFirst != null,
-              childExecutable: childFirst != null,
-              parentRelativeExecutable: parent.some(({ relative, candidate }) => relative && candidate.executable),
-              childRelativeExecutable: child.some(({ relative, candidate }) => relative && candidate.executable),
-              absoluteEntryExecutable: child.some(({ relative, candidate }) => !relative && candidate.executable),
-              childCandidateExists: child.some(({ candidate }) => candidate.exists),
-              childCandidateTargetExists: child.some(({ candidate }) => candidate.targetExists),
-              parentFirstRelative: parentFirst?.relative ?? false,
-              childFirstRelative: childFirst?.relative ?? false,
-              parentFirstSymlink: parentFirst?.candidate.symlink ?? false,
-              childFirstSymlink: childFirst?.candidate.symlink ?? false,
-              parentInterpreter: parentFirst?.candidate.interpreter ?? "not_applicable",
-              childInterpreter: childFirst?.candidate.interpreter ?? "not_applicable",
-            };
-          }
-
-          function knownCommand(value) {
-            if (value === "codex" || value === "pnpm" || value === "node") {
-              return value;
-            }
-            return value == null ? "missing" : "other";
-          }
-
-          function errorPathClass(error) {
-            if (error == null || typeof error.path !== "string") {
-              return "missing";
-            }
-            return knownCommand(error.path);
-          }
-
-          function errorSyscallClass(error) {
-            if (error == null || typeof error.syscall !== "string") {
-              return "missing";
-            }
-            return error.syscall === "spawn codex" ? "spawn_codex" : "other";
-          }
-
-          const startedAt = Date.now();
-          let stage = "setup";
-          let runnerAttempts = 0;
-          let runnerError;
-          let runnerRequest;
-          let runnerCwdExists = false;
-          let pathSummary;
-          let budget;
-          try {
-            const { loadConfig } = await import("./dist/config/index.js");
-            const { CodexAttemptBudget, executeCodexAuthenticationPreflight } = await import(
-              "./dist/codex/index.js"
-            );
-            const { createDefaultCliCompositionAdapters } = await import(
-              "./dist/cli/composition-root.js"
-            );
-            const { createCodexAdapterConfiguration, createCodexAdapterDependencies } = await import(
-              "./dist/cli/codex-runtime-support.js"
-            );
-            const config = await loadConfig("config.yml");
-            const adapters = createDefaultCliCompositionAdapters();
-            budget = new CodexAttemptBudget(config.ai.budget.maxCodexExecAttemptsPerRun);
-            const tickets = budget.reserveInitialAttempts(2);
-            if (tickets == null || tickets[1] == null) {
-              throw new Error("認証preflightの試行枠を確保できませんでした");
-            }
-            const observedAdapters = {
-              ...adapters,
-              codexProcessRunner: async (request) => {
-                runnerAttempts += 1;
-                runnerRequest = request;
-                runnerCwdExists = existsSync(request.workingDirectory);
-                pathSummary = summarizePath(request);
-                try {
-                  return await adapters.codexProcessRunner(request);
-                } catch (error) {
-                  runnerError = error;
-                  throw error;
-                }
-              },
-            };
-            const configuration = createCodexAdapterConfiguration(config);
-            const dependencies = createCodexAdapterDependencies(
-              observedAdapters,
-              { environment: process.env },
-              budget,
-              undefined,
-              undefined,
-            );
-            stage = "preflight";
-            await executeCodexAuthenticationPreflight(
-              {
-                ...configuration,
-                execution: { ...configuration.execution, maxAttempts: 1 },
-              },
-              { ...dependencies, initialAttemptTicket: tickets[1] },
-            );
-            console.log("probe_result=success");
-          } catch (error) {
-            console.log("probe_result=failure");
-            console.log(`probe_stage=${stage}`);
-            console.log(`preflight_error_class=${safeErrorClass(error)}`);
-            console.log(`preflight_cause_codes=${safeCauseCodes(error)}`);
-            console.log(`runner_rejected=${runnerError != null}`);
-            console.log(`runner_error_class=${safeErrorClass(runnerError)}`);
-            console.log(`runner_error_code=${safeErrorCode(runnerError)}`);
-            process.exitCode = 1;
-          } finally {
-            console.log(`attempt_count=${budget?.attemptCount ?? 0}`);
-            console.log(`runner_attempts=${runnerAttempts}`);
-            console.log(`runner_cwd_exists=${runnerCwdExists}`);
-            console.log(`command_class=${knownCommand(runnerRequest?.command)}`);
-            console.log(`command_is_absolute=${runnerRequest == null ? false : isAbsolute(runnerRequest.command)}`);
-            console.log(`command_contains_slash=${runnerRequest?.command.includes("/") ?? false}`);
-            console.log(`runner_error_path_class=${errorPathClass(runnerError)}`);
-            console.log(`runner_error_path_matches_command=${runnerRequest != null && runnerError?.path === runnerRequest.command}`);
-            console.log(`runner_error_syscall_class=${errorSyscallClass(runnerError)}`);
-            console.log(`path_relative_entries_present=${pathSummary?.relativeEntriesPresent ?? false}`);
-            console.log(`path_parent_executable=${pathSummary?.parentExecutable ?? false}`);
-            console.log(`path_child_executable=${pathSummary?.childExecutable ?? false}`);
-            console.log(`path_parent_relative_executable=${pathSummary?.parentRelativeExecutable ?? false}`);
-            console.log(`path_child_relative_executable=${pathSummary?.childRelativeExecutable ?? false}`);
-            console.log(`path_absolute_entry_executable=${pathSummary?.absoluteEntryExecutable ?? false}`);
-            console.log(`path_child_candidate_exists=${pathSummary?.childCandidateExists ?? false}`);
-            console.log(`path_child_candidate_target_exists=${pathSummary?.childCandidateTargetExists ?? false}`);
-            console.log(`path_parent_first_relative=${pathSummary?.parentFirstRelative ?? false}`);
-            console.log(`path_child_first_relative=${pathSummary?.childFirstRelative ?? false}`);
-            console.log(`path_parent_first_symlink=${pathSummary?.parentFirstSymlink ?? false}`);
-            console.log(`path_child_first_symlink=${pathSummary?.childFirstSymlink ?? false}`);
-            console.log(`path_parent_interpreter=${pathSummary?.parentInterpreter ?? "not_applicable"}`);
-            console.log(`path_child_interpreter=${pathSummary?.childInterpreter ?? "not_applicable"}`);
-            console.log(`duration_ms=${Date.now() - startedAt}`);
-          }
-          NODE
-          pnpm exec node hiho-codex-spawn-probe.mjs
+      - name: dry-run reportを保存
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dry-run-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/run-reports/dry-run.json
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: 更新されたCodex認証ファイルをsecretへ書き戻す
         if: always() && steps.codex_auth_placement.outputs.placed == 'true'
