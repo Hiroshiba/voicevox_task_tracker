@@ -368,14 +368,43 @@ function assertContinuitySource(sourceManifest, proofRoot) {
     first.actionsRunAttempt,
     "通知matrixのR1 completion attempt",
   );
+  const firstSentKeyDigests = z
+    .array(digestSchema)
+    .min(1)
+    .parse(firstCoverage.receiptChain.recordedSendKeyDigests);
+  const secondSentKeyDigests = z
+    .array(digestSchema)
+    .parse(secondCoverage.receiptChain.recordedSendKeyDigests);
+  const secondMessageSendCount = z
+    .number()
+    .int()
+    .nonnegative()
+    .parse(secondCoverage.notification.messageSendCount);
+  const secondRecordedSendCount = z
+    .number()
+    .int()
+    .nonnegative()
+    .parse(secondCoverage.notification.recordedSendCount);
+  const hasNewSentHistory = secondSentKeyDigests.length > 0;
   if (
     firstCoverage.analysis.genericAi.applications.executed < 1 ||
     firstCoverage.analysis.genericAi.processAttemptCount < 1 ||
     firstCoverage.notification.recordedSendCount < 1 ||
     secondCoverage.notification.sameKeySuppressionConsistent !== true ||
-    secondCoverage.notification.messageSendCount !== 0
+    secondMessageSendCount !== secondRecordedSendCount ||
+    secondSentKeyDigests.length < secondRecordedSendCount ||
+    new Set(secondSentKeyDigests).size !== secondSentKeyDigests.length ||
+    secondSentKeyDigests.some((key) => firstSentKeyDigests.includes(key)) ||
+    (hasNewSentHistory
+      ? secondRecordedSendCount < 1 ||
+        secondCoverage.pages.notificationHistory.buildStatus !== "built" ||
+        secondCoverage.pages.notificationHistory.status !== "deployed" ||
+        secondCoverage.pages.notificationHistory.externalReference?.kind !== "recording"
+      : secondRecordedSendCount !== 0 ||
+        secondCoverage.pages.notificationHistory.buildStatus !== "not_required" ||
+        secondCoverage.pages.notificationHistory.status !== "not_required")
   ) {
-    throw new TypeError("通知matrixの実AI採用または同一key抑止がありません");
+    throw new TypeError("通知matrixの実AI採用、同一key抑止または履歴Pagesがありません");
   }
   same(
     secondRun.display_title,

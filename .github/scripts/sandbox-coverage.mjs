@@ -1,8 +1,10 @@
 import { Buffer } from "node:buffer";
+import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import process from "node:process";
 
 import { z } from "zod";
+import { parseStateNotificationLedger } from "../../dist/persistence/state-documents.js";
 import {
   assertCompleteSandboxStageCoverage,
   createSandboxStageCoverage,
@@ -12,6 +14,7 @@ import { copySandboxCheckpointInputEvidence } from "../../dist/infrastructure/tr
 import { readVerifiedFirstResult, resultSchema, sha256 } from "./sandbox-continuity-result.mjs";
 import { plannedSnapshotReuseWitness, verifyCacheProbeAdoption } from "./sandbox-reuse-witness.mjs";
 import { firstFileCacheProbeSource } from "./sandbox-cache-probe-source.mjs";
+import { assertSecondNotificationCoverage } from "./sandbox-continuity-notification.mjs";
 import {
   readSandboxCheckpointEvidence,
   unavailableLegacyStageCoverage,
@@ -202,8 +205,8 @@ async function createCoverage() {
   const historyPages = receipt("pages_deployment", "notification_history");
   const settlement = receipt("notification_settlement");
   const messageReceipts = receipts.filter((entry) => entry.receiptType === "notification_message");
-  const recordedSendKeyDigests = messageReceipts
-    .filter((entry) => entry.status === "sent")
+  const sentMessageReceipts = messageReceipts.filter((entry) => entry.status === "sent");
+  const recordedSendKeyDigests = sentMessageReceipts
     .flatMap((entry) => entry.result.notificationKeys.map((key) => sha256(key)))
     .sort();
   const sentKeys = ledger.entries
@@ -320,13 +323,30 @@ async function createCoverage() {
       .parse(firstCoverage.analysis.genericAi.applications.executed);
     const cacheApplicationCount = z.number().int().nonnegative().parse(applications.cache);
     const cacheHitCount = z.number().int().nonnegative().parse(metrics.aiCacheHitCount);
-    const matchedSuppressedKeyDigests = suppressedKeyDigests.filter((key) =>
-      firstRecordedSendKeyDigests.includes(key),
+    const firstLedger = parseStateNotificationLedger(
+      execFileSync(
+        "git",
+        [
+          "-C",
+          required("SANDBOX_STATE_REPOSITORY_PATH"),
+          "show",
+          `${first.finalStateRevision}:state/notification-ledger.json`,
+        ],
+        { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+      ),
     );
-    sameKeySuppressionConsistent =
-      matchedSuppressedKeyDigests.length > 0 &&
-      firstSentKeyDigests.every((key) => sentLedgerKeyDigests.includes(key)) &&
-      messageReceipts.length === 0;
+    assertSecondNotificationCoverage({
+      firstLedger,
+      ledger,
+      firstSentKeyDigests,
+      firstRecordedSendKeyDigests,
+      suppressedKeyDigests,
+      outbox: record.notificationOutbox,
+      messageReceipts,
+      historyBuild,
+      historyPages,
+    });
+    sameKeySuppressionConsistent = true;
     if (
       trackingRunId === first.trackingRunId ||
       evidence.kind !== "artifact_cross_checked" ||
@@ -334,24 +354,22 @@ async function createCoverage() {
       snapshotReuses.length < 1 ||
       cacheApplicationCount < 1 ||
       cacheHitCount < 1 ||
-      record.notificationOutbox.delivery !== "no_candidates" ||
-      record.notificationOutbox.selectedContext.action !== "skip_digest" ||
-      messageReceipts.length !== 0 ||
-      historyPages.status !== "not_required" ||
-      sentKeys.length < 1 ||
-      !sameKeySuppressionConsistent
+      sentKeys.length < 1
     ) {
-      throw new TypeError(
-        "second runのsnapshot再利用、AI cache hitと同一key候補の送信抑止を確認できません",
-      );
+      throw new TypeError("second runの再利用とAI cache hitを確認できません");
     }
   }
   if (
     initialBuild.status !== "built" ||
+    initialPages.status !== "deployed" ||
     initialPages.result?.externalReference?.kind !== "recording" ||
+    (historyPages.status === "deployed" && historyBuild.status !== "built") ||
     (historyPages.status === "deployed" &&
       historyPages.result?.externalReference?.kind !== "recording") ||
-    settlement.result.action !== "send"
+    (historyPages.status === "not_required" && historyBuild.status !== "not_required") ||
+    settlement.result.action !== "send" ||
+    required("SANDBOX_RECORDING_OUTCOME") !== "recorded_success" ||
+    messageReceipts.length !== sentMessageReceipts.length
   ) {
     throw new TypeError("sandbox Pagesと通知の記録結果が不正です");
   }
