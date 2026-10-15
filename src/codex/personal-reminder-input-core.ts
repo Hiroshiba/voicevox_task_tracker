@@ -257,6 +257,9 @@ function validateSemanticInputIntegrity(input: PersonalReminderCauseSemanticInpu
     (relationEvidenceSourceIds.has(sourceId) || pendingRelationEvidenceSourceIds.has(sourceId));
   const causeNodeIds = causeScopeNodeIds(input.cause);
   for (const relation of input.relations) {
+    if (!causeNodeIds.has(relation.fromNodeId) && !causeNodeIds.has(relation.toNodeId)) {
+      throw new TypeError(`relation ${relation.id}がcause scopeに接続していません`);
+    }
     const hasMissingEndpoint = !itemIds.has(relation.fromNodeId) || !itemIds.has(relation.toNodeId);
     if (hasMissingEndpoint && !allowsMissingRelatedItem) {
       throw new TypeError(`relation ${relation.id}の端点がitem contextにありません`);

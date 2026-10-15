@@ -1,4 +1,9 @@
 import type { PersonalReminderCause } from "../../../domain/personal-reminder-causes.js";
+import {
+  personalReminderDirectScopeNodeIds,
+  personalReminderRelationConnectsDirectScope,
+} from "../../../domain/personal-reminder-relation-scope.js";
+import type { Relation } from "../../../domain/relation.js";
 import type { GraphNodeId } from "../../../domain/types.js";
 import type { CurrentSourceFact } from "../contracts/evidence-catalog.js";
 import { nativeImplementationEvidenceOwnerNodeIds } from "./evidence-native-implementation-scope.js";
@@ -8,6 +13,8 @@ type RelatedRelation = Readonly<{
   fromNodeId: GraphNodeId;
   toNodeId: GraphNodeId;
 }>;
+
+type CauseRelation = Pick<Relation, "active" | "fromNodeId" | "toNodeId" | "type">;
 
 /** 項目に接続したrelation参照から利用できる対象範囲を返す。 */
 export function relatedScope(
@@ -60,27 +67,38 @@ export function personalReminderSourceOwnerNodeIds(
 /** 個人催促原因の責務と採用relationから利用できる対象範囲を返す。 */
 export function personalReminderCauseScope(
   cause: PersonalReminderCause,
-  relationsById: ReadonlyMap<string, RelatedRelation>,
+  relationsById: ReadonlyMap<string, CauseRelation>,
   path: readonly (string | number)[],
 ): Readonly<{ nodeIds: readonly string[]; relationIds: readonly string[] }> {
-  const references =
+  const relationIds =
     cause.adoptedAssessment.status === "available"
-      ? cause.adoptedAssessment.result.references
-      : undefined;
-  const related = relatedScope(
-    cause.itemNodeId,
-    references?.relationIds ?? [],
-    relationsById,
-    path,
-  );
-  const nodes = new Set([
-    ...related.nodeIds,
-    ...(cause.responsibility.scope.kind === "item"
-      ? []
-      : cause.responsibility.scope.surfaces.map((surface) => surface.nodeId)),
-  ]);
+      ? cause.adoptedAssessment.result.references.relationIds
+      : [];
+  return personalReminderCauseScopeForRelationIds(cause, relationIds, relationsById, path);
+}
+
+/** 個人催促原因と指定したrelation参照から利用できる対象範囲を返す。 */
+export function personalReminderCauseScopeForRelationIds(
+  cause: PersonalReminderCause,
+  relationIds: readonly string[],
+  relationsById: ReadonlyMap<string, CauseRelation>,
+  path: readonly (string | number)[],
+): Readonly<{ nodeIds: readonly string[]; relationIds: readonly string[] }> {
+  const directScopeNodeIds = personalReminderDirectScopeNodeIds(cause);
+  const nodes = new Set(directScopeNodeIds);
+  for (const relationId of relationIds) {
+    const relation = relationsById.get(relationId);
+    if (
+      relation == null ||
+      !personalReminderRelationConnectsDirectScope(relation, directScopeNodeIds)
+    ) {
+      throw new RunCompletenessError("invalid_reference", relationId, path, undefined);
+    }
+    nodes.add(relation.fromNodeId);
+    nodes.add(relation.toNodeId);
+  }
   return Object.freeze({
     nodeIds: Object.freeze([...nodes].sort()),
-    relationIds: related.relationIds,
+    relationIds: Object.freeze([...new Set(relationIds)].sort()),
   });
 }

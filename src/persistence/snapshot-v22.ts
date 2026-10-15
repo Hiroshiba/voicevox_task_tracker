@@ -8,6 +8,10 @@ import type {
   PersonalReminderCause,
   PersonalReminderTimeBasis,
 } from "../domain/personal-reminder-causes.js";
+import {
+  personalReminderDirectScopeNodeIds,
+  personalReminderRelationConnectsDirectScope,
+} from "../domain/personal-reminder-relation-scope.js";
 import { parseSourceId, type SourceId } from "../domain/source-id.js";
 import type { Evidence, GraphNodeId, TrackedItemState } from "../domain/types.js";
 import {
@@ -114,10 +118,29 @@ export function assertNoPendingPersonalReminderClock(snapshot: Pick<StateSnapsho
   }
 }
 
-function assertReconfirmedProvenance(snapshot: StateSnapshot): void {
+function assertPersonalReminderReferenceAndReconfirmedProvenance(snapshot: StateSnapshot): void {
   const relationsById = new Map(snapshot.relations.map((relation) => [relation.id, relation]));
   for (const item of snapshot.items) {
     for (const cause of item.personalReminderCauses) {
+      const directScopeNodeIds = personalReminderDirectScopeNodeIds(cause);
+      const ownerNodeIds = new Set<string>(directScopeNodeIds);
+      const relationIds =
+        cause.adoptedAssessment.status === "available"
+          ? cause.adoptedAssessment.result.references.relationIds
+          : [];
+      for (const relationId of relationIds) {
+        const relation = relationsById.get(relationId);
+        if (
+          relation == null ||
+          !personalReminderRelationConnectsDirectScope(relation, directScopeNodeIds)
+        ) {
+          throw new StateSnapshotSemanticError(
+            `個人催促の関連項目が不正です。item: ${item.nodeId} cause: ${cause.causeId} relation: ${relationId}`,
+          );
+        }
+        ownerNodeIds.add(relation.fromNodeId);
+        ownerNodeIds.add(relation.toNodeId);
+      }
       const bases = [
         cause.obligationSince,
         ...(cause.actionableClock.status === "observed"
@@ -135,29 +158,6 @@ function assertReconfirmedProvenance(snapshot: StateSnapshot): void {
           throw new StateSnapshotSemanticError(
             `再確認した個人催促時計の監査値が不正です。item: ${item.nodeId} cause: ${cause.causeId}`,
           );
-        }
-        const ownerNodeIds = new Set<string>([
-          item.nodeId,
-          ...(cause.responsibility.scope.kind === "item"
-            ? []
-            : cause.responsibility.scope.surfaces.map((surface) => surface.nodeId)),
-        ]);
-        const relationIds =
-          cause.adoptedAssessment.status === "available"
-            ? cause.adoptedAssessment.result.references.relationIds
-            : [];
-        for (const relationId of relationIds) {
-          const relation = relationsById.get(relationId);
-          if (
-            relation == null ||
-            (relation.fromNodeId !== item.nodeId && relation.toNodeId !== item.nodeId)
-          ) {
-            throw new StateSnapshotSemanticError(
-              `再確認した個人催促時計の関連項目が不正です。item: ${item.nodeId} cause: ${cause.causeId} relation: ${relationId}`,
-            );
-          }
-          ownerNodeIds.add(relation.fromNodeId);
-          ownerNodeIds.add(relation.toNodeId);
         }
         for (const sourceId of basis.sourceIds) {
           const source = parseSourceId(sourceId);
@@ -225,7 +225,7 @@ function createSnapshot(value: unknown, proofVersion: "current" | "legacy"): Sta
       }),
     ),
   } satisfies StateSnapshot);
-  assertReconfirmedProvenance(snapshot);
+  assertPersonalReminderReferenceAndReconfirmedProvenance(snapshot);
   return snapshot;
 }
 
@@ -268,7 +268,7 @@ export function snapshotEffectiveGraphStateByNodeId(
 export function assertPersonalReminderEvidenceClosure(snapshot: StateSnapshot): void {
   assertNoPendingPersonalReminderClock(snapshot);
   assertVersion21EvidenceClosure(createVersion21Snapshot(version21Projection(snapshot)));
-  assertReconfirmedProvenance(snapshot);
+  assertPersonalReminderReferenceAndReconfirmedProvenance(snapshot);
 }
 
 /** personal reminderのEvidence recordを現行snapshot内で照合する。 */
@@ -281,5 +281,5 @@ export function assertPersonalReminderEvidenceRecordsClosure(
     createVersion21Snapshot(version21Projection(snapshot)),
     expectedEvidenceBySourceId,
   );
-  assertReconfirmedProvenance(snapshot);
+  assertPersonalReminderReferenceAndReconfirmedProvenance(snapshot);
 }

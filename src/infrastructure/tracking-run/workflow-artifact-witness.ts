@@ -212,8 +212,10 @@ const witnessSchema = z.strictObject({
       relations: z.array(
         z.strictObject({
           id: z.string().min(1),
+          active: z.boolean(),
           fromNodeId: nodeIdSchema,
           toNodeId: nodeIdSchema,
+          type: z.enum(["blocks", "parent_of", "implements", "related_to", "duplicates"]),
         }),
       ),
     }),

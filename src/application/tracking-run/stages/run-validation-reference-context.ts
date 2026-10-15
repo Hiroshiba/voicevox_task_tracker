@@ -11,12 +11,12 @@ import {
 } from "./evidence-native-implementation-scope.js";
 import { personalReminderSourceOwnerNodeIds } from "./personal-reminder-related-scope.js";
 import {
+  cacheCauseScope,
   causeScope,
   isRecord,
   itemEvidenceScope,
   notificationReasonScope,
   pendingNotificationScope,
-  relationScope,
   valueAtPath,
 } from "./run-validation-reference-scope.js";
 import {
@@ -219,11 +219,11 @@ export function referenceContext(
     if (addition == null) {
       throw new RunCompletenessError("missing_value", reference.sourceId, path, undefined);
     }
-    const scope = relationScope(
+    const scope = cacheCauseScope(
+      reference,
       values,
-      reference.owner.id,
+      addition.causeId,
       addition.generation.result.references.relationIds,
-      path,
     );
     return {
       purpose: "personal_reminder_cache",

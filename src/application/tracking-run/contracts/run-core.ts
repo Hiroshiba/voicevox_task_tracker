@@ -69,7 +69,7 @@ export type PersonalReminderPlanningInput = Readonly<{
     >[];
     relations: readonly Pick<
       Extract<AnalysisPreviousState["snapshot"], { status: "available" }>["relations"][number],
-      "id" | "fromNodeId" | "toNodeId" | "evidence"
+      "active" | "id" | "fromNodeId" | "toNodeId" | "type" | "evidence"
     >[];
   }>;
   previousItems: readonly Pick<
@@ -193,8 +193,10 @@ export function projectGenericAiRunCore(analyzed: AnalysisRunCore): GenericAiRun
                 analyzed.previousState.snapshot.relations.map((relation) =>
                   Object.freeze({
                     id: relation.id,
+                    active: relation.active,
                     fromNodeId: relation.fromNodeId,
                     toNodeId: relation.toNodeId,
+                    type: relation.type,
                     evidence: relation.evidence,
                   }),
                 ),

@@ -106,13 +106,16 @@ export function createCacheOwnerWitness(
       generationDigest: generationDigest(entry.generation, digest),
     });
   });
+  const personalAdditions = runValuesById(
+    outward.personalReminderAiCacheAdditions,
+    (entry) => entry.cacheKey,
+    ["personalReminderAiCacheAdditions"],
+  );
   const personalReminder = values.personalReminderAiCacheAdditions.map((entry, index) => {
-    const addition = outward.personalReminderAiCacheAdditions[index];
+    const addition = personalAdditions.get(entry.cacheKey);
     const item = addition == null ? undefined : items.get(addition.itemNodeId);
-    if (
-      addition == null ||
-      item?.personalReminderCauses.some((cause) => cause.causeId === entry.causeId) !== true
-    ) {
+    const cause = item?.personalReminderCauses.find((value) => value.causeId === entry.causeId);
+    if (addition?.causeId !== entry.causeId || cause == null) {
       throw new RunCompletenessError(
         "wrong_owner",
         entry.cacheKey,
@@ -191,10 +194,8 @@ export function assertCacheOwnerWitness(
   for (const [index, entry] of values.personalReminderAiCacheAdditions.entries()) {
     const owner = witness.personalReminder[index];
     const item = owner == null ? undefined : items.get(owner.itemNodeId);
-    if (
-      owner == null ||
-      item?.personalReminderCauses.some((cause) => cause.causeId === entry.causeId) !== true
-    ) {
+    const cause = item?.personalReminderCauses.find((value) => value.causeId === entry.causeId);
+    if (owner == null || cause == null) {
       throw new RunCompletenessError(
         "wrong_owner",
         entry.cacheKey,

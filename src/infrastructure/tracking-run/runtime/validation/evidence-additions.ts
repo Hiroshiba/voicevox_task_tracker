@@ -78,7 +78,12 @@ function personalReminderAiCacheAdditions(
         itemNodeId,
         `保存予定の個人催促AI cacheの原因がありません。対象: ${entry.causeId}`,
       );
-      return Object.freeze({ itemNodeId, result: entry.generation.result });
+      return Object.freeze({
+        cacheKey: entry.cacheKey,
+        itemNodeId,
+        causeId: entry.causeId,
+        result: entry.generation.result,
+      });
     }),
   );
 }

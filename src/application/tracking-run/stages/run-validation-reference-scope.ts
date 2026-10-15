@@ -3,6 +3,7 @@ import type {
   MaterializedReferenceValues,
 } from "./run-validation-reference-contracts.js";
 import type { CurrentSourceFact } from "../contracts/evidence-catalog.js";
+import { personalReminderRelationConnectsDirectScope } from "../../../domain/personal-reminder-relation-scope.js";
 import { nativeImplementationEvidenceOwnerNodeIds } from "./evidence-native-implementation-scope.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 
@@ -57,6 +58,24 @@ export function relationScope(
   return { nodeIds: [...nodes].sort(), relationIds: [...new Set(relationIds)].sort() };
 }
 
+function causeRelationScope(
+  values: MaterializedReferenceValues,
+  directNodeIds: ReadonlySet<string>,
+  relationIds: readonly string[],
+  path: Path,
+): Readonly<{ nodeIds: readonly string[]; relationIds: readonly string[] }> {
+  const nodes = new Set(directNodeIds);
+  for (const relationId of relationIds) {
+    const relation = values.snapshot.relations.find((entry) => entry.id === relationId);
+    if (relation == null || !personalReminderRelationConnectsDirectScope(relation, directNodeIds)) {
+      throw new RunCompletenessError("invalid_reference", relationId, path, undefined);
+    }
+    nodes.add(relation.fromNodeId);
+    nodes.add(relation.toNodeId);
+  }
+  return { nodeIds: [...nodes].sort(), relationIds: [...new Set(relationIds)].sort() };
+}
+
 function causeExecutionSurfaceNodeIds(cause: unknown, path: Path): readonly string[] {
   const scope = valueAtPath(cause, ["responsibility", "scope"]);
   if (!isRecord(scope) || typeof scope["kind"] !== "string") {
@@ -106,6 +125,7 @@ export function itemEvidenceScope(
     throw new RunCompletenessError("missing_value", ownerNodeId, reference.path, undefined);
   }
   const relationIds = new Set<string>();
+  const causeRelationIds = new Set<string>();
   const ownerNodeIds = new Set(
     nativeImplementationEvidenceOwnerNodeIds(
       reference.sourceId,
@@ -127,27 +147,9 @@ export function itemEvidenceScope(
       (Array.isArray(assessmentSourceIds) && assessmentSourceIds.includes(reference.sourceId)) ||
       causeClockReferencesSource(cause, reference.sourceId)
     ) {
-      for (const nodeId of causeExecutionSurfaceNodeIds(cause, reference.path)) {
-        ownerNodeIds.add(nodeId);
-      }
-      const related = valueAtPath(cause, [
-        "adoptedAssessment",
-        "result",
-        "references",
-        "relationIds",
-      ]);
-      if (Array.isArray(related)) {
-        for (const id of related) {
-          if (typeof id !== "string")
-            throw new RunCompletenessError(
-              "invalid_reference",
-              reference.sourceId,
-              reference.path,
-              undefined,
-            );
-          relationIds.add(id);
-        }
-      }
+      const scope = causeValueScope(cause, reference, values);
+      for (const nodeId of scope.nodeIds) ownerNodeIds.add(nodeId);
+      for (const relationId of scope.relationIds) causeRelationIds.add(relationId);
     }
   }
   const waitingOn = valueAtPath(item, ["waitingOn"]);
@@ -183,7 +185,7 @@ export function itemEvidenceScope(
   const related = relationScope(values, ownerNodeId, [...relationIds], reference.path);
   return {
     nodeIds: [...new Set([...related.nodeIds, ...ownerNodeIds])].sort(),
-    relationIds: related.relationIds,
+    relationIds: [...new Set([...related.relationIds, ...causeRelationIds])].sort(),
   };
 }
 
@@ -214,16 +216,20 @@ function causeValueScope(
       ids.push(id);
     }
   }
-  const relatedScopeValue = relationScope(values, reference.owner.id, ids, reference.path);
-  return {
-    nodeIds: [
-      ...new Set([
-        ...relatedScopeValue.nodeIds,
-        ...causeExecutionSurfaceNodeIds(cause, reference.path),
-      ]),
-    ].sort(),
-    relationIds: relatedScopeValue.relationIds,
-  };
+  return causeValueScopeForRelationIds(cause, ids, reference, values);
+}
+
+function causeValueScopeForRelationIds(
+  cause: unknown,
+  relationIds: readonly string[],
+  reference: MaterializedEvidenceReference,
+  values: MaterializedReferenceValues,
+): Readonly<{ nodeIds: readonly string[]; relationIds: readonly string[] }> {
+  const directNodeIds = new Set([
+    reference.owner.id,
+    ...causeExecutionSurfaceNodeIds(cause, reference.path),
+  ]);
+  return causeRelationScope(values, directNodeIds, relationIds, reference.path);
 }
 
 /** 個人催促原因が参照する関係の所有範囲を得る。 */
@@ -252,18 +258,44 @@ function causeForItem(
   return item?.personalReminderCauses.find((value) => value.causeId === causeId);
 }
 
+/** 保存cacheの原因IDから当該原因の所有範囲を得る。 */
+export function cacheCauseScope(
+  reference: MaterializedEvidenceReference,
+  values: MaterializedReferenceValues,
+  causeId: string,
+  relationIds: readonly string[],
+): Readonly<{ nodeIds: readonly string[]; relationIds: readonly string[] }> {
+  const cause = causeForItem(values, reference.owner.id, causeId);
+  if (cause == null) {
+    throw new RunCompletenessError("missing_value", causeId, reference.path, undefined);
+  }
+  return causeValueScopeForRelationIds(cause, relationIds, reference, values);
+}
+
 /** 保存済み通知に対応する原因の関係と実行面をsource所有範囲へ加える。 */
 export function pendingNotificationScope(
   reference: MaterializedEvidenceReference,
   values: MaterializedReferenceValues,
 ): Readonly<{ nodeIds: readonly string[]; relationIds: readonly string[] }> {
   const pending = valueAtPath(values, reference.path.slice(0, 3));
+  const kind = valueAtPath(pending, ["target", "kind"]);
+  if (kind !== "personal_reminder") {
+    return { nodeIds: [reference.owner.id], relationIds: [] };
+  }
   const causeId = valueAtPath(pending, ["target", "causeId"]);
-  if (typeof causeId !== "string") return { nodeIds: [reference.owner.id], relationIds: [] };
+  if (typeof causeId !== "string") {
+    throw new RunCompletenessError(
+      "invalid_reference",
+      reference.sourceId,
+      reference.path,
+      undefined,
+    );
+  }
   const cause = causeForItem(values, reference.owner.id, causeId);
-  return cause == null
-    ? { nodeIds: [reference.owner.id], relationIds: [] }
-    : causeValueScope(cause, reference, values);
+  if (cause == null) {
+    throw new RunCompletenessError("missing_value", causeId, reference.path, undefined);
+  }
+  return causeValueScope(cause, reference, values);
 }
 
 /** 個人催促通知理由に対応する原因の所有範囲を得る。 */

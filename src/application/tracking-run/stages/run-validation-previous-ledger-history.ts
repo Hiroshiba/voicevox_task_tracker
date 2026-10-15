@@ -8,6 +8,10 @@ import type {
   PendingPersonalReminderTarget,
 } from "../../../domain/pending-notification.js";
 import type { Relation } from "../../../domain/relation.js";
+import {
+  personalReminderDirectScopeNodeIds,
+  personalReminderRelationConnectsDirectScope,
+} from "../../../domain/personal-reminder-relation-scope.js";
 import { RunCompletenessError } from "./run-completeness-error.js";
 import type { RunValidationLedger } from "./run-validation-final-checks.js";
 
@@ -18,7 +22,7 @@ type PreviousPendingCauseSnapshotInput = Readonly<{
     nodeId: string;
     personalReminderCauses: readonly PersonalReminderCause[];
   }>[];
-  relations: readonly Pick<Relation, "id" | "fromNodeId" | "toNodeId">[];
+  relations: readonly Pick<Relation, "active" | "fromNodeId" | "id" | "toNodeId" | "type">[];
 }>;
 
 /** 前回通知の時計を支持した原因と関係の最小投影。 */
@@ -31,7 +35,7 @@ export type PreviousPendingCauseContext = Readonly<{
   actionableSince: PersonalReminderTimeBasis;
   stallSince: PersonalReminderTimeBasis;
   executionSurfaceNodeIds: readonly string[];
-  relations: readonly Readonly<{ id: string; fromNodeId: string; toNodeId: string }>[];
+  relations: readonly Pick<Relation, "active" | "fromNodeId" | "id" | "toNodeId" | "type">[];
 }>;
 
 function hasEventClock(
@@ -99,9 +103,10 @@ function assertContextMatchesPending(
   ) {
     throw new RunCompletenessError("invalid_reference", pending.itemNodeId, path, undefined);
   }
+  const directScopeNodeIds = new Set([context.itemNodeId, ...context.executionSurfaceNodeIds]);
   for (const relation of context.relations) {
-    if (relation.fromNodeId !== pending.itemNodeId && relation.toNodeId !== pending.itemNodeId) {
-      throw new RunCompletenessError("wrong_owner", relation.id, path, undefined);
+    if (!personalReminderRelationConnectsDirectScope(relation, directScopeNodeIds)) {
+      throw new RunCompletenessError("invalid_reference", relation.id, path, undefined);
     }
   }
 }
@@ -126,14 +131,20 @@ export function createPreviousPendingCauseContexts(
       cause.adoptedAssessment.status === "available"
         ? cause.adoptedAssessment.result.references.relationIds
         : [];
+    const directScopeNodeIds = personalReminderDirectScopeNodeIds(cause);
     const relations = [...new Set(relatedIds)].sort().map((id) => {
       const relation = previousRelations.find((entry) => entry.id === id);
-      if (relation == null)
+      if (
+        relation == null ||
+        !personalReminderRelationConnectsDirectScope(relation, directScopeNodeIds)
+      )
         throw new RunCompletenessError("invalid_reference", id, path, undefined);
       return Object.freeze({
         id: relation.id,
+        active: relation.active,
         fromNodeId: relation.fromNodeId,
         toNodeId: relation.toNodeId,
+        type: relation.type,
       });
     });
     const scope = cause.responsibility.scope;

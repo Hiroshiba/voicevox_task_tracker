@@ -3,9 +3,13 @@ import type {
   AiAnalysisElementResult,
   AiAnalysisElementMigrationResult,
 } from "../../../domain/ai-analysis-elements.js";
-import type { PersonalReminderCauseAssessment } from "../../../domain/personal-reminder-causes.js";
+import type {
+  PersonalReminderCauseAssessment,
+  PersonalReminderCauseId,
+} from "../../../domain/personal-reminder-causes.js";
 import type { SourceId } from "../../../domain/source-id.js";
 import type {
+  AiCacheEntryId,
   Evidence,
   GitHubNodeId,
   GitHubRepositoryId,
@@ -115,7 +119,9 @@ export type EvidenceAiCacheAddition = Readonly<{
 
 /** 保存予定の個人催促AI cache要素が参照する値。 */
 export type EvidencePersonalReminderAiCacheAddition = Readonly<{
+  cacheKey: AiCacheEntryId;
   itemNodeId: GitHubNodeId;
+  causeId: PersonalReminderCauseId;
   result: PersonalReminderCauseAssessment;
 }>;
 

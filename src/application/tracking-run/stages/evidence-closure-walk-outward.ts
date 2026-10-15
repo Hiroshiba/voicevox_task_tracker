@@ -1,7 +1,4 @@
-import type {
-  PersonalReminderCause,
-  PersonalReminderTimeBasis,
-} from "../../../domain/personal-reminder-causes.js";
+import type { PersonalReminderTimeBasis } from "../../../domain/personal-reminder-causes.js";
 import type { SourceId } from "../../../domain/source-id.js";
 import { createGitHubNodeId, type Evidence } from "../../../domain/types.js";
 import { type PendingNotification } from "../../../domain/pending-notification.js";
@@ -22,6 +19,7 @@ import {
 import { personalReminderCauseEvidenceSourceIds } from "./personal-reminder-cause-references.js";
 import {
   personalReminderCauseScope,
+  personalReminderCauseScopeForRelationIds,
   personalReminderSourceOwnerNodeIds,
   relatedScope,
 } from "./personal-reminder-related-scope.js";
@@ -108,15 +106,6 @@ function walkRelation(
   }
 }
 
-function causeOwnerNodeIds(cause: PersonalReminderCause): readonly string[] {
-  return Object.freeze([
-    cause.itemNodeId,
-    ...(cause.responsibility.scope.kind === "item"
-      ? []
-      : cause.responsibility.scope.surfaces.map((surface) => surface.nodeId)),
-  ]);
-}
-
 function itemEvidenceScope(
   entry: EvidenceClosureOutward["items"][number],
   sourceId: SourceId,
@@ -126,6 +115,7 @@ function itemEvidenceScope(
 ): Readonly<{ nodeIds: readonly string[]; relationIds: readonly string[] }> {
   const itemNodeId = entry.item.nodeId;
   const relationIds = new Set<string>();
+  const causeRelationIds = new Set<string>();
   const ownerNodeIds = new Set<string>([itemNodeId]);
   for (const nodeId of nativeImplementationEvidenceOwnerNodeIds(
     sourceId,
@@ -136,13 +126,19 @@ function itemEvidenceScope(
     ownerNodeIds.add(nodeId);
   }
   for (const result of entry.causeResults) {
-    const references =
-      result.cause.adoptedAssessment.status === "available"
-        ? result.cause.adoptedAssessment.result.references
-        : undefined;
     if (personalReminderCauseEvidenceSourceIds(result.cause).includes(sourceId)) {
-      for (const nodeId of causeOwnerNodeIds(result.cause)) ownerNodeIds.add(nodeId);
-      for (const relationId of references?.relationIds ?? []) relationIds.add(relationId);
+      const scope = personalReminderCauseScope(result.cause, relationsById, [
+        "items",
+        itemNodeId,
+        "personalReminderCauses",
+        result.cause.causeId,
+        "adoptedAssessment",
+        "result",
+        "references",
+        "relationIds",
+      ]);
+      for (const nodeId of scope.nodeIds) ownerNodeIds.add(nodeId);
+      for (const relationId of scope.relationIds) causeRelationIds.add(relationId);
     }
   }
   for (const waiting of entry.item.waitingOn) {
@@ -175,7 +171,7 @@ function itemEvidenceScope(
   ]);
   return Object.freeze({
     nodeIds: Object.freeze([...new Set([...related.nodeIds, ...ownerNodeIds])].sort()),
-    relationIds: related.relationIds,
+    relationIds: Object.freeze([...new Set([...related.relationIds, ...causeRelationIds])].sort()),
   });
 }
 
@@ -440,13 +436,21 @@ function walkPendingNotification(
     ?.causeResults.find((result) => result.cause.causeId === target.causeId)?.cause;
   const scope =
     cause == null
-      ? { nodeIds: [pending.itemNodeId], relationIds: [] }
+      ? undefined
       : personalReminderCauseScope(cause, relationsById, [
           "pendingNotifications",
           index,
           "target",
           "causeId",
         ]);
+  if (scope == null) {
+    throw new RunCompletenessError(
+      "missing_value",
+      target.causeId,
+      ["pendingNotifications", index, "target", "causeId"],
+      undefined,
+    );
+  }
   const destination: EvidenceUse["destination"] = Object.freeze({
     kind: "item",
     itemNodeId: pending.itemNodeId,
@@ -516,8 +520,19 @@ export function walkOutwardEvidenceUses(
       );
     }
     for (const [index, addition] of outward.personalReminderAiCacheAdditions.entries()) {
-      const scope = relatedScope(
-        addition.itemNodeId,
+      const cause = outward.items
+        .find((entry) => entry.item.nodeId === addition.itemNodeId)
+        ?.causeResults.find((result) => result.cause.causeId === addition.causeId)?.cause;
+      if (cause == null) {
+        throw new RunCompletenessError(
+          "wrong_owner",
+          addition.causeId,
+          ["personalReminderAiCacheAdditions", index, "causeId"],
+          undefined,
+        );
+      }
+      const scope = personalReminderCauseScopeForRelationIds(
+        cause,
         addition.result.references.relationIds,
         relationsById,
         ["personalReminderAiCacheAdditions", index, "result", "references", "relationIds"],
