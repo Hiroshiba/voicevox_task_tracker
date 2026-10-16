@@ -125,6 +125,15 @@ export function validateNotification(input) {
   if (selectedCandidateCount === 0) {
     throw new TypeError("通知候補0件のscenarioを成功扱いできません");
   }
+  if (
+    (sent.length === 0 &&
+      (historyBuild.status !== "not_required" || historyPages.status !== "not_required")) ||
+    (sent.length > 0 &&
+      (historyBuild.status !== "built" ||
+        (historyPages.status !== "deployed" && historyPages.status !== "replayed_same_content")))
+  ) {
+    throw new TypeError("送信receiptと通知履歴Pagesが一致しません");
+  }
   const action = record.notificationOutbox.action;
   if (scenarioId === "send-clear-rejection") {
     if (
@@ -137,14 +146,7 @@ export function validateNotification(input) {
       throw new TypeError("clear rejectionの通知branchを確認できません");
     }
   } else if (scenarioId === "hold") {
-    if (
-      phase !== "first" ||
-      action !== "hold" ||
-      messages.length !== 0 ||
-      manual.length !== 0 ||
-      historyPages.status !== "not_required" ||
-      historyBuild.status !== "not_required"
-    ) {
+    if (phase !== "first" || action !== "hold" || messages.length !== 0 || manual.length !== 0) {
       throw new TypeError("holdの通知branchを確認できません");
     }
   } else if (scenarioId === "acknowledge-current") {
@@ -153,8 +155,6 @@ export function validateNotification(input) {
       action !== "acknowledge-current" ||
       messages.length !== 0 ||
       manual.length !== 0 ||
-      historyPages.status !== "not_required" ||
-      historyBuild.status !== "not_required" ||
       record.notificationOutbox.acknowledgedEntries.some(
         (entry) =>
           ledger.entries.find((candidate) => candidate.notificationKey === entry.notificationKey)
@@ -176,6 +176,8 @@ export function validateNotification(input) {
       ambiguous[0].result.deliveryId !== pending.deliveryId ||
       manual.length !== 1 ||
       manual[0].result.resultingStateRevision !== manualArtifact.result.resultingStateRevision ||
+      manual[0].result.deliveryId !== pending.deliveryId ||
+      manualArtifact.result.deliveryId !== pending.deliveryId ||
       manual[0].result.deliveryAttemptId !== pending.attemptId ||
       manual[0].result.decision !== decision ||
       pending.originalOperationReservationCommitCount !== 1 ||
@@ -194,19 +196,34 @@ export function validateNotification(input) {
       throw new TypeError("ambiguous初回と同じrunの手動解決を確認できません");
     }
     if (decision === "retry") {
+      const sameOperation = messages.filter(
+        (receipt) => receipt.operationId === pending.deliveryOperationId,
+      );
+      const sameDelivery = messages.filter(
+        (receipt) => receipt.result.deliveryId === pending.deliveryId,
+      );
+      const retried = sameDelivery.find((receipt) => receipt.status === "sent");
       if (
-        sent.length < 1 ||
-        sent.some((receipt) => receipt.operationId === pending.deliveryOperationId) ||
-        !sent.some((receipt) => receipt.result.deliveryId === pending.deliveryId) ||
-        (historyPages.status !== "deployed" && historyPages.status !== "replayed_same_content")
+        sameOperation.length !== 2 ||
+        sameDelivery.length !== 2 ||
+        sameDelivery.filter((receipt) => receipt.status === "sent").length !== 1 ||
+        retried?.operationId !== pending.deliveryOperationId ||
+        retried.logicalTarget !== ambiguous[0].logicalTarget ||
+        retried.attemptId === ambiguous[0].attemptId ||
+        retried.attemptId === pending.attemptId ||
+        retried.invocationId === ambiguous[0].invocationId ||
+        retried.durableAttemptSequence !== ambiguous[0].durableAttemptSequence + 1 ||
+        JSON.stringify(retried.result.notificationKeys) !==
+          JSON.stringify(ambiguous[0].result.notificationKeys)
       ) {
         throw new TypeError("retry後のrecording-successを確認できません");
       }
     } else if (
       messages.filter(
-        (receipt) => receipt.result.deliveryId === pending.deliveryId && receipt.status === "sent",
-      ).length !== 0 ||
-      historyPages.status !== "not_required" ||
+        (receipt) =>
+          receipt.operationId === pending.deliveryOperationId ||
+          receipt.result.deliveryId === pending.deliveryId,
+      ).length !== 1 ||
       pending.notificationKeys.some(
         (key) =>
           ledger.entries.find((entry) => entry.notificationKey === key)?.status !== "acknowledged",
