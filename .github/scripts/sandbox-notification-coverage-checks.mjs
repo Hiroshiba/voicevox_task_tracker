@@ -120,6 +120,10 @@ export function validateNotification(input) {
   const ambiguous = messages.filter((receipt) => receipt.status === "ambiguous");
   const rejected = messages.filter((receipt) => receipt.status === "no_effect");
   const sent = messages.filter((receipt) => receipt.status === "sent");
+  const sentNotificationKeys = sent.flatMap((receipt) => receipt.result.notificationKeys);
+  if (new Set(sentNotificationKeys).size !== sentNotificationKeys.length) {
+    throw new TypeError("送信済みreceipt間で通知キーが重複しています");
+  }
   const manual = receipts.filter((receipt) => receipt.receiptType === "manual_resolution");
   const selectedCandidateCount = candidateCount(record.notificationOutbox);
   if (selectedCandidateCount === 0) {
