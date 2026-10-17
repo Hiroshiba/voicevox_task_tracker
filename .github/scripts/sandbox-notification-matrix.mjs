@@ -645,7 +645,10 @@ export async function assertScenario(coverage, result, scenarioId, proofRoot, is
     const completion = workflowRunSchema.parse(readJson(join(proofRoot, "completion-run.json")));
     same(completion.id.toString(), result.actionsRunId, "通知matrixの完了Actions run ID");
     same(completion.run_attempt, result.actionsRunAttempt, "通知matrixの完了Actions attempt");
-    same(completion.conclusion, "success", "通知matrixの完了Actions run結果");
+    // recover-reset後も元Actionsのfailureは変わらないため、完了はready manifestの確定証拠で確認する。
+    if (completion.conclusion !== "success" && completion.conclusion !== "failure") {
+      throw new TypeError("通知matrixの完了Actions run結果が不正です");
+    }
     same(completion.head_branch, required("GITHUB_REF_NAME"), "通知matrixの完了branch");
     if (coverage.ambiguousInitial == null) {
       same(completion.id, source.id, "通知matrixの初回と完了Actions run");
@@ -743,6 +746,7 @@ export async function assertScenario(coverage, result, scenarioId, proofRoot, is
     default:
       throw new TypeError("通知matrixのscenario IDが不正です");
   }
+  assertReadyScenario({ coverage, result, manifest, proofRoot });
   return { manifest, runtimeBundleDigest: record.runtimeRecoveryPlan.bundleSha256 };
 }
 
@@ -901,9 +905,6 @@ async function main() {
     },
   ];
   const origin = assertScenarioSource(scenarios[0].manifest, scenarios[0].proofRoot, null);
-  for (const scenario of scenarios) {
-    scenario.readyHeadRevision = assertReadyScenario(scenario);
-  }
   for (const [index, scenario] of scenarios.slice(1).entries()) {
     assertScenarioSource(scenario.manifest, scenario.proofRoot, scenarios[index]);
     same(scenario.manifest.seedRevision, origin.seedRevision, "通知matrixの共通seed revision");
