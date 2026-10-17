@@ -87,7 +87,10 @@ const scenarioId = process.env["SANDBOX_SCENARIO_ID"];
 const environmentId = process.env["SANDBOX_ENVIRONMENT_ID"];
 const resetSource = process.env["SANDBOX_RESET_SOURCE"];
 const analysisMode = process.env["SANDBOX_ANALYSIS_MODE"];
-if ((scenarioId === "continuity") !== (control.continuity != null)) {
+if (
+  (scenarioId === "continuity" || scenarioId === "continuity-strict-zero") !==
+  (control.continuity != null)
+) {
   throw new TypeError("continuity scenarioにはcontinuity controlが必要です");
 }
 const notificationScenarios = {
@@ -151,7 +154,7 @@ if (operation === "resume-preparing" && control.notification?.phase !== "resolut
 }
 if (control.continuity != null) {
   if (
-    scenarioId !== "continuity" ||
+    (scenarioId !== "continuity" && scenarioId !== "continuity-strict-zero") ||
     action !== "send" ||
     control.outcome !== "recorded_success" ||
     control.messageIndex !== 0

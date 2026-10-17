@@ -7,6 +7,7 @@ import {
   assertCompleteSandboxStageCoverage,
   assertSandboxStageReceiptLineage,
 } from "../../dist/infrastructure/tracking-run/sandbox-stage-coverage.js";
+import { assertFirstStrictZeroSourceProof } from "./sandbox-strict-zero-coverage.mjs";
 
 const revision = z.string().regex(/^[0-9a-f]{40}$/u);
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
@@ -16,7 +17,7 @@ const runId = z.string().regex(/^tracker-run:[0-9a-f]{64}$/u);
 export const resultSchema = z.strictObject({
   schemaVersion: z.literal(2),
   environmentId: z.string().regex(/^env-[1-9][0-9]*-[1-9][0-9]*$/u),
-  scenarioId: z.literal("continuity"),
+  scenarioId: z.enum(["continuity", "continuity-strict-zero"]),
   continuityPhase: z.enum(["first", "second"]),
   actionsRunId: z.string().regex(/^[1-9][0-9]*$/u),
   actionsRunAttempt: z.number().int().positive(),
@@ -59,6 +60,7 @@ export function readVerifiedFirstResult() {
     JSON.parse(readFileSync(required("SANDBOX_FIRST_RESULT_PATH"), "utf8")),
   );
   assertEqual(result.environmentId, required("SANDBOX_ENVIRONMENT_ID"), "first environment ID");
+  assertEqual(result.scenarioId, required("SANDBOX_SCENARIO_ID"), "first scenario ID");
   assertEqual(result.continuityPhase, "first", "first continuity phase");
   assertEqual(result.actionsRunId, required("SANDBOX_FIRST_RUN_ID"), "first Actions run ID");
   assertEqual(
@@ -100,6 +102,7 @@ export function readVerifiedFirstResult() {
     "first解析段階記録digest",
   );
   assertEqual(coverage.run.trackingRunId, result.trackingRunId, "first coverage run ID");
+  assertEqual(coverage.scenarioId, result.scenarioId, "first coverage scenario ID");
   assertEqual(
     coverage.run.finalStateRevision,
     result.finalStateRevision,
@@ -107,6 +110,9 @@ export function readVerifiedFirstResult() {
   );
   if (coverage.unexecutedStages.length !== 0 || coverage.notification.recordedSendCount < 1) {
     throw new TypeError("first coverageが完了したrecorded sendを示していません");
+  }
+  if (result.scenarioId === "continuity-strict-zero") {
+    assertFirstStrictZeroSourceProof(required("SANDBOX_FIRST_SOURCE_PROOF_PATH"), coverage);
   }
   return result;
 }

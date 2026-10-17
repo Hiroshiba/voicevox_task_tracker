@@ -114,6 +114,21 @@ export function createAnalysisStages(
           finalized,
           progress,
           sessions,
+          adapters.environment["SANDBOX_STRICT_ZERO_SOURCE_PROOF_PATH"] ===
+            "artifacts/workflow/sandbox-strict-zero-source-proof.json"
+            ? async (proof) => {
+                if (context.configuration.target.kind !== "sandbox") {
+                  throw new TypeError("strict-zeroのsource証拠にはsandboxが必要です");
+                }
+                await adapters.writeTextFile(
+                  join(
+                    adapters.repositoryPath,
+                    "artifacts/workflow/sandbox-strict-zero-source-proof.json",
+                  ),
+                  proof,
+                );
+              }
+            : undefined,
         );
       } finally {
         sessions.release(context.invocation.runId);

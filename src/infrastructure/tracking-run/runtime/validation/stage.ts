@@ -17,6 +17,7 @@ import {
   selectValidationNotifications,
 } from "./notification-selection.js";
 import { projectPublicationInputs } from "./publication-inputs.js";
+import { createSandboxStrictZeroSourceProof } from "./sandbox-strict-zero-source-proof.js";
 
 /** canonical stageの系譜と実保存値を検証する。 */
 export async function validateRunCompleteness(
@@ -27,6 +28,7 @@ export async function validateRunCompleteness(
   finalized: PersonalReminderFinalizedRun,
   progress: AnalysisProgress,
   sessions: GitHubRunSessions,
+  strictZeroSourceProofWriter: ((proof: string) => Promise<void>) | undefined,
 ): Promise<PublicationValidatedRun> {
   const { invocation, configuration, state } = context;
   const collection = graphReconciled.data.collection;
@@ -82,7 +84,7 @@ export async function validateRunCompleteness(
     notification.notificationItems,
     notificationLedger.pendingNotifications,
   );
-  return validateRun({
+  const validated = validateRun({
     expectedCore: Object.freeze({
       identity: Object.freeze({
         runId: invocation.runId,
@@ -128,4 +130,17 @@ export async function validateRunCompleteness(
       sessions.assertPublicBoundary(invocation.runId, values);
     },
   });
+  if (strictZeroSourceProofWriter != null) {
+    await strictZeroSourceProofWriter(
+      createSandboxStrictZeroSourceProof({
+        runId: invocation.runId,
+        configDigest: configuration.configDigest,
+        evaluatedAt: collection.evaluatedAt,
+        graceHours: configuration.config.staleness.recentProgressGraceHours,
+        snapshot: completeSnapshot,
+        items: notification.notificationItems,
+      }),
+    );
+  }
+  return validated;
 }

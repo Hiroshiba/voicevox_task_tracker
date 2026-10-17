@@ -362,6 +362,7 @@ jobs:
           NOTIFICATION_ACTION: ${{ inputs.notification_action }}
           REPOSITORY_FILTER: ${{ inputs.repository_filter }}
           SANDBOX_CONTEXT_PATH: ${{ inputs.effect_target == 'sandbox' && format('{0}/sandbox-context.json', runner.temp) || '' }}
+          SANDBOX_STRICT_ZERO_SOURCE_PROOF_PATH: ${{ inputs.sandbox_scenario_id == 'continuity-strict-zero' && 'artifacts/workflow/sandbox-strict-zero-source-proof.json' || '' }}
           SCHEDULE: ${{ inputs.schedule }}
           TRACKING_CONFIG_PATH: ${{ inputs.config_path }}
           VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ inputs.effect_target == 'sandbox' && secrets.VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
@@ -411,6 +412,7 @@ jobs:
             artifacts/workflow/validated-run.cpk.sidecar.json
             artifacts/workflow/sandbox-reuse-plan.json
             artifacts/workflow/sandbox-generic-ai-inputs.bundle
+            artifacts/workflow/sandbox-strict-zero-source-proof.json
           if-no-files-found: error
           retention-days: ${{ inputs.artifact_retention_days }}
       - name: 収集run reportを保存

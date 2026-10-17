@@ -806,7 +806,7 @@ promote() {
       .productionDiscordSent == false and
       (if .schemaVersion == 2 then
         .actionsRunId == $owner_run_id and .actionsRunAttempt == $owner_run_attempt and
-        (if .scenarioId == "continuity" then .codeRevision == $owner_code_revision else
+        (if .scenarioId == "continuity" or .scenarioId == "continuity-strict-zero" then .codeRevision == $owner_code_revision else
           .scenarioId == "send-clear-rejection" or .scenarioId == "hold" or
           .scenarioId == "acknowledge-current" or .scenarioId == "ambiguous-retry" or
           .scenarioId == "ambiguous-acknowledge" end)

@@ -16,6 +16,10 @@ import { plannedSnapshotReuseWitness, verifyCacheProbeAdoption } from "./sandbox
 import { firstFileCacheProbeSource } from "./sandbox-cache-probe-source.mjs";
 import { assertSecondNotificationCoverage } from "./sandbox-continuity-notification.mjs";
 import {
+  assertStrictZeroNotificationCoverage,
+  bindStrictZeroSourceProof,
+} from "./sandbox-strict-zero-coverage.mjs";
+import {
   readSandboxCheckpointEvidence,
   unavailableLegacyStageCoverage,
 } from "./sandbox-checkpoint-evidence.mjs";
@@ -215,6 +219,11 @@ async function createCoverage() {
   const sentLedgerKeyDigests = sentKeys.map((key) => sha256(key)).sort();
   const applications = countApplications(snapshot.items);
   const personal = countPersonal(snapshot.items);
+  const scenarioId = required("SANDBOX_SCENARIO_ID");
+  if (scenarioId !== "continuity" && scenarioId !== "continuity-strict-zero") {
+    throw new TypeError("continuity scenarioが不正です");
+  }
+  const strictZero = scenarioId === "continuity-strict-zero";
   const continuityPhase = required("SANDBOX_CONTINUITY_PHASE");
   const first = continuityPhase === "second" ? readVerifiedFirstResult() : null;
   const firstCoverage = first == null ? null : readJson(required("SANDBOX_FIRST_COVERAGE_PATH"));
@@ -383,9 +392,38 @@ async function createCoverage() {
     baseStateRevision: analysis.baseStateRevision,
   });
   assertCompleteSandboxStageCoverage(stages);
+  const strictZeroSourceProof = strictZero
+    ? bindStrictZeroSourceProof({
+        evidence,
+        unboundProofPath: required("SANDBOX_STRICT_ZERO_UNBOUND_PROOF_PATH"),
+        outputPath: required("SANDBOX_STRICT_ZERO_SOURCE_PROOF_OUTPUT_PATH"),
+        runId: trackingRunId,
+        record,
+        snapshot,
+        finalStateRevision,
+      })
+    : null;
+  const strictZeroCoverage =
+    strictZeroSourceProof == null
+      ? null
+      : assertStrictZeroNotificationCoverage({
+          phase: continuityPhase,
+          record,
+          ledger,
+          messageReceipts,
+          historyBuild,
+          historyPages,
+          baseStateRevision,
+          stateRepositoryPath: required("SANDBOX_STATE_REPOSITORY_PATH"),
+          first,
+          sourceProof: strictZeroSourceProof,
+          firstSourceProofPath:
+            continuityPhase === "second" ? required("SANDBOX_FIRST_SOURCE_PROOF_PATH") : null,
+          metrics,
+        });
   const coverage = {
     schemaVersion: 2,
-    scenarioId: "continuity",
+    scenarioId,
     continuityPhase,
     run: {
       actionsRunId: required("GITHUB_RUN_ID"),
@@ -492,6 +530,7 @@ async function createCoverage() {
             cacheProbe: selectedCacheProbe,
             remoteBaseReloaded: true,
           },
+    ...(strictZeroCoverage == null ? {} : { strictZero: strictZeroCoverage }),
     productionAdapters: { pagesDeployExecuted: false, discordSendExecuted: false },
     unexecutedBranches: [
       { branch: "production_pages_deploy", reason: "sandbox recording port" },
@@ -507,7 +546,7 @@ async function createCoverage() {
   const result = resultSchema.parse({
     schemaVersion: 2,
     environmentId: context.environmentId,
-    scenarioId: "continuity",
+    scenarioId,
     continuityPhase,
     actionsRunId: required("GITHUB_RUN_ID"),
     actionsRunAttempt: Number(required("GITHUB_RUN_ATTEMPT")),

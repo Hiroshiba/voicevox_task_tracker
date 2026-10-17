@@ -131,7 +131,6 @@ jobs:
             echo 'sandbox診断暗号化鍵は32 byteのBase64値にしてください' >&2
             exit 1
           fi
-
   recover-reset:
     needs: guard
     if: inputs.operation == 'recover-reset'
@@ -237,7 +236,6 @@ jobs:
             export SANDBOX_COVERAGE_PATH="$RUNNER_TEMP/recovery-coverage/sandbox-coverage.json"
           fi
           .github/scripts/sandbox-lifecycle.sh promote
-
   prepare:
     needs: guard
     if: inputs.operation != 'recover-reset'
@@ -358,6 +356,8 @@ jobs:
           SANDBOX_FIRST_CODE_REVISION: ${{ steps.recording_control.outputs.first_code_revision }}
           SANDBOX_FIRST_RESULT_PATH: ${{ runner.temp }}/first-result/sandbox-result.json
           SANDBOX_FIRST_COVERAGE_PATH: ${{ runner.temp }}/first-coverage/sandbox-coverage.json
+          SANDBOX_FIRST_SOURCE_PROOF_PATH: ${{ runner.temp }}/first-coverage/sandbox-strict-zero-source-proof.json
+          SANDBOX_SCENARIO_ID: ${{ inputs.scenario_id }}
         run: bash .github/scripts/sandbox-continuity-source-proofs.sh verify-first
       - name: sandbox環境を準備
         id: prepare
@@ -433,7 +433,6 @@ jobs:
           SANDBOX_SOURCE_REF: ${{ inputs.source_ref }}
           SANDBOX_ENVIRONMENT_ID: ${{ inputs.environment_id }}
         run: .github/scripts/sandbox-lifecycle.sh dispose
-
   manual-resolution:
     needs: prepare
     if: needs.prepare.result == 'success' && needs.prepare.outputs.notification_phase == 'resolution'
@@ -516,7 +515,6 @@ jobs:
         uses: ./.github/actions/upload-failure-artifact
         with:
           artifact-name: sandbox-manual-failure-${{ github.run_id }}-${{ github.run_attempt }}
-
   tracking:
     needs: [prepare, manual-resolution]
     if: always() && inputs.operation != 'dispose' && needs.prepare.result == 'success' && (needs.prepare.outputs.notification_phase != 'resolution' || needs.manual-resolution.result == 'success')
@@ -531,7 +529,7 @@ jobs:
       pages_environment: sandbox-${{ needs.prepare.outputs.environment_id }}
       effect_concurrency_key: sandbox-${{ github.repository }}-${{ needs.prepare.outputs.environment_id }}
       effect_target: sandbox
-      config_path: config.yml
+      config_path: ${{ inputs.scenario_id == 'continuity-strict-zero' && 'config.sandbox-strict-zero.yml' || 'config.yml' }}
       backfill: none
       repository_filter: ""
       notification_action: ${{ inputs.notification_action }}
@@ -747,6 +745,7 @@ jobs:
         if: needs.prepare.outputs.continuity_phase != 'none'
         env:
           SANDBOX_ENVIRONMENT_ID: ${{ needs.prepare.outputs.environment_id }}
+          SANDBOX_SCENARIO_ID: ${{ inputs.scenario_id }}
           SANDBOX_CONTEXT_PATH: ${{ runner.temp }}/context/sandbox-context.json
           SANDBOX_CODE_REVISION: ${{ needs.prepare.outputs.code_revision }}
           SANDBOX_CHECKPOINT_PATH: ${{ runner.temp }}/checkpoint/validated-run.cpk
@@ -765,6 +764,9 @@ jobs:
           SANDBOX_STATE_REPOSITORY_PATH: ${{ runner.temp }}/sandbox-state
           SANDBOX_FIRST_RESULT_PATH: ${{ runner.temp }}/first-result/sandbox-result.json
           SANDBOX_FIRST_COVERAGE_PATH: ${{ runner.temp }}/first-coverage/sandbox-coverage.json
+          SANDBOX_FIRST_SOURCE_PROOF_PATH: ${{ runner.temp }}/first-coverage/sandbox-strict-zero-source-proof.json
+          SANDBOX_STRICT_ZERO_UNBOUND_PROOF_PATH: ${{ runner.temp }}/checkpoint/sandbox-strict-zero-source-proof.json
+          SANDBOX_STRICT_ZERO_SOURCE_PROOF_OUTPUT_PATH: ${{ runner.temp }}/sandbox-strict-zero-source-proof.json
           SANDBOX_FIRST_SNAPSHOT_PATH: ${{ runner.temp }}/first-snapshot.json
           SANDBOX_REUSE_PLAN_PATH: ${{ runner.temp }}/checkpoint/sandbox-reuse-plan.json
           SANDBOX_STATE_VERIFICATION_PATH: ${{ runner.temp }}/state-verification.txt
@@ -823,7 +825,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sandbox-coverage-${{ needs.prepare.outputs.environment_id }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/sandbox-coverage.json
+          path: |
+            ${{ runner.temp }}/sandbox-coverage.json
+            ${{ runner.temp }}/sandbox-strict-zero-source-proof.json
           if-no-files-found: ignore
           retention-days: 30
       - name: sandbox完了情報を保存
@@ -872,7 +876,7 @@ jobs:
           export SANDBOX_RECEIPT_CHAIN_PATH="$RUNNER_TEMP/complete/$run_suffix/receipt-chain.json"
           .github/scripts/sandbox-lifecycle.sh promote
       - name: 次の通知scenarioをseed resetから起動
-        if: needs.prepare.outputs.continuity_phase == 'second' || needs.prepare.outputs.notification_phase != 'none'
+        if: (needs.prepare.outputs.continuity_phase == 'second' && inputs.scenario_id == 'continuity') || needs.prepare.outputs.notification_phase != 'none'
         env:
           GH_TOKEN: ${{ github.token }}
           SANDBOX_ENVIRONMENT_ID: ${{ needs.prepare.outputs.environment_id }}
@@ -989,6 +993,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SANDBOX_ENVIRONMENT_ID: ${{ needs.prepare.outputs.environment_id }}
           SANDBOX_SOURCE_REF: ${{ inputs.source_ref }}
+          SANDBOX_SCENARIO_ID: ${{ inputs.scenario_id }}
         run: bash .github/scripts/sandbox-start-continuity-second.sh
       - name: continuity secondの一時入力を削除
         if: always() && needs.prepare.outputs.continuity_phase == 'first'
