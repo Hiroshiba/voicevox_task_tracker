@@ -744,7 +744,7 @@ promote() {
   fi
   if ! jq -e --arg final_revision "$SANDBOX_EXPECTED_REVISION" '
     ([.entries[].receipt | select(.receiptType == "pages_deployment" and .phase == "initial" and .status == "deployed" and .result.externalReference.kind == "recording")] | length) == 1 and
-    ([.entries[].receipt | select(.receiptType == "pages_deployment" and .phase == "notification_history" and (.status == "not_required" or (.status == "deployed" and .result.externalReference.kind == "recording")))] | length) == 1 and
+    ([.entries[].receipt | select(.receiptType == "pages_deployment" and .phase == "notification_history" and (.status == "not_required" or ((.status == "deployed" or .status == "replayed_same_content") and .result.externalReference.kind == "recording")))] | length) == 1 and
     ([.entries[].receipt | select(.receiptType == "notification_settlement")] | length) == 1 and
     ([.entries[].receipt | select(.receiptType == "run_finalization" and .result.resultingStateRevision == $final_revision)] | length) == 1 and
     ([.entries[].receipt | select(.receiptType == "completion" and .result.finalStateRevision == $final_revision)] | length) == 1
