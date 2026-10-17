@@ -48,6 +48,7 @@ export type EncodePublicationCheckpointInput = Readonly<{
   runtimeIdentity: RuntimeIdentity;
   artifactFileName: string;
   analysisCompletedStages?: readonly AnalysisRunStageName[];
+  strictZeroSourceProofDigest?: Sha256Hash;
 }>;
 
 /** sidecarとruntimeを照合して復元したartifact。 */
@@ -60,6 +61,7 @@ export type DecodedPublicationArtifact = Readonly<{
   checkpointDigest: Sha256Hash;
   checkpointFileDigest: Sha256Hash;
   artifactFileName: string;
+  strictZeroSourceProofDigest?: Sha256Hash;
 }>;
 
 /** 保存先へ渡すartifactとsidecar bytes。 */
@@ -247,6 +249,9 @@ export function encodePublicationCheckpoint(
     ...(input.analysisCompletedStages == null
       ? {}
       : { analysisCompletedStages: input.analysisCompletedStages }),
+    ...(input.strictZeroSourceProofDigest == null
+      ? {}
+      : { strictZeroSourceProofDigest: input.strictZeroSourceProofDigest }),
     validatedPayload: validatedPayloadNode,
     publicationPlan: publicationPlanNode,
     frames: encoder.frames,
@@ -357,6 +362,9 @@ export function decodePublicationArtifact(
     checkpointDigest: artifact.checkpointDigest,
     checkpointFileDigest: sidecar.checkpointFileDigest,
     artifactFileName: sidecar.artifactFileName,
+    ...(logical.strictZeroSourceProofDigest == null
+      ? {}
+      : { strictZeroSourceProofDigest: logical.strictZeroSourceProofDigest }),
   });
   issuedArtifacts.add(decoded);
   return decoded;

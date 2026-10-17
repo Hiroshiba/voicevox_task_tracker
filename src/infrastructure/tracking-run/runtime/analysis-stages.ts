@@ -23,6 +23,7 @@ import { createPlanGenericAiStage } from "./codex/stage.js";
 import { createCollectItemsStage } from "./collection/stage.js";
 import { createCollectInventoryStage } from "./daily-startup/inventory.js";
 import { createPersonalReminderStages } from "./personal-reminder/stage.js";
+import { SANDBOX_STRICT_ZERO_SOURCE_PROOF_PATH } from "./validation/sandbox-strict-zero-source-proof.js";
 import { validateRunCompleteness } from "./validation/stage.js";
 import {
   SANDBOX_GENERIC_AI_INPUT_BUNDLE_NAME,
@@ -115,16 +116,13 @@ export function createAnalysisStages(
           progress,
           sessions,
           adapters.environment["SANDBOX_STRICT_ZERO_SOURCE_PROOF_PATH"] ===
-            "artifacts/workflow/sandbox-strict-zero-source-proof.json"
+            SANDBOX_STRICT_ZERO_SOURCE_PROOF_PATH
             ? async (proof) => {
                 if (context.configuration.target.kind !== "sandbox") {
                   throw new TypeError("strict-zeroのsource証拠にはsandboxが必要です");
                 }
                 await adapters.writeTextFile(
-                  join(
-                    adapters.repositoryPath,
-                    "artifacts/workflow/sandbox-strict-zero-source-proof.json",
-                  ),
+                  join(adapters.repositoryPath, SANDBOX_STRICT_ZERO_SOURCE_PROOF_PATH),
                   proof,
                 );
               }

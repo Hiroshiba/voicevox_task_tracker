@@ -10,6 +10,9 @@ import type { StateSnapshot } from "../../../../persistence/index.js";
 import { assertNonNullable } from "../../../../util/index.js";
 import { hashCanonicalJson } from "../../content-digest.js";
 
+export const SANDBOX_STRICT_ZERO_SOURCE_PROOF_PATH =
+  "artifacts/workflow/sandbox-strict-zero-source-proof.json";
+
 type SourceDigests = Readonly<{
   repositories: Sha256Hash;
   collectionItems: Sha256Hash;
@@ -55,9 +58,13 @@ function personalReminderInputs(item: DiscordNotificationItem): unknown {
     ({ cause, staleness }) => ({
       causeId: cause.causeId,
       responsibilityId: cause.responsibilityId,
+      itemNodeId: cause.itemNodeId,
       responsible: cause.responsible,
+      responsibility: cause.responsibility,
       action: cause.action,
       reasonCode: cause.reasonCode,
+      obligationSince: cause.obligationSince,
+      actionableClock: cause.actionableClock,
       currentInput: cause.currentInput,
       adoptedAssessment:
         cause.adoptedAssessment.status === "available"
@@ -75,6 +82,8 @@ function personalReminderInputs(item: DiscordNotificationItem): unknown {
               waitClass: staleness.waitClass,
               severity: staleness.severity,
               crossedThreshold: staleness.severityReason.crossedThreshold,
+              actionableSince: staleness.actionableSince,
+              stallSince: staleness.stallSince,
             }
           : staleness,
     }),
@@ -173,6 +182,7 @@ export function createSandboxStrictZeroSourceProof(
     repositoryFreshness: item.repositoryFreshness,
     notificationClass: item.notificationClass,
     notificationsSuppressedByLabel: item.notificationsSuppressedByLabel,
+    latestChange: item.latestChange,
     decisionBasis: item.decisionBasis,
     notificationRecommendation: item.notificationRecommendation,
     priorityWeight: item.priorityWeight,
@@ -182,6 +192,10 @@ export function createSandboxStrictZeroSourceProof(
       severity: item.current.severity,
       severityReason: severityReason(item.current.severityReason),
       waitClass: item.current.waitClass,
+      statusSince: item.current.statusSince,
+      ownerSince: item.current.ownerSince,
+      stallSince: item.current.stallSince,
+      lastProgressAt: item.current.lastProgressAt,
     },
     personalReminderCauses: personalReminderInputs(item),
     personalReminderCausePlanning: {

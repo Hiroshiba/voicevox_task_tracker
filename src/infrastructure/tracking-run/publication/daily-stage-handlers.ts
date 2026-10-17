@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import type { SequentialPublicationInput } from "../sequential-publication-input.js";
 import type { PersistedRun } from "./contracts.js";
@@ -36,6 +37,7 @@ import {
   readPublicationRuntimeContext,
   writeWorkflowRuntimeManifest,
 } from "../publication-runtime.js";
+import { SANDBOX_STRICT_ZERO_SOURCE_PROOF_PATH } from "../runtime/validation/sandbox-strict-zero-source-proof.js";
 import { sequentialPagesArtifactPath } from "../sequential-pages-artifact-path.js";
 import { createCollectAnalyzePayload } from "./artifact.js";
 import type { DailyPublicationStageHandlers } from "./stage-handler-contracts.js";
@@ -405,6 +407,15 @@ export async function writeDailyCollectAnalyzeArtifact(
     diagnostics: stageInput.diagnostics,
   });
   const outputPath = resolve(dependencies.adapters.repositoryPath, path);
+  const strictZeroSourceProofDigest =
+    dependencies.adapters.environment["SANDBOX_STRICT_ZERO_SOURCE_PROOF_PATH"] ===
+    SANDBOX_STRICT_ZERO_SOURCE_PROOF_PATH
+      ? nodeContentDigestPort.sha256Bytes(
+          await readFile(
+            resolve(dependencies.adapters.repositoryPath, SANDBOX_STRICT_ZERO_SOURCE_PROOF_PATH),
+          ),
+        )
+      : undefined;
   const encoded = encodePublicationCheckpoint(
     {
       planned: stageInput.planned,
@@ -412,6 +423,7 @@ export async function writeDailyCollectAnalyzeArtifact(
       runtimeIdentity: runtime.runtimeIdentity,
       artifactFileName: basename(outputPath),
       analysisCompletedStages: stageInput.completedStages,
+      ...(strictZeroSourceProofDigest == null ? {} : { strictZeroSourceProofDigest }),
     },
     nodeContentDigestPort,
     nodeCheckpointCompressionPort,

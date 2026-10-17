@@ -105,6 +105,7 @@ export const publicationArtifactLogicalSchema = z.strictObject({
   baseStateRevision: baseStateRevisionSchema,
   configDigest: sha256Schema,
   analysisCompletedStages: z.array(analysisRunStageSchema).optional(),
+  strictZeroSourceProofDigest: sha256Schema.optional(),
   validatedPayload: z.unknown(),
   publicationPlan: z.unknown(),
   frames: z.array(

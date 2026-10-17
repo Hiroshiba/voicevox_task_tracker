@@ -102,6 +102,7 @@ export function readSandboxCheckpointEvidence(recordValue, checkpointPath, sidec
     analysis,
     byteLength: bytes.length,
     validatedPayload: checkpoint.validatedPayload,
+    strictZeroSourceProofDigest: checkpoint.strictZeroSourceProofDigest,
   };
 }
 

@@ -73,6 +73,15 @@ export function bindStrictZeroSourceProof(input) {
     throw new TypeError("strict-zeroにはremote recordと照合済みcheckpointが必要です");
   }
   const unboundBytes = readFileSync(input.unboundProofPath);
+  if (input.evidence.strictZeroSourceProofDigest == null) {
+    throw new TypeError("strict-zeroのcheckpointにsource proof digestがありません");
+  }
+  const unboundProofDigest = sha256(unboundBytes);
+  assertSame(
+    unboundProofDigest,
+    input.evidence.strictZeroSourceProofDigest,
+    "strict-zeroのcheckpoint source proof digest",
+  );
   const unbound = unboundProofSchema.parse(JSON.parse(unboundBytes.toString("utf8")));
   assertSame(unbound.runId, input.runId, "strict-zeroのrun ID");
   assertSame(unbound.configDigest, input.record.configDigest, "strict-zeroのconfig digest");
@@ -90,7 +99,7 @@ export function bindStrictZeroSourceProof(input) {
     checkpointDigest: input.record.checkpointDigest,
     checkpointFileDigest: input.record.checkpointFileDigest,
     finalStateRevision: input.finalStateRevision,
-    unboundProofDigest: sha256(unboundBytes),
+    unboundProofDigest,
   });
   const bytes = serializeCanonicalJsonLine(bound);
   writeFileSync(input.outputPath, bytes, { flag: "wx", mode: 0o600 });
