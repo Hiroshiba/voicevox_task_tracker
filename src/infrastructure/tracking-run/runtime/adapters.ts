@@ -26,6 +26,7 @@ import type {
 import type { SequentialPagesResult } from "../initial-pages-deployment.js";
 import type { InitialStateCommitObserver } from "../initial-state-commit-progress.js";
 import type { SandboxRunContext } from "../sandbox-context.js";
+import type { SandboxFixedSource } from "../sandbox-fixed-source/source.js";
 import type { verifyPersistentStateDirectory } from "../state-verification.js";
 
 /** 日次実行配線へ注入する外部接続、時刻、永続化の境界。 */
@@ -43,6 +44,7 @@ export type ProductionRuntimeAdapters = Readonly<{
     migrationTimezone: string,
   ) => Promise<StatePersistenceSession>;
   readSandboxContext?: (path: string) => Promise<SandboxRunContext>;
+  sandboxFixedSource?: SandboxFixedSource;
   discoverRepositoryInventory: typeof discoverRepositoryInventory;
   enumerateGitHubItemsByIdentifiers: typeof enumerateGitHubItemsByIdentifiers;
   enumerateOpenGitHubItems: typeof enumerateOpenGitHubItems;
@@ -107,7 +109,7 @@ export type GitHubAuthenticationRuntimeAdapters = Pick<
 
 export type RepositoryInventoryRuntimeAdapters = Pick<
   ProductionRuntimeAdapters,
-  "discoverRepositoryInventory"
+  "discoverRepositoryInventory" | "sandboxFixedSource"
 >;
 
 export type CollectionRuntimeAdapters = Pick<
@@ -115,6 +117,7 @@ export type CollectionRuntimeAdapters = Pick<
   | "enumerateGitHubItemsByIdentifiers"
   | "enumerateOpenGitHubItems"
   | "collectGitHubItemDetails"
+  | "sandboxFixedSource"
   | "now"
   | "sleep"
 >;

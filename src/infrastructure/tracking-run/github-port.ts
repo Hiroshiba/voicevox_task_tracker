@@ -23,6 +23,9 @@ import {
 } from "../../github/repository-inventory.js";
 
 import { createPublicBoundaryDiagnosticError } from "./public-boundary-diagnostic.js";
+import { assertSandboxFixedSourceBinding } from "./sandbox-fixed-source/descriptor.js";
+import type { SandboxFixedSource } from "./sandbox-fixed-source/source.js";
+import type { SandboxRunContext } from "./sandbox-context.js";
 
 type GitHubInventoryDependencies = Readonly<{
   credentials: GitHubAppCredentials;
@@ -31,6 +34,8 @@ type GitHubInventoryDependencies = Readonly<{
   sessions: GitHubRunSessions;
   rawSnapshot: StateSnapshotReadResult;
   knownSecrets: readonly string[];
+  fixedSource?: SandboxFixedSource;
+  sandboxContext?: SandboxRunContext;
 }>;
 
 type GitHubReadDependencies = Readonly<{
@@ -40,10 +45,16 @@ type GitHubReadDependencies = Readonly<{
 }>;
 
 type PrivateRepositoryReference = Pick<Repository, "id" | "owner" | "name" | "visibility">;
+type GitHubRunSession =
+  | Readonly<{ kind: "live"; client: GitHubClient }>
+  | Readonly<{ kind: "fixed"; source: SandboxFixedSource }>;
+type GitHubInventorySource =
+  | Readonly<{ kind: "live"; client: GitHubClient; inventory: readonly Repository[] }>
+  | Readonly<{ kind: "fixed"; source: SandboxFixedSource; inventory: readonly Repository[] }>;
 
-/** runごとのGitHub clientと非公開repository参照をstage成果物の外で保持する。 */
+/** runごとのGitHub読取源と非公開repository参照をstage成果物の外で保持する。 */
 export class GitHubRunSessions {
-  readonly #clients = new Map<string, GitHubClient>();
+  readonly #sessions = new Map<string, GitHubRunSession>();
   readonly #privateRepositories = new Map<string, readonly PrivateRepositoryReference[]>();
 
   /** 認証済みclientと非公開repository参照をrunへ結び付ける。 */
@@ -51,7 +62,7 @@ export class GitHubRunSessions {
     if (this.#privateRepositories.has(runId)) {
       throw new TypeError("同じrunのGitHub sessionが既にあります");
     }
-    this.#clients.set(runId, client);
+    this.#sessions.set(runId, Object.freeze({ kind: "live", client }));
     this.#privateRepositories.set(
       runId,
       Object.freeze(
@@ -69,13 +80,40 @@ export class GitHubRunSessions {
     );
   }
 
-  /** 収集段階で認証済みclientを使う。 */
-  public require(runId: string): GitHubClient {
-    const client = this.#clients.get(runId);
-    if (client == null) {
+  /** 合成sourceと公開repository inventoryをrunへ結び付ける。 */
+  public registerFixed(
+    runId: string,
+    source: SandboxFixedSource,
+    inventory: readonly Repository[],
+  ): void {
+    if (this.#privateRepositories.has(runId)) {
+      throw new TypeError("同じrunのGitHub sessionが既にあります");
+    }
+    this.#sessions.set(runId, Object.freeze({ kind: "fixed", source }));
+    this.#privateRepositories.set(
+      runId,
+      Object.freeze(
+        inventory
+          .filter((repository) => repository.visibility !== "public")
+          .map((repository) =>
+            Object.freeze({
+              id: repository.id,
+              owner: repository.owner,
+              name: repository.name,
+              visibility: repository.visibility,
+            }),
+          ),
+      ),
+    );
+  }
+
+  /** 収集段階でrunに固定したGitHub読取源を使う。 */
+  public require(runId: string): GitHubRunSession {
+    const session = this.#sessions.get(runId);
+    if (session == null) {
       throw new TypeError("runのGitHub sessionがありません");
     }
-    return client;
+    return session;
   }
 
   /** runの値が既知の非公開repositoryを参照しないことを確認する。 */
@@ -90,14 +128,14 @@ export class GitHubRunSessions {
     }
   }
 
-  /** 収集後に認証済みclientへの参照を破棄する。 */
-  public releaseClient(runId: string): void {
-    this.#clients.delete(runId);
+  /** 収集後にGitHub読取源への参照を破棄する。 */
+  public releaseReadSource(runId: string): void {
+    this.#sessions.delete(runId);
   }
 
   /** 検査完了後にrunの参照を破棄する。 */
   public release(runId: string): void {
-    this.#clients.delete(runId);
+    this.#sessions.delete(runId);
     this.#privateRepositories.delete(runId);
   }
 }
@@ -126,16 +164,39 @@ export function createGitHubRepositoryInventoryPort(
 ): RepositoryInventoryPort {
   return Object.freeze({
     async collect(prepared) {
-      const client = await dependencies.createClient({
-        organization: prepared.core.config.organization,
-        credentials: dependencies.credentials,
-        operations: prepared.core.config.operations,
-      });
-      const inventory = await dependencies.discoverInventory({
-        organization: prepared.core.config.organization,
-        observedAt: prepared.core.identity.startedAt,
-        request: client.request,
-      });
+      const fixedSource = dependencies.fixedSource;
+      let source: GitHubInventorySource;
+      if (fixedSource != null) {
+        assertSandboxFixedSourceBinding(
+          fixedSource.descriptor,
+          dependencies.sandboxContext,
+          prepared,
+        );
+        source = Object.freeze({
+          kind: "fixed",
+          source: fixedSource,
+          inventory: fixedSource.discoverInventory(
+            prepared.core.config.organization,
+            prepared.core.identity.startedAt,
+          ),
+        });
+      } else {
+        const client = await dependencies.createClient({
+          organization: prepared.core.config.organization,
+          credentials: dependencies.credentials,
+          operations: prepared.core.config.operations,
+        });
+        source = Object.freeze({
+          kind: "live",
+          client,
+          inventory: await dependencies.discoverInventory({
+            organization: prepared.core.config.organization,
+            observedAt: prepared.core.identity.startedAt,
+            request: client.request,
+          }),
+        });
+      }
+      const inventory = source.inventory;
       const allowlist = createPublicRepositoryAllowlist(inventory);
       assertStoredPrivateRepositoryBoundary(inventory, prepared, dependencies.rawSnapshot);
       if (dependencies.rawSnapshot.status === "available") {
@@ -147,11 +208,19 @@ export function createGitHubRepositoryInventoryPort(
           knownSecrets: dependencies.knownSecrets,
         });
       }
-      dependencies.sessions.register(prepared.core.identity.runId, client, inventory);
+      if (source.kind === "live") {
+        dependencies.sessions.register(prepared.core.identity.runId, source.client, inventory);
+      } else {
+        dependencies.sessions.registerFixed(prepared.core.identity.runId, source.source, inventory);
+      }
       return Object.freeze({
         allowlist,
-        installationId: client.installationId,
-        githubApiRemaining: client.getRateLimitSnapshot()?.remaining ?? 0,
+        installationId:
+          source.kind === "live" ? source.client.installationId : source.source.installationId,
+        githubApiRemaining:
+          source.kind === "live"
+            ? (source.client.getRateLimitSnapshot()?.remaining ?? 0)
+            : source.source.rateLimitSnapshot().remaining,
         diagnostics: Object.freeze([]),
       });
     },
@@ -165,19 +234,25 @@ export function createGitHubReadPort(
   dependencies: GitHubReadDependencies,
 ): CollectionGitHubReadPort {
   const allowlist = run.data.allowlist;
-  const client = sessions.require(run.core.identity.runId);
+  const session = sessions.require(run.core.identity.runId);
+  if (session.kind === "fixed" && run.core.executionPolicy.effectTarget !== "sandbox") {
+    throw new TypeError("固定sourceはsandbox実行だけに指定できます");
+  }
   return Object.freeze({
     async enumerateOpen(repositories, observedAt) {
       const repositoryIds = new Set(repositories.map((repository) => repository.id));
       for (const repository of repositories) {
         allowlist.require(repository.id);
       }
-      const items = await dependencies.enumerateOpen({
-        allowlist,
-        repositories,
-        observedAt,
-        request: client.request,
-      });
+      const items =
+        session.kind === "fixed"
+          ? session.source.enumerateOpen(allowlist, repositories, observedAt)
+          : await dependencies.enumerateOpen({
+              allowlist,
+              repositories,
+              observedAt,
+              request: session.client.request,
+            });
       for (const item of items) {
         if (!repositoryIds.has(item.repositoryId)) {
           throw new TypeError("open列挙結果のrepositoryが要求した集合にありません");
@@ -186,13 +261,16 @@ export function createGitHubReadPort(
       return items;
     },
     async enumerateByIdentifiers(identifiers, observedAt) {
-      const items = await dependencies.enumerateByIdentifiers({
-        allowlist,
-        identifiers,
-        observedAt,
-        request: client.request,
-        graphql: client.graphql,
-      });
+      const items =
+        session.kind === "fixed"
+          ? session.source.enumerateByIdentifiers(allowlist, identifiers, observedAt)
+          : await dependencies.enumerateByIdentifiers({
+              allowlist,
+              identifiers,
+              observedAt,
+              request: session.client.request,
+              graphql: session.client.graphql,
+            });
       for (const item of items) {
         allowlist.require(item.repositoryId);
       }
@@ -202,15 +280,18 @@ export function createGitHubReadPort(
       for (const target of targets) {
         allowlist.require(target.item.repositoryId);
       }
-      const details = (
-        await dependencies.collectDetails({
-          allowlist,
-          targets,
-          observedAt,
-          graphql: client.graphql,
-          request: client.request,
-        })
-      ).items;
+      const details =
+        session.kind === "fixed"
+          ? session.source.collectDetails(allowlist, targets, observedAt)
+          : (
+              await dependencies.collectDetails({
+                allowlist,
+                targets,
+                observedAt,
+                graphql: session.client.graphql,
+                request: session.client.request,
+              })
+            ).items;
       const targetsByNodeId = new Map(targets.map((target) => [target.item.nodeId, target.item]));
       for (const detail of details) {
         const target = targetsByNodeId.get(detail.nodeId);
@@ -228,13 +309,19 @@ export function createGitHubReadPort(
       });
     },
     async collectRepositoryMetadata(repositoryFullNames, observedAt) {
-      return collectRepositoryMetadata(repositoryFullNames, observedAt, client.request);
+      return session.kind === "fixed"
+        ? session.source.collectRepositoryMetadata(allowlist, repositoryFullNames, observedAt)
+        : collectRepositoryMetadata(repositoryFullNames, observedAt, session.client.request);
     },
     async inspectLegacyReviewRequests(sourceIds) {
-      return inspectLegacyReviewRequests(sourceIds, allowlist, client.graphql);
+      return session.kind === "fixed"
+        ? session.source.inspectLegacyReviewRequests(sourceIds)
+        : inspectLegacyReviewRequests(sourceIds, allowlist, session.client.graphql);
     },
     rateLimitSnapshot() {
-      return client.getRateLimitSnapshot();
+      return session.kind === "fixed"
+        ? session.source.rateLimitSnapshot()
+        : session.client.getRateLimitSnapshot();
     },
   });
 }

@@ -22,6 +22,12 @@ export function createCollectInventoryStage(
         sessions,
         rawSnapshot: state.rawSnapshot,
         knownSecrets: configuration.credentials.knownSecrets,
+        ...(adapters.sandboxFixedSource == null
+          ? {}
+          : { fixedSource: adapters.sandboxFixedSource }),
+        ...(configuration.target.kind === "sandbox"
+          ? { sandboxContext: configuration.target.context }
+          : {}),
       }),
       nodeContentDigestPort,
     );

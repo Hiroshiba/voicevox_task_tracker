@@ -14,6 +14,12 @@ export function createCollectItemsStage(
   return async (inventoryCollected) => {
     const runId = inventoryCollected.core.identity.runId;
     try {
+      if (
+        adapters.sandboxFixedSource != null &&
+        inventoryCollected.core.executionPolicy.effectTarget !== "sandbox"
+      ) {
+        throw new TypeError("固定sourceはsandbox実行だけに指定できます");
+      }
       const read = createGitHubReadPort(inventoryCollected, sessions, {
         enumerateOpen: adapters.enumerateOpenGitHubItems,
         enumerateByIdentifiers: adapters.enumerateGitHubItemsByIdentifiers,
@@ -26,7 +32,7 @@ export function createCollectItemsStage(
         nodeContentDigestPort,
       );
       sessions.assertPublicBoundary(runId, [collected.data]);
-      sessions.releaseClient(runId);
+      sessions.releaseReadSource(runId);
       return collected;
     } catch (error: unknown) {
       sessions.release(runId);

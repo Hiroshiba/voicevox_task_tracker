@@ -23,6 +23,12 @@ import {
   writeCliTextFile,
 } from "../infrastructure/tracking-run/file-output.js";
 import type { ProductionRuntimeAdapters } from "../infrastructure/tracking-run/runtime/adapters.js";
+import {
+  SANDBOX_FIXED_SOURCE_DESCRIPTOR_ENV,
+  assertSandboxFixedSourceEnvironment,
+  parseSandboxFixedSourceDescriptor,
+} from "../infrastructure/tracking-run/sandbox-fixed-source/descriptor.js";
+import { createSandboxFixedSource } from "../infrastructure/tracking-run/sandbox-fixed-source/source.js";
 import { parseSandboxContext } from "../infrastructure/tracking-run/sandbox-context.js";
 import { deploySequentialPagesThroughActions } from "../infrastructure/tracking-run/sequential-pages-actions-port.js";
 import { verifyPersistentStateDirectory } from "../infrastructure/tracking-run/state-verification.js";
@@ -82,8 +88,27 @@ type ConcreteOperationName =
 export type CliCompositionAdapters = Omit<ProductionRuntimeAdapters, ConcreteOperationName>;
 
 function createProductionAdapters(adapters: CliCompositionAdapters): ProductionRuntimeAdapters {
+  const descriptorSource = adapters.environment[SANDBOX_FIXED_SOURCE_DESCRIPTOR_ENV];
+  if (
+    (descriptorSource != null || adapters.sandboxFixedSource != null) &&
+    (adapters.environment["TRACKING_EFFECT_TARGET"] !== "sandbox" ||
+      adapters.environment["GITHUB_REPOSITORY"] !== "Hiroshiba/voicevox_task_tracker")
+  ) {
+    throw new TypeError("固定sourceはHiroshiba sandbox実行だけに指定できます");
+  }
+  if (descriptorSource != null && adapters.sandboxFixedSource != null) {
+    throw new TypeError("固定sourceの記述子を重複指定できません");
+  }
+  const sandboxFixedSource =
+    descriptorSource == null
+      ? adapters.sandboxFixedSource
+      : createSandboxFixedSource(parseSandboxFixedSourceDescriptor(JSON.parse(descriptorSource)));
+  if (sandboxFixedSource != null) {
+    assertSandboxFixedSourceEnvironment(sandboxFixedSource.descriptor, adapters.environment);
+  }
   return Object.freeze({
     ...adapters,
+    ...(sandboxFixedSource == null ? {} : { sandboxFixedSource }),
     loadConfig: (path) => loadTrackingConfig(path, adapters.environment),
     openStateSession: (adapter, configuration, migrationTimezone) =>
       StatePersistenceSession.open(adapter, configuration, migrationTimezone),
