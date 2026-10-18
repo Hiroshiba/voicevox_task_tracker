@@ -211,6 +211,7 @@ function createPullRequestDetail(
     committedAt: item.headCommittedAt,
     pushedAt: Object.freeze({ status: "available", value: item.headCommittedAt }),
   });
+  const checksNodeId = createGitHubNodeId(`${nodeId}:checks`);
   const relatedItem = referencedIssue(repository, targetIssue);
   const commentUrl: GitHubItemUrl = `${itemUrl(repository, item)}#issuecomment-${item.commentNodeId}`;
   return Object.freeze({
@@ -263,11 +264,8 @@ function createPullRequestDetail(
       mergeQueue: Object.freeze({ status: "not_queued" }),
       checks: Object.freeze({
         status: "configured",
-        sourceId: buildProductionSourceId(
-          "github_status_check_rollup",
-          `${nodeId}:${item.headSha}`,
-        ),
-        nodeId: createGitHubNodeId(`${nodeId}:checks`),
+        sourceId: buildProductionSourceId("github_status_check_rollup", checksNodeId),
+        nodeId: checksNodeId,
         combinedState: "pending",
         contexts: Object.freeze([]),
       }),

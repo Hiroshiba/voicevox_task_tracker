@@ -175,10 +175,7 @@ function createSeedSnapshot(): StateSnapshot {
               role: "ci",
               reasonSummary: "required checksの実行中です",
               sourceIds: Object.freeze([
-                buildProductionSourceId(
-                  "github_status_check_rollup",
-                  `${observed.nodeId}:${item.headSha}`,
-                ),
+                buildProductionSourceId("github_status_check_rollup", `${observed.nodeId}:checks`),
               ] satisfies WaitingOn["sourceIds"]),
               confidence: 1,
             }),
