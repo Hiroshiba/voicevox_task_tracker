@@ -248,6 +248,8 @@ jobs:
       state_branch: ${{ steps.prepare.outputs.state_branch }}
       base_state_revision: ${{ steps.prepare.outputs.base_state_revision }}
       code_revision: ${{ steps.prepare.outputs.code_revision }}
+      fixed_source_descriptor: ${{ steps.fixed_source.outputs.fixed_source_descriptor }}
+      fixed_source_scheduled_for: ${{ steps.fixed_source.outputs.fixed_source_scheduled_for }}
       recording_outcome: ${{ steps.recording_control.outputs.recording_outcome }}
       recording_message_index: ${{ steps.recording_control.outputs.recording_message_index }}
       continuity_phase: ${{ steps.recording_control.outputs.continuity_phase }}
@@ -294,25 +296,8 @@ jobs:
           SANDBOX_OPERATION: ${{ inputs.operation }}
           SANDBOX_SEED_REF: ${{ inputs.seed_ref }}
           SANDBOX_SEED_REVISION: ${{ inputs.seed_revision }}
-        run: |
-          if [[ "$SANDBOX_OPERATION" != create || -z "$SANDBOX_SEED_REF" || ! "$SANDBOX_SEED_REVISION" =~ ^[0-9a-f]{40}$ ]] || ! git check-ref-format --branch "$SANDBOX_SEED_REF" >/dev/null; then echo 'custom seedにはcreate、forkのbranch名、40桁の期待commit SHAを指定してください' >&2; exit 1; fi
-          git fetch --no-tags origin "refs/heads/$SANDBOX_SEED_REF"
-          [[ "$(git rev-parse 'FETCH_HEAD^{commit}')" == "$SANDBOX_SEED_REVISION" ]] || { echo 'seed branchのheadが期待commit SHAと一致しません' >&2; exit 1; }
-          git worktree add --quiet --detach "$RUNNER_TEMP/sandbox-seed" "$SANDBOX_SEED_REVISION"
-          [[ "$(git -C "$RUNNER_TEMP/sandbox-seed" ls-tree -r HEAD | awk '{print $1, $2, $4}')" == $'100644 blob state/notification-ledger.json\n100644 blob state/operations-alert-ledger-v1.json\n100644 blob state/snapshot.json' ]] || { echo 'clean seedには現行stateの3ファイルだけを指定してください' >&2; exit 1; }
-          pnpm build
-          node dist/cli/tracker-run.js verify-state --state-directory "$RUNNER_TEMP/sandbox-seed/state" --state-revision "$SANDBOX_SEED_REVISION" > "$RUNNER_TEMP/sandbox-seed-verification.txt"
-          node --input-type=module <<'NODE'
-          import { readFileSync } from 'node:fs';
-          import { parseStateSnapshot, serializeStateSnapshot, parseStateNotificationLedger, serializeStateNotificationLedger, parseStateOperationsAlertLedger, serializeStateOperationsAlertLedger, assertExistingStatePublicSafety } from './dist/persistence/index.js';
-          const root = `${process.env.RUNNER_TEMP}/sandbox-seed/state/`;
-          const readCurrent = (path, parse, serialize) => { const source = readFileSync(root + path, 'utf8'); const value = parse(source); if (serialize(value) !== source) throw new TypeError(`${path}が現行canonical形式ではありません`); return value; };
-          const snapshot = readCurrent('snapshot.json', parseStateSnapshot, serializeStateSnapshot);
-          const ledger = readCurrent('notification-ledger.json', parseStateNotificationLedger, serializeStateNotificationLedger);
-          const operations = readCurrent('operations-alert-ledger-v1.json', parseStateOperationsAlertLedger, serializeStateOperationsAlertLedger);
-          assertExistingStatePublicSafety(snapshot, [], ledger, [operations], []);
-          NODE
-          echo "seed_revision=$SANDBOX_SEED_REVISION" >> "$GITHUB_OUTPUT"
+          SANDBOX_SCENARIO_ID: ${{ inputs.scenario_id }}
+        run: .github/scripts/sandbox-lifecycle.sh verify-custom-seed
       - name: sandbox通知portの入力を検証
         id: recording_control
         if: inputs.operation != 'dispose'
@@ -324,6 +309,8 @@ jobs:
           SANDBOX_ENVIRONMENT_ID: ${{ inputs.environment_id }}
           SANDBOX_RESET_SOURCE: ${{ inputs.reset_source }}
           SANDBOX_ANALYSIS_MODE: ${{ inputs.analysis_mode }}
+          SANDBOX_SEED_REF: ${{ inputs.seed_ref }}
+          SANDBOX_SEED_REVISION: ${{ inputs.seed_revision }}
         run: node .github/scripts/parse-sandbox-recording-control.mjs
       - name: continuity firstの段階記録検証を準備
         if: steps.recording_control.outputs.continuity_phase == 'second'
@@ -380,6 +367,14 @@ jobs:
           SANDBOX_FIRST_COVERAGE_PATH: ${{ runner.temp }}/first-coverage/sandbox-coverage.json
           GH_TOKEN: ${{ github.token }}
         run: .github/scripts/sandbox-lifecycle.sh prepare
+      - name: 固定sourceのrun記述子を確定
+        id: fixed_source
+        if: inputs.scenario_id == 'continuity-strict-zero'
+        env:
+          TRACKING_EFFECT_TARGET: sandbox
+          TRACKING_STATE_REF: ${{ steps.prepare.outputs.state_branch }}
+          SANDBOX_CONTEXT_PATH: ${{ runner.temp }}/sandbox-context.json
+        run: node dist/cli/sandbox-fixed-source.js prepare-descriptor
       - name: continuity secondのcache probe元を照合
         if: steps.recording_control.outputs.continuity_phase == 'second'
         env:
@@ -424,6 +419,7 @@ jobs:
             ${{ runner.temp }}/sandbox-control.json
             ${{ runner.temp }}/sandbox-generic-ai-inputs.bundle
             ${{ runner.temp }}/sandbox-generic-ai-input-binding.json
+            ${{ runner.temp }}/sandbox-fixed-source-descriptor.json
           if-no-files-found: error
           retention-days: 30
       - name: sandbox環境を廃棄
@@ -538,6 +534,8 @@ jobs:
       source_code_revision: ${{ needs.prepare.outputs.code_revision }}
       sandbox_context_artifact: sandbox-context-${{ github.run_id }}-${{ github.run_attempt }}
       sandbox_scenario_id: ${{ inputs.scenario_id }}
+      sandbox_fixed_source_descriptor: ${{ needs.prepare.outputs.fixed_source_descriptor }}
+      sandbox_fixed_source_scheduled_for: ${{ needs.prepare.outputs.fixed_source_scheduled_for }}
       recording_outcome: ${{ needs.prepare.outputs.recording_outcome }}
       recording_message_index: ${{ fromJSON(needs.prepare.outputs.recording_message_index) }}
       artifact_retention_days: 30
@@ -772,6 +770,8 @@ jobs:
           SANDBOX_STATE_VERIFICATION_PATH: ${{ runner.temp }}/state-verification.txt
           SANDBOX_COVERAGE_OUTPUT_PATH: ${{ runner.temp }}/sandbox-coverage.json
           SANDBOX_RESULT_OUTPUT_PATH: ${{ runner.temp }}/sandbox-result.json
+          SANDBOX_FIXED_SOURCE_DESCRIPTOR: ${{ needs.prepare.outputs.fixed_source_descriptor }}
+          SANDBOX_FIXED_SOURCE_ARTIFACT_PATH: ${{ runner.temp }}/context/sandbox-fixed-source-descriptor.json
         run: |
           run_suffix="${SANDBOX_TRACKING_RUN_ID#tracker-run:}"
           SANDBOX_RECEIPT_CHAIN_PATH="$RUNNER_TEMP/complete/$run_suffix/receipt-chain.json" \

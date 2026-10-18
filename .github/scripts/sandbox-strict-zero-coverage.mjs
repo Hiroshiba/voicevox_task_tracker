@@ -7,6 +7,13 @@ import {
   serializeCanonicalJsonLine,
 } from "../../dist/canonical-json/value.js";
 import { strictZeroSnapshotSourceDigests } from "../../dist/infrastructure/tracking-run/runtime/validation/sandbox-strict-zero-source-proof.js";
+import { parseSandboxContext } from "../../dist/infrastructure/tracking-run/sandbox-context.js";
+import { SANDBOX_FIXED_SOURCE_DATASET } from "../../dist/infrastructure/tracking-run/sandbox-fixed-source/dataset.js";
+import {
+  assertSandboxFixedSourceRecoveryBinding,
+  parseSandboxFixedSourceDescriptor,
+} from "../../dist/infrastructure/tracking-run/sandbox-fixed-source/descriptor.js";
+import { parseSandboxEnvironmentManifest } from "../../dist/persistence/sandbox-environment-manifest.js";
 import { parseStateNotificationLedger } from "../../dist/persistence/state-documents.js";
 import { sha256 } from "./sandbox-continuity-result.mjs";
 
@@ -65,6 +72,124 @@ function previousLedger(stateRepositoryPath, revision) {
 
 function sentEntries(ledger) {
   return ledger.entries.filter((entry) => entry.status === "sent");
+}
+
+/** 固定sourceのdescriptorを実run、seed、remote stateとfirst証拠へ結び付ける。 */
+export function assertStrictZeroFixedSourceCoverage(input) {
+  const descriptor = parseSandboxFixedSourceDescriptor(
+    JSON.parse(readFileSync(input.descriptorPath, "utf8")),
+  );
+  const supplied = parseSandboxFixedSourceDescriptor(JSON.parse(input.descriptorSource));
+  assertSame(descriptor, supplied, "固定sourceの配布記述子");
+  const context = parseSandboxContext(input.context);
+  const manifest = parseSandboxEnvironmentManifest(
+    readFileSync(`${input.stateRepositoryPath}/state/sandbox-environment.json`, "utf8"),
+  );
+  if (manifest.schemaVersion !== 2 || manifest.lifecycle.creation.kind !== "create") {
+    throw new TypeError("固定sourceのsandbox環境が合成seedから作られていません");
+  }
+  assertSandboxFixedSourceRecoveryBinding(descriptor, input.record, manifest);
+  for (const name of [
+    "environmentId",
+    "sourceRef",
+    "seedRevision",
+    "codeRevision",
+    "workflowRunId",
+    "workflowRunAttempt",
+  ]) {
+    assertSame(descriptor[name], context[name], `固定sourceの${name}`);
+  }
+  assertSame(descriptor.runSlot, input.phase, "固定sourceのrun slot");
+  assertSame(descriptor.runId, input.runId, "固定sourceのtracking run ID");
+  assertSame(descriptor.workflowRunId, input.actionsRunId, "固定sourceのActions run ID");
+  assertSame(descriptor.workflowRunAttempt, input.actionsRunAttempt, "固定sourceのActions attempt");
+  assertSame(
+    input.snapshot.generatedAt,
+    SANDBOX_FIXED_SOURCE_DATASET.clock[descriptor.runSlot].evaluatedAt,
+    "固定sourceの評価時刻",
+  );
+  let ownerDescriptor = descriptor;
+  if (input.phase === "first" && manifest.lifecycle.status !== "preparing") {
+    throw new TypeError("固定source firstの環境が準備中ではありません");
+  }
+  if (input.phase === "second") {
+    if (
+      input.first == null ||
+      input.firstCoverage == null ||
+      manifest.lifecycle.status !== "ready"
+    ) {
+      throw new TypeError("固定source secondのfirst証拠またはready環境がありません");
+    }
+    const firstDescriptor = parseSandboxFixedSourceDescriptor(input.firstCoverage.fixedSource);
+    const first = input.first;
+    ownerDescriptor = firstDescriptor;
+    assertSame(firstDescriptor.runSlot, "first", "固定source firstのrun slot");
+    assertSame(firstDescriptor.runId, first.trackingRunId, "固定source firstのtracking run ID");
+    assertSame(
+      firstDescriptor.workflowRunId,
+      first.actionsRunId,
+      "固定source firstのActions run ID",
+    );
+    assertSame(
+      firstDescriptor.workflowRunAttempt,
+      first.actionsRunAttempt,
+      "固定source firstのActions attempt",
+    );
+    for (const name of [
+      "datasetDigest",
+      "environmentId",
+      "sourceRef",
+      "seedRevision",
+      "codeRevision",
+      "configDigest",
+    ]) {
+      assertSame(firstDescriptor[name], descriptor[name], `固定sourceの連続${name}`);
+    }
+    assertSame(
+      manifest.lifecycle.completion.actionsRunId,
+      first.actionsRunId,
+      "固定source firstの完了run ID",
+    );
+    assertSame(
+      manifest.lifecycle.completion.actionsRunAttempt,
+      first.actionsRunAttempt,
+      "固定source firstの完了attempt",
+    );
+    assertSame(
+      manifest.lifecycle.completion.trackingRunId,
+      first.trackingRunId,
+      "固定source firstの完了tracking run ID",
+    );
+    assertSame(
+      manifest.lifecycle.completion.finalStateRevision,
+      first.finalStateRevision,
+      "固定source firstの完了revision",
+    );
+    if (manifest.lifecycle.completion.coverage.kind !== "verified") {
+      throw new TypeError("固定source firstのcoverageが検証済みではありません");
+    }
+    assertSame(
+      manifest.lifecycle.completion.coverage.digest,
+      first.coverageDigest,
+      "固定source firstのcoverage digest",
+    );
+  }
+  assertSame(
+    manifest.lifecycle.owner.actionsRunId,
+    ownerDescriptor.workflowRunId,
+    "固定sourceの作成run ID",
+  );
+  assertSame(
+    manifest.lifecycle.owner.actionsRunAttempt,
+    ownerDescriptor.workflowRunAttempt,
+    "固定sourceの作成attempt",
+  );
+  assertSame(
+    manifest.lifecycle.owner.codeRevision,
+    ownerDescriptor.codeRevision,
+    "固定sourceの作成code revision",
+  );
+  return descriptor;
 }
 
 /** strict-zeroの収集証拠をremote checkpointとsnapshotへ結び付ける。 */

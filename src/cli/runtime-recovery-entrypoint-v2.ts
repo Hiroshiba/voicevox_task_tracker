@@ -127,7 +127,11 @@ async function executeExactInput(
     GITHUB_RUN_ATTEMPT: String(input.runAttempt),
     ...(input.operation === "record_pages" ? pagesEnvironment(input.observation) : {}),
   };
-  const descriptorSource = environment[SANDBOX_FIXED_SOURCE_DESCRIPTOR_ENV];
+  const rawDescriptor = environment[SANDBOX_FIXED_SOURCE_DESCRIPTOR_ENV];
+  const descriptorSource = rawDescriptor === "" ? undefined : rawDescriptor;
+  if (environment["SANDBOX_FIXED_SOURCE_REQUIRED"] === "true" && descriptorSource == null) {
+    throw new TypeError("固定sourceが必要なsandbox runに記述子がありません");
+  }
   if (descriptorSource != null) {
     const descriptor = parseSandboxFixedSourceDescriptor(JSON.parse(descriptorSource));
     assertSandboxFixedSourceRun(descriptor, input.runId, input.runAttempt);

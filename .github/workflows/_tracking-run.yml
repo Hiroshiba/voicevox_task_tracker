@@ -67,6 +67,14 @@ on:
         description: sandboxで記録するscenario ID
         required: false
         type: string
+      sandbox_fixed_source_descriptor:
+        description: 固定sourceのrun記述子
+        required: false
+        type: string
+      sandbox_fixed_source_scheduled_for:
+        description: 固定sourceの予定時刻
+        required: false
+        type: string
       recording_outcome:
         description: sandbox通知portの結果
         required: false
@@ -104,6 +112,9 @@ env:
   TRACKING_STATE_REF: ${{ inputs.state_ref }}
   TRACKING_RECORDING_OUTCOME: ${{ inputs.recording_outcome }}
   TRACKING_RECORDING_MESSAGE_INDEX: ${{ inputs.recording_message_index }}
+  SANDBOX_FIXED_SOURCE_DESCRIPTOR: ${{ inputs.sandbox_fixed_source_descriptor }}
+  SANDBOX_FIXED_SOURCE_REQUIRED: ${{ inputs.sandbox_scenario_id == 'continuity-strict-zero' }}
+  SANDBOX_FIXED_SOURCE_SCHEDULED_FOR: ${{ inputs.sandbox_fixed_source_scheduled_for }}
 
 jobs:
   quality:
@@ -368,7 +379,13 @@ jobs:
           VOICEVOX_TASK_TRACKER_DIAGNOSTICS_AES256_KEY_V1_B64: ${{ inputs.effect_target == 'sandbox' && secrets.VOICEVOX_TASK_TRACKER_SANDBOX_DIAGNOSTICS_AES256_KEY_V1_B64 || '' }}
         run: |
           current_time="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
-          if [[ -n "$SCHEDULE" ]]; then
+          if [[ -n "$SANDBOX_FIXED_SOURCE_DESCRIPTOR" ]]; then
+            if [[ -z "$SANDBOX_FIXED_SOURCE_SCHEDULED_FOR" || -n "$SCHEDULE" ]]; then
+              echo '固定sourceの予定時刻が不正です' >&2
+              exit 1
+            fi
+            scheduled_for="$SANDBOX_FIXED_SOURCE_SCHEDULED_FOR"
+          elif [[ -n "$SCHEDULE" ]]; then
             case "$SCHEDULE" in
               "0 3 * * *") scheduled_time="03:00" ;;
               "0 7 * * *") scheduled_time="07:00" ;;
@@ -732,6 +749,8 @@ jobs:
       pages_environment: ${{ inputs.pages_environment }}
       code_revision: ${{ needs.prepare-runtime.outputs.code_revision }}
       run_id: ${{ needs.commit-initial-state.outputs.run_id }}
+      sandbox_fixed_source_descriptor: ${{ inputs.sandbox_fixed_source_descriptor }}
+      sandbox_fixed_source_required: ${{ inputs.sandbox_scenario_id == 'continuity-strict-zero' }}
       artifact_retention_days: ${{ inputs.artifact_retention_days }}
     secrets: inherit
 
@@ -752,6 +771,8 @@ jobs:
       pages_environment: ${{ inputs.pages_environment }}
       code_revision: ${{ needs.prepare-runtime.outputs.code_revision }}
       run_id: ${{ needs.finalize-run.outputs.run_id }}
+      sandbox_fixed_source_descriptor: ${{ inputs.sandbox_fixed_source_descriptor }}
+      sandbox_fixed_source_required: ${{ inputs.sandbox_scenario_id == 'continuity-strict-zero' }}
       artifact_retention_days: ${{ inputs.artifact_retention_days }}
     secrets: inherit
 
@@ -782,5 +803,7 @@ jobs:
       stage_results_json: ${{ toJSON(needs) }}
       has_failed_stage: ${{ contains(needs.*.result, 'failure') }}
       workflow_kind: ${{ inputs.effect_target == 'sandbox' && 'sandbox' || 'daily' }}
+      sandbox_fixed_source_descriptor: ${{ inputs.sandbox_fixed_source_descriptor }}
+      sandbox_fixed_source_required: ${{ inputs.sandbox_scenario_id == 'continuity-strict-zero' }}
       artifact_retention_days: ${{ inputs.artifact_retention_days }}
     secrets: inherit

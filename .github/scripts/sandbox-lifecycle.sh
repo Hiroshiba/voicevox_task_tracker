@@ -944,8 +944,34 @@ dispose() {
   write_output deleted_revision "$remote_revision"
 }
 
+verify_custom_seed() {
+  if [[ "$SANDBOX_OPERATION" != create || -z "$SANDBOX_SEED_REF" || ! "$SANDBOX_SEED_REVISION" =~ ^[0-9a-f]{40}$ ]] || ! git check-ref-format --branch "$SANDBOX_SEED_REF" >/dev/null; then
+    die 'custom seedにはcreate、forkのbranch名、40桁の期待commit SHAを指定してください'
+  fi
+  git fetch --no-tags origin "refs/heads/$SANDBOX_SEED_REF"
+  [[ "$(git rev-parse 'FETCH_HEAD^{commit}')" == "$SANDBOX_SEED_REVISION" ]] || die 'seed branchのheadが期待commit SHAと一致しません'
+  git worktree add --quiet --detach "$RUNNER_TEMP/sandbox-seed" "$SANDBOX_SEED_REVISION"
+  [[ "$(git -C "$RUNNER_TEMP/sandbox-seed" ls-tree -r HEAD | awk '{print $1, $2, $4}')" == $'100644 blob state/notification-ledger.json\n100644 blob state/operations-alert-ledger-v1.json\n100644 blob state/snapshot.json' ]] || die 'clean seedには現行stateの3ファイルだけを指定してください'
+  pnpm build
+  node dist/cli/tracker-run.js verify-state --state-directory "$RUNNER_TEMP/sandbox-seed/state" --state-revision "$SANDBOX_SEED_REVISION" > "$RUNNER_TEMP/sandbox-seed-verification.txt"
+  node --input-type=module <<'NODE'
+  import { readFileSync } from 'node:fs';
+  import { parseStateSnapshot, serializeStateSnapshot, parseStateNotificationLedger, serializeStateNotificationLedger, parseStateOperationsAlertLedger, serializeStateOperationsAlertLedger, assertExistingStatePublicSafety } from './dist/persistence/index.js';
+  const root = `${process.env.RUNNER_TEMP}/sandbox-seed/state/`;
+  const readCurrent = (path, parse, serialize) => { const source = readFileSync(root + path, 'utf8'); const value = parse(source); if (serialize(value) !== source) throw new TypeError(`${path}が現行canonical形式ではありません`); return value; };
+  const snapshot = readCurrent('snapshot.json', parseStateSnapshot, serializeStateSnapshot);
+  const ledger = readCurrent('notification-ledger.json', parseStateNotificationLedger, serializeStateNotificationLedger);
+  const operations = readCurrent('operations-alert-ledger-v1.json', parseStateOperationsAlertLedger, serializeStateOperationsAlertLedger);
+  assertExistingStatePublicSafety(snapshot, [], ledger, [operations], []);
+NODE
+  if [[ "$SANDBOX_SCENARIO_ID" == 'continuity-strict-zero' ]]; then
+    node dist/cli/sandbox-fixed-source.js verify-seed "$RUNNER_TEMP/sandbox-seed/state"
+  fi
+  write_output seed_revision "$SANDBOX_SEED_REVISION"
+}
+
 if [[ "$#" -ne 1 ]]; then
-  die "sandbox-lifecycleにはprepare、finalize、dispose、recover-info、promoteのいずれかを指定してください"
+  die "sandbox-lifecycleにはprepare、finalize、dispose、recover-info、promote、verify-custom-seedのいずれかを指定してください"
 fi
 
 case "$1" in
@@ -954,5 +980,6 @@ case "$1" in
   dispose) dispose ;;
   recover-info) recover_info ;;
   promote) promote ;;
-  *) die "sandbox-lifecycleにはprepare、finalize、dispose、recover-info、promoteのいずれかを指定してください" ;;
+  verify-custom-seed) verify_custom_seed ;;
+  *) die "sandbox-lifecycleにはprepare、finalize、dispose、recover-info、promote、verify-custom-seedのいずれかを指定してください" ;;
 esac

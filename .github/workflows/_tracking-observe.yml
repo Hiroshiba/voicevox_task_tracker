@@ -30,6 +30,13 @@ on:
       workflow_kind:
         required: true
         type: string
+      sandbox_fixed_source_descriptor:
+        required: false
+        type: string
+      sandbox_fixed_source_required:
+        required: false
+        default: false
+        type: boolean
       artifact_retention_days:
         required: true
         type: number
@@ -39,6 +46,8 @@ permissions: {}
 env:
   TRACKING_EFFECT_TARGET: ${{ inputs.effect_target }}
   TRACKING_STATE_REF: ${{ inputs.state_ref }}
+  SANDBOX_FIXED_SOURCE_DESCRIPTOR: ${{ inputs.sandbox_fixed_source_descriptor }}
+  SANDBOX_FIXED_SOURCE_REQUIRED: ${{ inputs.sandbox_fixed_source_required }}
 
 jobs:
   recovery-router:

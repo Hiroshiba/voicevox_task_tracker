@@ -87,6 +87,8 @@ const scenarioId = process.env["SANDBOX_SCENARIO_ID"];
 const environmentId = process.env["SANDBOX_ENVIRONMENT_ID"];
 const resetSource = process.env["SANDBOX_RESET_SOURCE"];
 const analysisMode = process.env["SANDBOX_ANALYSIS_MODE"];
+const seedRef = process.env["SANDBOX_SEED_REF"];
+const seedRevision = process.env["SANDBOX_SEED_REVISION"];
 if (
   (scenarioId === "continuity" || scenarioId === "continuity-strict-zero") !==
   (control.continuity != null)
@@ -153,6 +155,21 @@ if (operation === "resume-preparing" && control.notification?.phase !== "resolut
   throw new TypeError("準備中環境の再開には通知の手動解決入力が必要です");
 }
 if (control.continuity != null) {
+  if (scenarioId === "continuity-strict-zero") {
+    if (
+      (control.continuity.phase === "first" &&
+        (operation !== "create" ||
+          seedRef == null ||
+          seedRef === "" ||
+          seedRevision == null ||
+          seedRevision === "")) ||
+      (control.continuity.phase === "second" && (seedRef !== "" || seedRevision !== ""))
+    ) {
+      throw new TypeError(
+        "固定sourceのfirstには合成seedのcreate、secondにはseed指定のないcontinueが必要です",
+      );
+    }
+  }
   if (
     (scenarioId !== "continuity" && scenarioId !== "continuity-strict-zero") ||
     action !== "send" ||

@@ -41,7 +41,7 @@ import { createProductionCliApplication } from "./create-application.js";
 const DEFAULT_PAGES_OUTPUT_DIRECTORY = "web/public/data";
 const sandboxStateRefSchema = z.string().regex(/^sandbox-state\/env-[1-9][0-9]*-[1-9][0-9]*$/u);
 
-async function loadTrackingConfig(
+export async function loadTrackingConfig(
   path: string | URL,
   environment: Readonly<NodeJS.ProcessEnv>,
 ): Promise<Config> {
@@ -89,7 +89,14 @@ type ConcreteOperationName =
 export type CliCompositionAdapters = Omit<ProductionRuntimeAdapters, ConcreteOperationName>;
 
 function createProductionAdapters(adapters: CliCompositionAdapters): ProductionRuntimeAdapters {
-  const descriptorSource = adapters.environment[SANDBOX_FIXED_SOURCE_DESCRIPTOR_ENV];
+  const rawDescriptor = adapters.environment[SANDBOX_FIXED_SOURCE_DESCRIPTOR_ENV];
+  const descriptorSource = rawDescriptor === "" ? undefined : rawDescriptor;
+  if (
+    adapters.environment["SANDBOX_FIXED_SOURCE_REQUIRED"] === "true" &&
+    descriptorSource == null
+  ) {
+    throw new TypeError("固定sourceが必要なsandbox runに記述子がありません");
+  }
   if (
     (descriptorSource != null || adapters.sandboxFixedSource != null) &&
     (adapters.environment["TRACKING_EFFECT_TARGET"] !== "sandbox" ||

@@ -16,6 +16,7 @@ import { plannedSnapshotReuseWitness, verifyCacheProbeAdoption } from "./sandbox
 import { firstFileCacheProbeSource } from "./sandbox-cache-probe-source.mjs";
 import { assertSecondNotificationCoverage } from "./sandbox-continuity-notification.mjs";
 import {
+  assertStrictZeroFixedSourceCoverage,
   assertStrictZeroNotificationCoverage,
   bindStrictZeroSourceProof,
 } from "./sandbox-strict-zero-coverage.mjs";
@@ -421,6 +422,22 @@ async function createCoverage() {
             continuityPhase === "second" ? required("SANDBOX_FIRST_SOURCE_PROOF_PATH") : null,
           metrics,
         });
+  const fixedSource = strictZero
+    ? assertStrictZeroFixedSourceCoverage({
+        descriptorPath: required("SANDBOX_FIXED_SOURCE_ARTIFACT_PATH"),
+        descriptorSource: required("SANDBOX_FIXED_SOURCE_DESCRIPTOR"),
+        context,
+        stateRepositoryPath: required("SANDBOX_STATE_REPOSITORY_PATH"),
+        record,
+        snapshot,
+        phase: continuityPhase,
+        runId: trackingRunId,
+        actionsRunId: required("GITHUB_RUN_ID"),
+        actionsRunAttempt: Number(required("GITHUB_RUN_ATTEMPT")),
+        first,
+        firstCoverage,
+      })
+    : null;
   const coverage = {
     schemaVersion: 2,
     scenarioId,
@@ -531,6 +548,7 @@ async function createCoverage() {
             remoteBaseReloaded: true,
           },
     ...(strictZeroCoverage == null ? {} : { strictZero: strictZeroCoverage }),
+    ...(fixedSource == null ? {} : { fixedSource }),
     productionAdapters: { pagesDeployExecuted: false, discordSendExecuted: false },
     unexecutedBranches: [
       { branch: "production_pages_deploy", reason: "sandbox recording port" },

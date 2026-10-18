@@ -35,6 +35,15 @@ on:
         description: 再開対象のtracking run ID
         required: true
         type: string
+      sandbox_fixed_source_descriptor:
+        description: 固定sourceのrun記述子
+        required: false
+        type: string
+      sandbox_fixed_source_required:
+        description: 固定source記述子を必須にする
+        required: false
+        default: false
+        type: boolean
       artifact_retention_days:
         description: 実行artifactの保持日数
         required: true
@@ -46,6 +55,8 @@ env:
   TRACKING_EFFECT_TARGET: ${{ inputs.effect_target }}
   TRACKING_STATE_REF: ${{ inputs.state_ref }}
   TRACKING_PAGES_PHASE: ${{ inputs.phase }}
+  SANDBOX_FIXED_SOURCE_DESCRIPTOR: ${{ inputs.sandbox_fixed_source_descriptor }}
+  SANDBOX_FIXED_SOURCE_REQUIRED: ${{ inputs.sandbox_fixed_source_required }}
 
 jobs:
   deploy:
