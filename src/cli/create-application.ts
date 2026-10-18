@@ -1,6 +1,7 @@
 import { runIsolatedDryRun } from "../infrastructure/tracking-run/dry-run-runtime.js";
 import type { ProductionRuntimeAdapters } from "../infrastructure/tracking-run/runtime/adapters.js";
 import { createDailyDependencies } from "../infrastructure/tracking-run/runtime/daily-dependencies.js";
+import { createSandboxFixedSourceRunClock } from "../infrastructure/tracking-run/sandbox-fixed-source/clock.js";
 import { SequentialRunRunner } from "../infrastructure/tracking-run/sequential-run.js";
 import { SplitStageRunner } from "../infrastructure/tracking-run/split-stage-runner.js";
 import { CliApplication } from "./application.js";
@@ -11,8 +12,10 @@ import { StateVerificationRunner } from "./state-verification.js";
 export function createProductionCliApplication(
   adapters: ProductionRuntimeAdapters,
 ): CliApplication {
+  const fixedSource = adapters.sandboxFixedSource;
   const dailyRunner = new SequentialRunRunner(createDailyDependencies(adapters), {
-    now: adapters.now,
+    now:
+      fixedSource == null ? adapters.now : createSandboxFixedSourceRunClock(fixedSource).startedAt,
   });
   return new CliApplication({
     dailyRunner,

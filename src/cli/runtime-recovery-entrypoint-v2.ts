@@ -11,17 +11,30 @@ import {
   type RuntimeRecoveryInputV2,
   type RuntimeRecoveryOutputV2,
 } from "../application/tracking-run/contracts/runtime-recovery-v2.js";
+import { DURABLE_PUBLICATION_RECORD_STATE_PATH_V1 } from "../application/tracking-run/contracts/recovery-paths.js";
 import { serializeCanonicalJson, serializeCanonicalJsonLine } from "../canonical-json/value.js";
 import { inspectRunBootstrapState } from "../infrastructure/tracking-run/bootstrap-state.js";
 import { nodeContentDigestPort as digest } from "../infrastructure/tracking-run/content-digest.js";
 import { resolveExactManualDeliveryV2 } from "../infrastructure/tracking-run/runtime-recovery-manual-v2.js";
+import {
+  SANDBOX_FIXED_SOURCE_DESCRIPTOR_ENV,
+  assertSandboxFixedSourceRecoveryBinding,
+  assertSandboxFixedSourceRun,
+  parseSandboxFixedSourceDescriptor,
+} from "../infrastructure/tracking-run/sandbox-fixed-source/descriptor.js";
 import { splitStagePaths } from "../infrastructure/tracking-run/split-stage-paths.js";
 import { readSplitReceiptChain } from "../infrastructure/tracking-run/split-stage-receipts.js";
 import { GitStateBranchAdapter } from "../persistence/index.js";
 import {
+  SANDBOX_ENVIRONMENT_MANIFEST_PATH,
+  parseSandboxEnvironmentManifest,
+} from "../persistence/sandbox-environment-manifest.js";
+import { decodeDurablePublicationRecord } from "../publication/durable-record-schema.js";
+import { assertNonNullable } from "../util/assert-non-nullable.js";
+import {
   createCliApplication,
   createDefaultCliCompositionAdapters,
-  createDefaultProductionRuntimeAdapters,
+  createProductionRuntimeAdapters,
 } from "./composition-root.js";
 
 import { assertExactRuntimeV2 } from "../infrastructure/tracking-run/runtime-recovery-launcher-v2.js";
@@ -107,6 +120,37 @@ async function executeExactInput(
   ) {
     throw new TypeError("V2回復入力と永続stateのbootstrapが一致しません");
   }
+  const base = createDefaultCliCompositionAdapters();
+  const environment: NodeJS.ProcessEnv = {
+    ...base.environment,
+    TRACKING_STATE_REF: input.stateRef,
+    GITHUB_RUN_ATTEMPT: String(input.runAttempt),
+    ...(input.operation === "record_pages" ? pagesEnvironment(input.observation) : {}),
+  };
+  const descriptorSource = environment[SANDBOX_FIXED_SOURCE_DESCRIPTOR_ENV];
+  if (descriptorSource != null) {
+    const descriptor = parseSandboxFixedSourceDescriptor(JSON.parse(descriptorSource));
+    assertSandboxFixedSourceRun(descriptor, input.runId, input.runAttempt);
+    const files = await adapter.readFiles(input.exactStateRevision, [
+      DURABLE_PUBLICATION_RECORD_STATE_PATH_V1,
+      SANDBOX_ENVIRONMENT_MANIFEST_PATH,
+    ]);
+    const recordFile = files.get(DURABLE_PUBLICATION_RECORD_STATE_PATH_V1);
+    const manifestFile = files.get(SANDBOX_ENVIRONMENT_MANIFEST_PATH);
+    assertNonNullable(recordFile, "固定sourceのexact record読取結果がありません");
+    assertNonNullable(manifestFile, "固定sourceのsandbox manifest読取結果がありません");
+    if (recordFile.status !== "present" || manifestFile.status !== "present") {
+      throw new TypeError("固定sourceのexact stateにrecordまたはsandbox manifestがありません");
+    }
+    const record = decodeDurablePublicationRecord(recordFile.bytes, digest);
+    const manifest = parseSandboxEnvironmentManifest(
+      new TextDecoder("utf-8", { fatal: true }).decode(manifestFile.bytes),
+    );
+    if (manifest.schemaVersion !== 2) {
+      throw new TypeError("固定sourceのsandbox manifestが現行形式ではありません");
+    }
+    assertSandboxFixedSourceRecoveryBinding(descriptor, record, manifest);
+  }
   if (input.operation === "resolve_manual_delivery") {
     if (
       input.runtimeRecoveryPlan.kind !== "workflow_bundle" ||
@@ -118,7 +162,7 @@ async function executeExactInput(
       repositoryPath,
       input,
       adapter,
-      createDefaultProductionRuntimeAdapters(),
+      createProductionRuntimeAdapters({ ...base, environment }),
     );
     return runtimeRecoveryOutputV2Schema.parse({
       protocolVersion: 2,
@@ -137,13 +181,6 @@ async function executeExactInput(
     await assertPagesObservation(input, repositoryPath);
   }
   const output: string[] = [];
-  const base = createDefaultCliCompositionAdapters();
-  const environment: NodeJS.ProcessEnv = {
-    ...base.environment,
-    TRACKING_STATE_REF: input.stateRef,
-    GITHUB_RUN_ATTEMPT: String(input.runAttempt),
-    ...(input.operation === "record_pages" ? pagesEnvironment(input.observation) : {}),
-  };
   const application = createCliApplication({
     ...base,
     environment,

@@ -29,6 +29,7 @@ import {
   parseSandboxFixedSourceDescriptor,
 } from "../infrastructure/tracking-run/sandbox-fixed-source/descriptor.js";
 import { createSandboxFixedSource } from "../infrastructure/tracking-run/sandbox-fixed-source/source.js";
+import { createSandboxFixedSourceRunClock } from "../infrastructure/tracking-run/sandbox-fixed-source/clock.js";
 import { parseSandboxContext } from "../infrastructure/tracking-run/sandbox-context.js";
 import { deploySequentialPagesThroughActions } from "../infrastructure/tracking-run/sequential-pages-actions-port.js";
 import { verifyPersistentStateDirectory } from "../infrastructure/tracking-run/state-verification.js";
@@ -106,9 +107,14 @@ function createProductionAdapters(adapters: CliCompositionAdapters): ProductionR
   if (sandboxFixedSource != null) {
     assertSandboxFixedSourceEnvironment(sandboxFixedSource.descriptor, adapters.environment);
   }
+  const now =
+    sandboxFixedSource == null
+      ? adapters.now
+      : createSandboxFixedSourceRunClock(sandboxFixedSource).now;
   return Object.freeze({
     ...adapters,
     ...(sandboxFixedSource == null ? {} : { sandboxFixedSource }),
+    now,
     loadConfig: (path) => loadTrackingConfig(path, adapters.environment),
     openStateSession: (adapter, configuration, migrationTimezone) =>
       StatePersistenceSession.open(adapter, configuration, migrationTimezone),
@@ -130,6 +136,13 @@ export function createDefaultProductionRuntimeAdapters(
   diagnosticsRecorder?: DiagnosticsJsonlRecorder,
 ): ProductionRuntimeAdapters {
   return createProductionAdapters(createDefaultCliCompositionAdapters(diagnosticsRecorder));
+}
+
+/** 注入済みの具体アダプターでexact復旧用の実行境界を組み立てる。 */
+export function createProductionRuntimeAdapters(
+  adapters: CliCompositionAdapters,
+): ProductionRuntimeAdapters {
+  return createProductionAdapters(adapters);
 }
 
 /** 注入済みの具体アダプターから全サブコマンドを実行するapplicationを組み立てる。 */

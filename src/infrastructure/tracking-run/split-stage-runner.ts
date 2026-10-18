@@ -1,4 +1,5 @@
 import type { ProductionRuntimeAdapters } from "./runtime/adapters.js";
+import { assertSandboxFixedSourceRun } from "./sandbox-fixed-source/descriptor.js";
 import { SequentialRunRunner } from "./sequential-run.js";
 import type {
   RecoverRuntimeV2CliCommand,
@@ -28,6 +29,14 @@ export class SplitStageRunner {
 
   /** remote exact stateと検証済みreceiptから次の分割段階を返す。 */
   public async route(command: RouteStageCliCommand, invocationId: string): Promise<void> {
+    const fixed = this.#adapters.sandboxFixedSource;
+    if (fixed != null && command.runId != null) {
+      assertSandboxFixedSourceRun(
+        fixed.descriptor,
+        command.runId,
+        Number(this.#adapters.environment["GITHUB_RUN_ATTEMPT"]),
+      );
+    }
     await routeSplitStage(this.#adapters, command, invocationId);
   }
 
@@ -36,6 +45,13 @@ export class SplitStageRunner {
     command: RunStageCliCommand,
     invocationId: string,
   ): Promise<SplitStageExecutionResult> {
+    const fixed = this.#adapters.sandboxFixedSource;
+    if (fixed != null && command.stage !== "analyze") {
+      if (command.runId == null) {
+        throw new TypeError("固定sourceの分割stageにはrun IDが必要です");
+      }
+      assertSandboxFixedSourceRun(fixed.descriptor, command.runId, command.runAttempt);
+    }
     return runSplitStage(this.#adapters, this.#dailyRunner, command, invocationId);
   }
 }

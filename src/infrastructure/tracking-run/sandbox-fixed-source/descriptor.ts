@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import type { PreparedRun } from "../../../application/tracking-run/prepare-run.js";
 import { parseSha256Hash } from "../../../canonical-json/sha256.js";
+import type { SandboxEnvironmentManifest } from "../../../persistence/sandbox-environment-manifest.js";
+import type { DurablePublicationRecord } from "../../../publication/durable-record-schema.js";
 import { assertNonNullable } from "../../../util/assert-non-nullable.js";
 import type { SandboxRunContext } from "../sandbox-context.js";
 
@@ -56,6 +58,41 @@ export function assertSandboxFixedSourceEnvironment(
     environment["GITHUB_SHA"] !== descriptor.codeRevision
   ) {
     throw new TypeError("固定source記述子とActions実行環境が一致しません");
+  }
+}
+
+/** 固定sourceのrun識別子と起動attemptを照合する。 */
+export function assertSandboxFixedSourceRun(
+  descriptor: SandboxFixedSourceDescriptor,
+  runId: string,
+  runAttempt: number,
+): void {
+  if (descriptor.runId !== runId || descriptor.workflowRunAttempt !== runAttempt) {
+    throw new TypeError("固定source記述子とrun IDまたはattemptが一致しません");
+  }
+}
+
+/** 固定source記述子をexact state内のrunとsandbox環境へ結び付ける。 */
+export function assertSandboxFixedSourceRecoveryBinding(
+  descriptor: SandboxFixedSourceDescriptor,
+  record: DurablePublicationRecord,
+  manifest: SandboxEnvironmentManifest,
+): void {
+  if (
+    record.executionPolicy.effectTarget !== "sandbox" ||
+    record.runIdentity.runId !== descriptor.runId ||
+    record.runIdentity.startedAt !==
+      SANDBOX_FIXED_SOURCE_DATASET.clock[descriptor.runSlot].startedAt ||
+    record.configDigest !== descriptor.configDigest ||
+    record.runtimeRecoveryPlan.kind === "not_reproducible" ||
+    record.runtimeRecoveryPlan.codeRevision !== descriptor.codeRevision ||
+    (record.runtimeRecoveryPlan.kind === "workflow_bundle" &&
+      record.runtimeRecoveryPlan.workflowRunId !== descriptor.workflowRunId) ||
+    manifest.environmentId !== descriptor.environmentId ||
+    manifest.sourceRef !== descriptor.sourceRef ||
+    manifest.seedRevision !== descriptor.seedRevision
+  ) {
+    throw new TypeError("固定source記述子とexact stateの識別情報が一致しません");
   }
 }
 
