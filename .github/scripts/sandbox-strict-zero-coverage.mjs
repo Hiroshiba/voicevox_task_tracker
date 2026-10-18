@@ -87,7 +87,7 @@ export function bindStrictZeroSourceProof(input) {
   assertSame(unbound.configDigest, input.record.configDigest, "strict-zeroのconfig digest");
   assertSame(
     unbound.evaluatedAt,
-    input.evidence.validatedPayload.validation.core.evaluatedAt,
+    input.evidence.validatedPayload.validation.core.generatedAt,
     "strict-zeroの評価時刻",
   );
   const remoteDigests = strictZeroSnapshotSourceDigests(input.snapshot);
