@@ -12,7 +12,9 @@ import {
   createGitHubNodeId,
   createGitHubRepositoryId,
   createUtcIsoDateTime,
+  type WaitingOn,
 } from "../../../domain/types.js";
+import { buildProductionSourceId } from "../../../github/production-source-id.js";
 import {
   createFinalGraphProjection,
   type FinalGraphProjectionInput,
@@ -120,10 +122,12 @@ function createSeedSnapshot(): StateSnapshot {
       state: observed.state,
       notificationClass: "standard",
       primaryWaitingOn: Object.freeze({
-        index: "not_applicable",
-        selectionReason: "待機対象なし",
+        index: terminal ? "not_applicable" : 0,
+        selectionReason: terminal
+          ? "待機対象なし"
+          : "merge queue、auto-merge、required checksの順で選定しました",
       }),
-      nextAction: terminal ? "終了済み" : "自動確認を待つ",
+      nextAction: terminal ? "終了済み" : "required checksの完了を待つ",
       createdAt: observed.createdAt,
       githubUpdatedAt: observed.updatedAt,
       lastHumanActivityAt: activityAt,
@@ -161,7 +165,25 @@ function createSeedSnapshot(): StateSnapshot {
     };
     return terminal
       ? Object.freeze({ ...common, status: "terminal_completed", waitingOn: emptyWaitingOn })
-      : Object.freeze({ ...common, status: "waiting_for_automation", waitingOn: emptyWaitingOn });
+      : Object.freeze({
+          ...common,
+          status: "waiting_for_automation",
+          waitingOn: Object.freeze([
+            Object.freeze({
+              kind: "automation",
+              candidateId: "required_checks",
+              role: "ci",
+              reasonSummary: "required checksの実行中です",
+              sourceIds: Object.freeze([
+                buildProductionSourceId(
+                  "github_status_check_rollup",
+                  `${observed.nodeId}:${item.headSha}`,
+                ),
+              ] satisfies WaitingOn["sourceIds"]),
+              confidence: 1,
+            }),
+          ]),
+        });
   });
   const collectionItems: readonly SnapshotCollectionItem[] = dataset.items.map((item, index) => {
     const observed = enumerated[index];
